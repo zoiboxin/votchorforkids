@@ -1,0 +1,22 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Score {
+  id        String   @id @default(cuid())
+  name      String
+  points    Int
+  votes     Int      @default(0)
+  rescues   Int      @default(0)
+  caught    Int      @default(0)
+  won       Boolean  @default(false)
+  timeMs    Int      @default(0)
+  createdAt DateTime @default(now())
+
+  @@index([points])
+}
