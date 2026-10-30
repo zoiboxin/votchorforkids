@@ -4,14 +4,15 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  ANIMAL_SET, CIVIL_NAMES, HAIR_COLORS, ITEMS, PANTS_COLORS, SHIRT_COLORS, SKIN_TONES,
+  ANIMAL_SET, CIVIL_NAMES, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, PANTS_COLORS, SHIRT_COLORS, SKIN_TONES,
   TOTAL_VOTES, type Appearance,
 } from "@/lib/game/constants";
 import type { GameEngine } from "@/lib/game/engine";
 import { nightFactor } from "@/lib/game/sim";
-import { mulberry32, range } from "@/lib/game/rng";
+import { mulberry32 } from "@/lib/game/rng";
 import {
-  buildAnimal, buildCharacter, buildFood, buildVoteToken, nameTag, helpBubble, poseAnimal, poseCharacter,
+  buildAnimal, buildCharacter, nameTag, helpBubble, poseAnimal, poseCharacter,
+  voteTokenGeometry, foodGeometry, shadowMaterial, basicVertexMaterial,
 } from "@/lib/game/character";
 import { useGame } from "./store";
 
@@ -88,38 +89,46 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
 /* ------------------------------------------------------------------ */
 interface NpcView { mesh: THREE.Object3D; tag?: THREE.Sprite; bubble?: THREE.Sprite }
 
+/** Entities beyond this range from the camera are hidden & not animated (fog hides them anyway). */
+const CULL_DIST = 118;
+const CULL_SQ = CULL_DIST * CULL_DIST;
+/** Facial details (lids, brows, name tags) are only rendered up close — free LOD. */
+const DETAIL_DIST = 48;
+const DETAIL_SQ = DETAIL_DIST * DETAIL_DIST;
+
 export function Npcs({ engine }: { engine: GameEngine }) {
   const views = useMemo(() => {
     const r = mulberry32(4242);
-    const civLooks: Appearance[] = engine.civs.map((c) => ({
-      skin: SKIN_TONES[Math.floor(r() * SKIN_TONES.length)],
-      shirt: SHIRT_COLORS[Math.floor(r() * SHIRT_COLORS.length)],
-      pants: PANTS_COLORS[Math.floor(r() * PANTS_COLORS.length)],
+    const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(r() * arr.length)];
+    const civLooks: Appearance[] = engine.civs.map(() => ({
+      skin: pick(SKIN_TONES),
+      shirt: pick(SHIRT_COLORS),
+      pants: pick(PANTS_COLORS),
       shoe: ["#3b2314", "#111111", "#f5f5f5"][Math.floor(r() * 3)],
-      hair: HAIR_COLORS[Math.floor(r() * HAIR_COLORS.length)],
-      hairStyle: (["spiky", "bowl", "ponytail", "bald"] as const)[Math.floor(r() * 4)],
+      hair: pick(HAIR_COLORS),
+      hairStyle: pick(HAIR_STYLES).id,
       cap: r() < 0.25,
-      age: (["kid", "teen", "young", "old"] as const)[Math.floor(r() * 4)],
+      age: pick(["kid", "teen", "young", "old"] as const),
       girl: r() < 0.5,
     }));
     const map = new Map<number, NpcView>();
-    engine.cops.forEach((c) => {
+    engine.cops.forEach((c, i) => {
       const mesh = buildCharacter(
-        { skin: SKIN_TONES[1], shirt: "#2b4a8f", pants: "#1d2a4a", shoe: "#111111", hair: "#1a1210", hairStyle: "bowl", cap: true, age: "young", girl: false },
-        { police: true },
+        { skin: pick(SKIN_TONES), shirt: "#2b4a8f", pants: "#1d2a4a", shoe: "#111111", hair: pick(["#1a1210", "#5a3a1a", "#4a4a58"] as const), hairStyle: pick(["bowl", "spiky", "bald"] as const), cap: true, age: pick(["young", "young", "old"] as const), girl: false },
+        { police: true, mustache: i % 3 === 0 },
       );
       const tag = nameTag("POLICE", "rgba(30,50,120,0.85)");
-      tag.position.y = 2.85;
+      tag.position.y = 2.95;
       mesh.add(tag);
       map.set(c.id, { mesh, tag });
     });
     engine.civs.forEach((c, i) => {
       const mesh = buildCharacter(civLooks[i]);
       const tag = nameTag(c.name);
-      tag.position.y = 2.85;
+      tag.position.y = 2.95;
       mesh.add(tag);
       const bubble = helpBubble();
-      bubble.position.y = 3.6;
+      bubble.position.y = 3.7;
       bubble.visible = false;
       mesh.add(bubble);
       map.set(c.id, { mesh, tag, bubble });
@@ -127,29 +136,36 @@ export function Npcs({ engine }: { engine: GameEngine }) {
     return map;
   }, [engine]);
 
-  const group = useRef<THREE.Group>(null!);
   useFrame((s) => {
     const t = s.clock.elapsedTime;
+    const cam = s.camera.position;
     for (const list of [engine.cops, engine.civs]) {
       for (const n of list) {
         const v = views.get(n.id);
         if (!v) continue;
+        const dx = n.x - cam.x, dz = n.z - cam.z;
+        const d2 = dx * dx + dz * dz;
+        const near = d2 < CULL_SQ;
+        if (!near) { v.mesh.visible = false; continue; }
+        v.mesh.visible = true;
+        const close = d2 < DETAIL_SQ;
+        const rig = v.mesh.userData.rig as { lids: THREE.Object3D[]; brows: THREE.Object3D[] } | undefined;
+        if (rig) {
+          for (const l of rig.lids) l.visible = close;
+          for (const b of rig.brows) b.visible = close;
+        }
         v.mesh.position.set(n.x, 0, n.z);
         let dd = n.face - v.mesh.rotation.y;
         dd = Math.atan2(Math.sin(dd), Math.cos(dd));
         v.mesh.rotation.y += dd * 0.15;
         const speed = Math.hypot(n.vx, n.vz);
         poseCharacter(v.mesh, speed, t, { phase: n.phase, detained: n.mode === "detained" });
-        if (v.bubble) v.bubble.visible = n.mode === "detained";
-        if (v.tag) v.tag.visible = n.mode !== "detained";
+        if (v.bubble) v.bubble.visible = close && n.mode === "detained";
+        if (v.tag) v.tag.visible = close && n.mode !== "detained";
       }
     }
   });
-  return (
-    <group ref={group}>
-      {[...views.values()].map((v, i) => <primitive object={v.mesh} key={i} />)}
-    </group>
-  );
+  return <>{[...views.values()].map((v, i) => <primitive object={v.mesh} key={i} />)}</>;
 }
 
 /* ------------------------------------------------------------------ */
@@ -166,12 +182,16 @@ export function Zombies({ engine }: { engine: GameEngine }) {
   useFrame((s) => {
     const night = nightFactor(engine.clock);
     const t = s.clock.elapsedTime;
+    const cam = s.camera.position;
     for (const z of engine.zombies) {
       const m = views.get(z.id)!;
       const vis = night > 0.4;
-      m.visible = vis;
-      if (!vis) continue;
-      const sink = THREE.MathUtils.clamp((0.4 - night) * 8, -1.8, 0);
+      const dx = z.x - cam.x, dz = z.z - cam.z;
+      m.visible = vis && dx * dx + dz * dz < CULL_SQ;
+      if (!m.visible) continue;
+      // rise from the grave as night falls (fully out at night >= 0.55)
+      const rise = THREE.MathUtils.clamp((night - 0.4) / 0.15, 0, 1);
+      const sink = -1.8 * (1 - rise);
       m.position.set(z.x, sink, z.z);
       let dd = z.face - m.rotation.y;
       dd = Math.atan2(Math.sin(dd), Math.cos(dd));
@@ -194,8 +214,12 @@ export function Animals({ engine }: { engine: GameEngine }) {
   }, [engine]);
   useFrame((s) => {
     const t = s.clock.elapsedTime;
+    const cam = s.camera.position;
     for (const a of engine.animals) {
       const m = views.get(a.id)!;
+      const dx = a.x - cam.x, dz = a.z - cam.z;
+      if (dx * dx + dz * dz > CULL_SQ) { m.visible = false; continue; }
+      m.visible = true;
       m.position.set(a.x, 0, a.z);
       let dd = a.face - m.rotation.y;
       dd = Math.atan2(Math.sin(dd), Math.cos(dd));
@@ -207,53 +231,111 @@ export function Animals({ engine }: { engine: GameEngine }) {
 }
 
 /* ------------------------------------------------------------------ */
-/* Items + votes                                                       */
+/* Items + votes + shadows — all instanced (a handful of draw calls)   */
 /* ------------------------------------------------------------------ */
+const dummy = new THREE.Object3D();
+const ANIMAL_SCALES: Record<string, number> = { cow: 1.5, chicken: 0.55, deer: 1.1, monkey: 0.7 };
+
 export function Pickups({ engine }: { engine: GameEngine }) {
-  const itemViews = useMemo(
-    () => new Map(engine.items.map((it) => [it.id, buildFood(ITEMS[it.def].kind, ITEMS[it.def].color)])),
-    [engine],
-  );
-  const voteViews = useMemo(
-    () => new Map(engine.votes.map((v) => [v.id, buildVoteToken()])),
-    [engine],
-  );
+  const { voteMesh, foodMeshes, kinds } = useMemo(() => {
+    const mat = basicVertexMaterial();
+    const voteMesh = new THREE.InstancedMesh(voteTokenGeometry(), mat, TOTAL_VOTES);
+    voteMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    voteMesh.frustumCulled = false;
+    const foodMeshes = new Map<string, THREE.InstancedMesh>();
+    for (const d of ITEMS) {
+      if (foodMeshes.has(d.kind)) continue;
+      const m = new THREE.InstancedMesh(foodGeometry(d.kind, d.color), mat, ITEM_COUNT);
+      m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+      m.frustumCulled = false;
+      foodMeshes.set(d.kind, m);
+    }
+    return { voteMesh, foodMeshes, kinds: [...foodMeshes.keys()] };
+  }, []);
+
   useFrame((s) => {
     const t = s.clock.elapsedTime;
-    for (const it of engine.items) {
-      const m = itemViews.get(it.id)!;
-      m.visible = it.active;
-      if (it.active) {
-        m.position.set(it.x, 0.55 + Math.sin(t * 2.2 + it.id) * 0.12, it.z);
-        m.rotation.y = t * 1.4 + it.id;
-      }
-    }
     const p = engine.player;
+    /* votes */
+    let vi = 0;
     let slot = 0;
     for (const v of engine.votes) {
-      const m = voteViews.get(v.id)!;
+      if (v.state === "delivered") continue;
       if (v.state === "world") {
-        m.visible = true;
-        m.position.set(v.x, 0.75 + Math.sin(t * 2.6 + v.id) * 0.16, v.z);
-        m.rotation.y = t * 2 + v.id;
-      } else if (v.state === "carried") {
-        m.visible = true;
+        dummy.position.set(v.x, 0.75 + Math.sin(t * 2.6 + v.id) * 0.16, v.z);
+        dummy.rotation.set(0, t * 2 + v.id, 0);
+        dummy.scale.setScalar(1);
+      } else {
         const a = (slot / Math.max(1, engine.carriedVotes.length)) * Math.PI * 2;
         slot++;
-        m.position.set(p.x + Math.cos(a) * 0.5, p.y + 2.75 + Math.sin(t * 3) * 0.06, p.z + Math.sin(a) * 0.5);
-        m.rotation.y = t * 3;
-        m.scale.setScalar(0.85);
-      } else {
-        m.visible = false;
+        dummy.position.set(p.x + Math.cos(a) * 0.5, p.y + 2.75 + Math.sin(t * 3) * 0.06, p.z + Math.sin(a) * 0.5);
+        dummy.rotation.set(0, t * 3, 0);
+        dummy.scale.setScalar(0.85);
       }
+      dummy.updateMatrix();
+      voteMesh.setMatrixAt(vi++, dummy.matrix);
+    }
+    voteMesh.count = vi;
+    voteMesh.instanceMatrix.needsUpdate = true;
+    /* items per kind */
+    for (const [kind, mesh] of foodMeshes) {
+      let fi = 0;
+      for (const it of engine.items) {
+        if (!it.active || ITEMS[it.def].kind !== kind || fi >= ITEM_COUNT) continue;
+        dummy.position.set(it.x, 0.55 + Math.sin(t * 2.2 + it.id) * 0.12, it.z);
+        dummy.rotation.set(0, t * 1.4 + it.id, 0);
+        dummy.scale.setScalar(1);
+        dummy.updateMatrix();
+        mesh.setMatrixAt(fi++, dummy.matrix);
+      }
+      mesh.count = fi;
+      mesh.instanceMatrix.needsUpdate = true;
     }
   });
+
   return (
     <>
-      {[...itemViews.values()].map((m, i) => <primitive object={m} key={`i${i}`} />)}
-      {[...voteViews.values()].map((m, i) => <primitive object={m} key={`v${i}`} />)}
+      <primitive object={voteMesh} />
+      {kinds.map((k) => <primitive object={foodMeshes.get(k)!} key={k} />)}
     </>
   );
+}
+
+/** One instanced blob shadow for every moving entity (1 draw call). */
+export function Shadows({ engine }: { engine: GameEngine }) {
+  const mesh = useMemo(() => {
+    const geo = new THREE.PlaneGeometry(1, 1);
+    geo.rotateX(-Math.PI / 2);
+    const m = new THREE.InstancedMesh(geo, shadowMaterial(), 64);
+    m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    m.frustumCulled = false;
+    m.renderOrder = 1;
+    return m;
+  }, []);
+  const kinds = useMemo(() => ANIMAL_SET.flatMap((s2) => Array.from({ length: s2.count }, () => s2.kind)), []);
+  useFrame(() => {
+    let i = 0;
+    const put = (x: number, z: number, r: number, lift = 0) => {
+      if (i >= 64) return;
+      dummy.position.set(x, 0.1, z);
+      dummy.rotation.set(0, 0, 0);
+      dummy.scale.setScalar(r * 2 * Math.max(0.55, 1 - lift * 0.1));
+      dummy.updateMatrix();
+      mesh.setMatrixAt(i++, dummy.matrix);
+    };
+    const p = engine.player;
+    put(p.x, p.z, 0.64, p.y);
+    for (const c of engine.cops) put(c.x, c.z, 0.6);
+    for (const c of engine.civs) put(c.x, c.z, 0.6);
+    if (nightFactor(engine.clock) > 0.4) for (const z of engine.zombies) put(z.x, z.z, 0.6);
+    for (let k = 0; k < engine.animals.length; k++) {
+      const a = engine.animals[k];
+      put(a.x, a.z, 0.7 * (ANIMAL_SCALES[kinds[k]] ?? 1));
+    }
+    mesh.count = i;
+    mesh.instanceMatrix.needsUpdate = true;
+  });
+  return <primitive object={mesh} />;
 }
 
 /* ------------------------------------------------------------------ */

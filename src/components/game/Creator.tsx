@@ -18,13 +18,13 @@ import { useGame, type ScoreRow } from "./store";
 
 /* --------------------- 3D preview --------------------- */
 function Preview({ look }: { look: Appearance }) {
-  const mesh = useMemo(() => buildCharacter(look), [look]);
+  const mesh = useMemo(() => buildCharacter(look, { shadow: true }), [look]);
   const g = useRef<THREE.Group>(null!);
   return (
     <Canvas
       className="absolute inset-0"
-      camera={{ fov: 40, position: [0, 1.75, 4.35] }}
-      onCreated={({ camera }) => camera.lookAt(0, 1.15, 0)}
+      camera={{ fov: 40, position: [0, 1.9, 4.6] }}
+      onCreated={({ camera }) => camera.lookAt(0, 1.2, 0)}
       dpr={[1, 1.75]}
       gl={{ alpha: true, antialias: true }}
     >
@@ -41,8 +41,16 @@ function Preview({ look }: { look: Appearance }) {
 function PreviewAnim({ mesh, g }: { mesh: THREE.Object3D; g: React.RefObject<THREE.Group | null> }) {
   useFrame((s) => {
     const t = s.clock.elapsedTime;
-    if (g.current) g.current.rotation.y = Math.sin(t * 0.42) * 0.6; // sway, always roughly facing you
-    poseCharacter(mesh, 0, t);
+    if (g.current) {
+      g.current.rotation.y = Math.sin(t * 0.42) * 0.6; // sway, always roughly facing you
+      // a joyful little hop every few seconds to show off the animation
+      const hopPhase = t % 4.2;
+      const h = hopPhase > 3.4 ? Math.sin(((hopPhase - 3.4) / 0.8) * Math.PI) : 0;
+      g.current.position.y = h * 0.55;
+      poseCharacter(mesh, 0, t, { airborne: h > 0.05 });
+    } else {
+      poseCharacter(mesh, 0, t);
+    }
   });
   return null;
 }
@@ -97,7 +105,7 @@ function StylePicker({ value, onChange }: { value: HairStyle; onChange: (h: Hair
   return (
     <div>
       <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-white/70">Hair style</div>
-      <div className="flex gap-2">
+      <div className="flex flex-wrap gap-2">
         {HAIR_STYLES.map((h) => (
           <button
             key={h.id}

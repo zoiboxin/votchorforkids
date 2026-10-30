@@ -45,6 +45,7 @@ function Roads() {
     return out;
   }, []);
   const ref = useRef<THREE.InstancedMesh>(null!);
+  const lane = useRef<THREE.InstancedMesh>(null!);
   useLayoutEffect(() => {
     dashes.forEach((d, i) => {
       tmp.position.set(d.x, 0.09, d.z);
@@ -55,16 +56,23 @@ function Roads() {
     });
     tmp.rotation.set(0, 0, 0); tmp.scale.setScalar(1);
     ref.current.instanceMatrix.needsUpdate = true;
+    let i = 0;
+    for (const k of [-120, -60, 0, 60, 120]) {
+      tmp.rotation.set(-Math.PI / 2, 0, 0);
+      tmp.position.set(k, 0.07, 0); tmp.scale.set(14, 270, 1); tmp.updateMatrix();
+      lane.current.setMatrixAt(i++, tmp.matrix);
+      tmp.position.set(0, 0.07, k); tmp.scale.set(270, 14, 1); tmp.updateMatrix();
+      lane.current.setMatrixAt(i++, tmp.matrix);
+    }
+    tmp.rotation.set(0, 0, 0); tmp.scale.setScalar(1);
+    lane.current.instanceMatrix.needsUpdate = true;
   }, [dashes]);
-  const lines = [-120, -60, 0, 60, 120];
   return (
     <>
-      {lines.map((k) => (
-        <group key={k}>
-          <mesh rotation-x={-Math.PI / 2} position={[k, 0.07, 0]}><planeGeometry args={[14, 270]} /><meshLambertMaterial color="#4a4a52" /></mesh>
-          <mesh rotation-x={-Math.PI / 2} rotation-z={Math.PI / 2} position={[0, 0.07, k]}><planeGeometry args={[14, 270]} /><meshLambertMaterial color="#4a4a52" /></mesh>
-        </group>
-      ))}
+      <instancedMesh ref={lane} args={[undefined, undefined, 10]}>
+        <planeGeometry />
+        <meshLambertMaterial color="#4a4a52" />
+      </instancedMesh>
       <instancedMesh ref={ref} args={[undefined, undefined, dashes.length]}>
         <planeGeometry />
         <meshBasicMaterial color="#f8f4e8" />
@@ -157,6 +165,92 @@ function Forest() {
   );
 }
 
+/* ------------------------- windows (day glass / night glow) ------------------------- */
+interface WinInst { x: number; y: number; z: number; ry: number }
+
+function Windows({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
+  const glass = useRef<THREE.InstancedMesh>(null!);
+  const glow = useRef<THREE.InstancedMesh>(null!);
+  const { panes, lit } = useMemo(() => {
+    const r = mulberry32(555);
+    const panes: WinInst[] = [];
+    const lit: WinInst[] = [];
+    for (const b of WORLD.buildings) {
+      const floors = Math.min(5, Math.max(1, Math.floor((b.h - 3) / 4)));
+      const cols = Math.max(1, Math.min(3, Math.floor(b.w * 2 / 5)));
+      for (let f = 0; f < floors; f++) {
+        const y = 4.2 + f * 4.1;
+        if (y > b.h - 2) break;
+        for (let c = 0; c < cols; c++) {
+          const off = (c - (cols - 1) / 2) * 3.1;
+          // front/back faces (±z)
+          for (const sd of [-1, 1]) {
+            const w: WinInst = { x: b.x + off, y, z: b.z + sd * (b.d + 0.07), ry: sd > 0 ? 0 : Math.PI };
+            panes.push(w);
+            if (r() < 0.68) lit.push(w);
+          }
+          // side faces (±x)
+          for (const sd of [-1, 1]) {
+            const w: WinInst = { x: b.x + sd * (b.w + 0.07), y, z: b.z + off, ry: sd > 0 ? Math.PI / 2 : -Math.PI / 2 };
+            panes.push(w);
+            if (r() < 0.68) lit.push(w);
+          }
+        }
+      }
+    }
+    return { panes, lit };
+  }, []);
+
+  useLayoutEffect(() => {
+    panes.forEach((w, i) => {
+      tmp.position.set(w.x, w.y, w.z);
+      tmp.rotation.set(0, w.ry, 0);
+      tmp.scale.set(1.15, 1.4, 1);
+      tmp.updateMatrix();
+      glass.current.setMatrixAt(i, tmp.matrix);
+    });
+    glass.current.instanceMatrix.needsUpdate = true;
+  }, [panes]);
+  useLayoutEffect(() => {
+    lit.forEach((w, i) => {
+      tmp.position.set(w.x, w.y, w.z);
+      tmp.rotation.set(0, w.ry, 0);
+      tmp.scale.set(1.15, 1.4, 1);
+      tmp.updateMatrix();
+      glow.current.setMatrixAt(i, tmp.matrix);
+    });
+    glow.current.count = lit.length;
+    glow.current.instanceMatrix.needsUpdate = true;
+  }, [lit]);
+
+  const glassMat = useRef<THREE.MeshLambertMaterial>(null!);
+  const glowMat = useRef<THREE.MeshBasicMaterial>(null!);
+  const dayC = useMemo(() => new THREE.Color("#5b6a7d"), []);
+  const nightC = useMemo(() => new THREE.Color("#1c2230"), []);
+  const skyC = useMemo(() => new THREE.Color(), []);
+  useFrame(() => {
+    const n = nightFactor(clockRef.current);
+    if (glassMat.current) glassMat.current.color.copy(skyC.copy(dayC).lerp(nightC, n));
+    if (glowMat.current && glow.current) {
+      glowMat.current.opacity = Math.max(0, n - 0.35) * 1.5 * (0.82 + Math.sin(performance.now() / 700) * 0.06);
+      glow.current.visible = glowMat.current.opacity > 0.02;
+    }
+  });
+
+  return (
+    <>
+      <instancedMesh ref={glass} args={[undefined, undefined, panes.length]}>
+        <planeGeometry />
+        <meshLambertMaterial ref={glassMat} color="#5b6a7d" />
+      </instancedMesh>
+      <instancedMesh ref={glow} args={[undefined, undefined, Math.max(1, lit.length)]} frustumCulled={false} visible={false}>
+        <planeGeometry />
+        <meshBasicMaterial ref={glowMat} color="#ffd76a" transparent opacity={0} depthWrite={false} />
+      </instancedMesh>
+    </>
+  );
+}
+
 /* ------------------------- graveyard & flowers ------------------------- */
 function Graves() {
   const ref = useRef<THREE.InstancedMesh>(null!);
@@ -218,6 +312,8 @@ function Flowers() {
 
 /* ------------------------- mountains ------------------------- */
 function Mountains() {
+  const bodies = useRef<THREE.InstancedMesh>(null!);
+  const caps = useRef<THREE.InstancedMesh>(null!);
   const items = useMemo(() => {
     const r = mulberry32(7);
     return Array.from({ length: 44 }, (_, i) => {
@@ -225,14 +321,34 @@ function Mountains() {
       return { x: Math.cos(a) * d, z: Math.sin(a) * d, h, w: range(r, 45, 82), c: i % 3 ? "#7d7468" : "#8d8478" };
     });
   }, []);
+  useLayoutEffect(() => {
+    items.forEach((m, i) => {
+      tmp.rotation.set(0, 0, 0);
+      tmp.position.set(m.x, m.h / 2 - 4, m.z);
+      tmp.scale.set(m.w, m.h, m.w);
+      tmp.updateMatrix();
+      bodies.current.setMatrixAt(i, tmp.matrix);
+      bodies.current.setColorAt(i, col.set(m.c));
+      tmp.position.y = m.h * 0.86 - 4;
+      tmp.scale.set(m.w * 0.24, m.h * 0.28, m.w * 0.24);
+      tmp.updateMatrix();
+      caps.current.setMatrixAt(i, tmp.matrix);
+    });
+    tmp.scale.setScalar(1);
+    bodies.current.instanceMatrix.needsUpdate = true;
+    caps.current.instanceMatrix.needsUpdate = true;
+    if (bodies.current.instanceColor) bodies.current.instanceColor.needsUpdate = true;
+  }, [items]);
   return (
     <>
-      {items.map((m, i) => (
-        <group key={i} position={[m.x, 0, m.z]}>
-          <mesh position-y={m.h / 2 - 4}><coneGeometry args={[m.w, m.h, 7]} /><meshLambertMaterial color={m.c} flatShading /></mesh>
-          <mesh position-y={m.h * 0.86 - 4}><coneGeometry args={[m.w * 0.24, m.h * 0.28, 7]} /><meshLambertMaterial color="#f2f4f8" flatShading /></mesh>
-        </group>
-      ))}
+      <instancedMesh ref={bodies} args={[undefined, undefined, items.length]} frustumCulled={false}>
+        <coneGeometry args={[1, 1, 7]} />
+        <meshLambertMaterial flatShading />
+      </instancedMesh>
+      <instancedMesh ref={caps} args={[undefined, undefined, items.length]} frustumCulled={false}>
+        <coneGeometry args={[1, 1, 7]} />
+        <meshLambertMaterial color="#f2f4f8" flatShading />
+      </instancedMesh>
     </>
   );
 }
@@ -240,10 +356,21 @@ function Mountains() {
 /* ------------------------- parliament + ballot ------------------------- */
 function Parliament() {
   const flag = useRef<THREE.Mesh>(null!);
+  const cols = useRef<THREE.InstancedMesh>(null!);
   useFrame((s) => {
     if (flag.current) flag.current.rotation.y = Math.sin(s.clock.elapsedTime * 3) * 0.2;
   });
-  const cols = useMemo(() => Array.from({ length: 8 }, (_, i) => -30 + i * (60 / 7)), []);
+  const colXs = useMemo(() => Array.from({ length: 8 }, (_, i) => -30 + i * (60 / 7)), []);
+  useLayoutEffect(() => {
+    colXs.forEach((x, i) => {
+      tmp.position.set(x, 9.6, 8.4);
+      tmp.rotation.set(0, 0, 0);
+      tmp.scale.setScalar(1);
+      tmp.updateMatrix();
+      cols.current.setMatrixAt(i, tmp.matrix);
+    });
+    cols.current.instanceMatrix.needsUpdate = true;
+  }, [colXs]);
   return (
     <group position={[PARLIAMENT.x, 0, PARLIAMENT.z]}>
       <mesh position-y={9}><boxGeometry args={[70, 18, 14]} /><meshLambertMaterial color="#e8e0d0" /></mesh>
@@ -251,9 +378,10 @@ function Parliament() {
       <mesh position-y={24}><sphereGeometry args={[9, 18, 12]} /><meshLambertMaterial color="#7fc8a9" /></mesh>
       <mesh position-y={33.5}><cylinderGeometry args={[0.14, 0.14, 5, 6]} /><meshLambertMaterial color="#8a8a98" /></mesh>
       <mesh ref={flag} position={[0, 35, 0]}><planeGeometry args={[4.4, 2.6]} /><meshBasicMaterial color="#ff9933" side={THREE.DoubleSide} /></mesh>
-      {cols.map((x) => (
-        <mesh key={x} position={[x, 9.6, 8.4]}><cylinderGeometry args={[0.9, 1, 19, 8]} /><meshLambertMaterial color="#f8f4e8" /></mesh>
-      ))}
+      <instancedMesh ref={cols} args={[undefined, undefined, 8]}>
+        <cylinderGeometry args={[0.9, 1, 19, 8]} />
+        <meshLambertMaterial color="#f8f4e8" />
+      </instancedMesh>
       <mesh position-y={0.4} rotation-x={-Math.PI / 2}><planeGeometry args={[40, 10]} /><meshLambertMaterial color="#d9cfb8" /></mesh>
       <mesh position={[0, 0.5, 10]}><boxGeometry args={[30, 1, 6]} /><meshLambertMaterial color="#cfc4ae" /></mesh>
     </group>
@@ -415,6 +543,7 @@ export function WorldView({ clockRef }: { clockRef: React.MutableRefObject<numbe
       <Disc r={GRAVEYARD.r} color="#3a3a46" y={0.06} x={GRAVEYARD.x} z={GRAVEYARD.z} />
       <Roads />
       <Buildings />
+      <Windows clockRef={clockRef} />
       <Forest />
       <Graves />
       <Flowers />
