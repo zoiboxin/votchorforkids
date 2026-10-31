@@ -96,6 +96,9 @@ const SMILE = "#5a2418";
 const TONGUE = "#ff7d92";
 const GOLD = "#ffd447";
 
+/** Darkened hex variant for cuffs/collars so outfits read layered. */
+const shade = (hex: string, f: number) => `#${new THREE.Color(hex).multiplyScalar(f).getHexString()}`;
+
 /* ------------------------------------------------------------------ */
 /* Blob shadow (one shared radial texture)                             */
 /* ------------------------------------------------------------------ */
@@ -134,7 +137,7 @@ const lidGeo = () => sphere(0.115, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
 
 function addFace(
   head: THREE.Group, skin: string, toon: Bucket, unlit: Bucket,
-  lids: THREE.Group[], brows: THREE.Group[], opts: { droopy?: boolean; scale?: number },
+  lids: THREE.Group[], brows: THREE.Group[], opts: { droopy?: boolean; scale?: number; freckles?: boolean },
 ) {
   const s = opts.scale ?? 1;
 
@@ -168,12 +171,18 @@ function addFace(
     head.add(brow);
     brows.push(brow);
 
-    // solid blush dot
-    toon.add(sphere(0.052 * s, 8, 6), "#ff96a8", false, side * 0.25 * s, -0.12 * s, 0.285 * s, 0, 0, 0, 1.35, 0.85, 0.45);
+    // solid blush dot — soft rosy cheeks
+    toon.add(sphere(0.055 * s, 8, 6), "#ff9fb2", false, side * 0.25 * s, -0.12 * s, 0.285 * s, 0, 0, 0, 1.5, 0.95, 0.5);
   }
 
   // button nose
   toon.add(sphere(0.045 * s, 8, 6), skin, false, 0, -0.045 * s, 0.395 * s, 0, 0, 0, 1.1, 0.9, 0.9);
+
+  // kid freckles — three tiny dots per cheek
+  if (opts.freckles)
+    for (const side of [-1, 1])
+      for (let i = 0; i < 3; i++)
+        unlit.add(sphere(0.011 * s, 5, 4), "#c08552", true, side * (0.2 + (i % 2) * 0.07) * s, (-0.075 - Math.floor(i / 2) * 0.035) * s, 0.315 * s);
 
   // big open smile — arc + tiny tongue (unlit, always readable)
   const smileGeo = torus(0.095 * s, 0.023 * s, Math.PI).clone();
@@ -217,6 +226,7 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
   const headToon = new Bucket(), headUnlit = new Bucket();
   const armB: Bucket[] = [new Bucket(), new Bucket()];
   const legB: Bucket[] = [new Bucket(), new Bucket()];
+  const civvie = !police && !zombie;
 
   /* torso */
   bodyToon.add(capsule(0.28, 0.42), shirt, false, 0, 1.2, 0);
@@ -226,8 +236,16 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
     bodyToon.add(cyl(0.315, 0.315, 0.09, 12), "#161e38", false, 0, 1.02, 0);
     bodyUnlit.add(box(0.11, 0.07, 0.04), GOLD, true, 0, 1.02, 0.31);
     for (const sd of [-1, 1]) bodyToon.add(box(0.16, 0.05, 0.24), "#1c2a4e", false, sd * 0.26, 1.5, 0);
-  } else if (!zombie) {
+  } else if (civvie) {
     bodyToon.add(cyl(0.292, 0.3, 0.07, 12), "#ffffff", false, 0, 1.28, 0);
+    // raised crew-neck collar
+    bodyToon.add(cyl(0.265, 0.3, 0.085, 12), "#ffffff", false, 0, 1.505, 0);
+    // shirt buttons
+    bodyUnlit.add(cyl(0.028, 0.028, 0.022), "#4a3520", true, 0, 1.36, 0.283, Math.PI / 2);
+    bodyUnlit.add(cyl(0.028, 0.028, 0.022), "#4a3520", true, 0, 1.15, 0.286, Math.PI / 2);
+    // belt + gold buckle
+    bodyToon.add(cyl(0.305, 0.315, 0.09, 12), "#3a2c1e", false, 0, 0.95, 0);
+    bodyUnlit.add(box(0.1, 0.075, 0.035), GOLD, true, 0, 0.95, 0.302);
   }
   if (zombie) {
     bodyToon.add(box(0.16, 0.14, 0.02), "#5a6840", false, 0.15, 1.22, 0.27);
@@ -240,7 +258,7 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
   body.add(head);
   headToon.add(sphere(0.4, 16, 13), skin, false, 0, 0, 0, 0, 0, 0, 1, 0.95, 0.94);
   const lids: THREE.Group[] = [], brows: THREE.Group[] = [];
-  addFace(head, skin, headToon, headUnlit, lids, brows, { droopy: zombie, scale: 1.05 });
+  addFace(head, skin, headToon, headUnlit, lids, brows, { droopy: zombie, scale: 1.05, freckles: civvie && a.age === "kid" });
 
   if (zombie) {
     headUnlit.add(sphere(0.05, 8, 6), TONGUE, true, 0.03, -0.24, 0.37, 0, 0, 0, 0.8, 0.5, 1.3);
@@ -291,6 +309,9 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
           headUnlit.add(sphere(0.05, 7, 5), "#ff5a7a", true, sd * 0.38, 0.28, -0.1);
         }
       }
+      // long back-hair for girls — a soft lobe behind the head
+      if (a.girl)
+        headToon.add(sphere(0.42, 12, 9), hairCol, false, 0, -0.02, -0.07, 0, 0, 0, 1.0, 1.04, 0.98);
     }
   }
 
@@ -311,11 +332,12 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
     headUnlit.add(box(0.1, 0.014, 0.014), "#333333", true, 0, 0.03, 0.385);
   }
 
-  /* arms — sleeve + mitten hand merged per arm */
+  /* arms — sleeve + cuff + mitten hand merged per arm */
   for (const i of [0, 1]) {
     const sd = i === 0 ? -1 : 1;
     armB[i].add(capsule(0.098, 0.3), shirt, false, 0, -0.18, 0);
-    armB[i].add(sphere(0.105, 9, 7), skin, false, 0, -0.44, 0);
+    armB[i].add(cyl(0.107, 0.107, 0.05, 10), shade(shirt, 0.78), false, 0, -0.36, 0);
+    armB[i].add(sphere(0.115, 9, 7), skin, false, 0, -0.45, 0, 0, 0, 0, 1, 0.96, 1);
   }
   const arms: THREE.Group[] = [];
   for (const i of [0, 1]) {
@@ -328,12 +350,13 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
     arms.push(arm);
   }
 
-  /* legs — pants + chunky sneaker merged per leg */
+  /* legs — pants + chunky sneaker (colored upper, toe cap, white sole) */
   for (const i of [0, 1]) {
     const sd = i === 0 ? -1 : 1;
     legB[i].add(capsule(0.115, 0.42), pants, false, 0, -0.28, 0);
-    legB[i].add(sphere(0.145, 9, 7), zombie ? "#3a3a2a" : a.shoe, false, 0, -0.66, 0.06, 0, 0, 0, 1, 0.7, 1.45);
+    legB[i].add(sphere(0.15, 9, 7), zombie ? "#3a3a2a" : a.shoe, false, 0, -0.66, 0.06, 0, 0, 0, 1, 0.72, 1.45);
     legB[i].add(sphere(0.1, 8, 6), "#f8f4e8", false, 0, -0.68, 0.19, 0, 0, 0, 0.9, 0.5, 0.7);
+    legB[i].add(sphere(0.15, 8, 6), "#efe9dc", false, 0, -0.735, 0.05, 0, 0, 0, 1.04, 0.34, 1.5);
   }
   const legs: THREE.Group[] = [];
   for (const i of [0, 1]) {
@@ -386,6 +409,7 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
   if (!rig) return;
   const { legs, arms, body, head } = rig;
   const phase = o.phase ?? 0;
+  const HEAD_Y = 1.84;
 
   updateBlink(g, rig, t);
 
@@ -401,6 +425,9 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
   if (o.detained) {
     body.position.y = -0.34 + Math.sin(t * 2.2 + phase) * 0.015;
     body.rotation.x = 0.12;
+    body.rotation.y = 0;
+    body.rotation.z = 0;
+    head.position.y = HEAD_Y;
     legs[0].rotation.x = legs[1].rotation.x = -1.4;
     arms[0].rotation.x = arms[1].rotation.x = 0.3;
     arms[0].rotation.z = 0.15; arms[1].rotation.z = -0.15;
@@ -412,12 +439,15 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
   head.rotation.x = 0;
   body.rotation.x = 0;
   body.rotation.z = 0;
+  body.rotation.y = 0;
 
   if (o.airborne) {
     legs[0].rotation.x = -0.75; legs[1].rotation.x = 0.45;
     arms[0].rotation.x = -2.5; arms[1].rotation.x = -2.5;
     arms[0].rotation.z = 0.25; arms[1].rotation.z = -0.25;
     body.rotation.x = -0.1;
+    body.rotation.y = 0.14;
+    head.position.y = HEAD_Y;
     body.position.y = 0;
     body.scale.y = 1.06; body.scale.x = body.scale.z = 0.97;
     return;
@@ -429,9 +459,11 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
     body.position.y = b * 0.02;
     body.scale.y = 1 + b * 0.014;
     body.scale.x = body.scale.z = 1;
+    body.rotation.z = Math.sin(t * 0.7 + phase) * 0.022; // gentle weight shift
+    head.position.y = HEAD_Y + b * 0.012;
     legs[0].rotation.x = legs[1].rotation.x = 0;
     arms[0].rotation.x = b * 0.07; arms[1].rotation.x = -b * 0.07;
-    arms[0].rotation.z = 0.07; arms[1].rotation.z = -0.07;
+    arms[0].rotation.z = 0.09 + b * 0.02; arms[1].rotation.z = -0.09 - b * 0.02;
     head.rotation.y = Math.sin(t * 0.6 + phase) * 0.16;
     head.rotation.z = Math.sin(t * 0.9 + phase) * 0.03;
     return;
@@ -442,15 +474,18 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
   const k = Math.sin(freq) * sp * 0.98;
   legs[0].rotation.x = k;
   legs[1].rotation.x = -k;
-  arms[0].rotation.x = -k * 0.9;
-  arms[1].rotation.x = k * 0.9;
+  const pump = sprinting ? 1.18 : 0.9;
+  arms[0].rotation.x = -k * pump;
+  arms[1].rotation.x = k * pump;
   arms[0].rotation.z = 0.12;
   arms[1].rotation.z = -0.12;
   const bounce = Math.abs(Math.cos(freq));
   body.position.y = bounce * 0.06 * sp;
   body.scale.y = 1 - bounce * 0.035 * sp;
   body.scale.x = body.scale.z = 1 + bounce * 0.02 * sp;
-  body.rotation.x = Math.min(0.3, sp * 0.13) + (sprinting ? 0.1 : 0);
+  body.rotation.x = Math.min(0.3, sp * 0.13) + (sprinting ? 0.14 : 0);
+  body.rotation.z = Math.sin(freq) * 0.035 * sp; // hip roll adds life
+  head.position.y = HEAD_Y + bounce * 0.045 * sp; // head bobs on stride
   head.rotation.x = -0.05 * sp - (sprinting ? 0.08 : 0);
   head.rotation.z = Math.sin(freq) * 0.035 * sp;
   head.rotation.y = 0;
