@@ -166,20 +166,26 @@ export const TICKER_LINES: readonly string[] = [
   "📻 Poll prediction: 100% chance of running.",
 ];
 
-/* ---------- Pickups ---------- */
-export interface ItemDef { name: string; hp: number; stamina: number; color: string; msg: string; kind: "fruit" | "kit" | "drink" }
+/* ---------- Pickups (collected into pockets, used from the HUD item bar) ---------- */
+export interface ItemDef { name: string; emoji: string; hp: number; stamina: number; color: string; msg: string; kind: "fruit" | "kit" | "drink" }
 export const ITEMS: readonly ItemDef[] = [
-  { name: "Mango", hp: 8, stamina: 20, color: "#ffa726", msg: "Sweet mango! Health restored.", kind: "fruit" },
-  { name: "Samosa", hp: 12, stamina: 15, color: "#e0a030", msg: "Crispy samosa. Yum!", kind: "fruit" },
-  { name: "Jalebi", hp: 6, stamina: 30, color: "#ff8c1a", msg: "Sticky jalebi: speedy!", kind: "fruit" },
-  { name: "Laddu", hp: 10, stamina: 25, color: "#f0c040", msg: "Laddu power activated!", kind: "fruit" },
-  { name: "First-aid kit", hp: 45, stamina: 0, color: "#e0483a", msg: "First-aid kit! All patched up.", kind: "kit" },
-  { name: "Chai", hp: 4, stamina: 45, color: "#c88a4a", msg: "Chai break! Energy restored.", kind: "drink" },
-  { name: "Coconut water", hp: 8, stamina: 35, color: "#eeeedd", msg: "Coconut water. Hydrated!", kind: "drink" },
+  { name: "Mango", emoji: "🥭", hp: 8, stamina: 20, color: "#ffa726", msg: "Sweet mango! Health restored.", kind: "fruit" },
+  { name: "Samosa", emoji: "🥟", hp: 12, stamina: 15, color: "#e0a030", msg: "Crispy samosa. Yum!", kind: "fruit" },
+  { name: "Jalebi", emoji: "🍩", hp: 6, stamina: 30, color: "#ff8c1a", msg: "Sticky jalebi: speedy!", kind: "fruit" },
+  { name: "Laddu", emoji: "🍡", hp: 10, stamina: 25, color: "#f0c040", msg: "Laddu power activated!", kind: "fruit" },
+  { name: "First-aid kit", emoji: "🩹", hp: 45, stamina: 0, color: "#e0483a", msg: "First-aid kit! All patched up.", kind: "kit" },
+  { name: "Chai", emoji: "☕", hp: 4, stamina: 45, color: "#c88a4a", msg: "Chai break! Energy restored.", kind: "drink" },
+  { name: "Coconut water", emoji: "🥥", hp: 8, stamina: 35, color: "#eeeedd", msg: "Coconut water. Hydrated!", kind: "drink" },
 ];
-export const ITEM_COUNT = 26;
+export const ITEM_COUNT = 30;
 export const PICKUP_RADIUS = 1.9;
 export const ITEM_RESPAWN_S = 22;
+
+/* ---------- Inventory (HUD bottom-left item bar) ---------- */
+export const INV_SLOTS = 6;    // distinct food kinds you can carry at once
+export const INV_STACK = 5;    // max copies of one kind
+export const JUMP_COST = 5;    // stamina per jump
+export const HURT_FLASH_S = 0.55; // red vignette length after taking damage
 
 /* ---------- Votes (the core loop) ---------- */
 export const TOTAL_VOTES = 16;

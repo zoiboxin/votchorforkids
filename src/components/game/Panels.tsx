@@ -9,7 +9,7 @@ import { Slider } from "@/components/ui/slider";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Music, Volume2, Gauge, Gamepad2, Flag, ShieldAlert, Sunrise, HeartHandshake, Vote,
-  User, Pencil, BarChart3, History as HistoryIcon, Trash2, Trophy, Timer, Star, Shirt,
+  User, Pencil, BarChart3, History as HistoryIcon, Trash2, Trophy, Timer, Star, Shirt, Zap,
 } from "lucide-react";
 import { AGE_STATS, HAIR_STYLES } from "@/lib/game/constants";
 import { rankFor } from "@/lib/game/ranks";
@@ -21,10 +21,10 @@ import { setVolumes, sfx } from "@/lib/game/audio";
 const CONTROLS: [string, string][] = [
   ["W A S D / Arrows", "Run around the city"],
   ["Mouse drag", "Look around"],
-  ["Shift", "Sprint (uses stamina)"],
-  ["Space", "Jump"],
+  ["Shift", "Sprint — drains ⚡ energy fast"],
+  ["Space", "Jump (costs a little energy)"],
   ["E", "Rescue a detained friend"],
-  ["1 / 2 / 3", "Nothing to press — votes auto-stack (max 3)"],
+  ["1 – 6", "Eat pocketed food ❤⚡ — or tap the bag bottom-left"],
   ["P or Esc", "Pause the game"],
   ["M", "Mute / unmute"],
 ];
@@ -67,12 +67,21 @@ export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange:
             </div>
             <div className="rounded-2xl bg-white/5 p-3">
               <div className="mb-1.5 flex items-center gap-2 font-black text-orange-300"><Sunrise size={15} /> Day & night</div>
-              <p className="text-white/85">Grab mangoes, samosas & chai to stay strong. When night falls… graveyard zombies wake up 🧟</p>
+              <p className="text-white/85">When night falls… graveyard zombies wake up 🧟 Their touch hurts — run or eat to recover!</p>
             </div>
             <div className="rounded-2xl bg-white/5 p-3">
-              <div className="mb-1.5 flex items-center gap-2 font-black text-sky-300"><Gauge size={15} /> Stamina</div>
-              <p className="text-white/85">Sprinting drains stamina — it refills when you jog. Kids are nimble, elders regenerate fast!</p>
+              <div className="mb-1.5 flex items-center gap-2 font-black text-sky-300"><Gauge size={15} /> Energy & exhaustion</div>
+              <p className="text-white/85">Sprinting drains <b className="text-amber-300">⚡ energy</b> and jumping costs a splash. Hit empty and you&apos;ll crawl — walk to breathe, or eat!</p>
             </div>
+          </section>
+
+          <section className="rounded-2xl bg-white/5 p-3">
+            <div className="mb-1.5 flex items-center gap-2 font-black text-lime-300"><Zap size={15} /> Food pockets (bottom-left)</div>
+            <p className="leading-relaxed text-white/85">
+              Run over food to <b>pocket</b> it — up to 6 kinds (🥭 Mango · 🥟 Samosa · 🍩 Jalebi · 🍡 Laddu · 🩹 First-aid · ☕ Chai · 🥥 Coconut water).
+              Tap the bag or press <b className="text-yellow-200">1-6</b> to eat: fruits heal ❤ + refill ⚡, first-aid kits mend <b>45 ❤</b>, chai pumps <b>45 ⚡</b>.
+              Police hits and zombie touches drain ❤ — snacking is surviving!
+            </p>
           </section>
 
           <section className="rounded-2xl bg-white/5 p-3">

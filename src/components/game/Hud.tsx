@@ -8,6 +8,7 @@ import {
   ChevronUp, Timer,
 } from "lucide-react";
 import type { GameEngine } from "@/lib/game/engine";
+import { ITEMS } from "@/lib/game/constants";
 import { useGame } from "./store";
 import { setMuted as setAudioMuted, sfx, stopMusic, startMusic } from "@/lib/game/audio";
 import { Button } from "@/components/ui/button";
@@ -92,6 +93,58 @@ function VotePips({ carried }: { carried: number }) {
           />
         ))}
       </div>
+    </div>
+  );
+}
+
+/* ------------- food pockets: bottom-left item bar (old-game hotbar, revived) ------------- */
+function ItemBar({ engine, vertical = false }: { engine: GameEngine; vertical?: boolean }) {
+  const inv = useGame((s) => s.hud.inv);
+  const slots = vertical ? [...inv].reverse() : inv; // touch: slot 1 sits closest to the joystick
+  return (
+    <div
+      data-ui
+      role="toolbar"
+      aria-label="Food pockets — click a snack to eat it and restore health or energy"
+      className={`pointer-events-auto flex rounded-2xl bg-black/35 p-1.5 backdrop-blur-md ${
+        vertical ? "flex-col-reverse gap-1.5" : "flex-row items-end gap-1.5"
+      }`}
+    >
+      {slots.length === 0 && !vertical && (
+        <span className="px-2 py-1 text-[11px] font-bold text-white/70">
+          🎒 Empty pockets — run over 🥭☕🩹 to collect food!
+        </span>
+      )}
+      {slots.map((slot) => {
+        const d = ITEMS[slot.def];
+        const keyNo = inv.findIndex((s) => s.def === slot.def) + 1;
+        return (
+          <motion.button
+            key={slot.def}
+            layout
+            initial={{ scale: 0.5, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            whileTap={{ scale: 0.88 }}
+            transition={{ type: "spring", stiffness: 380, damping: 20 }}
+            onClick={() => engine.useItem(slot.def)}
+            title={`${d.name} — +${d.hp} ❤ ${d.stamina > 0 ? `+${d.stamina} ⚡` : ""} · click or press ${keyNo}`}
+            aria-label={`Use ${d.name}: restores ${d.hp} health and ${d.stamina} energy`}
+            className="relative flex h-11 w-11 items-center justify-center rounded-xl border-2 border-white/30 bg-white/10 shadow-lg backdrop-blur-md transition-colors hover:border-amber-300/80 hover:bg-amber-400/25 sm:h-12 sm:w-12"
+          >
+            <span className="text-xl leading-none sm:text-2xl" aria-hidden>{d.emoji}</span>
+            {slot.count > 1 && (
+              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full border border-black/40 bg-amber-400 px-1 text-[10px] font-black text-amber-950">
+                {slot.count}
+              </span>
+            )}
+            {!vertical && (
+              <span className="absolute -bottom-1 -left-1 flex h-3.5 w-3.5 items-center justify-center rounded bg-black/75 text-[8px] font-black text-white/90">
+                {keyNo}
+              </span>
+            )}
+          </motion.button>
+        );
+      })}
     </div>
   );
 }
@@ -326,17 +379,22 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
     setPaused(next);
   };
 
-  // P / Escape toggles pause while playing
+  // P / Escape toggles pause, 1-6 eats pocketed food, M mutes
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (useGame.getState().victoryOpen) return;
       if (e.code === "KeyP" || e.code === "Escape") { e.preventDefault(); togglePause(); }
       if (e.code === "KeyM") { const m = !useGame.getState().muted; setMuted(m); setAudioMuted(m); }
+      const dig = /^Digit([1-6])$/.exec(e.code);
+      if (dig) {
+        const slot = useGame.getState().hud.inv[Number(dig[1]) - 1];
+        if (slot) engine.useItem(slot.def);
+      }
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
-  }, [victoryOpen]);
+  }, [victoryOpen, engine]);
 
   useEffect(() => {
     if (!toasts.length) return;
@@ -364,6 +422,22 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         style={{ boxShadow: "inset 0 0 90px 18px rgba(220,40,40,0.26)" }}
       />
 
+      {/* damage flash — police hit or zombie catch */}
+      <AnimatePresence>
+        {hud.hurt && (
+          <motion.div
+            key="hurt-flash"
+            aria-hidden
+            initial={{ opacity: 0.95 }}
+            animate={{ opacity: 0.4 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.28, ease: "easeOut" }}
+            className="absolute inset-0"
+            style={{ boxShadow: "inset 0 0 150px 46px rgba(220,38,38,0.55)" }}
+          />
+        )}
+      </AnimatePresence>
+
       {/* low-hp heartbeat vignette */}
       {hud.hp <= 30 && !hud.detained && (
         <motion.div
@@ -381,7 +455,12 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       {/* top-left: vitals */}
       <div className="absolute left-3 top-3 flex flex-col gap-1.5 rounded-2xl bg-black/35 p-3 backdrop-blur-md">
         <Bar v={hud.hp} color="bg-gradient-to-r from-rose-500 to-rose-400" icon={<Heart size={16} className="text-rose-300" fill="currentColor" />} low={hud.hp <= 30} />
-        <Bar v={hud.stamina} color="bg-gradient-to-r from-amber-500 to-yellow-300" icon={<Zap size={16} className="text-amber-300" fill="currentColor" />} />
+        <Bar v={hud.stamina} color="bg-gradient-to-r from-amber-500 to-yellow-300" icon={<Zap size={16} className="text-amber-300" fill="currentColor" />} low={hud.stamina <= 15} />
+        {hud.exhausted && (
+          <div className="animate-pulse text-[10px] font-black uppercase tracking-wider text-amber-300">
+            😮‍💨 Exhausted — walking to recover…
+          </div>
+        )}
         <div className="mt-1 flex items-center gap-2 text-sm text-white">
           <VotePips carried={hud.carried} />
           <span className="ml-1 rounded-full bg-yellow-400/90 px-2 py-0.5 text-xs font-black text-yellow-950">
@@ -475,7 +554,8 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         {showHelp && (
           <div className="max-w-[220px] rounded-xl bg-black/40 px-3 py-2 text-xs leading-relaxed text-white/90 backdrop-blur-md">
             <b className="text-yellow-300">Goal:</b> snatch 🗳 votes, deliver them at the Parliament ballot box. Rescue pink-bubbled friends with <b>E</b>. Dodge the police — sprint with <b>Shift</b>!
-            {!touch && <div className="mt-1 text-white/70">WASD move · Shift sprint · Space jump · E rescue · P pause</div>}
+            <div className="mt-1 text-amber-200/90">⚡ Sprinting drains energy · run over 🥭☕🩹 food to pocket it, then tap the bag (or press <b>1-6</b>) to eat: heals ❤ and refills ⚡.</div>
+            {!touch && <div className="mt-1 text-white/70">WASD move · Shift sprint · Space jump · E rescue · 1-6 eat · P pause</div>}
           </div>
         )}
       </div>
@@ -555,9 +635,17 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         )}
       </AnimatePresence>
 
+      {/* food pockets — desktop: bottom-left corner */}
+      {!touch && (
+        <div className="absolute bottom-3 left-3 z-10">
+          <ItemBar engine={engine} />
+        </div>
+      )}
+
       {/* mobile controls */}
       {touch && !paused && (
         <>
+          <div className="absolute bottom-[10rem] left-4 z-10"><ItemBar engine={engine} vertical /></div>
           <div className="absolute bottom-6 left-4 z-10"><Joystick engine={engine} /></div>
           <div className="absolute bottom-6 right-4 z-10"><MobileButtons engine={engine} /></div>
         </>

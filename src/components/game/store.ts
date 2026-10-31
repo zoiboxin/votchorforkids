@@ -150,6 +150,7 @@ export const emptyHud: HudData = {
   points: 0, rescues: 0, support: 0, zone: "City", clock: 0.3, night: 0,
   detained: false, detainLeft: 0, prompt: "", policeNear: false,
   civilians: 0, police: 0, won: false, elapsed: 0,
+  inv: [], hurt: false, sprinting: false, exhausted: false,
 };
 
 let toastId = 1;

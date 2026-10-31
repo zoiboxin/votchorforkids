@@ -1,7 +1,8 @@
 import {
   AGE_STATS, ANIMAL_SET, BALLOT, CARRY_RADIUS, CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
-  ESCAPE_LOST_S, FARM_RADIUS, GRAVEYARD, ITEMS, ITEM_COUNT, ITEM_RESPAWN_S, JUNGLE_RADIUS, MAX_CARRY, PICKUP_RADIUS,
+  ESCAPE_LOST_S, FARM_RADIUS, GRAVEYARD, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
+  ITEM_RESPAWN_S, JUMP_COST, JUNGLE_RADIUS, MAX_CARRY, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, RESCUE_POINTS,
   RESCUE_RADIUS, SPAWN, STAR_DECAY_S, TOTAL_VOTES, WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
   ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, type AnimalKind, type Appearance, type Zone, zoneOf, ZONE_TOAST,
@@ -33,6 +34,7 @@ export interface HudData {
   points: number; rescues: number; support: number; zone: Zone; clock: number; night: number;
   detained: boolean; detainLeft: number; prompt: string; policeNear: boolean;
   civilians: number; police: number; won: boolean; elapsed: number;
+  inv: { def: number; count: number }[]; hurt: boolean; sprinting: boolean; exhausted: boolean;
 }
 
 export type ToastFn = (msg: string, kind?: "info" | "good" | "bad") => void;
@@ -49,6 +51,10 @@ export class GameEngine {
   input = { f: 0, r: 0, sprint: false, jump: false, yaw: Math.PI, pitch: 0.32 };
   touchMove = { active: false, sprint: false };
   hp = 100; stamina = 100;
+  inv: { def: number; count: number }[] = []; // pocketed food, used from the HUD item bar
+  hurtT = 0;                // red damage-flash timer
+  private exhaustedAnnounced = false;
+  private pocketFullT = 0;  // throttles the "pockets full" toast
   clock = 0.3;
   stars = 0; starTimer = 0;
   carriedVotes: VoteEnt[] = [];
@@ -151,6 +157,7 @@ export class GameEngine {
     this.look = look;
     this.player = newBody(SPAWN.x, SPAWN.z);
     this.hp = 100; this.stamina = 100; this.stars = 0; this.starTimer = 0;
+    this.inv = []; this.hurtT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0;
     this.carriedVotes = []; this.delivered = 0; this.points = 0; this.rescues = 0; this.caughtCount = 0;
     this.detainedT = 0; this.invulnT = 8; this.elapsed = 0; this.won = false; this.clock = 0.3;
     for (const v of this.votes) { v.state = "world"; const p = freeSpot(this.rnd, this.world, 16, 330); v.x = p.x; v.z = p.z; }
@@ -200,6 +207,7 @@ export class GameEngine {
     this.stars = Math.min(5, this.stars + 1);
     this.starTimer = STAR_DECAY_S;
     this.hp = Math.max(1, this.hp - 8);
+    this.hurtT = HURT_FLASH_S;
     this.detainedT = DETAIN_SECONDS;
     this.invulnT = 6; // grace window after release so cops can't instantly re-catch
     cop.mode = "celebrate"; cop.timer = 2.5;
@@ -238,10 +246,31 @@ export class GameEngine {
     this.player.x = SPAWN.x; this.player.z = SPAWN.z; this.player.y = 0;
     this.player.vx = this.player.vz = 0;
     this.hp = 60;
+    this.hurtT = HURT_FLASH_S;
     this.detainedT = 4;
     this.invulnT = 3;
     this.dropVotes(SPAWN.x + 2, SPAWN.z + 2);
     this.toast("Whoa, everything is spinning… a kind chaiwala helped you.", "bad");
+  }
+
+  /* ---------------- inventory (food in pockets) ---------------- */
+  /** Eat/use a pocketed item: restores ❤ health and/or ⚡ energy. */
+  useItem(def: number) {
+    const idx = this.inv.findIndex((s) => s.def === def);
+    if (idx < 0 || this.inv[idx].count <= 0) return;
+    const d = ITEMS[def];
+    if (this.hp >= 100 && this.stamina >= 100) {
+      this.toast(`Already full! Save the ${d.name} for later.`, "info");
+      return;
+    }
+    this.inv[idx].count--;
+    if (this.inv[idx].count <= 0) this.inv.splice(idx, 1);
+    this.hp = clamp(this.hp + d.hp, 0, 100);
+    this.stamina = clamp(this.stamina + d.stamina, 0, 100);
+    this.player.stamina = this.stamina; // keep the movement body in sync
+    if (d.kind === "fruit" || d.kind === "drink") sfx.eat(); else sfx.rescue();
+    this.exhaustedAnnounced = false; // energy came back — allow the exhausted hint next time
+    this.toast(`${d.emoji} ${d.msg}`, "good");
   }
 
   /* ---------------- main update ---------------- */
@@ -258,15 +287,26 @@ export class GameEngine {
     if (z !== this.zone) { this.zone = z; this.toast(ZONE_TOAST[z], "info"); }
 
     /* --- player --- */
+    this.pocketFullT = Math.max(0, this.pocketFullT - dt);
+    this.hurtT = Math.max(0, this.hurtT - dt);
     if (this.detainedT > 0) {
       this.detainedT -= dt;
       p.vx = p.vz = 0;
     } else {
       this.invulnT = Math.max(0, this.invulnT - dt);
       const prevY = p.y;
+      p.stamina = this.stamina; // engine stamina is the single source of truth
       stepBody(p, { f: this.input.f, r: this.input.r, sprint: this.input.sprint, jump: this.input.jump }, dt, this.look.age, this.world, { yaw: this.input.yaw });
-      if (prevY <= 0 && p.y > 0) sfx.jump();
+      this.stamina = p.stamina; // sprinting drains / walking regenerates (see stepBody)
+      if (prevY <= 0 && p.y > 0) {
+        sfx.jump();
+        this.stamina = Math.max(0, this.stamina - JUMP_COST);
+      }
       if (prevY > 0 && p.y === 0) sfx.land();
+      if (this.stamina <= 0.5 && !this.exhaustedAnnounced) {
+        this.exhaustedAnnounced = true;
+        this.toast("😮‍💨 Exhausted! Walk a little to catch your breath, or eat something.", "info");
+      } else if (this.stamina > 25) this.exhaustedAnnounced = false;
     }
     this.hp = Math.min(100, this.hp + 1.2 * dt * AGE_STATS[this.look.age].regen);
 
@@ -292,7 +332,7 @@ export class GameEngine {
     }
     if (this.carriedVotes.length > 0 && dist2(p.x, p.z, BALLOT.x, BALLOT.z) < DELIVER_RADIUS * DELIVER_RADIUS) this.deliver();
 
-    /* --- items --- */
+    /* --- items: walk over food to pocket it, use it later from the HUD --- */
     for (const it of this.items) {
       if (!it.active) {
         it.respawn -= dt;
@@ -301,11 +341,25 @@ export class GameEngine {
       }
       if (dist2(p.x, p.z, it.x, it.z) < PICKUP_RADIUS * PICKUP_RADIUS) {
         const d = ITEMS[it.def];
-        this.hp = clamp(this.hp + d.hp, 0, 100);
-        this.stamina = clamp(this.stamina + d.stamina, 0, 100);
+        let slot = this.inv.find((s) => s.def === it.def);
+        if (slot) {
+          if (slot.count >= INV_STACK) continue; // stack full — leave it on the ground
+          slot.count++;
+        } else {
+          if (this.inv.length >= INV_SLOTS) {
+            if (this.pocketFullT <= 0) {
+              this.pocketFullT = 6;
+              this.toast("🎒 Pockets full! Eat something to make room (press 1-6).", "info");
+            }
+            continue; // no free slot — leave it on the ground
+          }
+          this.inv.push({ def: it.def, count: 1 });
+          slot = this.inv[this.inv.length - 1];
+        }
         it.active = false; it.respawn = ITEM_RESPAWN_S;
-        if (d.kind === "fruit") sfx.eat(); else sfx.pickup();
-        this.toast(`${d.name}: ${d.msg}`, "good");
+        const n = this.inv.findIndex((s) => s.def === it.def) + 1;
+        sfx.pickup();
+        this.toast(`${d.emoji} ${d.name} pocketed (x${slot.count}) — tap the bag or press ${n} to use!`, "good");
       }
     }
 
@@ -399,6 +453,7 @@ export class GameEngine {
         if (d2p < 1.6 * 1.6 && zb.touchCd <= 0 && this.detainedT <= 0) {
           zb.touchCd = ZOMBIE_TOUCH_CD;
           this.hp = Math.max(0, this.hp - ZOMBIE_DMG);
+          this.hurtT = HURT_FLASH_S;
           sfx.zombie();
           if (this.hp <= 0) this.dizzyRespawn();
         }
@@ -451,6 +506,8 @@ export class GameEngine {
       prompt, policeNear,
       civilians: this.civs.length, police: this.cops.length,
       won: this.won, elapsed: this.elapsed,
+      inv: this.inv.map((s) => ({ def: s.def, count: s.count })),
+      hurt: this.hurtT > 0, sprinting: p.sprinting, exhausted: this.stamina <= 0.5,
     };
   }
 
