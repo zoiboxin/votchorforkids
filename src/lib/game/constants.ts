@@ -182,7 +182,7 @@ export const PICKUP_RADIUS = 1.9;
 export const ITEM_RESPAWN_S = 22;
 
 /* ---------- Inventory (HUD bottom-left item bar) ---------- */
-export const INV_SLOTS = 6;    // distinct food kinds you can carry at once
+export const INV_SLOTS = 8;    // fixed hotbar size — empty slots render as dashed boxes
 export const INV_STACK = 5;    // max copies of one kind
 export const JUMP_COST = 5;    // stamina per jump
 export const HURT_FLASH_S = 0.55; // red vignette length after taking damage

@@ -5,60 +5,157 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Heart, Zap, Star, Sun, Moon, Vote, MapPin, Volume2, VolumeX, Pause, Play as PlayIcon,
   Keyboard, Gauge, CircleHelp, Flag, Home, Settings as SettingsIcon, CheckCircle2, Siren, Info, ShieldCheck,
-  ChevronUp, Timer,
+  ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon,
 } from "lucide-react";
 import type { GameEngine } from "@/lib/game/engine";
-import { ITEMS } from "@/lib/game/constants";
+import { ITEMS, INV_SLOTS } from "@/lib/game/constants";
 import { useGame } from "./store";
 import { setMuted as setAudioMuted, sfx, stopMusic, startMusic } from "@/lib/game/audio";
 import { Button } from "@/components/ui/button";
 import { HowToPlay, SettingsDialog } from "./Panels";
 
+/* ------- shared world-map canvas painting (156px minimap + 440px big map) ------- */
+function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine, night: boolean) {
+  const K = S / 700;          // world units → px
+  const U = S / 156;          // scale for the hand-tuned 156px marker sizes
+  const dot = (x: number, z: number, r: number, col: string, alpha = 1) => {
+    c.globalAlpha = alpha;
+    c.fillStyle = col;
+    c.beginPath();
+    c.arc(S / 2 + x * K, S / 2 + z * K, r, 0, 6.3);
+    c.fill();
+    c.globalAlpha = 1;
+  };
+  c.clearRect(0, 0, S, S);
+  dot(0, 0, 335 * K, "#2d5a2e");
+  dot(0, 0, 200 * K, "#7a8f3f");
+  dot(0, 0, 130 * K, "#8d8a80");
+  dot(-185, 165, 42 * K, "#3a3a46");
+  if (S > 300) {
+    // big map only: zone rings, graveyard fence and district labels
+    c.strokeStyle = "rgba(255,255,255,0.22)";
+    c.lineWidth = 1;
+    for (const r of [245, 320, 390]) { c.beginPath(); c.arc(S / 2, S / 2, r * K, 0, 6.3); c.stroke(); }
+    c.beginPath(); c.arc(S / 2 - 255 * K, S / 2 + 215 * K, 45 * K, 0, 6.3); c.stroke();
+    c.fillStyle = "rgba(255,255,255,0.55)";
+    c.font = `700 ${Math.round(7 * U)}px ui-sans-serif, system-ui, sans-serif`;
+    c.textAlign = "center";
+    c.fillText("CITY", S / 2, S / 2 + 90 * K);
+    c.fillText("FARMLAND", S / 2, S / 2 + 290 * K);
+    c.fillText("JUNGLE", S / 2 - 270 * K, S / 2 - 255 * K);
+    c.fillText("GRAVEYARD", S / 2 - 255 * K, S / 2 + 265 * K);
+  }
+  // parliament
+  c.fillStyle = "#e0483a";
+  c.fillRect(S / 2 - 4 * U, S / 2 - 118 * K - 3 * U, 8 * U, 6 * U);
+  // ballot
+  c.fillStyle = "#f7c948";
+  c.beginPath(); c.arc(S / 2, S / 2 - 100 * K, 2.6 * U, 0, 6.3); c.fill();
+  for (const it of engine.items) if (it.active) dot(it.x, it.z, 1.1 * U, "#ffd166", 0.8);
+  for (const v of engine.votes) if (v.state === "world") dot(v.x, v.z, 2.2 * U, "#f7c948");
+  for (const cop of engine.cops) {
+    const chasing = cop.mode === "chase";
+    dot(cop.x, cop.z, (chasing ? 3 : 2) * U, chasing ? "#ff4d4d" : "#6aa0ff");
+  }
+  for (const cv of engine.civs) if (cv.mode === "detained") dot(cv.x, cv.z, 3 * U, "#ff8fa3");
+  if (night) for (const zb of engine.zombies) dot(zb.x, zb.z, 2.4 * U, "#c084fc");
+  dot(engine.player.x, engine.player.z, 3.6 * U, "#ffffff");
+}
+
 /* ----------------------------- minimap ----------------------------- */
-function Minimap({ engine }: { engine: GameEngine }) {
+function Minimap({ engine, onOpen }: { engine: GameEngine; onOpen: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const hud = useGame((s) => s.hud);
   useEffect(() => {
     const c = ref.current?.getContext("2d");
-    if (!c) return;
-    const S = 156, K = S / 700;
-    const dot = (x: number, z: number, r: number, col: string, alpha = 1) => {
-      c.globalAlpha = alpha;
-      c.fillStyle = col;
-      c.beginPath();
-      c.arc(S / 2 + x * K, S / 2 + z * K, r, 0, 6.3);
-      c.fill();
-      c.globalAlpha = 1;
-    };
-    c.clearRect(0, 0, S, S);
-    dot(0, 0, 335 * K, "#2d5a2e");
-    dot(0, 0, 200 * K, "#7a8f3f");
-    dot(0, 0, 130 * K, "#8d8a80");
-    dot(-185, 165, 42 * K, "#3a3a46");
-    // parliament
-    c.fillStyle = "#e0483a";
-    c.fillRect(S / 2 - 4, S / 2 - 118 * K - 3, 8, 6);
-    // ballot
-    c.fillStyle = "#f7c948";
-    c.beginPath(); c.arc(S / 2, S / 2 - 100 * K, 2.6, 0, 6.3); c.fill();
-    for (const it of engine.items) if (it.active) dot(it.x, it.z, 1.1, "#ffd166", 0.8);
-    for (const v of engine.votes) if (v.state === "world") dot(v.x, v.z, 2.2, "#f7c948");
-    for (const cop of engine.cops) {
-      const chasing = cop.mode === "chase";
-      dot(cop.x, cop.z, chasing ? 3 : 2, chasing ? "#ff4d4d" : "#6aa0ff");
-    }
-    for (const cv of engine.civs) if (cv.mode === "detained") dot(cv.x, cv.z, 3, "#ff8fa3");
-    dot(engine.player.x, engine.player.z, 3.6, "#ffffff");
+    if (c) drawWorldMap(c, 156, engine, hud.night > 0.5);
   }, [engine, hud]);
   return (
-    <div className="relative origin-top-right scale-[0.72] sm:scale-100">
-      <canvas
-        ref={ref} width={156} height={156}
-        aria-label="Minimap, north at the top"
-        className="rounded-xl border-2 border-white/30 shadow-lg"
-      />
+    <button
+      data-ui type="button" onClick={onOpen}
+      title="Open the big world map (M)"
+      aria-label="Open the big world map"
+      className="pointer-events-auto relative block origin-top-right scale-[0.72] cursor-pointer transition-transform hover:scale-90 sm:scale-100 sm:hover:scale-105"
+    >
+      <canvas ref={ref} width={156} height={156} aria-hidden className="rounded-xl border-2 border-white/30 shadow-lg" />
       <span className="absolute -top-1.5 left-1/2 -translate-x-1/2 rounded-full border border-white/30 bg-black/70 px-1.5 text-[9px] font-black leading-3 text-white">N</span>
-    </div>
+      <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/70 px-1.5 text-[8px] font-black uppercase tracking-widest text-white/85">M — big map</span>
+    </button>
+  );
+}
+
+/* ----------------------------- big map overlay ----------------------------- */
+const BIG_MAP_S = 440;
+const MAP_LEGEND: [string, string][] = [
+  ["#ffffff", "You"], ["#f7c948", "Votes"], ["#ffd166", "Food"], ["#6aa0ff", "Police"],
+  ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ["#c084fc", "Zombies · night"],
+];
+function BigMap({ engine, onClose }: { engine: GameEngine; onClose: () => void }) {
+  const ref = useRef<HTMLCanvasElement>(null);
+  const hud = useGame((s) => s.hud);
+  useEffect(() => {
+    const c = ref.current?.getContext("2d");
+    if (c) drawWorldMap(c, BIG_MAP_S, engine, hud.night > 0.5);
+  }, [engine, hud]);
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+      data-ui role="dialog" aria-label="Big map of the world"
+      className="pointer-events-auto absolute inset-0 z-30 flex items-center justify-center bg-slate-950/70 p-3 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <motion.div
+        initial={{ scale: 0.92, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0 }}
+        transition={{ type: "spring", stiffness: 280, damping: 24 }}
+        onClick={(e) => e.stopPropagation()}
+        className="w-[min(94vw,480px)] rounded-3xl border border-white/20 bg-slate-900/95 p-4 shadow-2xl"
+      >
+        <div className="mb-2 flex items-center justify-between">
+          <div className="text-sm font-black uppercase tracking-widest text-white">
+            <MapIcon size={14} className="mr-1 inline text-yellow-300" /> World map
+          </div>
+          <Button size="icon" variant="ghost" aria-label="Close big map" onClick={onClose} className="h-8 w-8 rounded-lg bg-white/10 text-white hover:bg-white/20">
+            <X size={16} />
+          </Button>
+        </div>
+        <canvas
+          ref={ref} width={BIG_MAP_S} height={BIG_MAP_S} aria-label="World map canvas"
+          className="h-[min(78vw,440px)] w-[min(78vw,440px)] rounded-2xl border border-white/20"
+        />
+        <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[10px] font-bold text-white/80">
+          {MAP_LEGEND.map(([col, label]) => (
+            <span key={label} className="flex items-center gap-1">
+              <span className="inline-block h-2 w-2 rounded-full" style={{ background: col }} aria-hidden /> {label}
+            </span>
+          ))}
+        </div>
+        <div className="mt-1 text-center text-[10px] font-black uppercase tracking-widest text-white/45">M or Esc to close</div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+/* ------------- bottom-center location chip — tap to copy "X · Z" ------------- */
+function CoordsChip({ px, pz }: { px: number; pz: number }) {
+  const [copied, setCopied] = useState(false);
+  const copy = async () => {
+    try { await navigator.clipboard.writeText(`X ${px} · Z ${pz}`); } catch { /* clipboard unavailable */ }
+    setCopied(true);
+    setTimeout(() => setCopied(false), 1600);
+  };
+  return (
+    <button
+      data-ui type="button" onClick={copy}
+      title="Click to copy your coordinates"
+      aria-label={`Your location: X ${px}, Z ${pz}. Click to copy.`}
+      className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-white/25 bg-black/55 px-3 py-1 text-[10px] font-black tabular-nums tracking-wide text-white/90 backdrop-blur-md transition-colors hover:border-amber-300/70 hover:text-amber-200"
+    >
+      {copied ? <Check size={11} className="text-emerald-300" /> : <MapPin size={11} className="text-yellow-300" />}
+      <span>X {px} · Z {pz}</span>
+      <span className="hidden items-center gap-0.5 rounded bg-white/10 px-1 text-[8px] font-black uppercase tracking-widest text-white/55 sm:flex">
+        <Copy size={9} /> copy
+      </span>
+    </button>
   );
 }
 
@@ -97,54 +194,66 @@ function VotePips({ carried }: { carried: number }) {
   );
 }
 
-/* ------------- food pockets: bottom-left item bar (old-game hotbar, revived) ------------- */
+/* ------------- food pockets: fixed 8-slot hotbar (old-game bottom-left bar, revived) ------------- */
 function ItemBar({ engine, vertical = false }: { engine: GameEngine; vertical?: boolean }) {
   const inv = useGame((s) => s.hud.inv);
-  const slots = vertical ? [...inv].reverse() : inv; // touch: slot 1 sits closest to the joystick
+  const touch = useGame((s) => s.touch);
+  // Fixed hotbar: always INV_SLOTS boxes; pocketed food fills them from the left.
+  // Slot n matches the Digit-n hotkey (hud.inv[n-1]) on desktop.
+  const cells = Array.from({ length: INV_SLOTS }, (_, i) => inv[i] ?? null);
+  const size = vertical ? "h-10 w-10" : "h-10 w-10 sm:h-12 sm:w-12";
   return (
     <div
       data-ui
       role="toolbar"
       aria-label="Food pockets — click a snack to eat it and restore health or energy"
-      className={`pointer-events-auto flex rounded-2xl bg-black/35 p-1.5 backdrop-blur-md ${
-        vertical ? "flex-col-reverse gap-1.5" : "flex-row items-end gap-1.5"
-      }`}
+      className={`pointer-events-auto rounded-2xl bg-black/35 p-1.5 backdrop-blur-md ${vertical ? "" : "inline-block"}`}
     >
-      {slots.length === 0 && !vertical && (
-        <span className="px-2 py-1 text-[11px] font-bold text-white/70">
-          🎒 Empty pockets — run over 🥭☕🩹 to collect food!
-        </span>
-      )}
-      {slots.map((slot) => {
-        const d = ITEMS[slot.def];
-        const keyNo = inv.findIndex((s) => s.def === slot.def) + 1;
-        return (
-          <motion.button
-            key={slot.def}
-            layout
-            initial={{ scale: 0.5, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            whileTap={{ scale: 0.88 }}
-            transition={{ type: "spring", stiffness: 380, damping: 20 }}
-            onClick={() => engine.useItem(slot.def)}
-            title={`${d.name} — +${d.hp} ❤ ${d.stamina > 0 ? `+${d.stamina} ⚡` : ""} · click or press ${keyNo}`}
-            aria-label={`Use ${d.name}: restores ${d.hp} health and ${d.stamina} energy`}
-            className="relative flex h-11 w-11 items-center justify-center rounded-xl border-2 border-white/30 bg-white/10 shadow-lg backdrop-blur-md transition-colors hover:border-amber-300/80 hover:bg-amber-400/25 sm:h-12 sm:w-12"
-          >
-            <span className="text-xl leading-none sm:text-2xl" aria-hidden>{d.emoji}</span>
-            {slot.count > 1 && (
-              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full border border-black/40 bg-amber-400 px-1 text-[10px] font-black text-amber-950">
-                {slot.count}
+      <div className={`flex flex-wrap gap-1 ${vertical ? "max-w-[13rem]" : "max-w-[13rem] lg:max-w-none lg:flex-nowrap"}`}>
+        {cells.map((slot, i) => {
+          const keyNo = i + 1;
+          if (!slot) {
+            return (
+              <span
+                key={`empty-${i}`}
+                aria-hidden
+                className={`flex ${size} items-center justify-center rounded-xl border-2 border-dashed border-white/25 bg-black/20`}
+              >
+                <Package size={15} className="text-white/30" />
               </span>
-            )}
-            {!vertical && (
+            );
+          }
+          const d = ITEMS[slot.def];
+          return (
+            <motion.button
+              key={slot.def}
+              layout
+              initial={{ scale: 0.5, opacity: 0 }}
+              animate={{ scale: 1, opacity: 1 }}
+              whileTap={{ scale: 0.88 }}
+              transition={{ type: "spring", stiffness: 380, damping: 20 }}
+              onClick={() => engine.useItem(slot.def)}
+              onContextMenu={!vertical ? (e) => { e.preventDefault(); engine.dropItem(slot.def); } : undefined}
+              title={`${d.name} — +${d.hp} ❤ ${d.stamina > 0 ? `+${d.stamina} ⚡` : ""} · click to eat${touch ? "" : " · right-click to drop"}`}
+              aria-label={`Use ${d.name}: restores ${d.hp} health and ${d.stamina} energy`}
+              className={`relative flex ${size} items-center justify-center rounded-xl border-2 border-white/30 bg-white/10 shadow-lg backdrop-blur-md transition-colors hover:border-amber-300/80 hover:bg-amber-400/25`}
+            >
+              <span className="text-lg leading-none sm:text-2xl" aria-hidden>{d.emoji}</span>
+              {slot.count > 1 && (
+                <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full border border-black/40 bg-amber-400 px-1 text-[10px] font-black text-amber-950">
+                  {slot.count}
+                </span>
+              )}
               <span className="absolute -bottom-1 -left-1 flex h-3.5 w-3.5 items-center justify-center rounded bg-black/75 text-[8px] font-black text-white/90">
                 {keyNo}
               </span>
-            )}
-          </motion.button>
-        );
-      })}
+            </motion.button>
+          );
+        })}
+      </div>
+      <div className="mt-1 w-fit rounded-lg bg-black/60 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-white/75">
+        {touch ? "tap slot = eat it" : "1-8 use · right-click drop"}
+      </div>
     </div>
   );
 }
@@ -355,6 +464,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
   const paused = useGame((s) => s.paused);
   const setPaused = useGame((s) => s.setPaused);
   const victoryOpen = useGame((s) => s.victoryOpen);
+  const [bigMap, setBigMap] = useState(false);
 
   const hr = hud.clock * 24;
   const time = `${String(Math.floor(hr)).padStart(2, "0")}:${String(Math.floor((hr % 1) * 60)).padStart(2, "0")}`;
@@ -372,21 +482,26 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
 
   const togglePause = () => {
     if (victoryOpen) return;
-    const next = !paused;
+    const next = !useGame.getState().paused;
     sfx.click();
     engine.running = !next;
     if (next) stopMusic(); else startMusic();
     setPaused(next);
   };
 
-  // P / Escape toggles pause, 1-6 eats pocketed food, M mutes
+  // P / Escape toggles pause · 1-8 eats pocketed food · M opens the big map
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (useGame.getState().victoryOpen) return;
+      if (bigMap) {
+        // the map swallows M / Esc so it always closes first
+        if (e.code === "KeyM" || e.code === "Escape") { e.preventDefault(); setBigMap(false); }
+        return;
+      }
+      if (e.code === "KeyM") { e.preventDefault(); setBigMap(true); return; }
       if (e.code === "KeyP" || e.code === "Escape") { e.preventDefault(); togglePause(); }
-      if (e.code === "KeyM") { const m = !useGame.getState().muted; setMuted(m); setAudioMuted(m); }
-      const dig = /^Digit([1-6])$/.exec(e.code);
+      const dig = /^Digit([1-8])$/.exec(e.code);
       if (dig) {
         const slot = useGame.getState().hud.inv[Number(dig[1]) - 1];
         if (slot) engine.useItem(slot.def);
@@ -394,7 +509,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
-  }, [victoryOpen, engine]);
+  }, [victoryOpen, engine, bigMap, togglePause]);
 
   useEffect(() => {
     if (!toasts.length) return;
@@ -516,7 +631,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
 
       {/* top-right: minimap + score */}
       <div className="absolute right-3 top-3 flex flex-col items-end gap-2">
-        <Minimap engine={engine} />
+        <Minimap engine={engine} onOpen={() => setBigMap(true)} />
         <div className="pointer-events-auto flex items-center gap-2">
           <motion.div
             key={hud.points}
@@ -554,8 +669,8 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         {showHelp && (
           <div className="max-w-[220px] rounded-xl bg-black/40 px-3 py-2 text-xs leading-relaxed text-white/90 backdrop-blur-md">
             <b className="text-yellow-300">Goal:</b> snatch 🗳 votes, deliver them at the Parliament ballot box. Rescue pink-bubbled friends with <b>E</b>. Dodge the police — sprint with <b>Shift</b>!
-            <div className="mt-1 text-amber-200/90">⚡ Sprinting drains energy · run over 🥭☕🩹 food to pocket it, then tap the bag (or press <b>1-6</b>) to eat: heals ❤ and refills ⚡.</div>
-            {!touch && <div className="mt-1 text-white/70">WASD move · Shift sprint · Space jump · E rescue · 1-6 eat · P pause</div>}
+            <div className="mt-1 text-amber-200/90">⚡ Sprinting drains energy · run over 🥭☕🩹 food to pocket it, then tap the bag (or press <b>1-8</b>) to eat: heals ❤ and refills ⚡.</div>
+            {!touch && <div className="mt-1 text-white/70">WASD move · Shift sprint · Space jump · E rescue · 1-8 eat · right-click drop · M map · P pause</div>}
           </div>
         )}
       </div>
@@ -568,7 +683,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       )}
 
       {/* toasts */}
-      <div className="absolute bottom-24 left-1/2 z-10 flex w-[90%] max-w-md -translate-x-1/2 flex-col items-center gap-1.5 sm:bottom-16">
+      <div className="absolute bottom-24 left-1/2 z-10 flex w-[90%] max-w-md -translate-x-1/2 flex-col items-center gap-1.5 sm:bottom-24">
         <AnimatePresence>
           {toasts.map((t) => (
             <motion.div
@@ -658,10 +773,42 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         </div>
       )}
 
-      {/* police count / city life */}
-      <div className="absolute bottom-3 right-3 rounded-xl bg-black/30 px-3 py-1 text-xs text-white/80 backdrop-blur-md">
-        🚓 {hud.police} police · 🧍 {hud.civilians} civilians
+      {/* bottom-right: big-map shortcut + coords (narrow) + city life */}
+      <div className="absolute bottom-3 right-3 z-10 flex flex-col items-end gap-1.5">
+        {!touch && (
+          <button
+            data-ui type="button" onClick={() => setBigMap(true)} title="Big map (M)"
+            aria-label="Open big map"
+            className="pointer-events-auto flex items-center gap-1 rounded-lg bg-black/45 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-white/80 backdrop-blur-md transition-colors hover:bg-black/70 hover:text-yellow-200"
+          >
+            <MapIcon size={11} /> M — big map
+          </button>
+        )}
+        {!touch && (
+          <div className="md:hidden">
+            <CoordsChip px={hud.px} pz={hud.pz} />
+          </div>
+        )}
+        <div className="rounded-xl bg-black/30 px-3 py-1 text-xs text-white/80 backdrop-blur-md">
+          🚓 {hud.police} police · 🧍 {hud.civilians} civilians
+        </div>
       </div>
+
+      {/* bottom-center: controls hint + location chip (old-game footer, revived) —
+          narrow desktops hide the center stack and tuck the coords chip bottom-right instead */}
+      {!touch && (
+        <div className="absolute bottom-3 left-1/2 z-10 hidden -translate-x-1/2 flex-col items-center gap-1.5 md:flex">
+          <div className="hidden whitespace-nowrap rounded-full bg-black/45 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/75 backdrop-blur-md lg:block">
+            WASD move · Shift sprint · Space jump · E rescue
+          </div>
+          <CoordsChip px={hud.px} pz={hud.pz} />
+        </div>
+      )}
+
+      {/* big world map overlay */}
+      <AnimatePresence>
+        {bigMap && <BigMap engine={engine} onClose={() => setBigMap(false)} />}
+      </AnimatePresence>
     </div>
   );
 }

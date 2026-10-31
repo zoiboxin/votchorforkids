@@ -35,6 +35,7 @@ export interface HudData {
   detained: boolean; detainLeft: number; prompt: string; policeNear: boolean;
   civilians: number; police: number; won: boolean; elapsed: number;
   inv: { def: number; count: number }[]; hurt: boolean; sprinting: boolean; exhausted: boolean;
+  px: number; pz: number; // player world coords — bottom-center location chip
 }
 
 export type ToastFn = (msg: string, kind?: "info" | "good" | "bad") => void;
@@ -254,6 +255,21 @@ export class GameEngine {
   }
 
   /* ---------------- inventory (food in pockets) ---------------- */
+  /** Drop one unit of a pocketed item — tossed a little ahead so it doesn't bounce straight back into your pockets. */
+  dropItem(def: number) {
+    const idx = this.inv.findIndex((s) => s.def === def);
+    if (idx < 0) return;
+    const d = ITEMS[def];
+    const toss = 2.6 + Math.random() * 1.2; // past the 1.9 pickup radius
+    const p = { x: this.player.x + Math.sin(this.player.face) * toss, z: this.player.z + Math.cos(this.player.face) * toss };
+    resolve(p, 0.6, this.world);
+    this.items.push({ id: this.nid(), def, x: p.x, z: p.z, active: true, respawn: 0 });
+    this.inv[idx].count--;
+    if (this.inv[idx].count <= 0) this.inv.splice(idx, 1);
+    sfx.click();
+    this.toast(`${d.emoji} ${d.name} dropped — run over it to pocket it again.`, "info");
+  }
+
   /** Eat/use a pocketed item: restores ❤ health and/or ⚡ energy. */
   useItem(def: number) {
     const idx = this.inv.findIndex((s) => s.def === def);
@@ -349,7 +365,7 @@ export class GameEngine {
           if (this.inv.length >= INV_SLOTS) {
             if (this.pocketFullT <= 0) {
               this.pocketFullT = 6;
-              this.toast("🎒 Pockets full! Eat something to make room (press 1-6).", "info");
+              this.toast("🎒 Pockets full! Eat something to make room (press 1-8).", "info");
             }
             continue; // no free slot — leave it on the ground
           }
@@ -508,6 +524,7 @@ export class GameEngine {
       won: this.won, elapsed: this.elapsed,
       inv: this.inv.map((s) => ({ def: s.def, count: s.count })),
       hurt: this.hurtT > 0, sprinting: p.sprinting, exhausted: this.stamina <= 0.5,
+      px: Math.round(this.player.x), pz: Math.round(this.player.z),
     };
   }
 

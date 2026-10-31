@@ -24,9 +24,10 @@ const CONTROLS: [string, string][] = [
   ["Shift", "Sprint — drains ⚡ energy fast"],
   ["Space", "Jump (costs a little energy)"],
   ["E", "Rescue a detained friend"],
-  ["1 – 6", "Eat pocketed food ❤⚡ — or tap the bag bottom-left"],
+  ["1 – 8", "Eat pocketed food ❤⚡ — or tap the bag bottom-left"],
+  ["Right-click slot", "Drop food back on the ground"],
+  ["M", "Open the big world map"],
   ["P or Esc", "Pause the game"],
-  ["M", "Mute / unmute"],
 ];
 
 export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
@@ -78,8 +79,8 @@ export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange:
           <section className="rounded-2xl bg-white/5 p-3">
             <div className="mb-1.5 flex items-center gap-2 font-black text-lime-300"><Zap size={15} /> Food pockets (bottom-left)</div>
             <p className="leading-relaxed text-white/85">
-              Run over food to <b>pocket</b> it — up to 6 kinds (🥭 Mango · 🥟 Samosa · 🍩 Jalebi · 🍡 Laddu · 🩹 First-aid · ☕ Chai · 🥥 Coconut water).
-              Tap the bag or press <b className="text-yellow-200">1-6</b> to eat: fruits heal ❤ + refill ⚡, first-aid kits mend <b>45 ❤</b>, chai pumps <b>45 ⚡</b>.
+              Run over food to <b>pocket</b> it — up to 8 kinds (🥭 Mango · 🥟 Samosa · 🍩 Jalebi · 🍡 Laddu · 🩹 First-aid · ☕ Chai · 🥥 Coconut water).
+              Tap the bag or press <b className="text-yellow-200">1-8</b> to eat: fruits heal ❤ + refill ⚡, first-aid kits mend <b>45 ❤</b>, chai pumps <b>45 ⚡</b>. Right-click a slot to drop food back on the ground.
               Police hits and zombie touches drain ❤ — snacking is surviving!
             </p>
           </section>
