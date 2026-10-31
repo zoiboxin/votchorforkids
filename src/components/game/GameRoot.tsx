@@ -70,7 +70,8 @@ export function GameRoot() {
     const id = setInterval(() => {
       if (eng.won && !useGame.getState().victoryOpen) {
         useGame.getState().setVictoryOpen(true);
-        useGame.getState().recordRun(useGame.getState().hud.points);
+        const h = useGame.getState().hud;
+        useGame.getState().recordRun(h.points, h.delivered, h.rescues);
       }
     }, 400);
     return () => clearInterval(id);
@@ -78,7 +79,7 @@ export function GameRoot() {
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-sky-300">
-      {screen === "landing" && <Landing />}
+      {screen === "landing" && <Landing onPlay={startGame} />}
 
       {screen === "creator" && <Creator onStart={startGame} />}
 

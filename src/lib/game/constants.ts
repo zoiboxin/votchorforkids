@@ -26,7 +26,7 @@ export const AGE_STATS: Record<AgeGroup, { scale: number; speed: number; regen: 
 
 export const SPRINT_MULT = 1.65;
 
-export type HairStyle = "spiky" | "bowl" | "ponytail" | "twintails" | "mohawk" | "curly" | "bald";
+export type HairStyle = "spiky" | "bowl" | "ponytail" | "twintails" | "mohawk" | "curly" | "afro" | "bun" | "bald";
 
 export interface Appearance {
   skin: string;
@@ -36,6 +36,7 @@ export interface Appearance {
   hair: string;
   hairStyle: HairStyle;
   cap: boolean;
+  capColor: string;
   glasses: boolean;
   age: AgeGroup;
   girl: boolean;
@@ -46,6 +47,7 @@ export const SHIRT_COLORS = ["#f5a524", "#e0483a", "#2a9d8f", "#f1e9d2", "#e91e8
 export const PANTS_COLORS = ["#2b3556", "#4a3b2a", "#7a3b3b", "#2a6f4f", "#444a55", "#8a5aa8"];
 export const SHOE_COLORS = ["#3b2314", "#111111", "#f5f5f5", "#e0483a", "#2a6fdb"];
 export const HAIR_COLORS = ["#1a1210", "#5a3a1a", "#c88a4a", "#e8c15a", "#d8d8d8", "#b03030", "#4a4a58"];
+export const CAP_COLORS = ["#e0483a", "#2a9d8f", "#f5a524", "#2b3556", "#e91e8c", "#7bc043", "#f8f4e8", "#111111"];
 export const HAIR_STYLES: { id: HairStyle; label: string }[] = [
   { id: "spiky", label: "Spiky" },
   { id: "bowl", label: "Bowl" },
@@ -53,6 +55,8 @@ export const HAIR_STYLES: { id: HairStyle; label: string }[] = [
   { id: "twintails", label: "Twintails" },
   { id: "mohawk", label: "Mohawk" },
   { id: "curly", label: "Curly" },
+  { id: "afro", label: "Afro" },
+  { id: "bun", label: "Bun" },
   { id: "bald", label: "Bald" },
 ];
 
@@ -69,6 +73,7 @@ export const defaultAppearance = (): Appearance => ({
   hair: HAIR_COLORS[0],
   hairStyle: "spiky",
   cap: true,
+  capColor: "#e0483a",
   glasses: false,
   age: "young",
   girl: false,
@@ -106,6 +111,18 @@ export const OUTFIT_PRESETS: readonly OutfitPreset[] = [
     id: "dancer", label: "Bhangra King", emoji: "💃",
     look: { shirt: "#ff6b35", pants: "#2a6f4f", shoe: "#e0483a", hair: "#e8c15a", hairStyle: "curly", cap: false, glasses: false, age: "young" },
   },
+  {
+    id: "superkid", label: "Super Kid", emoji: "🦸",
+    look: { shirt: "#2a9d8f", pants: "#2b3556", shoe: "#e0483a", hair: "#1a1210", hairStyle: "spiky", cap: true, capColor: "#e0483a", glasses: false, age: "kid" },
+  },
+  {
+    id: "popstar", label: "Pop Star", emoji: "🎤",
+    look: { shirt: "#e91e8c", pants: "#8a5aa8", shoe: "#f5f5f5", hair: "#b03030", hairStyle: "bun", cap: false, glasses: false, age: "teen", girl: true },
+  },
+  {
+    id: "dada", label: "Cool Dada", emoji: "🕶️",
+    look: { shirt: "#00b4d8", pants: "#444a55", shoe: "#111111", hair: "#4a4a58", hairStyle: "afro", cap: false, glasses: true, age: "teen" },
+  },
 ];
 
 /** Random look for the 🎲 button. */
@@ -121,11 +138,19 @@ export function randomAppearance(rnd: () => number = Math.random): Appearance {
     hair: pick(HAIR_COLORS),
     hairStyle: pick(styles),
     cap: rnd() < 0.45,
+    capColor: pick(CAP_COLORS),
     glasses: rnd() < 0.3,
     age: pick(ages),
     girl: rnd() < 0.5,
   };
 }
+
+/** Suggested player names for the 🎲 name button. */
+export const NAME_SUGGESTIONS: readonly string[] = [
+  "Chintu", "Pintu", "Babli", "Golu", "Rani", "Munna", "Chotu", "Pinky",
+  "Bholu", "Guddu", "Laddo", "Shona", "Titli", "Bunty", "Jhumri", "Kaalu",
+  "Bijli", "Sheru", "Gudiya", "Pappu",
+];
 
 /** Funny strings for the landing-page marquee ticker. */
 export const TICKER_LINES: readonly string[] = [

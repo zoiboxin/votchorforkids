@@ -282,6 +282,15 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
         headToon.add(sphere(i % 2 ? 0.16 : 0.13, 8, 6), hairCol, false, Math.cos(ang) * 0.24, 0.3 + (i % 3) * 0.05, Math.sin(ang) * 0.24 - 0.04);
       }
       headToon.add(sphere(0.17, 8, 6), hairCol, false, 0, 0.42, -0.05);
+    } else if (style === "afro") {
+      // big rounded cloud with puffy lobes — reads great from any angle
+      headToon.add(sphere(0.46, 12, 9), hairCol, false, 0, 0.17, -0.03, 0, 0, 0, 1.12, 0.94, 1.08);
+      for (let i = 0; i < 8; i++) {
+        const ang = (i / 8) * Math.PI * 2;
+        headToon.add(sphere(i % 2 ? 0.16 : 0.13, 8, 6), hairCol, false,
+          Math.cos(ang) * 0.3, 0.24 + (i % 3) * 0.07, Math.sin(ang) * 0.28 - 0.05);
+      }
+      headToon.add(sphere(0.2, 9, 7), hairCol, false, 0, 0.5, -0.06);
     } else {
       const domeTheta = style === "bowl" ? Math.PI * 0.62 : Math.PI * 0.5;
       headToon.add(sphere(0.425, 14, 10, 0, Math.PI * 2, 0, domeTheta), hairCol, false, 0, 0.015, style === "bowl" ? 0.03 : 0, 0, 0, 0, 1.04, style === "bowl" ? 1.02 : 1.08, 1.04);
@@ -309,6 +318,12 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
           headUnlit.add(sphere(0.05, 7, 5), "#ff5a7a", true, sd * 0.38, 0.28, -0.1);
         }
       }
+      if (style === "bun") {
+        // tidy top-knot with a little bow tie
+        headToon.add(sphere(0.155, 9, 7), hairCol, false, 0, 0.5, -0.1);
+        headToon.add(sphere(0.09, 8, 6), hairCol, false, 0, 0.4, -0.07);
+        headUnlit.add(sphere(0.045, 7, 5), "#ff5a7a", true, 0, 0.4, -0.02);
+      }
       // long back-hair for girls — a soft lobe behind the head
       if (a.girl)
         headToon.add(sphere(0.42, 12, 9), hairCol, false, 0, -0.02, -0.07, 0, 0, 0, 1.0, 1.04, 0.98);
@@ -317,12 +332,15 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
 
   /* cap */
   if (police || (a.cap && !zombie)) {
-    const capCol = police ? "#1c2a4e" : a.shirt;
+    const capCol = police ? "#1c2a4e" : a.capColor || a.shirt;
     headToon.add(sphere(0.415, 14, 9, 0, Math.PI * 2, 0, Math.PI / 2.35), capCol, false, 0, 0.13, 0);
     headToon.add(cyl(0.2, 0.28, 0.045, 12), police ? "#10182e" : capCol, false, 0, 0.24, 0.32, -0.32);
     if (police) {
       headUnlit.add(cyl(0.05, 0.05, 0.025), GOLD, true, 0, 0.4, 0.26, Math.PI / 2);
       headToon.add(cyl(0.418, 0.424, 0.08, 14), "#10182e", false, 0, 0.15, 0);
+    } else {
+      // little white front-panel highlight so custom cap colors pop
+      headUnlit.add(sphere(0.05, 7, 5), "#ffffff", true, 0, 0.42, 0.3);
     }
   }
 

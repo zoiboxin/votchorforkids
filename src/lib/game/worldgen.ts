@@ -311,5 +311,22 @@ export function freeSpot(
     for (const av of avoid) if (Math.hypot(x - av.x, z - av.z) < av.r) { ok = false; break; }
     if (ok) return { x, z };
   }
-  return { x: 0, z: 12 };
+  // Fallback: start at the classic fallback point but always push it OUT of every
+  // avoid circle (never next to the player spawn). Avoid-push runs LAST because
+  // collider overlaps self-heal every frame (stepBody/stepNpc re-resolve) while
+  // avoid-circle overlaps would permanently re-create the spawn-camping bug.
+  let fx = 0, fz = 12;
+  const fb = { x: fx, z: fz };
+  for (const av of avoid) {
+    const dx = fb.x - av.x, dz = fb.z - av.z;
+    const d = Math.hypot(dx, dz) || 0.01;
+    if (d < av.r + 4) { fb.x = av.x + (dx / d) * (av.r + 4); fb.z = av.z + (dz / d) * (av.r + 4); }
+  }
+  resolve(fb, 0.9, world);
+  for (const av of avoid) {
+    const dx = fb.x - av.x, dz = fb.z - av.z;
+    const d = Math.hypot(dx, dz) || 0.01;
+    if (d < av.r + 2) { fb.x = av.x + (dx / d) * (av.r + 2); fb.z = av.z + (dz / d) * (av.r + 2); }
+  }
+  return { x: fb.x, z: fb.z };
 }

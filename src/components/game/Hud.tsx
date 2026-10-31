@@ -5,6 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Heart, Zap, Star, Sun, Moon, Vote, MapPin, Volume2, VolumeX, Pause, Play as PlayIcon,
   Keyboard, Gauge, CircleHelp, Flag, Home, Settings as SettingsIcon, CheckCircle2, Siren, Info, ShieldCheck,
+  ChevronUp, Timer,
 } from "lucide-react";
 import type { GameEngine } from "@/lib/game/engine";
 import { useGame } from "./store";
@@ -49,7 +50,7 @@ function Minimap({ engine }: { engine: GameEngine }) {
     dot(engine.player.x, engine.player.z, 3.6, "#ffffff");
   }, [engine, hud]);
   return (
-    <div className="relative">
+    <div className="relative origin-top-right scale-[0.72] sm:scale-100">
       <canvas
         ref={ref} width={156} height={156}
         aria-label="Minimap, north at the top"
@@ -69,6 +70,66 @@ function Bar({ v, color, icon, low = false }: { v: number; color: string; icon: 
         <div className={`h-full rounded-full ${color} transition-[width] duration-200`} style={{ width: `${v}%` }} />
       </div>
     </div>
+  );
+}
+
+/* --------------------- carried-vote pips (3 slots) --------------------- */
+function VotePips({ carried }: { carried: number }) {
+  return (
+    <div className="flex items-center gap-1.5">
+      <Vote size={16} className="text-yellow-300" />
+      <div className="flex gap-1" aria-label={`Carrying ${carried} of 3 votes`}>
+        {Array.from({ length: 3 }, (_, i) => (
+          <motion.div
+            key={i}
+            animate={i < carried ? { scale: [1, 1.35, 1] } : { scale: 1 }}
+            transition={i < carried ? { repeat: Infinity, duration: 1.3, delay: i * 0.15 } : { duration: 0.2 }}
+            className={`h-3.5 w-3.5 rounded-full border ${
+              i < carried
+                ? "border-yellow-100 bg-gradient-to-br from-yellow-200 to-amber-400 shadow-[0_0_7px_rgba(250,204,21,0.85)]"
+                : "border-white/30 bg-black/40"
+            }`}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+/* ------------- danger compass: arrow toward nearest chasing cop ------------- */
+function DangerCompass({ engine }: { engine: GameEngine }) {
+  const hud = useGame((s) => s.hud);
+  if (!hud.policeNear || hud.detained) return null;
+  let best: { d: number; a: number } | null = null;
+  for (const cop of engine.cops) {
+    if (cop.mode !== "chase") continue;
+    const dx = cop.x - engine.player.x, dz = cop.z - engine.player.z;
+    const d = Math.hypot(dx, dz);
+    if (!best || d < best.d) best = { d, a: Math.atan2(dx, dz) };
+  }
+  if (!best) return null;
+  // 0° = straight ahead of the camera; positive = clockwise (to the right)
+  const deg = ((best.a - engine.input.yaw) * 180) / Math.PI;
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }}
+      className="pointer-events-none absolute left-1/2 top-1/2 z-[5]"
+      aria-label={`Police ${Math.round(best.d)} meters away`}
+    >
+      <div style={{ transform: `rotate(${deg}deg)` }}>
+        <div
+          className="flex flex-col items-center"
+          style={{ transform: `translate(-50%, -128px)` }}
+        >
+          <motion.span animate={{ y: [0, 4, 0] }} transition={{ repeat: Infinity, duration: 0.8 }}>
+            <ChevronUp size={26} className="text-rose-400 drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)]" strokeWidth={3.5} />
+          </motion.span>
+          <span className="rounded-full bg-rose-600/85 px-1.5 text-[9px] font-black leading-4 text-white shadow">
+            🚓 {Math.round(best.d)}m
+          </span>
+        </div>
+      </div>
+    </motion.div>
   );
 }
 
@@ -215,6 +276,11 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
             <Home size={16} className="mr-2" /> Quit to menu
           </Button>
         </div>
+        {hud.delivered > 0 && (
+          <p className="mt-3 text-center text-[11px] text-emerald-300/90">
+            This run: {hud.delivered} votes delivered · {hud.rescues} rescued · {hud.points} pts
+          </p>
+        )}
       </motion.div>
       <HowToPlay open={help} onOpenChange={setHelp} />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
@@ -240,7 +306,16 @@ export function Hud({ engine }: { engine: GameEngine }) {
   const hr = hud.clock * 24;
   const time = `${String(Math.floor(hr)).padStart(2, "0")}:${String(Math.floor((hr % 1) * 60)).padStart(2, "0")}`;
   const night = hud.night > 0.5;
-  const graceT = engine.invulnT > 0 && hud.elapsed < 8 && !hud.detained;
+  const graceT = engine.invulnT > 0 && hud.elapsed < 10 && !hud.detained;
+  const runSecs = Math.floor(hud.elapsed);
+  const runTime = `${String(Math.floor(runSecs / 60)).padStart(2, "0")}:${String(runSecs % 60).padStart(2, "0")}`;
+  const ZONE_TINT: Record<string, string> = {
+    City: "text-sky-200",
+    Farmland: "text-lime-200",
+    Jungle: "text-emerald-200",
+    Graveyard: "text-violet-200",
+    "Mountain Wall": "text-slate-200",
+  };
 
   const togglePause = () => {
     if (victoryOpen) return;
@@ -289,13 +364,26 @@ export function Hud({ engine }: { engine: GameEngine }) {
         style={{ boxShadow: "inset 0 0 90px 18px rgba(220,40,40,0.26)" }}
       />
 
+      {/* low-hp heartbeat vignette */}
+      {hud.hp <= 30 && !hud.detained && (
+        <motion.div
+          aria-hidden
+          className="absolute inset-0"
+          animate={{ opacity: [0.35, 0.85, 0.35] }}
+          transition={{ repeat: Infinity, duration: 1.15, ease: "easeInOut" }}
+          style={{ boxShadow: "inset 0 0 110px 26px rgba(190,18,60,0.4)" }}
+        />
+      )}
+
+      {/* directional warning toward the closest chasing cop */}
+      <AnimatePresence>{hud.policeNear && <DangerCompass engine={engine} />}</AnimatePresence>
+
       {/* top-left: vitals */}
       <div className="absolute left-3 top-3 flex flex-col gap-1.5 rounded-2xl bg-black/35 p-3 backdrop-blur-md">
         <Bar v={hud.hp} color="bg-gradient-to-r from-rose-500 to-rose-400" icon={<Heart size={16} className="text-rose-300" fill="currentColor" />} low={hud.hp <= 30} />
         <Bar v={hud.stamina} color="bg-gradient-to-r from-amber-500 to-yellow-300" icon={<Zap size={16} className="text-amber-300" fill="currentColor" />} />
         <div className="mt-1 flex items-center gap-2 text-sm text-white">
-          <Vote size={16} className="text-yellow-300" />
-          <span className="font-bold">{hud.carried > 0 ? `🗳️ ${hud.carried}/3` : "—"}</span>
+          <VotePips carried={hud.carried} />
           <span className="ml-1 rounded-full bg-yellow-400/90 px-2 py-0.5 text-xs font-black text-yellow-950">
             {hud.delivered}/{hud.total} delivered
           </span>
@@ -310,10 +398,15 @@ export function Hud({ engine }: { engine: GameEngine }) {
       </div>
 
       {/* top-center: objective tracker + zone/clock */}
-      <div className="absolute left-3 right-3 top-[122px] flex flex-col items-center gap-1.5 sm:left-1/2 sm:right-auto sm:top-3 sm:-translate-x-1/2">
-        <div className="rounded-full bg-black/35 px-3 py-1 text-xs font-bold text-white backdrop-blur-md sm:px-4 sm:py-1.5 sm:text-sm">
-          <MapPin size={14} className="mr-1 inline text-emerald-300" />
-          {hud.zone} · {time} {night ? <Moon size={14} className="inline text-indigo-200" /> : <Sun size={14} className="inline text-yellow-300" />}
+      <div className="absolute left-3 right-3 top-[172px] flex flex-col items-center gap-1.5 sm:left-1/2 sm:right-auto sm:top-3 sm:-translate-x-1/2">
+        <div className="flex items-center gap-2">
+          <div className="rounded-full bg-black/35 px-3 py-1 text-xs font-bold text-white backdrop-blur-md sm:px-4 sm:py-1.5 sm:text-sm">
+            <MapPin size={14} className={`mr-1 inline ${ZONE_TINT[hud.zone] ?? "text-emerald-300"}`} />
+            <span className={ZONE_TINT[hud.zone] ?? ""}>{hud.zone}</span> · {time} {night ? <Moon size={14} className="inline text-indigo-200" /> : <Sun size={14} className="inline text-yellow-300" />}
+          </div>
+          <div className="hidden rounded-full bg-black/35 px-3 py-1 text-xs font-bold tabular-nums text-white backdrop-blur-md sm:block sm:text-sm">
+            <Timer size={14} className="mr-1 inline text-sky-200" />{runTime}
+          </div>
         </div>
         {/* objective progress */}
         <div className="flex w-52 flex-col rounded-xl bg-black/35 px-3 py-1.5 backdrop-blur-md sm:w-64">
@@ -346,9 +439,16 @@ export function Hud({ engine }: { engine: GameEngine }) {
       <div className="absolute right-3 top-3 flex flex-col items-end gap-2">
         <Minimap engine={engine} />
         <div className="pointer-events-auto flex items-center gap-2">
-          <div className="rounded-xl bg-black/35 px-3 py-1 text-sm font-black text-yellow-300 backdrop-blur-md">
+          <motion.div
+            key={hud.points}
+            initial={{ scale: 1.3 }}
+            animate={{ scale: 1 }}
+            transition={{ type: "spring", stiffness: 400, damping: 16 }}
+            className="rounded-xl bg-black/35 px-3 py-1 text-sm font-black tabular-nums text-yellow-300 backdrop-blur-md"
+            aria-label="Score"
+          >
             {hud.points} pts
-          </div>
+          </motion.div>
           {showFps && <FpsCounter />}
           <Button
             size="icon" variant="ghost" aria-label={muted ? "Unmute" : "Mute"}
@@ -446,7 +546,7 @@ export function Hud({ engine }: { engine: GameEngine }) {
               stopMusic();
               setPaused(false);
               useGame.getState().setVictoryOpen(false);
-              useGame.getState().recordRun(useGame.getState().hud.points);
+              useGame.getState().recordRun(useGame.getState().hud.points, useGame.getState().hud.delivered, useGame.getState().hud.rescues);
               useGame.getState().setScreen("landing");
             }}
           />

@@ -15,18 +15,31 @@ export interface Settings {
   showFps: boolean;
 }
 
+export interface PlayerStats { runs: number; best: number; votes: number; rescues: number }
+
 const LS_PROFILE = "votechor_profile_v2";
 const LS_SETTINGS = "votechor_settings_v2";
 
-function loadProfile(): { name: string; look: Appearance } {
-  if (typeof window === "undefined") return { name: "", look: defaultAppearance() };
+function loadProfile(): { name: string; look: Appearance; stats: PlayerStats } {
+  const fresh = { name: "", look: defaultAppearance(), stats: { runs: 0, best: 0, votes: 0, rescues: 0 } };
+  if (typeof window === "undefined") return fresh;
   try {
     const raw = JSON.parse(localStorage.getItem(LS_PROFILE) ?? "null");
     if (raw && typeof raw === "object") {
-      return { name: typeof raw.name === "string" ? raw.name : "", look: normalizeAppearance(raw.look) };
+      const st = (raw.stats && typeof raw.stats === "object" ? raw.stats : {}) as Partial<PlayerStats>;
+      return {
+        name: typeof raw.name === "string" ? raw.name : "",
+        look: normalizeAppearance(raw.look),
+        stats: {
+          runs: Number(st.runs) || 0,
+          best: Number(st.best) || 0,
+          votes: Number(st.votes) || 0,
+          rescues: Number(st.rescues) || 0,
+        },
+      };
     }
   } catch { /* ignore */ }
-  return { name: "", look: defaultAppearance() };
+  return fresh;
 }
 
 function loadSettings(): Settings {
@@ -44,9 +57,9 @@ function loadSettings(): Settings {
   return { music: 0.7, sfx: 0.8, showFps: false };
 }
 
-function saveProfile(name: string, look: Appearance) {
+function saveProfile(name: string, look: Appearance, stats: PlayerStats) {
   if (typeof window === "undefined") return;
-  try { localStorage.setItem(LS_PROFILE, JSON.stringify({ name, look })); } catch { /* ignore */ }
+  try { localStorage.setItem(LS_PROFILE, JSON.stringify({ name, look, stats })); } catch { /* ignore */ }
 }
 
 function saveSettings(s: Settings) {
@@ -69,6 +82,8 @@ export interface GameStore {
   settings: Settings;
   runsPlayed: number;
   bestScore: number;
+  lifeVotes: number;
+  lifeRescues: number;
   setLook: (p: Partial<Appearance>) => void;
   applyLook: (a: Appearance) => void;
   setName: (n: string) => void;
@@ -83,7 +98,7 @@ export interface GameStore {
   setVictoryOpen: (v: boolean) => void;
   setPaused: (p: boolean) => void;
   patchSettings: (p: Partial<Settings>) => void;
-  recordRun: (score: number) => void;
+  recordRun: (score: number, votes?: number, rescues?: number) => void;
 }
 
 export const emptyHud: HudData = {
@@ -96,7 +111,9 @@ export const emptyHud: HudData = {
 let toastId = 1;
 
 /** Hydrate persisted player identity once at module load (client only). */
-const saved = typeof window !== "undefined" ? loadProfile() : { name: "", look: defaultAppearance() };
+const saved = typeof window !== "undefined"
+  ? loadProfile()
+  : { name: "", look: defaultAppearance(), stats: { runs: 0, best: 0, votes: 0, rescues: 0 } };
 
 export const useGame = create<GameStore>()((set, get) => ({
   screen: "landing",
@@ -111,24 +128,26 @@ export const useGame = create<GameStore>()((set, get) => ({
   victoryOpen: false,
   paused: false,
   settings: typeof window !== "undefined" ? loadSettings() : { music: 0.7, sfx: 0.8, showFps: false },
-  runsPlayed: 0,
-  bestScore: 0,
+  runsPlayed: saved.stats.runs,
+  bestScore: saved.stats.best,
+  lifeVotes: saved.stats.votes,
+  lifeRescues: saved.stats.rescues,
   setLook: (p) => {
     set((s) => {
       const look = { ...s.look, ...p };
-      saveProfile(s.playerName, look);
+      saveProfile(s.playerName, look, { runs: s.runsPlayed, best: s.bestScore, votes: s.lifeVotes, rescues: s.lifeRescues });
       return { look };
     });
   },
   applyLook: (a) => {
     set((s) => {
-      saveProfile(s.playerName, a);
+      saveProfile(s.playerName, a, { runs: s.runsPlayed, best: s.bestScore, votes: s.lifeVotes, rescues: s.lifeRescues });
       return { look: a };
     });
   },
   setName: (n) => {
     set((s) => {
-      saveProfile(n, s.look);
+      saveProfile(n, s.look, { runs: s.runsPlayed, best: s.bestScore, votes: s.lifeVotes, rescues: s.lifeRescues });
       return { playerName: n };
     });
   },
@@ -149,10 +168,16 @@ export const useGame = create<GameStore>()((set, get) => ({
       return { settings };
     });
   },
-  recordRun: (score) => set((s) => ({
-    runsPlayed: s.runsPlayed + 1,
-    bestScore: Math.max(s.bestScore, score),
-  })),
+  recordRun: (score, votes = 0, rescues = 0) => set((s) => {
+    const stats = {
+      runs: s.runsPlayed + 1,
+      best: Math.max(s.bestScore, score),
+      votes: s.lifeVotes + votes,
+      rescues: s.lifeRescues + rescues,
+    };
+    saveProfile(s.playerName, s.look, stats);
+    return { runsPlayed: stats.runs, bestScore: stats.best, lifeVotes: stats.votes, lifeRescues: stats.rescues };
+  }),
 }));
 
 // Apply persisted volumes to the audio engine on boot.

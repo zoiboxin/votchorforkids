@@ -1365,6 +1365,9 @@ function Env({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
   const hemi = useRef<THREE.HemisphereLight>(null!);
   const sun = useRef<THREE.DirectionalLight>(null!);
   const sky = useMemo(() => new THREE.Color(), []);
+  // Reuse one fog instance (no per-frame allocation); a high day-far keeps the
+  // mountain ring readable as real shapes instead of melting into the sky.
+  const fog = useMemo(() => new THREE.Fog(0x8fd3ff, 120, 900), []);
   const PI2 = Math.PI * 2;
   useFrame(() => {
     const clock = clockRef.current;
@@ -1374,7 +1377,9 @@ function Env({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
     sky.copy(DAY).lerp(NIGHT, n);
     if (dk > 0) sky.lerp(DUSK, dk * 0.6);
     scene.background = sky;
-    scene.fog = new THREE.Fog(sky, 90, n > 0.5 ? 300 : 580);
+    fog.color.copy(sky);
+    fog.far = n > 0.5 ? 310 : 900;
+    scene.fog = fog;
     hemi.current.intensity = 0.35 + 0.55 * (1 - n);
     sun.current.intensity = 0.25 + 0.95 * (1 - n);
     sun.current.position.set(Math.cos(PI2 * (clock - 0.25)) * 200, Math.max(24, h * 200), 90);

@@ -9,7 +9,7 @@ import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-  AGE_STATS, HAIR_COLORS, HAIR_STYLES, OUTFIT_PRESETS, PANTS_COLORS, SHIRT_COLORS, SHOE_COLORS, SKIN_TONES,
+  AGE_STATS, CAP_COLORS, HAIR_COLORS, HAIR_STYLES, NAME_SUGGESTIONS, OUTFIT_PRESETS, PANTS_COLORS, SHIRT_COLORS, SHOE_COLORS, SKIN_TONES,
   randomAppearance,
   type AgeGroup, type Appearance, type HairStyle,
 } from "@/lib/game/constants";
@@ -197,15 +197,15 @@ export function Creator({ onStart }: { onStart: () => void }) {
   const ready = playerName.trim().length > 0;
 
   return (
-    <div className="relative min-h-screen w-full overflow-y-auto">
-      {/* backdrop */}
+    <div className="relative h-screen w-full overflow-y-auto">
+      {/* backdrop (fixed so it covers the viewport while the page scrolls) */}
       <div
-        className="absolute inset-0 bg-cover bg-center"
+        className="fixed inset-0 bg-cover bg-center"
         style={{ backgroundImage: "url(/hero-votechor.png)" }}
       />
-      <div className="absolute inset-0 bg-gradient-to-b from-slate-950/70 via-slate-900/55 to-slate-950/80" />
+      <div className="fixed inset-0 bg-gradient-to-b from-slate-950/70 via-slate-900/55 to-slate-950/80" />
 
-      <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-4 py-6 lg:flex-row lg:items-stretch">
+      <div className="relative mx-auto flex min-h-full w-full max-w-6xl flex-col gap-6 px-4 py-6 lg:flex-row lg:items-stretch">
         {/* left: title + preview */}
         <div className="flex flex-1 flex-col items-center justify-center gap-4">
           <Button
@@ -263,7 +263,21 @@ export function Creator({ onStart }: { onStart: () => void }) {
             </div>
             <div className="space-y-4">
               <div>
-                <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-white/70">Name</div>
+                <div className="mb-1.5 flex items-center justify-between">
+                  <span className="text-xs font-bold uppercase tracking-wide text-white/70">Name</span>
+                  <button
+                    aria-label="Suggest a random name"
+                    onClick={() => {
+                      sfx.click();
+                      let n = playerName;
+                      while (n === playerName) n = NAME_SUGGESTIONS[Math.floor(Math.random() * NAME_SUGGESTIONS.length)];
+                      setName(n.slice(0, 16));
+                    }}
+                    className="flex items-center gap-1 rounded-full border border-white/25 bg-white/10 px-2 py-0.5 text-[10px] font-black text-white/85 hover:bg-white/20"
+                  >
+                    <Dices size={11} /> surprise me
+                  </button>
+                </div>
                 <Input
                   value={playerName}
                   onChange={(e) => setName(e.target.value.slice(0, 16))}
@@ -288,6 +302,9 @@ export function Creator({ onStart }: { onStart: () => void }) {
                 <span className="text-sm font-bold text-white/85">🧢 Wear a cap</span>
                 <Switch checked={look.cap} onCheckedChange={(cap) => { sfx.click(); update({ cap }); }} />
               </div>
+              {look.cap && (
+                <Swatches label="Cap color" colors={CAP_COLORS} value={look.capColor} onChange={(capColor) => update({ capColor })} />
+              )}
               <div className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-2">
                 <span className="text-sm font-bold text-white/85">👓 Glasses</span>
                 <Switch checked={look.glasses} onCheckedChange={(glasses) => { sfx.click(); update({ glasses }); }} />
