@@ -415,6 +415,25 @@ export const rigOf = (g: THREE.Object3D): CharRig => g.userData.rig as CharRig;
 /* ------------------------------------------------------------------ */
 export interface PoseOpts { phase?: number; airborne?: boolean; detained?: boolean; zombie?: boolean; vy?: number; flip?: number; squash?: number }
 
+/** All channels poseCharacter drives — computed as targets, blended, then applied. */
+interface PoseCh {
+  by: number; brx: number; bry: number; brz: number; bsx: number; bsy: number;
+  hy: number; hrx: number; hry: number; hrz: number;
+  l0: number; l1: number; a0x: number; a1x: number; a0z: number; a1z: number;
+}
+const POSE_KEYS: (keyof PoseCh)[] = ["by", "brx", "bry", "brz", "bsx", "bsy", "hy", "hrx", "hry", "hrz", "l0", "l1", "a0x", "a1x", "a0z", "a1z"];
+const mixCh = (a: PoseCh, b: PoseCh, t: number, out: PoseCh): PoseCh => {
+  for (const k of POSE_KEYS) out[k] = a[k] + (b[k] - a[k]) * t;
+  return out;
+};
+const sstep = (a: number, b: number, x: number) => {
+  const p = Math.min(1, Math.max(0, (x - a) / (b - a)));
+  return p * p * (3 - 2 * p);
+};
+const _ground: PoseCh = { by: 0, brx: 0, bry: 0, brz: 0, bsx: 1, bsy: 1, hy: 0, hrx: 0, hry: 0, hrz: 0, l0: 0, l1: 0, a0x: 0, a1x: 0, a0z: 0, a1z: 0 };
+const _stride: PoseCh = { ..._ground };
+const _air: PoseCh = { ..._ground };
+
 function updateBlink(g: THREE.Object3D, rig: CharRig, t: number) {
   const st = g.userData.blink as { next: number; t: number; amt: number } | undefined;
   if (!st || rig.lids.length < 2) return;
@@ -445,6 +464,21 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
     rig.brows[1].position.y = 0.19 + lift;
   }
 
+  /* ---- per-character gait state -------------------------------------
+   * The stride phase is INTEGRATED over time (ph += dt·freq). The old
+   * code computed the phase as t·freq with t = absolute clock seconds,
+   * so every speed change (start walking, walk→run, takeoff, landing)
+   * teleported the phase by hundreds of radians — limbs scrambled for a
+   * moment and only looked right once speed settled. Integrating keeps
+   * the stride continuous no matter how speed changes.                 */
+  const st = (g.userData.gait ??= { lastT: t, ph: phase, air: 0 });
+  const dt = Math.min(0.1, Math.max(0, t - st.lastT));
+  st.lastT = t;
+  st.ph += dt * (5.4 + speed * 1.45);
+  // ground ⇄ air crossfade (~0.1 s) — no snapping on takeoff / landing
+  st.air += ((o.airborne ? 1 : 0) - st.air) * Math.min(1, dt * 22);
+  const airB = st.air;
+
   if (o.detained) {
     body.position.y = -0.34 + Math.sin(t * 2.2 + phase) * 0.015;
     body.rotation.x = 0.12;
@@ -459,96 +493,93 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
     return;
   }
 
-  head.rotation.x = 0;
-  body.rotation.x = 0;
-  body.rotation.z = 0;
-  body.rotation.y = 0;
-
-  if (o.airborne) {
-    // mid-air front flip after a double jump — one full rotation over FLIP_S
-    if (o.flip && o.flip > 0) {
-      const p = 1 - Math.min(1, o.flip);        // 0 → 1 through the flip
-      body.rotation.x = -Math.PI * 2 * p;       // full front flip
-      body.rotation.y = 0;
-      body.rotation.z = 0;
-      legs[0].rotation.x = -1.5; legs[1].rotation.x = -1.25; // tight tuck
-      arms[0].rotation.x = -1.15; arms[1].rotation.x = -1.15;
-      arms[0].rotation.z = 0.32; arms[1].rotation.z = -0.32;
-      head.position.y = HEAD_Y;
-      body.position.y = 0;
-      body.scale.y = 1.05; body.scale.x = body.scale.z = 0.96;
-      return;
-    }
-    const rising = (o.vy ?? 0) > 0;
-    if (rising) {
-      // launch: arms thrown up, legs trailing, body stretched
-      legs[0].rotation.x = -0.75; legs[1].rotation.x = 0.45;
-      arms[0].rotation.x = -2.6; arms[1].rotation.x = -2.4;
-      arms[0].rotation.z = 0.3; arms[1].rotation.z = -0.3;
-      body.rotation.x = -0.12;
-      body.scale.y = 1.07; body.scale.x = body.scale.z = 0.96;
-    } else {
-      // falling: superhero arms out, legs reaching for the ground
-      legs[0].rotation.x = -0.5; legs[1].rotation.x = 0.3;
-      arms[0].rotation.x = -0.85; arms[1].rotation.x = -0.85;
-      arms[0].rotation.z = 1.15; arms[1].rotation.z = -1.15;
-      body.rotation.x = 0.06;
-      body.scale.y = 0.97; body.scale.x = body.scale.z = 1.02;
-    }
-    body.rotation.y = 0.1;
+  // mid-air front flip after a double jump — one hard-cut cartoon move
+  if (o.airborne && o.flip && o.flip > 0) {
+    const p = 1 - Math.min(1, o.flip);        // 0 → 1 through the flip
+    body.rotation.x = -Math.PI * 2 * p;       // full front flip
+    body.rotation.y = 0;
     body.rotation.z = 0;
+    legs[0].rotation.x = -1.5; legs[1].rotation.x = -1.25; // tight tuck
+    arms[0].rotation.x = -1.15; arms[1].rotation.x = -1.15;
+    arms[0].rotation.z = 0.32; arms[1].rotation.z = -0.32;
     head.position.y = HEAD_Y;
+    head.rotation.set(0, 0, 0);
     body.position.y = 0;
+    body.scale.set(0.96, 1.05, 0.96);
     return;
+  }
+
+  /* ---- ground pose: idle ⇄ walk ⇄ run, blended continuously -------- */
+  const sp = Math.min(1.6, speed / 4.5);
+  const b = Math.sin(t * 2 + phase);          // slow breathing (fixed freq — safe)
+  // idle targets
+  _ground.by = b * 0.02;
+  _ground.brx = 0; _ground.bry = 0;
+  _ground.brz = Math.sin(t * 0.7 + phase) * 0.022; // gentle weight shift
+  _ground.bsx = 1; _ground.bsy = 1 + b * 0.014;
+  _ground.hy = HEAD_Y + b * 0.012;
+  _ground.hrx = 0;
+  _ground.hry = Math.sin(t * 0.6 + phase) * 0.16;
+  _ground.hrz = Math.sin(t * 0.9 + phase) * 0.03;
+  _ground.l0 = 0; _ground.l1 = 0;
+  _ground.a0x = b * 0.07; _ground.a1x = -b * 0.07;
+  _ground.a0z = 0.09 + b * 0.02; _ground.a1z = -0.09 - b * 0.02;
+  // stride targets (integrated phase — smooth through any speed change)
+  const freq = st.ph;
+  const k = Math.sin(freq) * sp * 0.98;
+  const runB = sstep(6.8, 9.2, speed);        // smooth walk → run lean/pump
+  const pump = 0.9 + runB * 0.28;
+  const bounce = Math.abs(Math.cos(freq));
+  _stride.by = bounce * 0.06 * sp;
+  _stride.brx = Math.min(0.3, sp * 0.13) + runB * 0.14;
+  _stride.bry = 0;
+  _stride.brz = Math.sin(freq) * 0.035 * sp;  // hip roll adds life
+  _stride.bsx = 1 + bounce * 0.02 * sp;
+  _stride.bsy = 1 - bounce * 0.035 * sp;
+  _stride.hy = HEAD_Y + bounce * 0.045 * sp;  // head bobs on stride
+  _stride.hrx = -0.05 * sp - runB * 0.08;
+  _stride.hry = 0;
+  _stride.hrz = Math.sin(freq) * 0.035 * sp;
+  _stride.l0 = k; _stride.l1 = -k;
+  _stride.a0x = -k * pump; _stride.a1x = k * pump;
+  _stride.a0z = 0.12; _stride.a1z = -0.12;
+  mixCh(_ground, _stride, sstep(0.05, 0.55, sp), _ground); // idle → stride
+
+  /* ---- air pose: launch ⇄ fall, blended by vertical speed ----------- */
+  const upB = sstep(-1.6, 1.6, o.vy ?? 0);    // 1 = rising · 0 = falling
+  // rise pose: arms thrown up, legs trailing, body stretched
+  _stride.by = 0; _stride.brx = -0.12; _stride.bry = 0.1; _stride.brz = 0;
+  _stride.bsx = 0.96; _stride.bsy = 1.07;
+  _stride.hy = HEAD_Y; _stride.hrx = 0; _stride.hry = 0; _stride.hrz = 0;
+  _stride.l0 = -0.75; _stride.l1 = 0.45;
+  _stride.a0x = -2.6; _stride.a1x = -2.4; _stride.a0z = 0.3; _stride.a1z = -0.3;
+  // fall pose: superhero arms out, legs reaching for the ground
+  _air.by = 0; _air.brx = 0.06; _air.bry = 0.1; _air.brz = 0;
+  _air.bsx = 1.02; _air.bsy = 0.97;
+  _air.hy = HEAD_Y; _air.hrx = 0; _air.hry = 0; _air.hrz = 0;
+  _air.l0 = -0.5; _air.l1 = 0.3;
+  _air.a0x = -0.85; _air.a1x = -0.85; _air.a0z = 1.15; _air.a1z = -1.15;
+  mixCh(_air, _stride, upB, _air);            // no snap at the apex
+  mixCh(_ground, _air, airB, _ground);        // ground ⇄ air crossfade
+
+  if (o.zombie) {
+    _ground.a0x = -1.4 + Math.sin(t * 3 + phase) * 0.14;
+    _ground.a1x = -1.4 + Math.sin(t * 3 + phase + 1) * 0.14;
+    _ground.a0z = 0.1; _ground.a1z = -0.1;
+    _ground.brz = Math.sin(t * 2.4 + phase) * 0.07;
+    _ground.hrx = 0.12;
   }
 
   // landing squash-and-stretch: peaks mid-way, eases back to 1
   const sq = o.squash ? Math.sin(Math.min(1, o.squash) * Math.PI) * 0.16 : 0;
-
-  const sp = Math.min(1.6, speed / 4.5);
-  if (sp < 0.06) {
-    const b = Math.sin(t * 2 + phase);
-    body.position.y = b * 0.02 - sq * 0.35;
-    body.scale.y = (1 + b * 0.014) * (1 - sq);
-    body.scale.x = body.scale.z = 1 + sq * 0.7;
-    body.rotation.z = Math.sin(t * 0.7 + phase) * 0.022; // gentle weight shift
-    head.position.y = HEAD_Y + b * 0.012;
-    legs[0].rotation.x = legs[1].rotation.x = 0;
-    arms[0].rotation.x = b * 0.07; arms[1].rotation.x = -b * 0.07;
-    arms[0].rotation.z = 0.09 + b * 0.02; arms[1].rotation.z = -0.09 - b * 0.02;
-    head.rotation.y = Math.sin(t * 0.6 + phase) * 0.16;
-    head.rotation.z = Math.sin(t * 0.9 + phase) * 0.03;
-    return;
-  }
-
-  const sprinting = speed > 6.9;
-  const freq = t * (5.4 + speed * 1.45) + phase;
-  const k = Math.sin(freq) * sp * 0.98;
-  legs[0].rotation.x = k;
-  legs[1].rotation.x = -k;
-  const pump = sprinting ? 1.18 : 0.9;
-  arms[0].rotation.x = -k * pump;
-  arms[1].rotation.x = k * pump;
-  arms[0].rotation.z = 0.12;
-  arms[1].rotation.z = -0.12;
-  const bounce = Math.abs(Math.cos(freq));
-  body.position.y = bounce * 0.06 * sp - sq * 0.35;
-  body.scale.y = (1 - bounce * 0.035 * sp) * (1 - sq);
-  body.scale.x = body.scale.z = (1 + bounce * 0.02 * sp) * (1 + sq * 0.7);
-  body.rotation.x = Math.min(0.3, sp * 0.13) + (sprinting ? 0.14 : 0);
-  body.rotation.z = Math.sin(freq) * 0.035 * sp; // hip roll adds life
-  head.position.y = HEAD_Y + bounce * 0.045 * sp; // head bobs on stride
-  head.rotation.x = -0.05 * sp - (sprinting ? 0.08 : 0);
-  head.rotation.z = Math.sin(freq) * 0.035 * sp;
-  head.rotation.y = 0;
-
-  if (o.zombie) {
-    arms[0].rotation.x = -1.4 + Math.sin(t * 3 + phase) * 0.14;
-    arms[1].rotation.x = -1.4 + Math.sin(t * 3 + phase + 1) * 0.14;
-    arms[0].rotation.z = 0.1; arms[1].rotation.z = -0.1;
-    body.rotation.z = Math.sin(t * 2.4 + phase) * 0.07;
-    head.rotation.x = 0.12;
-  }
+  body.position.y = _ground.by - sq * 0.35;
+  body.rotation.set(_ground.brx, _ground.bry, _ground.brz);
+  body.scale.set(_ground.bsx * (1 + sq * 0.7), _ground.bsy * (1 - sq), _ground.bsx * (1 + sq * 0.7));
+  head.position.y = _ground.hy;
+  head.rotation.set(_ground.hrx, _ground.hry, _ground.hrz);
+  legs[0].rotation.x = _ground.l0; legs[1].rotation.x = _ground.l1;
+  arms[0].rotation.x = _ground.a0x; arms[1].rotation.x = _ground.a1x;
+  arms[0].rotation.z = _ground.a0z; arms[1].rotation.z = _ground.a1z;
 }
 
 /* ------------------------------------------------------------------ */
@@ -640,10 +671,16 @@ export function buildAnimal(kind: AnimalKind3): THREE.Group {
 export function poseAnimal(g: THREE.Object3D, speed: number, t: number, phase = 0) {
   const rig = g.userData.rig as { legs: THREE.Group[]; head: THREE.Group; body: THREE.Group } | undefined;
   if (!rig) return;
+  // integrated stride phase (same fix as poseCharacter — no phase jumps
+  // when the animal speeds up / slows down)
+  const st = (g.userData.gait ??= { lastT: t, ph: phase });
+  const dt = Math.min(0.1, Math.max(0, t - st.lastT));
+  st.lastT = t;
+  st.ph += dt * (6 + speed * 2);
   const sp = Math.min(1.4, speed / 3.5);
-  const k = Math.sin(t * (6 + speed * 2) + phase) * sp * 0.7;
+  const k = Math.sin(st.ph) * sp * 0.7;
   rig.legs.forEach((l, i) => { l.rotation.x = (i % 2 === 0 ? k : -k) * (i < 2 ? 1 : -1); });
-  rig.body.position.y = Math.abs(Math.cos(t * (6 + speed * 2) + phase)) * 0.04 * sp;
+  rig.body.position.y = Math.abs(Math.cos(st.ph)) * 0.04 * sp;
   rig.head.rotation.x = Math.sin(t * 1.5 + phase) * 0.08;
   rig.head.rotation.z = Math.sin(t * 0.9 + phase) * 0.05;
 }
