@@ -56,14 +56,36 @@ export function GameRoot() {
 
   const backToMenu = useCallback(() => {
     stopMusic();
-    if (engineRef.current) engineRef.current.running = false;
+    const eng = engineRef.current;
+    if (eng) {
+      eng.running = false;
+      // save unfinished runs too (quit mid-chase) — wins are recorded by the victory watcher
+      if (!eng.won && eng.points > 0) {
+        const timeMs = Math.round(eng.elapsed * 1000);
+        useGame.getState().recordRun(eng.points, eng.delivered, eng.rescues, eng.caughtCount, false, timeMs);
+        fetch("/api/scores", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            name: useGame.getState().playerName || "Guest",
+            points: eng.points, votes: eng.delivered, rescues: eng.rescues,
+            caught: eng.caughtCount, won: false, timeMs,
+          }),
+        })
+          .then((r) => r.json())
+          .then(() => fetch("/api/scores"))
+          .then((r) => r.json())
+          .then((d) => useGame.getState().setScores(d.scores ?? []))
+          .catch(() => {});
+      }
+    }
     useGame.getState().setPaused(false);
     setScreen("landing");
   }, [setScreen]);
 
   useGameInput(engineRef.current);
 
-  // watch for the win → open the victory modal once
+  // watch for the win → open the victory modal once + save the record
   useEffect(() => {
     const eng = engineRef.current;
     if (!eng) return;
@@ -71,7 +93,7 @@ export function GameRoot() {
       if (eng.won && !useGame.getState().victoryOpen) {
         useGame.getState().setVictoryOpen(true);
         const h = useGame.getState().hud;
-        useGame.getState().recordRun(h.points, h.delivered, h.rescues);
+        useGame.getState().recordRun(h.points, h.delivered, h.rescues, eng.caughtCount, true, Math.round(h.elapsed * 1000));
       }
     }, 400);
     return () => clearInterval(id);
@@ -86,7 +108,7 @@ export function GameRoot() {
       {(screen === "connecting" || screen === "play") && engine && (
         <>
           <Scene engine={engine} key={`scene-${runId}`} />
-          <Hud engine={engine} />
+          <Hud engine={engine} onQuit={backToMenu} />
           <VictoryModal
             engine={engine}
             onReplay={() => { setRunId((r) => r + 1); startGame(); }}

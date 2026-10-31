@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Play, Settings, Gamepad2, UserCog, Trophy, ShieldAlert, Sunrise, MapPin, Sparkles, Vote } from "lucide-react";
+import { Play, Settings, Gamepad2, UserCog, Trophy, ShieldAlert, Sunrise, MapPin, Sparkles, Vote, User, BarChart3, History as HistoryIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TICKER_LINES } from "@/lib/game/constants";
 import { primeAudio, sfx, startMusic } from "@/lib/game/audio";
 import { useGame } from "./store";
 import { Leaderboard } from "./Creator";
-import { HowToPlay, SettingsDialog } from "./Panels";
+import { HowToPlay, SettingsDialog, ProfileDialog, StatsDialog, HistoryDialog } from "./Panels";
+import { RankBadge, RankProgress } from "./RankCard";
 
 const FEATURES: { emoji: string; icon: React.ReactNode; title: string; text: string; tint: string }[] = [
   { emoji: "🏙️", icon: <MapPin size={18} />, title: "Huge GTA-style city", text: "Towers, shops, homes, a mega mall, farms, jungle & graveyard — all explorable", tint: "text-emerald-300" },
@@ -26,8 +27,12 @@ export function Landing({ onPlay }: { onPlay: () => void }) {
   const bestScore = useGame((s) => s.bestScore);
   const lifeVotes = useGame((s) => s.lifeVotes);
   const lifeRescues = useGame((s) => s.lifeRescues);
+  const careerXp = useGame((s) => s.careerXp);
   const [help, setHelp] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [statsOpen, setStatsOpen] = useState(false);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const hasProfile = playerName.trim().length > 0;
 
   useEffect(() => {
@@ -108,14 +113,46 @@ export function Landing({ onPlay }: { onPlay: () => void }) {
             The votes are missing. The protest is on. <span className="text-yellow-200">Everybody run!</span>
           </p>
 
-          {/* player card + lifetime stats */}
-          <div className="mt-4 flex flex-wrap items-center justify-center gap-2 rounded-2xl border border-white/25 bg-black/40 px-4 py-2 text-sm text-white backdrop-blur">
-            <span className="font-black text-yellow-200">{hasProfile ? `Hi, ${playerName}!` : "New challenger!"}</span>
-            <span className="text-white/75">{look.girl ? "👧" : "👦"} {look.age}{look.cap ? " 🧢" : ""}{look.glasses ? " 👓" : ""}</span>
-            {runsPlayed > 0 && <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs font-bold">🏃 {runsPlayed} run{runsPlayed === 1 ? "" : "s"}</span>}
-            {bestScore > 0 && <span className="rounded-full bg-yellow-400/20 px-2 py-0.5 text-xs font-bold text-yellow-200">🏆 best {bestScore}</span>}
-            {lifeVotes > 0 && <span className="rounded-full bg-emerald-400/15 px-2 py-0.5 text-xs font-bold text-emerald-200">🗳️ {lifeVotes} delivered</span>}
-            {lifeRescues > 0 && <span className="rounded-full bg-rose-400/15 px-2 py-0.5 text-xs font-bold text-rose-200">❤️ {lifeRescues} rescued</span>}
+          {/* profile console: rank + identity + manage buttons */}
+          <div className="mx-auto mt-4 w-full max-w-xl rounded-2xl border border-white/25 bg-black/40 p-3 text-sm text-white backdrop-blur">
+            <div className="flex items-center gap-3">
+              <RankBadge xp={careerXp} size={46} />
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-2">
+                  <span className="truncate font-black text-yellow-200">{hasProfile ? `Hi, ${playerName}!` : "New challenger!"}</span>
+                  <span className="shrink-0 text-white/75">{look.girl ? "👧" : "👦"} {look.age}{look.cap ? " 🧢" : ""}{look.glasses ? " 👓" : ""}</span>
+                </div>
+                <div className="mt-1">
+                  <RankProgress xp={careerXp} />
+                </div>
+                <div className="mt-1.5 flex flex-wrap gap-1.5 text-[10px] font-bold">
+                  {runsPlayed > 0 && <span className="rounded-full bg-white/10 px-2 py-0.5">🏃 {runsPlayed} run{runsPlayed === 1 ? "" : "s"}</span>}
+                  {bestScore > 0 && <span className="rounded-full bg-yellow-400/20 px-2 py-0.5 text-yellow-200">🏆 best {bestScore.toLocaleString()}</span>}
+                  {lifeVotes > 0 && <span className="rounded-full bg-emerald-400/15 px-2 py-0.5 text-emerald-200">🗳️ {lifeVotes} delivered</span>}
+                  {lifeRescues > 0 && <span className="rounded-full bg-rose-400/15 px-2 py-0.5 text-rose-200">❤️ {lifeRescues} rescued</span>}
+                </div>
+              </div>
+            </div>
+            <div className="mt-2.5 grid grid-cols-3 gap-2">
+              <Button
+                size="sm" aria-label="Manage profile" onClick={() => { sfx.click(); setProfileOpen(true); }}
+                className="h-9 rounded-xl border border-white/20 bg-white/10 text-xs font-black text-white backdrop-blur hover:bg-white/20"
+              >
+                <User size={14} className="mr-1" /> Profile
+              </Button>
+              <Button
+                size="sm" aria-label="View career stats" onClick={() => { sfx.click(); setStatsOpen(true); }}
+                className="h-9 rounded-xl border border-white/20 bg-white/10 text-xs font-black text-white backdrop-blur hover:bg-white/20"
+              >
+                <BarChart3 size={14} className="mr-1" /> Stats
+              </Button>
+              <Button
+                size="sm" aria-label="View run history" onClick={() => { sfx.click(); setHistoryOpen(true); }}
+                className="h-9 rounded-xl border border-white/20 bg-white/10 text-xs font-black text-white backdrop-blur hover:bg-white/20"
+              >
+                <HistoryIcon size={14} className="mr-1" /> History
+              </Button>
+            </div>
           </div>
         </header>
 
@@ -198,6 +235,9 @@ export function Landing({ onPlay }: { onPlay: () => void }) {
 
       <HowToPlay open={help} onOpenChange={setHelp} />
       <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      <ProfileDialog open={profileOpen} onOpenChange={setProfileOpen} />
+      <StatsDialog open={statsOpen} onOpenChange={setStatsOpen} />
+      <HistoryDialog open={historyOpen} onOpenChange={setHistoryOpen} />
     </div>
   );
 }

@@ -289,7 +289,7 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
 }
 
 /* ----------------------------- main HUD ----------------------------- */
-export function Hud({ engine }: { engine: GameEngine }) {
+export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => void }) {
   const hud = useGame((s) => s.hud);
   const toasts = useGame((s) => s.toasts);
   const dropToast = useGame((s) => s.dropToast);
@@ -542,11 +542,13 @@ export function Hud({ engine }: { engine: GameEngine }) {
           <PauseMenu
             engine={engine}
             onQuit={() => {
+              if (onQuit) { onQuit(); return; }
+              // fallback when no GameRoot handler is wired
               engine.running = false;
               stopMusic();
               setPaused(false);
               useGame.getState().setVictoryOpen(false);
-              useGame.getState().recordRun(useGame.getState().hud.points, useGame.getState().hud.delivered, useGame.getState().hud.rescues);
+              useGame.getState().recordRun(useGame.getState().hud.points, useGame.getState().hud.delivered, useGame.getState().hud.rescues, engine.caughtCount, false, Math.round(useGame.getState().hud.elapsed * 1000));
               useGame.getState().setScreen("landing");
             }}
           />
