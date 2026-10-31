@@ -119,47 +119,132 @@ function Buildings() {
 }
 
 /* ------------------------- trees ------------------------- */
+const TRUNK_COLS = ["#8a5a33", "#7a4a28", "#6e4123", "#96683c"];
+const PINE_COLS = ["#2f9e55", "#37a45c", "#2a8a4e", "#46b06a", "#2d9450"];
+const ROUND_COLS = ["#58b368", "#6cbf6f", "#4aa85e", "#7ac74f", "#63b568"];
+
+/** Shared wind-clock uniform + GPU sway injected into foliage materials. */
+const WIND = { value: 0 };
+function windify(mat: THREE.Material, amp: number, key: string) {
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.uTime = WIND;
+    sh.uniforms.uAmp = { value: amp };
+    sh.vertexShader = sh.vertexShader
+      .replace(
+        "#include <common>",
+        "#include <common>\nuniform float uTime;\nuniform float uAmp;",
+      )
+      .replace(
+        "#include <begin_vertex>",
+        `#include <begin_vertex>
+        {
+          float ph = instanceMatrix[3][0] * 0.35 + instanceMatrix[3][2] * 0.27;
+          float sw = (sin(uTime * 1.4 + ph) + 0.55 * sin(uTime * 2.4 + ph * 1.7)) * uAmp;
+          float lift = clamp((transformed.y + 0.5) * 1.2, 0.0, 1.0);
+          transformed.x += sw * lift;
+          transformed.z += sw * lift * 0.6;
+        }`,
+      );
+  };
+  mat.customProgramCacheKey = () => key;
+}
+
 function Forest() {
   const trunks = useRef<THREE.InstancedMesh>(null!);
-  const cones = useRef<THREE.InstancedMesh>(null!);
+  const tiers = useRef<THREE.InstancedMesh>(null!);
   const blobs = useRef<THREE.InstancedMesh>(null!);
-  const nCone = useMemo(() => WORLD.trees.filter((t) => t.kind === 0).length, []);
+  const n = useMemo(() => {
+    let pine = 0;
+    for (const t of WORLD.trees) if (t.kind === 0) pine++;
+    return { pine, round: WORLD.trees.length - pine };
+  }, []);
+
   useLayoutEffect(() => {
-    let ci = 0, bi = 0;
+    const r = mulberry32(20240);
+    // Three stacked cone tiers — base y / radius / height are × tree scale.
+    const TIERS = [
+      { y: 4.55, rad: 2.6, h: 3.4, shade: 0.93 },
+      { y: 6.5, rad: 1.98, h: 2.85, shade: 1.0 },
+      { y: 8.15, rad: 1.42, h: 2.35, shade: 1.08 },
+    ];
+    let ti = 0, bi = 0;
     WORLD.trees.forEach((t, i) => {
-      tmp.rotation.set(0, t.x * 1.7, 0);
-      tmp.scale.setScalar(t.s);
-      tmp.position.set(t.x, 1.5 * t.s, t.z);
+      const rot = t.x * 0.7 + t.z * 1.3;
+      const hm = range(r, 0.9, 1.14); // per-tree height variety
+      tmp.rotation.set(0, rot, 0);
+      tmp.scale.set(t.s, t.s, t.s);
+      tmp.position.set(t.x, 1.6 * t.s, t.z);
       tmp.updateMatrix();
       trunks.current.setMatrixAt(i, tmp.matrix);
+      trunks.current.setColorAt(i, col.set(TRUNK_COLS[i % TRUNK_COLS.length]));
+
       if (t.kind === 0) {
-        tmp.position.y = 5.4 * t.s;
-        tmp.updateMatrix();
-        cones.current.setMatrixAt(ci++, tmp.matrix);
+        const g = col.set(PINE_COLS[Math.floor(r() * PINE_COLS.length)]).clone();
+        for (const tier of TIERS) {
+          tmp.rotation.set(0, rot, 0);
+          tmp.scale.set(tier.rad * t.s, tier.h * t.s * hm, tier.rad * t.s);
+          tmp.position.set(t.x, tier.y * t.s * hm, t.z);
+          tmp.updateMatrix();
+          tiers.current.setMatrixAt(ti, tmp.matrix);
+          tiers.current.setColorAt(ti, col.copy(g).multiplyScalar(tier.shade));
+          ti++;
+        }
       } else {
-        tmp.position.y = 4.6 * t.s;
-        tmp.updateMatrix();
-        blobs.current.setMatrixAt(bi++, tmp.matrix);
+        const g = col.set(ROUND_COLS[Math.floor(r() * ROUND_COLS.length)]).clone();
+        const put = (dx: number, dy: number, dz: number, rad: number, shade: number) => {
+          tmp.rotation.set(0, rot, 0);
+          tmp.scale.setScalar(rad * t.s);
+          tmp.position.set(t.x + dx * t.s, dy * t.s, t.z + dz * t.s);
+          tmp.updateMatrix();
+          blobs.current.setMatrixAt(bi, tmp.matrix);
+          blobs.current.setColorAt(bi, col.copy(g).multiplyScalar(shade));
+          bi++;
+        };
+        put(0, 5.1, 0, 2.5, 1);        // main puffy crown
+        put(0, 6.75, 0, 1.72, 1.09);   // topknot
+        for (let k = 0; k < 3; k++) {  // side puffs
+          const a = rot + (k * Math.PI * 2) / 3;
+          put(Math.cos(a) * 1.6, 4.35, Math.sin(a) * 1.6, 1.58, 0.9);
+        }
       }
     });
     tmp.rotation.set(0, 0, 0);
+    tmp.scale.setScalar(1);
+    trunks.current.count = WORLD.trees.length;
+    tiers.current.count = ti;
+    blobs.current.count = bi;
     trunks.current.instanceMatrix.needsUpdate = true;
-    cones.current.instanceMatrix.needsUpdate = true;
+    tiers.current.instanceMatrix.needsUpdate = true;
     blobs.current.instanceMatrix.needsUpdate = true;
-  }, [nCone]);
+    if (trunks.current.instanceColor) trunks.current.instanceColor.needsUpdate = true;
+    if (tiers.current.instanceColor) tiers.current.instanceColor.needsUpdate = true;
+    if (blobs.current.instanceColor) blobs.current.instanceColor.needsUpdate = true;
+  }, [n]);
+
+  useFrame((s) => { WIND.value = s.clock.elapsedTime; });
+
+  const trunkMat = useMemo(() => new THREE.MeshLambertMaterial(), []);
+  const pineMat = useMemo(() => {
+    const m = new THREE.MeshLambertMaterial({ flatShading: true });
+    windify(m, 0.05, "wind-pine");
+    return m;
+  }, []);
+  const blobMat = useMemo(() => {
+    const m = new THREE.MeshLambertMaterial();
+    windify(m, 0.045, "wind-blob");
+    return m;
+  }, []);
+
   return (
     <>
-      <instancedMesh ref={trunks} args={[undefined, undefined, WORLD.trees.length]}>
-        <cylinderGeometry args={[0.32, 0.48, 3, 6]} />
-        <meshLambertMaterial color="#7a4a28" />
+      <instancedMesh ref={trunks} args={[undefined, undefined, WORLD.trees.length]} material={trunkMat}>
+        <cylinderGeometry args={[0.34, 0.52, 3.2, 7]} />
       </instancedMesh>
-      <instancedMesh ref={cones} args={[undefined, undefined, Math.max(1, nCone)]}>
-        <coneGeometry args={[2.3, 6.4, 7]} />
-        <meshLambertMaterial color="#2f8f46" />
+      <instancedMesh ref={tiers} args={[undefined, undefined, Math.max(1, n.pine * 3)]} material={pineMat}>
+        <coneGeometry args={[1, 1, 8]} />
       </instancedMesh>
-      <instancedMesh ref={blobs} args={[undefined, undefined, Math.max(1, WORLD.trees.length - nCone)]}>
-        <sphereGeometry args={[2.7, 8, 6]} />
-        <meshLambertMaterial color="#43a047" />
+      <instancedMesh ref={blobs} args={[undefined, undefined, Math.max(1, n.round * 5)]} material={blobMat}>
+        <sphereGeometry args={[1, 9, 7]} />
       </instancedMesh>
     </>
   );
@@ -311,43 +396,141 @@ function Flowers() {
 }
 
 /* ------------------------- mountains ------------------------- */
+const ROCK_COLS = ["#8d8478", "#7d7468", "#96897a", "#8b8f9a", "#847a6d"];
+const HILL_COLS = ["#5d8a4a", "#527e42", "#68964f", "#4e7a40"];
+
+interface Peak {
+  x: number; z: number; h: number; w: number;
+  rot: number; sx: number; sz: number;
+  ci: number; tint: number; seg: 0 | 1 | 2; snow: number;
+}
+
 function Mountains() {
-  const bodies = useRef<THREE.InstancedMesh>(null!);
-  const caps = useRef<THREE.InstancedMesh>(null!);
-  const items = useMemo(() => {
+  const b5 = useRef<THREE.InstancedMesh>(null!);
+  const b6 = useRef<THREE.InstancedMesh>(null!);
+  const b7 = useRef<THREE.InstancedMesh>(null!);
+  const c5 = useRef<THREE.InstancedMesh>(null!);
+  const c6 = useRef<THREE.InstancedMesh>(null!);
+  const c7 = useRef<THREE.InstancedMesh>(null!);
+  const hills = useRef<THREE.InstancedMesh>(null!);
+
+  const data = useMemo(() => {
     const r = mulberry32(7);
-    return Array.from({ length: 44 }, (_, i) => {
-      const a = (i / 44) * Math.PI * 2 + range(r, -0.07, 0.07), d = range(r, 348, 425), h = range(r, 75, 165);
-      return { x: Math.cos(a) * d, z: Math.sin(a) * d, h, w: range(r, 45, 82), c: i % 3 ? "#7d7468" : "#8d8478" };
+    // Major peaks — ring around the map, each with its own silhouette.
+    const majors: Peak[] = Array.from({ length: 26 }, (_, i) => {
+      const a = (i / 26) * Math.PI * 2 + range(r, -0.06, 0.06);
+      const d = range(r, 348, 418);
+      const h = range(r, 85, 178);
+      const w = range(r, 52, 96);
+      return {
+        x: Math.cos(a) * d, z: Math.sin(a) * d, h, w,
+        rot: range(r, 0, Math.PI * 2),
+        sx: range(r, 0.8, 1.2), sz: range(r, 0.8, 1.2),
+        ci: i % ROCK_COLS.length, tint: range(r, -0.045, 0.055),
+        seg: (i % 3) as 0 | 1 | 2,
+        snow: h > 125 ? range(r, 0.5, 0.64) : h > 98 ? range(r, 0.6, 0.75) : range(r, 0.78, 0.94),
+      };
     });
+    // Shoulder peaks — cluster beside majors to form ranges.
+    const shoulders: Peak[] = [];
+    majors.forEach((m, i) => {
+      const nSh = r() < 0.45 ? 2 : r() < 0.75 ? 1 : 0;
+      for (let k = 0; k < nSh; k++) {
+        const a = Math.atan2(m.z, m.x) + (k === 0 ? 1 : -1) * range(r, 0.02, 0.055);
+        const d = Math.hypot(m.x, m.z) + range(r, -26, 44);
+        const h = m.h * range(r, 0.36, 0.6);
+        shoulders.push({
+          x: Math.cos(a) * d, z: Math.sin(a) * d, h,
+          w: m.w * range(r, 0.42, 0.6),
+          rot: range(r, 0, Math.PI * 2),
+          sx: range(r, 0.85, 1.15), sz: range(r, 0.85, 1.15),
+          ci: (i + k + 1) % ROCK_COLS.length, tint: range(r, -0.04, 0.05),
+          seg: ((i + k + 1) % 3) as 0 | 1 | 2,
+          snow: h > 75 ? range(r, 0.58, 0.72) : range(r, 0.82, 0.96),
+        });
+      }
+    });
+    // Rounded low-poly foothills, kept outside the playable jungle ring.
+    const hills = Array.from({ length: 44 }, (_, i) => {
+      const a = range(r, 0, Math.PI * 2), d = range(r, 342, 382);
+      return { x: Math.cos(a) * d, z: Math.sin(a) * d, h: range(r, 9, 26), w: range(r, 24, 54), ci: i % HILL_COLS.length, tint: range(r, -0.05, 0.06) };
+    });
+    const segBody = [0, 0, 0], segCap = [0, 0, 0];
+    for (const p of [...majors, ...shoulders]) { segBody[p.seg]++; if (p.snow < 0.98) segCap[p.seg]++; }
+    return { majors, shoulders, hills, segBody, segCap };
   }, []);
+
   useLayoutEffect(() => {
-    items.forEach((m, i) => {
-      tmp.rotation.set(0, 0, 0);
-      tmp.position.set(m.x, m.h / 2 - 4, m.z);
-      tmp.scale.set(m.w, m.h, m.w);
+    const bodyRefs = [b5, b6, b7], capRefs = [c5, c6, c7];
+    const nb = [0, 0, 0], nc = [0, 0, 0];
+    const putPeak = (p: Peak) => {
+      const br = bodyRefs[p.seg].current, cr = capRefs[p.seg].current;
+      tmp.rotation.set(0, p.rot, 0);
+      tmp.scale.set(p.w * p.sx, p.h, p.w * p.sz);
+      tmp.position.set(p.x, p.h / 2 - 4, p.z);
       tmp.updateMatrix();
-      bodies.current.setMatrixAt(i, tmp.matrix);
-      bodies.current.setColorAt(i, col.set(m.c));
-      tmp.position.y = m.h * 0.86 - 4;
-      tmp.scale.set(m.w * 0.24, m.h * 0.28, m.w * 0.24);
+      br.setMatrixAt(nb[p.seg], tmp.matrix);
+      br.setColorAt(nb[p.seg], col.set(ROCK_COLS[p.ci]).offsetHSL(0, 0, p.tint));
+      nb[p.seg]++;
+      if (p.snow < 0.98) {
+        const f = p.snow;
+        // Cap is the cone tip region — same triangle, slight overhang so snow drapes.
+        tmp.scale.set(p.w * p.sx * (1 - f) * 1.06, p.h * (1 - f) * 1.02, p.w * p.sz * (1 - f) * 1.06);
+        tmp.position.set(p.x, p.h * f + (p.h * (1 - f)) / 2 - 4, p.z);
+        tmp.updateMatrix();
+        cr.setMatrixAt(nc[p.seg], tmp.matrix);
+        nc[p.seg]++;
+      }
+    };
+    data.majors.forEach(putPeak);
+    data.shoulders.forEach(putPeak);
+    data.hills.forEach((hl, i) => {
+      tmp.rotation.set(0, hl.x * 0.11, 0);
+      tmp.scale.set(hl.w, hl.h, hl.w);
+      tmp.position.set(hl.x, hl.h * 0.55, hl.z);
       tmp.updateMatrix();
-      caps.current.setMatrixAt(i, tmp.matrix);
+      hills.current.setMatrixAt(i, tmp.matrix);
+      hills.current.setColorAt(i, col.set(HILL_COLS[hl.ci]).offsetHSL(0, 0, hl.tint));
     });
+    tmp.rotation.set(0, 0, 0);
     tmp.scale.setScalar(1);
-    bodies.current.instanceMatrix.needsUpdate = true;
-    caps.current.instanceMatrix.needsUpdate = true;
-    if (bodies.current.instanceColor) bodies.current.instanceColor.needsUpdate = true;
-  }, [items]);
+    for (let s = 0; s < 3; s++) {
+      bodyRefs[s].current.count = nb[s];
+      capRefs[s].current.count = nc[s];
+      bodyRefs[s].current.instanceMatrix.needsUpdate = true;
+      capRefs[s].current.instanceMatrix.needsUpdate = true;
+      if (bodyRefs[s].current.instanceColor) bodyRefs[s].current.instanceColor.needsUpdate = true;
+    }
+    hills.current.instanceMatrix.needsUpdate = true;
+    if (hills.current.instanceColor) hills.current.instanceColor.needsUpdate = true;
+  }, [data]);
+
+  const rockMat = useMemo(() => new THREE.MeshLambertMaterial({ flatShading: true }), []);
+  const snowMat = useMemo(() => new THREE.MeshLambertMaterial({ color: "#f4f7fb", flatShading: true }), []);
+  const hillMat = useMemo(() => new THREE.MeshLambertMaterial({ flatShading: true }), []);
+
   return (
     <>
-      <instancedMesh ref={bodies} args={[undefined, undefined, items.length]} frustumCulled={false}>
-        <coneGeometry args={[1, 1, 7]} />
-        <meshLambertMaterial flatShading />
+      <instancedMesh ref={b5} args={[undefined, undefined, Math.max(1, data.segBody[0])]} material={rockMat} frustumCulled={false}>
+        <coneGeometry args={[1, 1, 5]} />
       </instancedMesh>
-      <instancedMesh ref={caps} args={[undefined, undefined, items.length]} frustumCulled={false}>
+      <instancedMesh ref={b6} args={[undefined, undefined, Math.max(1, data.segBody[1])]} material={rockMat} frustumCulled={false}>
+        <coneGeometry args={[1, 1, 6]} />
+      </instancedMesh>
+      <instancedMesh ref={b7} args={[undefined, undefined, Math.max(1, data.segBody[2])]} material={rockMat} frustumCulled={false}>
         <coneGeometry args={[1, 1, 7]} />
-        <meshLambertMaterial color="#f2f4f8" flatShading />
+      </instancedMesh>
+      <instancedMesh ref={c5} args={[undefined, undefined, Math.max(1, data.segCap[0])]} material={snowMat} frustumCulled={false}>
+        <coneGeometry args={[1, 1, 5]} />
+      </instancedMesh>
+      <instancedMesh ref={c6} args={[undefined, undefined, Math.max(1, data.segCap[1])]} material={snowMat} frustumCulled={false}>
+        <coneGeometry args={[1, 1, 6]} />
+      </instancedMesh>
+      <instancedMesh ref={c7} args={[undefined, undefined, Math.max(1, data.segCap[2])]} material={snowMat} frustumCulled={false}>
+        <coneGeometry args={[1, 1, 7]} />
+      </instancedMesh>
+      <instancedMesh ref={hills} args={[undefined, undefined, data.hills.length]} material={hillMat} frustumCulled={false}>
+        <icosahedronGeometry args={[1, 0]} />
       </instancedMesh>
     </>
   );
@@ -519,7 +702,7 @@ function Env({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
     sky.copy(DAY).lerp(NIGHT, n);
     if (dk > 0) sky.lerp(DUSK, dk * 0.6);
     scene.background = sky;
-    scene.fog = new THREE.Fog(sky, 70, n > 0.5 ? 250 : 400);
+    scene.fog = new THREE.Fog(sky, 70, n > 0.5 ? 270 : 470);
     hemi.current.intensity = 0.35 + 0.55 * (1 - n);
     sun.current.intensity = 0.25 + 0.95 * (1 - n);
     sun.current.position.set(Math.cos(PI2 * (clock - 0.25)) * 200, Math.max(24, h * 200), 90);

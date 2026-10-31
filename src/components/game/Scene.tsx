@@ -159,7 +159,7 @@ export function Scene({ engine }: { engine: GameEngine }) {
       onCreated={({ gl, scene, camera }) => {
         gl.setClearColor("#8fd3ff");
         // expose for debugging/perf tuning (also used to detect software renderers)
-        (window as unknown as { __vc3?: unknown }).__vc3 = { gl, scene, camera };
+        (window as unknown as { __vc3?: unknown }).__vc3 = { gl, scene, camera, engine };
       }}
     >
       {low && <AdaptiveDpr />}
