@@ -62,7 +62,7 @@ export class GameEngine {
 
   points = 0; rescues = 0; caughtCount = 0;
   delivered = 0;
-  detainedT = 0; invulnT = 0; elapsed = 0;
+  detainedT = 0; invulnT = 6; elapsed = 0; // 6s spawn grace — cops can't spot or catch you
   won = false; wonAt = 0;
   running = false;
   private nextId = 1;
@@ -92,9 +92,16 @@ export class GameEngine {
       const p = freeSpot(r, this.world, a, b);
       this.votes.push({ id: this.nid(), x: p.x, z: p.z, state: "world" });
     }
-    // police
+    // police — keep clear of the player's spawn so nobody gets spotted on frame one
     for (let i = 0; i < POLICE_COUNT; i++) {
-      const p = freeSpot(r, this.world, 12, 90);
+      const p = freeSpot(r, this.world, 12, 90, [{ x: SPAWN.x, z: SPAWN.z, r: 70 }]);
+      if (Math.hypot(p.x - SPAWN.x, p.z - SPAWN.z) < 60) {
+        // safety net (freeSpot's fallback sits next to spawn): relocate to a safe ring
+        const a = r() * Math.PI * 2;
+        p.x = SPAWN.x + Math.cos(a) * 78;
+        p.z = SPAWN.z + Math.sin(a) * 78;
+        resolve(p, 0.9, this.world);
+      }
       this.cops.push({ id: this.nid(), kind: "police", x: p.x, z: p.z, vx: 0, vz: 0, face: 0, mode: "patrol", tx: p.x, tz: p.z, timer: 0, phase: Math.random() * 6, name: "Police", speed: POLICE_SPEED * 0.6, alertT: 0 });
     }
     // civilians
@@ -131,10 +138,16 @@ export class GameEngine {
     this.player = newBody(SPAWN.x, SPAWN.z);
     this.hp = 100; this.stamina = 100; this.stars = 0; this.starTimer = 0;
     this.carriedVotes = []; this.delivered = 0; this.points = 0; this.rescues = 0; this.caughtCount = 0;
-    this.detainedT = 0; this.invulnT = 0; this.elapsed = 0; this.won = false; this.clock = 0.3;
+    this.detainedT = 0; this.invulnT = 6; this.elapsed = 0; this.won = false; this.clock = 0.3;
     for (const v of this.votes) { v.state = "world"; const p = freeSpot(this.rnd, this.world, 16, 330); v.x = p.x; v.z = p.z; }
     for (const it of this.items) { it.active = true; it.respawn = 0; }
     for (const c of this.civs) c.mode = "wander";
+    // scatter cops away from spawn & calm them down so restarts are fair
+    for (const cop of this.cops) {
+      const sp = freeSpot(this.rnd, this.world, 40, 120, [{ x: SPAWN.x, z: SPAWN.z, r: 70 }]);
+      cop.x = sp.x; cop.z = sp.z; cop.vx = cop.vz = 0;
+      cop.tx = sp.x; cop.tz = sp.z; cop.mode = "patrol"; cop.alertT = 0; cop.timer = 0;
+    }
     this.running = true;
   }
 
@@ -174,7 +187,7 @@ export class GameEngine {
     this.starTimer = STAR_DECAY_S;
     this.hp = Math.max(1, this.hp - 8);
     this.detainedT = DETAIN_SECONDS;
-    this.invulnT = 0;
+    this.invulnT = 5; // grace window after release so cops can't instantly re-catch
     cop.mode = "celebrate"; cop.timer = 2.5;
     sfx.caught();
     this.toast(carried > 0
@@ -212,6 +225,7 @@ export class GameEngine {
     this.player.vx = this.player.vz = 0;
     this.hp = 60;
     this.detainedT = 4;
+    this.invulnT = 3;
     this.dropVotes(SPAWN.x + 2, SPAWN.z + 2);
     this.toast("Whoa, everything is spinning… a kind chaiwala helped you.", "bad");
   }

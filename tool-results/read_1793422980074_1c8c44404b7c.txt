@@ -1,0 +1,1311 @@
+     1→"use client";
+     2→
+     3→import { useLayoutEffect, useMemo, useRef } from "react";
+     4→import { useFrame, useThree } from "@react-three/fiber";
+     5→import * as THREE from "three";
+     6→import {
+     7→  BALLOT, CITY_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, PARLIAMENT,
+     8→} from "@/lib/game/constants";
+     9→import {
+    10→  AVENUE, generateWorld, HOSPITAL, MALL, PARK, ROAD_W, ROADS, RING_R, RING_W, SCHOOL,
+    11→  type World,
+    12→} from "@/lib/game/worldgen";
+    13→import { buildBallotBox } from "@/lib/game/character";
+    14→import { mulberry32, range } from "@/lib/game/rng";
+    15→import { nightFactor } from "@/lib/game/sim";
+    16→
+    17→export const WORLD: World = generateWorld();
+    18→const tmp = new THREE.Object3D();
+    19→const col = new THREE.Color();
+    20→
+    21→/* ------------------------- ground & zones ------------------------- */
+    22→function Disc({ r, color, y, x = 0, z = 0 }: { r: number; color: string; y: number; x?: number; z?: number }) {
+    23→  return (
+    24→    <mesh rotation-x={-Math.PI / 2} position={[x, y, z]}>
+    25→      <circleGeometry args={[r, 72]} />
+    26→      <meshLambertMaterial color={color} />
+    27→    </mesh>
+    28→  );
+    29→}
+    30→function Ring({ a, b, color, y }: { a: number; b: number; color: string; y: number }) {
+    31→  return (
+    32→    <mesh rotation-x={-Math.PI / 2} position-y={y}>
+    33→      <ringGeometry args={[a, b, 96]} />
+    34→      <meshLambertMaterial color={color} />
+    35→    </mesh>
+    36→  );
+    37→}
+    38→
+    39→/* ------------------------- roads: grid + ring highway + avenue ------------------------- */
+    40→function Roads() {
+    41→  const SPAN = 250;
+    42→  const dashes = useMemo(() => {
+    43→    const out: { x: number; z: number; rot: number }[] = [];
+    44→    for (const k of ROADS)
+    45→      for (let d = -SPAN; d <= SPAN; d += 9) {
+    46→        if (ROADS.some((o) => Math.abs(d - o) < 11)) continue; // keep intersections clear
+    47→        out.push({ x: k, z: d, rot: 0 });
+    48→        out.push({ x: d, z: k, rot: Math.PI / 2 });
+    49→      }
+    50→    for (let d = AVENUE.z0 + 6; d >= AVENUE.z1 + 5; d -= 8) out.push({ x: AVENUE.x, z: d, rot: 0 });
+    51→    return out;
+    52→  }, []);
+    53→  const ringDashes = useMemo(() => Array.from({ length: 56 }, (_, i) => (i / 56) * Math.PI * 2), []);
+    54→
+    55→  const ref = useRef<THREE.InstancedMesh>(null!);
+    56→  const ringRef = useRef<THREE.InstancedMesh>(null!);
+    57→  const lane = useRef<THREE.InstancedMesh>(null!);
+    58→  useLayoutEffect(() => {
+    59→    dashes.forEach((d, i) => {
+    60→      tmp.position.set(d.x, 0.12, d.z);
+    61→      tmp.rotation.set(-Math.PI / 2, 0, d.rot);
+    62→      tmp.scale.set(0.35, 2.4, 1);
+    63→      tmp.updateMatrix();
+    64→      ref.current.setMatrixAt(i, tmp.matrix);
+    65→    });
+    66→    ref.current.instanceMatrix.needsUpdate = true;
+    67→    ringDashes.forEach((a, i) => {
+    68→      tmp.position.set(Math.cos(a) * RING_R, 0.12, Math.sin(a) * RING_R);
+    69→      tmp.rotation.set(-Math.PI / 2, 0, -a);
+    70→      tmp.scale.set(0.35, 3.2, 1);
+    71→      tmp.updateMatrix();
+    72→      ringRef.current.setMatrixAt(i, tmp.matrix);
+    73→    });
+    74→    ringRef.current.instanceMatrix.needsUpdate = true;
+    75→    tmp.rotation.set(0, 0, 0);
+    76→    tmp.scale.setScalar(1);
+    77→    let i = 0;
+    78→    for (const k of ROADS) {
+    79→      tmp.rotation.set(-Math.PI / 2, 0, 0);
+    80→      tmp.position.set(k, 0.07, 0); tmp.scale.set(ROAD_W, SPAN * 2, 1); tmp.updateMatrix();
+    81→      lane.current.setMatrixAt(i++, tmp.matrix);
+    82→      tmp.position.set(0, 0.07, k); tmp.scale.set(SPAN * 2, ROAD_W, 1); tmp.updateMatrix();
+    83→      lane.current.setMatrixAt(i++, tmp.matrix);
+    84→    }
+    85→    tmp.position.set(AVENUE.x, 0.07, (AVENUE.z0 + AVENUE.z1) / 2);
+    86→    tmp.scale.set(AVENUE.w, AVENUE.z0 - AVENUE.z1, 1); tmp.updateMatrix();
+    87→    lane.current.setMatrixAt(i++, tmp.matrix);
+    88→    tmp.rotation.set(0, 0, 0); tmp.scale.setScalar(1);
+    89→    lane.current.instanceMatrix.needsUpdate = true;
+    90→  }, [dashes, ringDashes]);
+    91→  return (
+    92→    <>
+    93→      <instancedMesh ref={lane} args={[undefined, undefined, 11]}>
+    94→        <planeGeometry />
+    95→        <meshLambertMaterial color="#4a4a52" />
+    96→      </instancedMesh>
+    97→      <mesh rotation-x={-Math.PI / 2} position-y={0.08}>
+    98→        <ringGeometry args={[RING_R - RING_W / 2, RING_R + RING_W / 2, 96]} />
+    99→        <meshLambertMaterial color="#45454d" />
+   100→      </mesh>
+   101→      <instancedMesh ref={ringRef} args={[undefined, undefined, ringDashes.length]}>
+   102→        <planeGeometry />
+   103→        <meshBasicMaterial color="#f8f4e8" />
+   104→      </instancedMesh>
+   105→      <instancedMesh ref={ref} args={[undefined, undefined, dashes.length]}>
+   106→        <planeGeometry />
+   107→        <meshBasicMaterial color="#f8f4e8" />
+   108→      </instancedMesh>
+   109→    </>
+   110→  );
+   111→}
+   112→
+   113→/* ------------------------- buildings (towers / shops / homes / landmarks) ------------------------- */
+   114→function Buildings() {
+   115→  const walls = useRef<THREE.InstancedMesh>(null!);
+   116→  const flats = useRef<THREE.InstancedMesh>(null!);
+   117→  const pyrms = useRef<THREE.InstancedMesh>(null!);
+   118→  const trims = useRef<THREE.InstancedMesh>(null!);
+   119→  const doors = useRef<THREE.InstancedMesh>(null!);
+   120→  const counts = useMemo(() => {
+   121→    let flats = 0, pyrms = 0, trims = 0, doors = 0;
+   122→    for (const b of WORLD.buildings) {
+   123→      if (b.kind === 2 || b.kind === 6) pyrms++; else flats++;
+   124→      if (b.kind === 1) trims += 2; // awning + sign
+   125→      if (b.kind === 1 || b.kind === 2) doors++;
+   126→    }
+   127→    return { flats, pyrms, trims, doors };
+   128→  }, []);
+   129→
+   130→  useLayoutEffect(() => {
+   131→    let wi = 0, fi = 0, pi = 0, ti = 0, di = 0;
+   132→    WORLD.buildings.forEach((b) => {
+   133→      tmp.rotation.set(0, 0, 0);
+   134→      tmp.position.set(b.x, b.h / 2, b.z);
+   135→      tmp.scale.set(b.w * 2, b.h, b.d * 2);
+   136→      tmp.updateMatrix();
+   137→      walls.current.setMatrixAt(wi, tmp.matrix);
+   138→      walls.current.setColorAt(wi, col.setHex(b.color));
+   139→      wi++;
+   140→      if (b.kind === 2 || b.kind === 6) {
+   141→        const rh = b.kind === 6 ? 3.4 : 2.3;
+   142→        tmp.position.set(b.x, b.h + rh / 2, b.z);
+   143→        tmp.rotation.set(0, Math.PI / 4, 0);
+   144→        tmp.scale.set(b.w * 2 * 0.78, rh, b.d * 2 * 0.78);
+   145→        tmp.updateMatrix();
+   146→        pyrms.current.setMatrixAt(pi, tmp.matrix);
+   147→        pyrms.current.setColorAt(pi, col.setHex(b.roof));
+   148→        pi++;
+   149→      } else {
+   150→        tmp.position.set(b.x, b.h + 0.45, b.z);
+   151→        tmp.rotation.set(0, 0, 0);
+   152→        tmp.scale.set(b.w * 2 + 1.1, 0.9, b.d * 2 + 1.1);
+   153→        tmp.updateMatrix();
+   154→        flats.current.setMatrixAt(fi, tmp.matrix);
+   155→        flats.current.setColorAt(fi, col.setHex(b.roof));
+   156→        fi++;
+   157→      }
+   158→      if (b.kind === 1) {
+   159→        tmp.rotation.set(0, 0, 0);
+   160→        tmp.position.set(b.x, 3.5, b.z + b.fz * (b.d + 0.85));
+   161→        tmp.scale.set(b.w * 1.85, 0.45, 2.1);
+   162→        tmp.updateMatrix();
+   163→        trims.current.setMatrixAt(ti, tmp.matrix);
+   164→        trims.current.setColorAt(ti, col.setHex(b.awn));
+   165→        ti++;
+   166→        tmp.position.set(b.x, 5.9, b.z + b.fz * (b.d + 0.16));
+   167→        tmp.scale.set(b.w * 1.5, 1.15, 0.35);
+   168→        tmp.updateMatrix();
+   169→        trims.current.setMatrixAt(ti, tmp.matrix);
+   170→        trims.current.setColorAt(ti, col.setHex(b.roof));
+   171→        ti++;
+   172→      }
+   173→      if (b.kind === 1 || b.kind === 2) {
+   174→        tmp.rotation.set(0, 0, 0);
+   175→        tmp.position.set(b.kind === 2 ? b.x + b.fz * 0.9 : b.x, 1.25, b.z + b.fz * (b.d + 0.1));
+   176→        tmp.scale.set(1.4, 2.5, 1);
+   177→        tmp.updateMatrix();
+   178→        doors.current.setMatrixAt(di, tmp.matrix);
+   179→        di++;
+   180→      }
+   181→    });
+   182→    walls.current.instanceMatrix.needsUpdate = true;
+   183→    flats.current.instanceMatrix.needsUpdate = true;
+   184→    pyrms.current.instanceMatrix.needsUpdate = true;
+   185→    trims.current.instanceMatrix.needsUpdate = true;
+   186→    doors.current.instanceMatrix.needsUpdate = true;
+   187→    walls.current.count = wi; flats.current.count = fi; pyrms.current.count = pi;
+   188→    trims.current.count = ti; doors.current.count = di;
+   189→    for (const m of [walls, flats, pyrms, trims]) {
+   190→      if (m.current.instanceColor) m.current.instanceColor.needsUpdate = true;
+   191→    }
+   192→  }, [counts]);
+   193→
+   194→  return (
+   195→    <>
+   196→      <instancedMesh ref={walls} args={[undefined, undefined, WORLD.buildings.length]}>
+   197→        <boxGeometry />
+   198→        <meshLambertMaterial />
+   199→      </instancedMesh>
+   200→      <instancedMesh ref={flats} args={[undefined, undefined, Math.max(1, counts.flats)]}>
+   201→        <boxGeometry />
+   202→        <meshLambertMaterial />
+   203→      </instancedMesh>
+   204→      <instancedMesh ref={pyrms} args={[undefined, undefined, Math.max(1, counts.pyrms)]}>
+   205→        <coneGeometry args={[1, 1, 4]} />
+   206→        <meshLambertMaterial flatShading />
+   207→      </instancedMesh>
+   208→      <instancedMesh ref={trims} args={[undefined, undefined, Math.max(1, counts.trims)]}>
+   209→        <boxGeometry />
+   210→        <meshLambertMaterial />
+   211→      </instancedMesh>
+   212→      <instancedMesh ref={doors} args={[undefined, undefined, Math.max(1, counts.doors)]}>
+   213→        <boxGeometry />
+   214→        <meshLambertMaterial color="#4a382c" />
+   215→      </instancedMesh>
+   216→    </>
+   217→  );
+   218→}
+   219→
+   220→/* ------------------------- trees ------------------------- */
+   221→const TRUNK_COLS = ["#8a5a33", "#7a4a28", "#6e4123", "#96683c"];
+   222→const PINE_COLS = ["#2f9e55", "#37a45c", "#2a8a4e", "#46b06a", "#2d9450"];
+   223→const ROUND_COLS = ["#58b368", "#6cbf6f", "#4aa85e", "#7ac74f", "#63b568"];
+   224→
+   225→/** Shared wind-clock uniform + GPU sway injected into foliage materials. */
+   226→const WIND = { value: 0 };
+   227→function windify(mat: THREE.Material, amp: number, key: string) {
+   228→  mat.onBeforeCompile = (sh) => {
+   229→    sh.uniforms.uTime = WIND;
+   230→    sh.uniforms.uAmp = { value: amp };
+   231→    sh.vertexShader = sh.vertexShader
+   232→      .replace(
+   233→        "#include <common>",
+   234→        "#include <common>\nuniform float uTime;\nuniform float uAmp;",
+   235→      )
+   236→      .replace(
+   237→        "#include <begin_vertex>",
+   238→        `#include <begin_vertex>
+   239→        {
+   240→          float ph = instanceMatrix[3][0] * 0.35 + instanceMatrix[3][2] * 0.27;
+   241→          float sw = (sin(uTime * 1.4 + ph) + 0.55 * sin(uTime * 2.4 + ph * 1.7)) * uAmp;
+   242→          float lift = clamp((transformed.y + 0.5) * 1.2, 0.0, 1.0);
+   243→          transformed.x += sw * lift;
+   244→          transformed.z += sw * lift * 0.6;
+   245→        }`,
+   246→      );
+   247→  };
+   248→  mat.customProgramCacheKey = () => key;
+   249→}
+   250→
+   251→function Forest() {
+   252→  const trunks = useRef<THREE.InstancedMesh>(null!);
+   253→  const tiers = useRef<THREE.InstancedMesh>(null!);
+   254→  const blobs = useRef<THREE.InstancedMesh>(null!);
+   255→  const n = useMemo(() => {
+   256→    let pine = 0;
+   257→    for (const t of WORLD.trees) if (t.kind === 0) pine++;
+   258→    return { pine, round: WORLD.trees.length - pine };
+   259→  }, []);
+   260→
+   261→  useLayoutEffect(() => {
+   262→    const r = mulberry32(20240);
+   263→    // Three stacked cone tiers — base y / radius / height are × tree scale.
+   264→    const TIERS = [
+   265→      { y: 4.55, rad: 2.6, h: 3.4, shade: 0.93 },
+   266→      { y: 6.5, rad: 1.98, h: 2.85, shade: 1.0 },
+   267→      { y: 8.15, rad: 1.42, h: 2.35, shade: 1.08 },
+   268→    ];
+   269→    let ti = 0, bi = 0;
+   270→    WORLD.trees.forEach((t, i) => {
+   271→      const rot = t.x * 0.7 + t.z * 1.3;
+   272→      const hm = range(r, 0.9, 1.14); // per-tree height variety
+   273→      tmp.rotation.set(0, rot, 0);
+   274→      tmp.scale.set(t.s, t.s, t.s);
+   275→      tmp.position.set(t.x, 1.6 * t.s, t.z);
+   276→      tmp.updateMatrix();
+   277→      trunks.current.setMatrixAt(i, tmp.matrix);
+   278→      trunks.current.setColorAt(i, col.set(TRUNK_COLS[i % TRUNK_COLS.length]));
+   279→
+   280→      if (t.kind === 0) {
+   281→        const g = col.set(PINE_COLS[Math.floor(r() * PINE_COLS.length)]).clone();
+   282→        for (const tier of TIERS) {
+   283→          tmp.rotation.set(0, rot, 0);
+   284→          tmp.scale.set(tier.rad * t.s, tier.h * t.s * hm, tier.rad * t.s);
+   285→          tmp.position.set(t.x, tier.y * t.s * hm, t.z);
+   286→          tmp.updateMatrix();
+   287→          tiers.current.setMatrixAt(ti, tmp.matrix);
+   288→          tiers.current.setColorAt(ti, col.copy(g).multiplyScalar(tier.shade));
+   289→          ti++;
+   290→        }
+   291→      } else {
+   292→        const g = col.set(ROUND_COLS[Math.floor(r() * ROUND_COLS.length)]).clone();
+   293→        const put = (dx: number, dy: number, dz: number, rad: number, shade: number) => {
+   294→          tmp.rotation.set(0, rot, 0);
+   295→          tmp.scale.setScalar(rad * t.s);
+   296→          tmp.position.set(t.x + dx * t.s, dy * t.s, t.z + dz * t.s);
+   297→          tmp.updateMatrix();
+   298→          blobs.current.setMatrixAt(bi, tmp.matrix);
+   299→          blobs.current.setColorAt(bi, col.copy(g).multiplyScalar(shade));
+   300→          bi++;
+   301→        };
+   302→        put(0, 5.1, 0, 2.5, 1);        // main puffy crown
+   303→        put(0, 6.75, 0, 1.72, 1.09);   // topknot
+   304→        for (let k = 0; k < 3; k++) {  // side puffs
+   305→          const a = rot + (k * Math.PI * 2) / 3;
+   306→          put(Math.cos(a) * 1.6, 4.35, Math.sin(a) * 1.6, 1.58, 0.9);
+   307→        }
+   308→      }
+   309→    });
+   310→    tmp.rotation.set(0, 0, 0);
+   311→    tmp.scale.setScalar(1);
+   312→    trunks.current.count = WORLD.trees.length;
+   313→    tiers.current.count = ti;
+   314→    blobs.current.count = bi;
+   315→    trunks.current.instanceMatrix.needsUpdate = true;
+   316→    tiers.current.instanceMatrix.needsUpdate = true;
+   317→    blobs.current.instanceMatrix.needsUpdate = true;
+   318→    if (trunks.current.instanceColor) trunks.current.instanceColor.needsUpdate = true;
+   319→    if (tiers.current.instanceColor) tiers.current.instanceColor.needsUpdate = true;
+   320→    if (blobs.current.instanceColor) blobs.current.instanceColor.needsUpdate = true;
+   321→  }, [n]);
+   322→
+   323→  useFrame((s) => { WIND.value = s.clock.elapsedTime; });
+   324→
+   325→  const trunkMat = useMemo(() => new THREE.MeshLambertMaterial(), []);
+   326→  const pineMat = useMemo(() => {
+   327→    const m = new THREE.MeshLambertMaterial({ flatShading: true });
+   328→    windify(m, 0.05, "wind-pine");
+   329→    return m;
+   330→  }, []);
+   331→  const blobMat = useMemo(() => {
+   332→    const m = new THREE.MeshLambertMaterial();
+   333→    windify(m, 0.045, "wind-blob");
+   334→    return m;
+   335→  }, []);
+   336→
+   337→  return (
+   338→    <>
+   339→      <instancedMesh ref={trunks} args={[undefined, undefined, WORLD.trees.length]} material={trunkMat}>
+   340→        <cylinderGeometry args={[0.34, 0.52, 3.2, 5]} />
+   341→      </instancedMesh>
+   342→      <instancedMesh ref={tiers} args={[undefined, undefined, Math.max(1, n.pine * 3)]} material={pineMat}>
+   343→        <coneGeometry args={[1, 1, 6]} />
+   344→      </instancedMesh>
+   345→      <instancedMesh ref={blobs} args={[undefined, undefined, Math.max(1, n.round * 5)]} material={blobMat}>
+   346→        <sphereGeometry args={[1, 6, 4]} />
+   347→      </instancedMesh>
+   348→    </>
+   349→  );
+   350→}
+   351→
+   352→/* ------------------------- windows (day glass / night glow) ------------------------- */
+   353→interface WinInst { x: number; y: number; z: number; ry: number; w: number; h: number }
+   354→
+   355→function Windows({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
+   356→  const glass = useRef<THREE.InstancedMesh>(null!);
+   357→  const glow = useRef<THREE.InstancedMesh>(null!);
+   358→  const { panes, lit } = useMemo(() => {
+   359→    const r = mulberry32(555);
+   360→    const panes: WinInst[] = [];
+   361→    const lit: WinInst[] = [];
+   362→    for (const b of WORLD.buildings) {
+   363→      if (b.kind === 3) continue; // mall has a glass atrium instead
+   364→      let floors: number, y0: number, dy: number, pw: number, ph: number, cols: number, sp: number;
+   365→      switch (b.kind) {
+   366→        case 0: floors = Math.min(6, Math.floor((b.h - 4) / 4.2)); y0 = 4.4; dy = 4.1; pw = 1.2; ph = 1.5; cols = Math.max(1, Math.min(3, Math.floor(b.w * 2 / 5))); sp = 3.1; break;
+   367→        case 1: floors = 1; y0 = 2.4; dy = 0; pw = 1.9; ph = 1.9; cols = 2; sp = 5.0; break;
+   368→        case 2: floors = 1; y0 = 3.6; dy = 0; pw = 0.95; ph = 1.05; cols = 2; sp = 3.0; break;
+   369→        case 4: floors = 2; y0 = 3.6; dy = 3.0; pw = 1.5; ph = 1.3; cols = 3; sp = 3.2; break;
+   370→        case 5: floors = 3; y0 = 3.8; dy = 3.6; pw = 1.3; ph = 1.4; cols = 3; sp = 3.2; break;
+   371→        default: floors = 1; y0 = 4.2; dy = 0; pw = 1.1; ph = 1.0; cols = 2; sp = 4.0; break; // barn
+   372→      }
+   373→      const spread = Math.min(sp, (b.w * 2) / (cols + 0.6));
+   374→      for (let f = 0; f < floors; f++) {
+   375→        const y = y0 + f * dy;
+   376→        if (y > b.h - 1.8) break;
+   377→        for (let c = 0; c < cols; c++) {
+   378→          const off = (c - (cols - 1) / 2) * spread;
+   379→          // front/back faces (±z)
+   380→          for (const sd of [-1, 1]) {
+   381→            const w: WinInst = { x: b.x + off, y, z: b.z + sd * (b.d + 0.07), ry: sd > 0 ? 0 : Math.PI, w: pw, h: ph };
+   382→            panes.push(w);
+   383→            if (r() < 0.68) lit.push(w);
+   384→          }
+   385→          // side faces (±x)
+   386→          for (const sd of [-1, 1]) {
+   387→            const w: WinInst = { x: b.x + sd * (b.w + 0.07), y, z: b.z + off, ry: sd > 0 ? Math.PI / 2 : -Math.PI / 2, w: pw, h: ph };
+   388→            panes.push(w);
+   389→            if (r() < 0.68) lit.push(w);
+   390→          }
+   391→        }
+   392→      }
+   393→    }
+   394→    return { panes, lit };
+   395→  }, []);
+   396→
+   397→  useLayoutEffect(() => {
+   398→    panes.forEach((w, i) => {
+   399→      tmp.position.set(w.x, w.y, w.z);
+   400→      tmp.rotation.set(0, w.ry, 0);
+   401→      tmp.scale.set(w.w, w.h, 1);
+   402→      tmp.updateMatrix();
+   403→      glass.current.setMatrixAt(i, tmp.matrix);
+   404→    });
+   405→    glass.current.instanceMatrix.needsUpdate = true;
+   406→  }, [panes]);
+   407→  useLayoutEffect(() => {
+   408→    lit.forEach((w, i) => {
+   409→      tmp.position.set(w.x, w.y, w.z);
+   410→      tmp.rotation.set(0, w.ry, 0);
+   411→      tmp.scale.set(w.w, w.h, 1);
+   412→      tmp.updateMatrix();
+   413→      glow.current.setMatrixAt(i, tmp.matrix);
+   414→    });
+   415→    glow.current.count = lit.length;
+   416→    glow.current.instanceMatrix.needsUpdate = true;
+   417→  }, [lit]);
+   418→
+   419→  const glassMat = useRef<THREE.MeshLambertMaterial>(null!);
+   420→  const glowMat = useRef<THREE.MeshBasicMaterial>(null!);
+   421→  const dayC = useMemo(() => new THREE.Color("#5b6a7d"), []);
+   422→  const nightC = useMemo(() => new THREE.Color("#1c2230"), []);
+   423→  const skyC = useMemo(() => new THREE.Color(), []);
+   424→  useFrame(() => {
+   425→    const n = nightFactor(clockRef.current);
+   426→    if (glassMat.current) glassMat.current.color.copy(skyC.copy(dayC).lerp(nightC, n));
+   427→    if (glowMat.current && glow.current) {
+   428→      glowMat.current.opacity = Math.max(0, n - 0.35) * 1.5 * (0.82 + Math.sin(performance.now() / 700) * 0.06);
+   429→      glow.current.visible = glowMat.current.opacity > 0.02;
+   430→    }
+   431→  });
+   432→
+   433→  return (
+   434→    <>
+   435→      <instancedMesh ref={glass} args={[undefined, undefined, panes.length]}>
+   436→        <planeGeometry />
+   437→        <meshLambertMaterial ref={glassMat} color="#5b6a7d" />
+   438→      </instancedMesh>
+   439→      <instancedMesh ref={glow} args={[undefined, undefined, Math.max(1, lit.length)]} frustumCulled={false} visible={false}>
+   440→        <planeGeometry />
+   441→        <meshBasicMaterial ref={glowMat} color="#ffd76a" transparent opacity={0} depthWrite={false} />
+   442→      </instancedMesh>
+   443→    </>
+   444→  );
+   445→}
+   446→
+   447→/* ------------------------- cars: parked + ring traffic ------------------------- */
+   448→const CAR_COL_HEX = ["#e0483a", "#2a9d8f", "#f0c040", "#f2f2f2", "#8a5aa8", "#ff8c42", "#4aa3df", "#67b05f"];
+   449→
+   450→function placeCar(
+   451→  body: THREE.InstancedMesh, cab: THREE.InstancedMesh, trim: THREE.InstancedMesh,
+   452→  wheels: THREE.InstancedMesh | null,
+   453→  i: number, x: number, y: number, z: number, rot: number, c: number,
+   454→) {
+   455→  const fx = Math.sin(rot), fz = Math.cos(rot);
+   456→  const cs = Math.cos(rot), sn = Math.sin(rot);
+   457→  tmp.rotation.set(0, rot, 0);
+   458→  tmp.position.set(x, y + 0.52, z);
+   459→  tmp.scale.set(1.9, 1.0, 4.4);
+   460→  tmp.updateMatrix();
+   461→  body.setMatrixAt(i, tmp.matrix);
+   462→  body.setColorAt(i, col.set(CAR_COL_HEX[c % CAR_COL_HEX.length]));
+   463→  tmp.position.set(x - fx * 0.4, y + 1.3, z - fz * 0.4);
+   464→  tmp.scale.set(1.66, 0.62, 2.05);
+   465→  tmp.updateMatrix();
+   466→  cab.setMatrixAt(i, tmp.matrix);
+   467→  cab.setColorAt(i, col.set("#9fd0e4"));
+   468→  tmp.position.set(x, y + 0.16, z);
+   469→  tmp.scale.set(2.02, 0.32, 4.55);
+   470→  tmp.updateMatrix();
+   471→  trim.setMatrixAt(i, tmp.matrix);
+   472→  trim.setColorAt(i, col.set("#14181d"));
+   473→  if (wheels) {
+   474→    for (let k = 0; k < 4; k++) {
+   475→      const lx = k % 2 === 0 ? -0.98 : 0.98;
+   476→      const lz = k < 2 ? -1.42 : 1.42;
+   477→      tmp.rotation.set(0, rot, Math.PI / 2);
+   478→      tmp.position.set(x + lx * cs + lz * sn, y + 0.42, z - lx * sn + lz * cs);
+   479→      tmp.scale.setScalar(1);
+   480→      tmp.updateMatrix();
+   481→      wheels.setMatrixAt(i * 4 + k, tmp.matrix);
+   482→    }
+   483→  }
+   484→}
+   485→
+   486→function Cars() {
+   487→  const body = useRef<THREE.InstancedMesh>(null!);
+   488→  const cab = useRef<THREE.InstancedMesh>(null!);
+   489→  const trim = useRef<THREE.InstancedMesh>(null!);
+   490→  const wheels = useRef<THREE.InstancedMesh>(null!);
+   491→  useLayoutEffect(() => {
+   492→    WORLD.cars.forEach((c, i) => placeCar(body.current, cab.current, trim.current, wheels.current, i, c.x, 0, c.z, c.rot, c.c));
+   493→    body.current.instanceMatrix.needsUpdate = true;
+   494→    cab.current.instanceMatrix.needsUpdate = true;
+   495→    trim.current.instanceMatrix.needsUpdate = true;
+   496→    wheels.current.instanceMatrix.needsUpdate = true;
+   497→    if (body.current.instanceColor) body.current.instanceColor.needsUpdate = true;
+   498→    if (cab.current.instanceColor) cab.current.instanceColor.needsUpdate = true;
+   499→    if (trim.current.instanceColor) trim.current.instanceColor.needsUpdate = true;
+   500→  }, []);
+   501→  const n = Math.max(1, WORLD.cars.length);
+   502→  return (
+   503→    <>
+   504→      <instancedMesh ref={body} args={[undefined, undefined, n]}>
+   505→        <boxGeometry />
+   506→        <meshLambertMaterial />
+   507→      </instancedMesh>
+   508→      <instancedMesh ref={cab} args={[undefined, undefined, n]}>
+   509→        <boxGeometry />
+   510→        <meshLambertMaterial />
+   511→      </instancedMesh>
+   512→      <instancedMesh ref={trim} args={[undefined, undefined, n]}>
+   513→        <boxGeometry />
+   514→        <meshLambertMaterial />
+   515→      </instancedMesh>
+   516→      <instancedMesh ref={wheels} args={[undefined, undefined, n * 4]}>
+   517→        <cylinderGeometry args={[0.42, 0.42, 0.34, 6]} />
+   518→        <meshLambertMaterial color="#171a1f" />
+   519→      </instancedMesh>
+   520→    </>
+   521→  );
+   522→}
+   523→
+   524→/** Little cars cruising the ring highway, GTA-style. */
+   525→function RingTraffic() {
+   526→  const N = 10;
+   527→  const data = useMemo(() => Array.from({ length: N }, (_, i) => ({
+   528→    r: i % 2 === 0 ? RING_R - 2.7 : RING_R + 2.7,
+   529→    dir: i % 2 === 0 ? 1 : -1,
+   530→    a: (i / N) * Math.PI * 2,
+   531→    sp: 0.05 + (i % 3) * 0.014,
+   532→    c: (i * 3 + 1) % CAR_COL_HEX.length,
+   533→  })), []);
+   534→  const body = useRef<THREE.InstancedMesh>(null!);
+   535→  const cab = useRef<THREE.InstancedMesh>(null!);
+   536→  const trim = useRef<THREE.InstancedMesh>(null!);
+   537→  const wheels = useRef<THREE.InstancedMesh>(null!);
+   538→  useFrame((s) => {
+   539→    data.forEach((d, i) => {
+   540→      const a = d.a + s.clock.elapsedTime * d.sp * d.dir;
+   541→      const rot = d.dir > 0 ? -a : Math.PI + a;
+   542→      placeCar(body.current, cab.current, trim.current, wheels.current, i, Math.cos(a) * d.r, 0.07, Math.sin(a) * d.r, rot, d.c);
+   543→    });
+   544→    body.current.instanceMatrix.needsUpdate = true;
+   545→    cab.current.instanceMatrix.needsUpdate = true;
+   546→    trim.current.instanceMatrix.needsUpdate = true;
+   547→    wheels.current.instanceMatrix.needsUpdate = true;
+   548→    if (body.current.instanceColor) body.current.instanceColor.needsUpdate = true;
+   549→    if (cab.current.instanceColor) cab.current.instanceColor.needsUpdate = true;
+   550→    if (trim.current.instanceColor) trim.current.instanceColor.needsUpdate = true;
+   551→  });
+   552→  return (
+   553→    <>
+   554→      <instancedMesh ref={body} args={[undefined, undefined, N]} frustumCulled={false}>
+   555→        <boxGeometry />
+   556→        <meshLambertMaterial />
+   557→      </instancedMesh>
+   558→      <instancedMesh ref={cab} args={[undefined, undefined, N]} frustumCulled={false}>
+   559→        <boxGeometry />
+   560→        <meshLambertMaterial />
+   561→      </instancedMesh>
+   562→      <instancedMesh ref={trim} args={[undefined, undefined, N]} frustumCulled={false}>
+   563→        <boxGeometry />
+   564→        <meshLambertMaterial />
+   565→      </instancedMesh>
+   566→      <instancedMesh ref={wheels} args={[undefined, undefined, N * 4]} frustumCulled={false}>
+   567→        <cylinderGeometry args={[0.42, 0.42, 0.34, 6]} />
+   568→        <meshLambertMaterial color="#171a1f" />
+   569→      </instancedMesh>
+   570→    </>
+   571→  );
+   572→}
+   573→
+   574→/* ------------------------- street lamps (glow at night) ------------------------- */
+   575→function Lamps({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
+   576→  const pole = useRef<THREE.InstancedMesh>(null!);
+   577→  const head = useRef<THREE.InstancedMesh>(null!);
+   578→  const glow = useRef<THREE.InstancedMesh>(null!);
+   579→  const n = Math.max(1, WORLD.lamps.length);
+   580→  useLayoutEffect(() => {
+   581→    WORLD.lamps.forEach((l, i) => {
+   582→      tmp.rotation.set(0, 0, 0);
+   583→      tmp.position.set(l.x, 2.8, l.z);
+   584→      tmp.scale.setScalar(1);
+   585→      tmp.updateMatrix();
+   586→      pole.current.setMatrixAt(i, tmp.matrix);
+   587→      tmp.position.set(l.x, 5.62, l.z);
+   588→      tmp.updateMatrix();
+   589→      head.current.setMatrixAt(i, tmp.matrix);
+   590→      glow.current.setMatrixAt(i, tmp.matrix);
+   591→    });
+   592→    pole.current.instanceMatrix.needsUpdate = true;
+   593→    head.current.instanceMatrix.needsUpdate = true;
+   594→    glow.current.instanceMatrix.needsUpdate = true;
+   595→  }, []);
+   596→  const glowMat = useRef<THREE.MeshBasicMaterial>(null!);
+   597→  useFrame(() => {
+   598→    const nf = nightFactor(clockRef.current);
+   599→    if (glowMat.current) {
+   600→      glowMat.current.opacity = Math.max(0, nf - 0.3) * 1.4 * (0.85 + Math.sin(performance.now() / 620) * 0.08);
+   601→      glow.current.visible = glowMat.current.opacity > 0.02;
+   602→    }
+   603→  });
+   604→  return (
+   605→    <>
+   606→      <instancedMesh ref={pole} args={[undefined, undefined, n]}>
+   607→        <cylinderGeometry args={[0.09, 0.14, 5.6, 6]} />
+   608→        <meshLambertMaterial color="#3a3f46" />
+   609→      </instancedMesh>
+   610→      <instancedMesh ref={head} args={[undefined, undefined, n]}>
+   611→        <sphereGeometry args={[0.34, 8, 6]} />
+   612→        <meshLambertMaterial color="#2f333a" />
+   613→      </instancedMesh>
+   614→      <instancedMesh ref={glow} args={[undefined, undefined, n]} frustumCulled={false} visible={false}>
+   615→        <sphereGeometry args={[0.62, 8, 6]} />
+   616→        <meshBasicMaterial ref={glowMat} color="#ffd76a" transparent opacity={0} depthWrite={false} />
+   617→      </instancedMesh>
+   618→    </>
+   619→  );
+   620→}
+   621→
+   622→/* ------------------------- central park ------------------------- */
+   623→function Park() {
+   624→  const jet = useRef<THREE.Mesh>(null!);
+   625→  useFrame((s) => {
+   626→    if (jet.current) {
+   627→      const p = 1 + Math.sin(s.clock.elapsedTime * 2.6) * 0.22;
+   628→      jet.current.scale.set(p, 1 + Math.sin(s.clock.elapsedTime * 3.1) * 0.3, p);
+   629→    }
+   630→  });
+   631→  return (
+   632→    <group position={[PARK.x, 0, PARK.z]}>
+   633→      <mesh rotation-x={-Math.PI / 2} position-y={0.08}>
+   634→        <circleGeometry args={[PARK.r, 48]} />
+   635→        <meshLambertMaterial color="#5fb657" />
+   636→      </mesh>
+   637→      <mesh rotation-x={-Math.PI / 2} position-y={0.09}>
+   638→        <planeGeometry args={[PARK.r * 2, 7]} />
+   639→        <meshLambertMaterial color="#d9cfb2" />
+   640→      </mesh>
+   641→      <mesh rotation-x={-Math.PI / 2} position-y={0.09}>
+   642→        <planeGeometry args={[7, PARK.r * 2]} />
+   643→        <meshLambertMaterial color="#d9cfb2" />
+   644→      </mesh>
+   645→      {/* pond (collider at PARK.x-11, PARK.z+11) */}
+   646→      <group position={[-11, 0, 11]}>
+   647→        <mesh rotation-x={-Math.PI / 2} position-y={0.11}>
+   648→          <circleGeometry args={[7.4, 32]} />
+   649→          <meshLambertMaterial color="#4fa8d8" />
+   650→        </mesh>
+   651→        <mesh rotation-x={-Math.PI / 2} position-y={0.1}>
+   652→          <ringGeometry args={[7.4, 8.7, 32]} />
+   653→          <meshLambertMaterial color="#b8b0a0" />
+   654→        </mesh>
+   655→      </group>
+   656→      {/* fountain */}
+   657→      <mesh position-y={0.5}><cylinderGeometry args={[3, 3.3, 1, 16]} /><meshLambertMaterial color="#cfc4ae" /></mesh>
+   658→      <mesh position-y={0.99}><cylinderGeometry args={[2.55, 2.55, 0.14, 16]} /><meshLambertMaterial color="#5db4e0" /></mesh>
+   659→      <mesh position-y={1.75}><cylinderGeometry args={[0.45, 0.62, 1.6, 10]} /><meshLambertMaterial color="#cfc4ae" /></mesh>
+   660→      <mesh position-y={2.62}><cylinderGeometry args={[1.25, 1, 0.45, 12]} /><meshLambertMaterial color="#cfc4ae" /></mesh>
+   661→      <mesh ref={jet} position-y={3.35}><coneGeometry args={[0.3, 1.5, 8]} /><meshLambertMaterial color="#9fd8f0" transparent opacity={0.85} /></mesh>
+   662→    </group>
+   663→  );
+   664→}
+   665→
+   666→function Benches() {
+   667→  const seat = useRef<THREE.InstancedMesh>(null!);
+   668→  const back = useRef<THREE.InstancedMesh>(null!);
+   669→  const n = Math.max(1, WORLD.benches.length);
+   670→  useLayoutEffect(() => {
+   671→    WORLD.benches.forEach((b, i) => {
+   672→      tmp.rotation.set(0, b.rot, 0);
+   673→      tmp.position.set(b.x, 0.55, b.z);
+   674→      tmp.scale.set(1.9, 0.16, 0.6);
+   675→      tmp.updateMatrix();
+   676→      seat.current.setMatrixAt(i, tmp.matrix);
+   677→      tmp.position.set(b.x - 0.26 * Math.sin(b.rot), 0.98, b.z - 0.26 * Math.cos(b.rot));
+   678→      tmp.scale.set(1.9, 0.55, 0.12);
+   679→      tmp.updateMatrix();
+   680→      back.current.setMatrixAt(i, tmp.matrix);
+   681→    });
+   682→    seat.current.instanceMatrix.needsUpdate = true;
+   683→    back.current.instanceMatrix.needsUpdate = true;
+   684→  }, []);
+   685→  return (
+   686→    <>
+   687→      <instancedMesh ref={seat} args={[undefined, undefined, n]}>
+   688→        <boxGeometry />
+   689→        <meshLambertMaterial color="#8a5a33" />
+   690→      </instancedMesh>
+   691→      <instancedMesh ref={back} args={[undefined, undefined, n]}>
+   692→        <boxGeometry />
+   693→        <meshLambertMaterial color="#7a4a28" />
+   694→      </instancedMesh>
+   695→    </>
+   696→  );
+   697→}
+   698→
+   699→function Umbrellas() {
+   700→  const pole = useRef<THREE.InstancedMesh>(null!);
+   701→  const canopy = useRef<THREE.InstancedMesh>(null!);
+   702→  const cols = ["#e0483a", "#2a9d8f"];
+   703→  const n = Math.max(1, WORLD.umbrellas.length);
+   704→  useLayoutEffect(() => {
+   705→    WORLD.umbrellas.forEach((u, i) => {
+   706→      tmp.rotation.set(0, 0, 0);
+   707→      tmp.position.set(u.x, 1.35, u.z);
+   708→      tmp.scale.setScalar(1);
+   709→      tmp.updateMatrix();
+   710→      pole.current.setMatrixAt(i, tmp.matrix);
+   711→      tmp.position.set(u.x, 2.85, u.z);
+   712→      tmp.updateMatrix();
+   713→      canopy.current.setMatrixAt(i, tmp.matrix);
+   714→      canopy.current.setColorAt(i, col.set(cols[u.c % cols.length]));
+   715→    });
+   716→    pole.current.instanceMatrix.needsUpdate = true;
+   717→    canopy.current.instanceMatrix.needsUpdate = true;
+   718→    if (canopy.current.instanceColor) canopy.current.instanceColor.needsUpdate = true;
+   719→  }, []);
+   720→  return (
+   721→    <>
+   722→      <instancedMesh ref={pole} args={[undefined, undefined, n]}>
+   723→        <cylinderGeometry args={[0.06, 0.06, 2.7, 6]} />
+   724→        <meshLambertMaterial color="#e8e2d4" />
+   725→      </instancedMesh>
+   726→      <instancedMesh ref={canopy} args={[undefined, undefined, n]}>
+   727→        <coneGeometry args={[1.75, 0.85, 8]} />
+   728→        <meshLambertMaterial flatShading />
+   729→      </instancedMesh>
+   730→    </>
+   731→  );
+   732→}
+   733→
+   734→/* ------------------------- farmland: fields, silos, windmills ------------------------- */
+   735→const CROP_COL_HEX = ["#9ec24a", "#d8c25a", "#6faf4e"];
+   736→
+   737→function Farm() {
+   738→  const crops = useRef<THREE.InstancedMesh>(null!);
+   739→  const cropData = useMemo(() => {
+   740→    const out: { x: number; z: number; rot: number; crop: number }[] = [];
+   741→    for (const f of WORLD.fields) {
+   742→      for (let lx = -f.w + 1; lx <= f.w - 1; lx += 1.8)
+   743→        for (let lz = -f.d + 1.1; lz <= f.d - 1.1; lz += 2.0) {
+   744→          const c = Math.cos(f.rot), s = Math.sin(f.rot);
+   745→          out.push({ x: f.x + lx * c + lz * s, z: f.z - lx * s + lz * c, rot: f.rot, crop: f.crop });
+   746→        }
+   747→    }
+   748→    return out;
+   749→  }, []);
+   750→  useLayoutEffect(() => {
+   751→    cropData.forEach((c, i) => {
+   752→      tmp.rotation.set(0, c.rot, 0);
+   753→      tmp.position.set(c.x, 0.32, c.z);
+   754→      tmp.scale.setScalar(1);
+   755→      tmp.updateMatrix();
+   756→      crops.current.setMatrixAt(i, tmp.matrix);
+   757→      crops.current.setColorAt(i, col.set(CROP_COL_HEX[c.crop]));
+   758→    });
+   759→    crops.current.instanceMatrix.needsUpdate = true;
+   760→    if (crops.current.instanceColor) crops.current.instanceColor.needsUpdate = true;
+   761→  }, [cropData]);
+   762→
+   763→  const siloB = useRef<THREE.InstancedMesh>(null!);
+   764→  const siloT = useRef<THREE.InstancedMesh>(null!);
+   765→  useLayoutEffect(() => {
+   766→    WORLD.silos.forEach((s, i) => {
+   767→      tmp.rotation.set(0, 0, 0);
+   768→      tmp.position.set(s.x, 5.5, s.z);
+   769→      tmp.scale.setScalar(1);
+   770→      tmp.updateMatrix();
+   771→      siloB.current.setMatrixAt(i, tmp.matrix);
+   772→      tmp.position.set(s.x, 11.02, s.z);
+   773→      tmp.updateMatrix();
+   774→      siloT.current.setMatrixAt(i, tmp.matrix);
+   775→    });
+   776→    siloB.current.instanceMatrix.needsUpdate = true;
+   777→    siloT.current.instanceMatrix.needsUpdate = true;
+   778→  }, []);
+   779→
+   780→  return (
+   781→    <>
+   782→      {WORLD.fields.map((f, i) => (
+   783→        <group key={i} position={[f.x, 0, f.z]} rotation-y={f.rot}>
+   784→          <mesh rotation-x={-Math.PI / 2} position-y={0.05}>
+   785→            <planeGeometry args={[f.w * 2, f.d * 2]} />
+   786→            <meshLambertMaterial color="#6b4f35" />
+   787→          </mesh>
+   788→        </group>
+   789→      ))}
+   790→      <instancedMesh ref={crops} args={[undefined, undefined, Math.max(1, cropData.length)]}>
+   791→        <boxGeometry args={[0.6, 0.55, 1.35]} />
+   792→        <meshLambertMaterial />
+   793→      </instancedMesh>
+   794→      <instancedMesh ref={siloB} args={[undefined, undefined, Math.max(1, WORLD.silos.length)]}>
+   795→        <cylinderGeometry args={[3, 3, 11, 12]} />
+   796→        <meshLambertMaterial color="#ccd2d8" />
+   797→      </instancedMesh>
+   798→      <instancedMesh ref={siloT} args={[undefined, undefined, Math.max(1, WORLD.silos.length)]}>
+   799→        <sphereGeometry args={[3, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2]} />
+   800→        <meshLambertMaterial color="#b8bec6" />
+   801→      </instancedMesh>
+   802→      <Windmills />
+   803→    </>
+   804→  );
+   805→}
+   806→
+   807→function Windmills() {
+   808→  const rotors = useRef<(THREE.Group | null)[]>([]);
+   809→  useFrame((_, dt) => {
+   810→    rotors.current.forEach((r) => { if (r) r.rotation.z += dt * 0.85; });
+   811→  });
+   812→  return (
+   813→    <>
+   814→      {WORLD.windmills.map((w, i) => (
+   815→        <group key={i} position={[w.x, 0, w.z]} rotation-y={w.rot}>
+   816→          <mesh position-y={5.5}><cylinderGeometry args={[0.42, 0.68, 11, 8]} /><meshLambertMaterial color="#e8e2d4" /></mesh>
+   817→          <group ref={(g) => { rotors.current[i] = g; }} position={[0, 11, 0.55]} rotation-z={i * 0.7}>
+   818→            {[0, 1, 2, 3].map((k) => (
+   819→              <mesh key={k} rotation-z={k * Math.PI / 2} position={[0, 2.1, 0]}>
+   820→                <boxGeometry args={[0.5, 4.2, 0.14]} />
+   821→                <meshLambertMaterial color="#f8f4e8" />
+   822→              </mesh>
+   823→            ))}
+   824→          </group>
+   825→          <mesh position={[0, 11, 1.05]}><boxGeometry args={[0.12, 1.7, 0.9]} /><meshLambertMaterial color="#c0442e" /></mesh>
+   826→        </group>
+   827→      ))}
+   828→    </>
+   829→  );
+   830→}
+   831→
+   832→/* ------------------------- landmarks: mall front, school yard, hospital cross ------------------------- */
+   833→function Landmarks() {
+   834→  return (
+   835→    <>
+   836→      {/* MEGA MALL — glass atrium, roof sign, parking lot */}
+   837→      <group position={[MALL.x, 0, MALL.z]}>
+   838→        <mesh rotation-x={-Math.PI / 2} position={[0.25, 0.07, -26]}>
+   839→          <planeGeometry args={[46, 26]} />
+   840→          <meshLambertMaterial color="#565660" />
+   841→        </mesh>
+   842→        <mesh position={[0, 4.6, -11.06]}>
+   843→          <planeGeometry args={[26, 9]} />
+   844→          <meshLambertMaterial color="#a8d4e8" side={THREE.DoubleSide} />
+   845→        </mesh>
+   846→        <mesh position={[0, 1.9, -11.2]}>
+   847→          <boxGeometry args={[6.5, 3.8, 0.5]} />
+   848→          <meshLambertMaterial color="#3a3f46" />
+   849→        </mesh>
+   850→        <mesh position={[0, 17.4, 0]}>
+   851→          <boxGeometry args={[24, 3.2, 1]} />
+   852→          <meshLambertMaterial color="#d62828" />
+   853→        </mesh>
+   854→        {[-7.8, -2.6, 2.6, 7.8].map((x) => (
+   855→          <mesh key={x} position={[x, 17.4, -0.75]}>
+   856→            <boxGeometry args={[2.6, 2.1, 0.4]} />
+   857→            <meshLambertMaterial color="#f8f4e8" />
+   858→          </mesh>
+   859→        ))}
+   860→        {[-9, 9].map((x) => (
+   861→          <mesh key={x} position={[x, 16.3, 0]}>
+   862→            <boxGeometry args={[0.5, 2.2, 0.5]} />
+   863→            <meshLambertMaterial color="#8a8f98" />
+   864→          </mesh>
+   865→        ))}
+   866→      </group>
+   867→      {/* School — yard, running track, flag, basketball hoop */}
+   868→      <group position={[SCHOOL.x, 0, SCHOOL.z]}>
+   869→        <mesh rotation-x={-Math.PI / 2} position={[0, 0.07, -18]}>
+   870→          <circleGeometry args={[14, 40]} />
+   871→          <meshLambertMaterial color="#7ec868" />
+   872→        </mesh>
+   873→        <mesh rotation-x={-Math.PI / 2} position={[0, 0.08, -18]} scale={[1, 0.72, 1]}>
+   874→          <ringGeometry args={[10.5, 12.3, 40]} />
+   875→          <meshLambertMaterial color="#d8734a" />
+   876→        </mesh>
+   877→        <mesh position={[-10, 3.5, -12]}><cylinderGeometry args={[0.1, 0.12, 7, 6]} /><meshLambertMaterial color="#8a8a98" /></mesh>
+   878→        <mesh position={[-8.9, 6.2, -12]} rotation-y={Math.PI / 2}><planeGeometry args={[2.2, 1.3]} /><meshBasicMaterial color="#ff9933" side={THREE.DoubleSide} /></mesh>
+   879→        <mesh position={[12, 2.5, -10]}><cylinderGeometry args={[0.12, 0.14, 5, 6]} /><meshLambertMaterial color="#3a3f46" /></mesh>
+   880→        <mesh position={[12, 4.7, -10.35]}><boxGeometry args={[2.6, 1.7, 0.16]} /><meshLambertMaterial color="#f4f6f8" /></mesh>
+   881→        <mesh position={[12, 3.95, -10.7]} rotation-x={Math.PI / 2}><torusGeometry args={[0.55, 0.08, 6, 14]} /><meshLambertMaterial color="#ff6b35" /></mesh>
+   882→      </group>
+   883→      {/* Hospital — big red cross + entrance canopy */}
+   884→      <group position={[HOSPITAL.x, 0, HOSPITAL.z]}>
+   885→        <mesh position={[0, 12.4, -6.62]}><boxGeometry args={[1.7, 5.2, 0.22]} /><meshBasicMaterial color="#d62828" /></mesh>
+   886→        <mesh position={[0, 12.4, -6.62]}><boxGeometry args={[5.2, 1.7, 0.22]} /><meshBasicMaterial color="#d62828" /></mesh>
+   887→        <mesh position={[0, 3.5, -8.2]}><boxGeometry args={[7, 0.5, 3.2]} /><meshLambertMaterial color="#c7ccd4" /></mesh>
+   888→        {[-3, 3].map((x) => (
+   889→          <mesh key={x} position={[x, 1.7, -9.4]}><cylinderGeometry args={[0.14, 0.14, 3.4, 6]} /><meshLambertMaterial color="#9aa0a8" /></mesh>
+   890→        ))}
+   891→      </group>
+   892→    </>
+   893→  );
+   894→}
+   895→
+   896→/* ------------------------- graveyard & flowers ------------------------- */
+   897→function Graves() {
+   898→  const ref = useRef<THREE.InstancedMesh>(null!);
+   899→  const crosses = useRef<THREE.InstancedMesh>(null!);
+   900→  useLayoutEffect(() => {
+   901→    const r = mulberry32(99);
+   902→    for (let i = 0; i < 70; i++) {
+   903→      const a = range(r, 0, Math.PI * 2), d = range(r, 4, 38);
+   904→      tmp.position.set(GRAVEYARD.x + Math.cos(a) * d, 0.7, GRAVEYARD.z + Math.sin(a) * d);
+   905→      tmp.rotation.set(0, range(r, -0.4, 0.4), range(r, -0.08, 0.08));
+   906→      tmp.scale.setScalar(1);
+   907→      tmp.updateMatrix();
+   908→      ref.current.setMatrixAt(i, tmp.matrix);
+   909→      tmp.position.y = 1.6;
+   910→      tmp.rotation.set(0, tmp.rotation.y, 0);
+   911→      tmp.updateMatrix();
+   912→      crosses.current.setMatrixAt(i, tmp.matrix);
+   913→    }
+   914→    tmp.rotation.set(0, 0, 0);
+   915→    ref.current.instanceMatrix.needsUpdate = true;
+   916→    crosses.current.instanceMatrix.needsUpdate = true;
+   917→  }, []);
+   918→  return (
+   919→    <>
+   920→      <instancedMesh ref={ref} args={[undefined, undefined, 70]}>
+   921→        <boxGeometry args={[0.9, 1.4, 0.3]} />
+   922→        <meshLambertMaterial color="#6a6a78" />
+   923→      </instancedMesh>
+   924→      <instancedMesh ref={crosses} args={[undefined, undefined, 70]}>
+   925→        <boxGeometry args={[0.12, 0.7, 0.12]} />
+   926→        <meshLambertMaterial color="#8a8a98" />
+   927→      </instancedMesh>
+   928→    </>
+   929→  );
+   930→}
+   931→
+   932→function Flowers() {
+   933→  const ref = useRef<THREE.InstancedMesh>(null!);
+   934→  useLayoutEffect(() => {
+   935→    const cols = ["#ff6b8a", "#ffd166", "#f8f4e8", "#c77dff", "#ff9f45"];
+   936→    WORLD.flowers.forEach((f, i) => {
+   937→      tmp.position.set(f.x, 0.16, f.z);
+   938→      tmp.rotation.set(0, f.x, 0);
+   939→      tmp.scale.setScalar(f.s);
+   940→      tmp.updateMatrix();
+   941→      ref.current.setMatrixAt(i, tmp.matrix);
+   942→      ref.current.setColorAt(i, col.set(cols[Math.floor(f.c * cols.length)]));
+   943→    });
+   944→    ref.current.instanceMatrix.needsUpdate = true;
+   945→    if (ref.current.instanceColor) ref.current.instanceColor.needsUpdate = true;
+   946→  }, []);
+   947→  return (
+   948→    <instancedMesh ref={ref} args={[undefined, undefined, WORLD.flowers.length]}>
+   949→      <sphereGeometry args={[0.22, 5, 3]} />
+   950→      <meshLambertMaterial />
+   951→    </instancedMesh>
+   952→  );
+   953→}
+   954→
+   955→/* ------------------------- mountains ------------------------- */
+   956→const ROCK_COLS = ["#8d8478", "#7d7468", "#96897a", "#8b8f9a", "#847a6d"];
+   957→const HILL_COLS = ["#5d8a4a", "#527e42", "#68964f", "#4e7a40"];
+   958→
+   959→interface Peak {
+   960→  x: number; z: number; h: number; w: number;
+   961→  rot: number; sx: number; sz: number;
+   962→  ci: number; tint: number; seg: 0 | 1 | 2; snow: number;
+   963→}
+   964→
+   965→function Mountains() {
+   966→  const b5 = useRef<THREE.InstancedMesh>(null!);
+   967→  const b6 = useRef<THREE.InstancedMesh>(null!);
+   968→  const b7 = useRef<THREE.InstancedMesh>(null!);
+   969→  const c5 = useRef<THREE.InstancedMesh>(null!);
+   970→  const c6 = useRef<THREE.InstancedMesh>(null!);
+   971→  const c7 = useRef<THREE.InstancedMesh>(null!);
+   972→  const hills = useRef<THREE.InstancedMesh>(null!);
+   973→
+   974→  const data = useMemo(() => {
+   975→    const r = mulberry32(7);
+   976→    // Major peaks — ring around the (now much bigger) map, each with its own silhouette.
+   977→    const majors: Peak[] = Array.from({ length: 26 }, (_, i) => {
+   978→      const a = (i / 26) * Math.PI * 2 + range(r, -0.06, 0.06);
+   979→      const d = range(r, 430, 502);
+   980→      const h = range(r, 95, 185);
+   981→      const w = range(r, 58, 100);
+   982→      return {
+   983→        x: Math.cos(a) * d, z: Math.sin(a) * d, h, w,
+   984→        rot: range(r, 0, Math.PI * 2),
+   985→        sx: range(r, 0.8, 1.2), sz: range(r, 0.8, 1.2),
+   986→        ci: i % ROCK_COLS.length, tint: range(r, -0.045, 0.055),
+   987→        seg: (i % 3) as 0 | 1 | 2,
+   988→        snow: h > 130 ? range(r, 0.5, 0.64) : h > 105 ? range(r, 0.6, 0.75) : range(r, 0.78, 0.94),
+   989→      };
+   990→    });
+   991→    // Shoulder peaks — cluster beside majors to form ranges.
+   992→    const shoulders: Peak[] = [];
+   993→    majors.forEach((m, i) => {
+   994→      const nSh = r() < 0.45 ? 2 : r() < 0.75 ? 1 : 0;
+   995→      for (let k = 0; k < nSh; k++) {
+   996→        const a = Math.atan2(m.z, m.x) + (k === 0 ? 1 : -1) * range(r, 0.02, 0.055);
+   997→        const d = Math.hypot(m.x, m.z) + range(r, -28, 46);
+   998→        const h = m.h * range(r, 0.36, 0.6);
+   999→        shoulders.push({
+  1000→          x: Math.cos(a) * d, z: Math.sin(a) * d, h,
+  1001→          w: m.w * range(r, 0.42, 0.6),
+  1002→          rot: range(r, 0, Math.PI * 2),
+  1003→          sx: range(r, 0.85, 1.15), sz: range(r, 0.85, 1.15),
+  1004→          ci: (i + k + 1) % ROCK_COLS.length, tint: range(r, -0.04, 0.05),
+  1005→          seg: ((i + k + 1) % 3) as 0 | 1 | 2,
+  1006→          snow: h > 78 ? range(r, 0.58, 0.72) : range(r, 0.82, 0.96),
+  1007→        });
+  1008→      }
+  1009→    });
+  1010→    // Rounded low-poly foothills, kept outside the playable ring.
+  1011→    const hills = Array.from({ length: 44 }, (_, i) => {
+  1012→      const a = range(r, 0, Math.PI * 2), d = range(r, 408, 448);
+  1013→      return { x: Math.cos(a) * d, z: Math.sin(a) * d, h: range(r, 9, 26), w: range(r, 24, 54), ci: i % HILL_COLS.length, tint: range(r, -0.05, 0.06) };
+  1014→    });
+  1015→    const segBody = [0, 0, 0], segCap = [0, 0, 0];
+  1016→    for (const p of [...majors, ...shoulders]) { segBody[p.seg]++; if (p.snow < 0.98) segCap[p.seg]++; }
+  1017→    return { majors, shoulders, hills, segBody, segCap };
+  1018→  }, []);
+  1019→
+  1020→  useLayoutEffect(() => {
+  1021→    const bodyRefs = [b5, b6, b7], capRefs = [c5, c6, c7];
+  1022→    const nb = [0, 0, 0], nc = [0, 0, 0];
+  1023→    const putPeak = (p: Peak) => {
+  1024→      const br = bodyRefs[p.seg].current, cr = capRefs[p.seg].current;
+  1025→      tmp.rotation.set(0, p.rot, 0);
+  1026→      tmp.scale.set(p.w * p.sx, p.h, p.w * p.sz);
+  1027→      tmp.position.set(p.x, p.h / 2 - 4, p.z);
+  1028→      tmp.updateMatrix();
+  1029→      br.setMatrixAt(nb[p.seg], tmp.matrix);
+  1030→      br.setColorAt(nb[p.seg], col.set(ROCK_COLS[p.ci]).offsetHSL(0, 0, p.tint));
+  1031→      nb[p.seg]++;
+  1032→      if (p.snow < 0.98) {
+  1033→        const f = p.snow;
+  1034→        // Cap is the cone tip region — same triangle, slight overhang so snow drapes.
+  1035→        tmp.scale.set(p.w * p.sx * (1 - f) * 1.06, p.h * (1 - f) * 1.02, p.w * p.sz * (1 - f) * 1.06);
+  1036→        tmp.position.set(p.x, p.h * f + (p.h * (1 - f)) / 2 - 4, p.z);
+  1037→        tmp.updateMatrix();
+  1038→        cr.setMatrixAt(nc[p.seg], tmp.matrix);
+  1039→        nc[p.seg]++;
+  1040→      }
+  1041→    };
+  1042→    data.majors.forEach(putPeak);
+  1043→    data.shoulders.forEach(putPeak);
+  1044→    data.hills.forEach((hl, i) => {
+  1045→      tmp.rotation.set(0, hl.x * 0.11, 0);
+  1046→      tmp.scale.set(hl.w, hl.h, hl.w);
+  1047→      tmp.position.set(hl.x, hl.h * 0.55, hl.z);
+  1048→      tmp.updateMatrix();
+  1049→      hills.current.setMatrixAt(i, tmp.matrix);
+  1050→      hills.current.setColorAt(i, col.set(HILL_COLS[hl.ci]).offsetHSL(0, 0, hl.tint));
+  1051→    });
+  1052→    tmp.rotation.set(0, 0, 0);
+  1053→    tmp.scale.setScalar(1);
+  1054→    for (let s = 0; s < 3; s++) {
+  1055→      bodyRefs[s].current.count = nb[s];
+  1056→      capRefs[s].current.count = nc[s];
+  1057→      bodyRefs[s].current.instanceMatrix.needsUpdate = true;
+  1058→      capRefs[s].current.instanceMatrix.needsUpdate = true;
+  1059→      if (bodyRefs[s].current.instanceColor) bodyRefs[s].current.instanceColor.needsUpdate = true;
+  1060→    }
+  1061→    hills.current.instanceMatrix.needsUpdate = true;
+  1062→    if (hills.current.instanceColor) hills.current.instanceColor.needsUpdate = true;
+  1063→  }, [data]);
+  1064→
+  1065→  const rockMat = useMemo(() => new THREE.MeshLambertMaterial({ flatShading: true }), []);
+  1066→  const snowMat = useMemo(() => new THREE.MeshLambertMaterial({ color: "#f4f7fb", flatShading: true }), []);
+  1067→  const hillMat = useMemo(() => new THREE.MeshLambertMaterial({ flatShading: true }), []);
+  1068→
+  1069→  return (
+  1070→    <>
+  1071→      <instancedMesh ref={b5} args={[undefined, undefined, Math.max(1, data.segBody[0])]} material={rockMat} frustumCulled={false}>
+  1072→        <coneGeometry args={[1, 1, 5]} />
+  1073→      </instancedMesh>
+  1074→      <instancedMesh ref={b6} args={[undefined, undefined, Math.max(1, data.segBody[1])]} material={rockMat} frustumCulled={false}>
+  1075→        <coneGeometry args={[1, 1, 6]} />
+  1076→      </instancedMesh>
+  1077→      <instancedMesh ref={b7} args={[undefined, undefined, Math.max(1, data.segBody[2])]} material={rockMat} frustumCulled={false}>
+  1078→        <coneGeometry args={[1, 1, 7]} />
+  1079→      </instancedMesh>
+  1080→      <instancedMesh ref={c5} args={[undefined, undefined, Math.max(1, data.segCap[0])]} material={snowMat} frustumCulled={false}>
+  1081→        <coneGeometry args={[1, 1, 5]} />
+  1082→      </instancedMesh>
+  1083→      <instancedMesh ref={c6} args={[undefined, undefined, Math.max(1, data.segCap[1])]} material={snowMat} frustumCulled={false}>
+  1084→        <coneGeometry args={[1, 1, 6]} />
+  1085→      </instancedMesh>
+  1086→      <instancedMesh ref={c7} args={[undefined, undefined, Math.max(1, data.segCap[2])]} material={snowMat} frustumCulled={false}>
+  1087→        <coneGeometry args={[1, 1, 7]} />
+  1088→      </instancedMesh>
+  1089→      <instancedMesh ref={hills} args={[undefined, undefined, data.hills.length]} material={hillMat} frustumCulled={false}>
+  1090→        <icosahedronGeometry args={[1, 0]} />
+  1091→      </instancedMesh>
+  1092→    </>
+  1093→  );
+  1094→}
+  1095→
+  1096→/* ------------------------- parliament + ballot ------------------------- */
+  1097→function Parliament() {
+  1098→  const flag = useRef<THREE.Mesh>(null!);
+  1099→  const cols = useRef<THREE.InstancedMesh>(null!);
+  1100→  useFrame((s) => {
+  1101→    if (flag.current) flag.current.rotation.y = Math.sin(s.clock.elapsedTime * 3) * 0.2;
+  1102→  });
+  1103→  const colXs = useMemo(() => Array.from({ length: 8 }, (_, i) => -30 + i * (60 / 7)), []);
+  1104→  useLayoutEffect(() => {
+  1105→    colXs.forEach((x, i) => {
+  1106→      tmp.position.set(x, 9.6, 8.4);
+  1107→      tmp.rotation.set(0, 0, 0);
+  1108→      tmp.scale.setScalar(1);
+  1109→      tmp.updateMatrix();
+  1110→      cols.current.setMatrixAt(i, tmp.matrix);
+  1111→    });
+  1112→    cols.current.instanceMatrix.needsUpdate = true;
+  1113→  }, [colXs]);
+  1114→  return (
+  1115→    <group position={[PARLIAMENT.x, 0, PARLIAMENT.z]}>
+  1116→      <mesh rotation-x={-Math.PI / 2} position={[0, 0.05, 6]}>
+  1117→        <circleGeometry args={[32, 48]} />
+  1118→        <meshLambertMaterial color="#cfc4ae" />
+  1119→      </mesh>
+  1120→      <mesh position-y={9}><boxGeometry args={[70, 18, 14]} /><meshLambertMaterial color="#e8e0d0" /></mesh>
+  1121→      <mesh position-y={18.6}><boxGeometry args={[72, 1.4, 16]} /><meshLambertMaterial color="#cfc4ae" /></mesh>
+  1122→      <mesh position-y={24}><sphereGeometry args={[9, 18, 12]} /><meshLambertMaterial color="#7fc8a9" /></mesh>
+  1123→      <mesh position-y={33.5}><cylinderGeometry args={[0.14, 0.14, 5, 6]} /><meshLambertMaterial color="#8a8a98" /></mesh>
+  1124→      <mesh ref={flag} position={[0, 35, 0]}><planeGeometry args={[4.4, 2.6]} /><meshBasicMaterial color="#ff9933" side={THREE.DoubleSide} /></mesh>
+  1125→      <instancedMesh ref={cols} args={[undefined, undefined, 8]}>
+  1126→        <cylinderGeometry args={[0.9, 1, 19, 8]} />
+  1127→        <meshLambertMaterial color="#f8f4e8" />
+  1128→      </instancedMesh>
+  1129→      <mesh position-y={0.4} rotation-x={-Math.PI / 2}><planeGeometry args={[40, 10]} /><meshLambertMaterial color="#d9cfb8" /></mesh>
+  1130→      <mesh position={[0, 0.5, 10]}><boxGeometry args={[30, 1, 6]} /><meshLambertMaterial color="#cfc4ae" /></mesh>
+  1131→    </group>
+  1132→  );
+  1133→}
+  1134→
+  1135→function BallotBox() {
+  1136→  const ref = useRef<THREE.Group>(null!);
+  1137→  const box = useMemo(() => buildBallotBox(), []);
+  1138→  useFrame((s) => {
+  1139→    const p = 1 + Math.sin(s.clock.elapsedTime * 2.4) * 0.06;
+  1140→    box.scale.set(p, 1 / p, p);
+  1141→    if (ref.current) ref.current.position.y = 0.85 + Math.sin(s.clock.elapsedTime * 1.8) * 0.08;
+  1142→  });
+  1143→  return (
+  1144→    <group ref={ref} position={[BALLOT.x, 0.85, BALLOT.z]}>
+  1145→      <primitive object={box} />
+  1146→    </group>
+  1147→  );
+  1148→}
+  1149→
+  1150→/* ------------------------- sky life ------------------------- */
+  1151→function Clouds() {
+  1152→  const ref = useRef<THREE.InstancedMesh>(null!);
+  1153→  const data = useMemo(() => {
+  1154→    const r = mulberry32(31);
+  1155→    return Array.from({ length: 16 }, () => ({
+  1156→      x: range(r, -560, 560), y: range(r, 95, 155), z: range(r, -560, 560),
+  1157→      s: range(r, 15, 32), v: range(r, 1.2, 3.2), off: range(r, 0, 9),
+  1158→    }));
+  1159→  }, []);
+  1160→  useFrame((s) => {
+  1161→    const t = s.clock.elapsedTime;
+  1162→    data.forEach((c, i) => {
+  1163→      const x = ((c.x + t * c.v + 580) % 1160) - 580;
+  1164→      for (let k = 0; k < 3; k++) {
+  1165→        tmp.position.set(x + k * c.s * 0.55, c.y + Math.sin(t * 0.5 + c.off + k) * 1.5, c.z + (k === 1 ? c.s * 0.3 : 0));
+  1166→        tmp.scale.setScalar(k === 1 ? c.s * 0.8 : c.s * 0.6);
+  1167→        tmp.updateMatrix();
+  1168→        ref.current.setMatrixAt(i * 3 + k, tmp.matrix);
+  1169→      }
+  1170→    });
+  1171→    ref.current.instanceMatrix.needsUpdate = true;
+  1172→  });
+  1173→  return (
+  1174→    <instancedMesh ref={ref} args={[undefined, undefined, 48]} frustumCulled={false}>
+  1175→      <sphereGeometry args={[1, 8, 6]} />
+  1176→      <meshLambertMaterial color="#ffffff" emissive="#d8e8f8" emissiveIntensity={0.35} />
+  1177→    </instancedMesh>
+  1178→  );
+  1179→}
+  1180→
+  1181→function Sky({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
+  1182→  const stars = useRef<THREE.Points>(null!);
+  1183→  const sun = useRef<THREE.Mesh>(null!);
+  1184→  const moon = useRef<THREE.Mesh>(null!);
+  1185→  const starGeo = useMemo(() => {
+  1186→    const r = mulberry32(5);
+  1187→    const pos = new Float32Array(420 * 3);
+  1188→    for (let i = 0; i < 420; i++) {
+  1189→      const a = range(r, 0, Math.PI * 2), p = range(r, 0.12, 1.35), R = 640;
+  1190→      pos[i * 3] = Math.cos(a) * Math.cos(p) * R;
+  1191→      pos[i * 3 + 1] = Math.sin(p) * R * 0.7 + 40;
+  1192→      pos[i * 3 + 2] = Math.sin(a) * Math.cos(p) * R;
+  1193→    }
+  1194→    const g = new THREE.BufferGeometry();
+  1195→    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  1196→    return g;
+  1197→  }, []);
+  1198→  const PI2 = Math.PI * 2;
+  1199→  useFrame(() => {
+  1200→    const clock = clockRef.current;
+  1201→    const n = nightFactor(clock);
+  1202→    if (stars.current) (stars.current.material as THREE.PointsMaterial).opacity = Math.max(0, n - 0.25) * 1.6;
+  1203→    const a = PI2 * (clock - 0.25);
+  1204→    if (sun.current) sun.current.position.set(Math.cos(a) * 520, Math.sin(a) * 420, -180);
+  1205→    if (moon.current) moon.current.position.set(Math.cos(a + Math.PI) * 520, Math.sin(a + Math.PI) * 420, -180);
+  1206→  });
+  1207→  return (
+  1208→    <>
+  1209→      <points ref={stars} geometry={starGeo} frustumCulled={false}>
+  1210→        <pointsMaterial color="#ffffff" size={2.6} transparent opacity={0} sizeAttenuation={false} />
+  1211→      </points>
+  1212→      <mesh ref={sun}><sphereGeometry args={[22, 12, 10]} /><meshBasicMaterial color="#ffdd66" /></mesh>
+  1213→      <mesh ref={moon}><sphereGeometry args={[16, 12, 10]} /><meshBasicMaterial color="#e8ecf8" /></mesh>
+  1214→    </>
+  1215→  );
+  1216→}
+  1217→
+  1218→function Fireflies({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
+  1219→  const ref = useRef<THREE.Points>(null!);
+  1220→  const geo = useMemo(() => {
+  1221→    const r = mulberry32(77);
+  1222→    const pos = new Float32Array(70 * 3);
+  1223→    for (let i = 0; i < 70; i++) {
+  1224→      const a = range(r, 0, Math.PI * 2), d = range(r, FARM_RADIUS + 10, JUNGLE_RADIUS - 15);
+  1225→      pos[i * 3] = Math.cos(a) * d;
+  1226→      pos[i * 3 + 1] = range(r, 0.6, 2.6);
+  1227→      pos[i * 3 + 2] = Math.sin(a) * d;
+  1228→    }
+  1229→    const g = new THREE.BufferGeometry();
+  1230→    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+  1231→    return g;
+  1232→  }, []);
+  1233→  useFrame((s) => {
+  1234→    const n = nightFactor(clockRef.current);
+  1235→    const m = ref.current?.material as THREE.PointsMaterial | undefined;
+  1236→    if (!m) return;
+  1237→    m.opacity = Math.max(0, n - 0.4) * 2.2 * (0.7 + Math.sin(s.clock.elapsedTime * 3) * 0.3);
+  1238→    ref.current.position.y = Math.sin(s.clock.elapsedTime * 1.2) * 0.4;
+  1239→  });
+  1240→  return (
+  1241→    <points ref={ref} geometry={geo} frustumCulled={false}>
+  1242→      <pointsMaterial color="#ffe066" size={3.4} transparent opacity={0} sizeAttenuation={false} />
+  1243→    </points>
+  1244→  );
+  1245→}
+  1246→
+  1247→/* ------------------------- environment ------------------------- */
+  1248→const DAY = new THREE.Color(0x8fd3ff);
+  1249→const DUSK = new THREE.Color(0xff9a5a);
+  1250→const NIGHT = new THREE.Color(0x0a0e2a);
+  1251→
+  1252→function Env({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
+  1253→  const { scene } = useThree();
+  1254→  const hemi = useRef<THREE.HemisphereLight>(null!);
+  1255→  const sun = useRef<THREE.DirectionalLight>(null!);
+  1256→  const sky = useMemo(() => new THREE.Color(), []);
+  1257→  const PI2 = Math.PI * 2;
+  1258→  useFrame(() => {
+  1259→    const clock = clockRef.current;
+  1260→    const n = nightFactor(clock);
+  1261→    const h = Math.sin(PI2 * (clock - 0.25));
+  1262→    const dk = Math.max(0, 1 - Math.abs(h) * 5);
+  1263→    sky.copy(DAY).lerp(NIGHT, n);
+  1264→    if (dk > 0) sky.lerp(DUSK, dk * 0.6);
+  1265→    scene.background = sky;
+  1266→    scene.fog = new THREE.Fog(sky, 90, n > 0.5 ? 300 : 580);
+  1267→    hemi.current.intensity = 0.35 + 0.55 * (1 - n);
+  1268→    sun.current.intensity = 0.25 + 0.95 * (1 - n);
+  1269→    sun.current.position.set(Math.cos(PI2 * (clock - 0.25)) * 200, Math.max(24, h * 200), 90);
+  1270→  });
+  1271→  return (
+  1272→    <>
+  1273→      <hemisphereLight ref={hemi} args={[0xffffff, 0x557744, 0.8]} />
+  1274→      <directionalLight ref={sun} args={[0xfff2d0, 1]} />
+  1275→    </>
+  1276→  );
+  1277→}
+  1278→
+  1279→export function WorldView({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
+  1280→  return (
+  1281→    <>
+  1282→      <Env clockRef={clockRef} />
+  1283→      <Disc r={780} color="#3f7a36" y={-0.12} />
+  1284→      <Disc r={CITY_RADIUS} color="#9a968c" y={0} />
+  1285→      <Ring a={CITY_RADIUS} b={FARM_RADIUS} color="#9cb84e" y={0.02} />
+  1286→      <Ring a={FARM_RADIUS} b={JUNGLE_RADIUS} color="#2d7a3a" y={0.03} />
+  1287→      <Disc r={GRAVEYARD.r} color="#3a3a46" y={0.06} x={GRAVEYARD.x} z={GRAVEYARD.z} />
+  1288→      <Roads />
+  1289→      <Buildings />
+  1290→      <Windows clockRef={clockRef} />
+  1291→      <Cars />
+  1292→      <RingTraffic />
+  1293→      <Lamps clockRef={clockRef} />
+  1294→      <Park />
+  1295→      <Benches />
+  1296→      <Umbrellas />
+  1297→      <Farm />
+  1298→      <Landmarks />
+  1299→      <Forest />
+  1300→      <Graves />
+  1301→      <Flowers />
+  1302→      <Mountains />
+  1303→      <Parliament />
+  1304→      <BallotBox />
+  1305→      <Clouds />
+  1306→      <Sky clockRef={clockRef} />
+  1307→      <Fireflies clockRef={clockRef} />
+  1308→    </>
+  1309→  );
+  1310→}
+  1311→

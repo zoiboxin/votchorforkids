@@ -952,40 +952,175 @@ function Flowers() {
   );
 }
 
-/* ------------------------- mountains ------------------------- */
+/* --------- mountains: procedural ridged silhouettes (no more plain cones) --------- */
 const ROCK_COLS = ["#8d8478", "#7d7468", "#96897a", "#8b8f9a", "#847a6d"];
 const HILL_COLS = ["#5d8a4a", "#527e42", "#68964f", "#4e7a40"];
+const BASE_GRASS = new THREE.Color("#71875c");
+const SCRUB_COL = new THREE.Color("#5c6e54");
+const SNOW_COL = new THREE.Color("#f4f7fb");
+const SNOW_SHADE = new THREE.Color("#c9d5e2");
+
+/** deterministic 2d hash → [0,1) */
+const hash2 = (a: number, b: number) => {
+  const s = Math.sin(a * 127.1 + b * 311.7) * 43758.5453;
+  return s - Math.floor(s);
+};
 
 interface Peak {
   x: number; z: number; h: number; w: number;
   rot: number; sx: number; sz: number;
-  ci: number; tint: number; seg: 0 | 1 | 2; snow: number;
+  ci: number; tint: number; snow: number; seed: number;
+  k: number;    // slope profile exponent — higher = more concave & fluted
+  skew: number; // asymmetric flanks (one steep, one gentle)
+  amp: [number, number, number];        // ridge harmonic amplitudes
+  ph: [number, number, number, number, number]; // ridge phases
+  jit: number;  // surface crag jitter
+  topT: number; // where the top ring sits — low = broad broken summit, high = needle
+  green: boolean; // grassy foothill (no snow, green palette)
+}
+
+/** Radial silhouette multiplier: fluted ridges + one steep / one gentle flank. */
+function ridgeMul(p: Peak, a: number): number {
+  return (
+    1 +
+    p.amp[0] * Math.sin(2 * a + p.ph[0]) +
+    p.amp[1] * Math.sin(3 * a + p.ph[1]) +
+    p.amp[2] * Math.sin(5 * a + p.ph[2]) +
+    0.05 * Math.sin(8 * a + p.ph[3]) +
+    p.skew * Math.sin(a + p.ph[4])
+  );
+}
+
+/** Height profile: concave alpine slope with a subtle lower-mountain bulge. t: 0 base → 1 summit */
+const profile = (t: number, k: number) =>
+  Math.pow(1 - t, k) * (1 + 0.14 * Math.pow(Math.sin(Math.min(1, t) * Math.PI), 2));
+
+/** Bake every peak & foothill into one merged geometry with per-face rock/snow/grass colors. */
+function buildMountainGeometry(peaks: Peak[]): THREE.BufferGeometry {
+  const pos: number[] = [];
+  const colA: number[] = [];
+  const cA = new THREE.Color(), cB = new THREE.Color();
+  let fi = 0;
+
+  const face = (
+    ax: number, ay: number, az: number,
+    bx: number, by: number, bz: number,
+    cx: number, cy: number, cz: number,
+    jAvg: number, p: Peak,
+  ) => {
+    const ux = bx - ax, uy = by - ay, uz = bz - az;
+    const vx = cx - ax, vy = cy - ay, vz = cz - az;
+    const nx = uy * vz - uz * vy;
+    let ny = uz * vx - ux * vz;
+    const nz = ux * vy - uy * vx;
+    const nl = Math.hypot(nx, ny, nz) || 1;
+    ny /= nl; // steepness: 1 = flat ground, 0 = vertical wall
+    const hf = ((ay + by + cy) / 3 + 4) / p.h; // height fraction (base sunk 4 units)
+    const hsh = hash2(fi * 1.7 + p.seed, 3.3);
+    // Snow settles above the peak's snowline on gentler faces; steep crags stay rocky.
+    const snowy = hf > p.snow + (hsh - 0.5) * 0.09 && (ny > 0.6 || hf > p.snow + 0.12);
+    if (snowy) {
+      cB.copy(SNOW_COL).offsetHSL(0, 0, (hsh - 0.5) * 0.045);
+      const shade = Math.min(1, Math.max(0, -jAvg * 4 + (1 - ny) * 0.6)) * 0.5;
+      cB.lerp(SNOW_SHADE, shade);
+    } else {
+      cA.set((p.green ? HILL_COLS : ROCK_COLS)[p.ci]).offsetHSL(0, 0, p.tint);
+      const light =
+        (hsh - 0.5) * 0.06 +
+        jAvg * 0.5 -                                      // crevices darker than ridges
+        (1 - Math.max(0, ny)) * 0.045 +                   // steep walls darker
+        (hash2(fi * 2.3, p.seed + 9.1) - 0.5) * 0.03;     // faint strata banding
+      cB.copy(cA).offsetHSL(0, 0, light);
+      if (!p.green && hf < 0.16) cB.lerp(BASE_GRASS, ((0.16 - hf) / 0.16) * 0.6);
+      // scrub/forest band on gentler mid-slopes (cliffs stay bare rock)
+      const forest = Math.max(0, 1 - Math.abs(hf - 0.26) / 0.16) * Math.max(0, (ny - 0.4) / 0.35);
+      if (!p.green && forest > 0) cB.lerp(SCRUB_COL, Math.min(1, forest) * 0.45);
+    }
+    pos.push(ax, ay, az, bx, by, bz, cx, cy, cz);
+    colA.push(cB.r, cB.g, cB.b, cB.r, cB.g, cB.b, cB.r, cB.g, cB.b);
+    fi++;
+  };
+
+  for (const p of peaks) {
+    const R = p.green ? 10 : 9 + (Math.floor(p.seed) % 3) * 2;
+    const H = p.green ? 6 : 8;
+    const cR = Math.cos(p.rot), sR = Math.sin(p.rot);
+    const baseR = p.w / 2;
+    const rings: { x: number; y: number; z: number; j: number }[][] = [];
+    for (let i = 0; i < H; i++) {
+      const t = (i / (H - 1)) * p.topT;
+      const pr = profile(t, p.k) * (p.green ? 1.15 : 1);
+      const y0 = -4 + t * p.h;
+      const ring: { x: number; y: number; z: number; j: number }[] = [];
+      for (let j = 0; j < R; j++) {
+        const a = (j / R) * Math.PI * 2;
+        const jRad = (hash2(i * 3.7 + p.seed, j * 9.1) - 0.5) * p.jit;
+        const rr = baseR * pr * ridgeMul(p, a) * (1 + jRad);
+        const yJ = (hash2(j * 5.3 + p.seed, i * 2.9) - 0.5) * p.h * 0.03 * (0.25 + t);
+        const lx = Math.cos(a) * rr * p.sx;
+        const lz = Math.sin(a) * rr * p.sz;
+        ring.push({ x: p.x + lx * cR - lz * sR, y: y0 + yJ, z: p.z + lx * sR + lz * cR, j: jRad });
+      }
+      rings.push(ring);
+    }
+    // jagged, slightly off-centre summit
+    const ax = (hash2(p.seed, 8.4) - 0.5) * p.w * 0.05;
+    const az = (hash2(p.seed, 6.1) - 0.5) * p.w * 0.05;
+    const apex = {
+      x: p.x + (ax * cR - az * sR) * p.sx,
+      y: -4 + (p.topT + 0.025 + hash2(p.seed, 4.2) * 0.035) * p.h + (hash2(p.seed, 2.7) - 0.5) * p.h * 0.015,
+      z: p.z + (ax * sR + az * cR) * p.sz,
+      j: 0,
+    };
+    for (let i = 0; i < H - 1; i++) {
+      const lo = rings[i], hi = rings[i + 1];
+      for (let j = 0; j < R; j++) {
+        const j2 = (j + 1) % R;
+        const A = lo[j], B = lo[j2], C = hi[j2], D = hi[j];
+        const jAvg = (A.j + B.j + C.j + D.j) / 4;
+        face(A.x, A.y, A.z, C.x, C.y, C.z, B.x, B.y, B.z, jAvg, p);
+        face(A.x, A.y, A.z, D.x, D.y, D.z, C.x, C.y, C.z, jAvg, p);
+      }
+    }
+    const top = rings[H - 1];
+    for (let j = 0; j < R; j++) {
+      const A = top[j], B = top[(j + 1) % R];
+      face(A.x, A.y, A.z, apex.x, apex.y, apex.z, B.x, B.y, B.z, (A.j + B.j) / 2, p);
+    }
+  }
+
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(colA, 3));
+  geo.computeVertexNormals();
+  return geo;
 }
 
 function Mountains() {
-  const b5 = useRef<THREE.InstancedMesh>(null!);
-  const b6 = useRef<THREE.InstancedMesh>(null!);
-  const b7 = useRef<THREE.InstancedMesh>(null!);
-  const c5 = useRef<THREE.InstancedMesh>(null!);
-  const c6 = useRef<THREE.InstancedMesh>(null!);
-  const c7 = useRef<THREE.InstancedMesh>(null!);
-  const hills = useRef<THREE.InstancedMesh>(null!);
-
-  const data = useMemo(() => {
+  const geo = useMemo(() => {
     const r = mulberry32(7);
-    // Major peaks — ring around the (now much bigger) map, each with its own silhouette.
+    // Major peaks — heights cluster by sector so some directions are huge snowy
+    // ranges and others are low rocky hills, instead of a uniform spike fence.
     const majors: Peak[] = Array.from({ length: 26 }, (_, i) => {
       const a = (i / 26) * Math.PI * 2 + range(r, -0.06, 0.06);
-      const d = range(r, 430, 502);
-      const h = range(r, 95, 185);
-      const w = range(r, 58, 100);
+      const cl = 0.5 + 0.5 * Math.sin(2 * a + 1.7) * Math.sin(3 * a + 0.6); // 0..1
+      const h = 66 + cl * 122 + range(r, -12, 12);
+      const d = 424 + cl * 48 + range(r, -22, 22);
+      const w = range(r, 54, 118);
       return {
         x: Math.cos(a) * d, z: Math.sin(a) * d, h, w,
         rot: range(r, 0, Math.PI * 2),
         sx: range(r, 0.8, 1.2), sz: range(r, 0.8, 1.2),
         ci: i % ROCK_COLS.length, tint: range(r, -0.045, 0.055),
-        seg: (i % 3) as 0 | 1 | 2,
-        snow: h > 130 ? range(r, 0.5, 0.64) : h > 105 ? range(r, 0.6, 0.75) : range(r, 0.78, 0.94),
+        snow: h > 135 ? range(r, 0.5, 0.62) : h > 100 ? range(r, 0.58, 0.72) : range(r, 0.74, 0.9),
+        seed: 11 + i * 3.17,
+        k: range(r, 1.2, 1.75),
+        skew: range(r, 0.1, 0.22),
+        amp: [range(r, 0.14, 0.26), range(r, 0.09, 0.17), range(r, 0.05, 0.11)],
+        ph: [range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28)],
+        jit: range(r, 0.16, 0.28),
+        topT: range(r, 0.78, 0.9),
+        green: false,
       };
     });
     // Shoulder peaks — cluster beside majors to form ranges.
@@ -993,104 +1128,51 @@ function Mountains() {
     majors.forEach((m, i) => {
       const nSh = r() < 0.45 ? 2 : r() < 0.75 ? 1 : 0;
       for (let k = 0; k < nSh; k++) {
-        const a = Math.atan2(m.z, m.x) + (k === 0 ? 1 : -1) * range(r, 0.02, 0.055);
-        const d = Math.hypot(m.x, m.z) + range(r, -28, 46);
-        const h = m.h * range(r, 0.36, 0.6);
+        const a = Math.atan2(m.z, m.x) + (k === 0 ? 1 : -1) * range(r, 0.025, 0.07);
+        const d = Math.hypot(m.x, m.z) + range(r, -40, 60);
+        const h = m.h * range(r, 0.4, 0.68);
         shoulders.push({
           x: Math.cos(a) * d, z: Math.sin(a) * d, h,
-          w: m.w * range(r, 0.42, 0.6),
+          w: m.w * range(r, 0.5, 0.78),
           rot: range(r, 0, Math.PI * 2),
           sx: range(r, 0.85, 1.15), sz: range(r, 0.85, 1.15),
           ci: (i + k + 1) % ROCK_COLS.length, tint: range(r, -0.04, 0.05),
-          seg: ((i + k + 1) % 3) as 0 | 1 | 2,
-          snow: h > 78 ? range(r, 0.58, 0.72) : range(r, 0.82, 0.96),
+          snow: h > 78 ? range(r, 0.6, 0.74) : h > 45 ? range(r, 0.72, 0.85) : range(r, 0.85, 0.96),
+          seed: 71 + i * 7.7 + k * 2.9,
+          k: range(r, 1.2, 1.7),
+          skew: range(r, 0.08, 0.2),
+          amp: [range(r, 0.13, 0.24), range(r, 0.08, 0.16), range(r, 0.04, 0.1)],
+          ph: [range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28)],
+          jit: range(r, 0.14, 0.24),
+          topT: range(r, 0.8, 0.9),
+          green: false,
         });
       }
     });
-    // Rounded low-poly foothills, kept outside the playable ring.
-    const hills = Array.from({ length: 44 }, (_, i) => {
+    // Lumpy grassy foothills, kept outside the playable ring.
+    const hills: Peak[] = Array.from({ length: 44 }, (_, i) => {
       const a = range(r, 0, Math.PI * 2), d = range(r, 408, 448);
-      return { x: Math.cos(a) * d, z: Math.sin(a) * d, h: range(r, 9, 26), w: range(r, 24, 54), ci: i % HILL_COLS.length, tint: range(r, -0.05, 0.06) };
+      return {
+        x: Math.cos(a) * d, z: Math.sin(a) * d,
+        h: range(r, 14, 30), w: range(r, 26, 56),
+        rot: range(r, 0, Math.PI * 2),
+        sx: range(r, 0.85, 1.2), sz: range(r, 0.85, 1.2),
+        ci: i % HILL_COLS.length, tint: range(r, -0.05, 0.06),
+        snow: 2, seed: 211 + i * 5.3,
+        k: range(r, 0.5, 0.62),
+        skew: range(r, 0.08, 0.18),
+        amp: [range(r, 0.12, 0.22), range(r, 0.08, 0.16), range(r, 0.05, 0.1)],
+        ph: [range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28)],
+        jit: range(r, 0.16, 0.24),
+        topT: range(r, 0.82, 0.92),
+        green: true,
+      };
     });
-    const segBody = [0, 0, 0], segCap = [0, 0, 0];
-    for (const p of [...majors, ...shoulders]) { segBody[p.seg]++; if (p.snow < 0.98) segCap[p.seg]++; }
-    return { majors, shoulders, hills, segBody, segCap };
+    return buildMountainGeometry([...majors, ...shoulders, ...hills]);
   }, []);
 
-  useLayoutEffect(() => {
-    const bodyRefs = [b5, b6, b7], capRefs = [c5, c6, c7];
-    const nb = [0, 0, 0], nc = [0, 0, 0];
-    const putPeak = (p: Peak) => {
-      const br = bodyRefs[p.seg].current, cr = capRefs[p.seg].current;
-      tmp.rotation.set(0, p.rot, 0);
-      tmp.scale.set(p.w * p.sx, p.h, p.w * p.sz);
-      tmp.position.set(p.x, p.h / 2 - 4, p.z);
-      tmp.updateMatrix();
-      br.setMatrixAt(nb[p.seg], tmp.matrix);
-      br.setColorAt(nb[p.seg], col.set(ROCK_COLS[p.ci]).offsetHSL(0, 0, p.tint));
-      nb[p.seg]++;
-      if (p.snow < 0.98) {
-        const f = p.snow;
-        // Cap is the cone tip region — same triangle, slight overhang so snow drapes.
-        tmp.scale.set(p.w * p.sx * (1 - f) * 1.06, p.h * (1 - f) * 1.02, p.w * p.sz * (1 - f) * 1.06);
-        tmp.position.set(p.x, p.h * f + (p.h * (1 - f)) / 2 - 4, p.z);
-        tmp.updateMatrix();
-        cr.setMatrixAt(nc[p.seg], tmp.matrix);
-        nc[p.seg]++;
-      }
-    };
-    data.majors.forEach(putPeak);
-    data.shoulders.forEach(putPeak);
-    data.hills.forEach((hl, i) => {
-      tmp.rotation.set(0, hl.x * 0.11, 0);
-      tmp.scale.set(hl.w, hl.h, hl.w);
-      tmp.position.set(hl.x, hl.h * 0.55, hl.z);
-      tmp.updateMatrix();
-      hills.current.setMatrixAt(i, tmp.matrix);
-      hills.current.setColorAt(i, col.set(HILL_COLS[hl.ci]).offsetHSL(0, 0, hl.tint));
-    });
-    tmp.rotation.set(0, 0, 0);
-    tmp.scale.setScalar(1);
-    for (let s = 0; s < 3; s++) {
-      bodyRefs[s].current.count = nb[s];
-      capRefs[s].current.count = nc[s];
-      bodyRefs[s].current.instanceMatrix.needsUpdate = true;
-      capRefs[s].current.instanceMatrix.needsUpdate = true;
-      if (bodyRefs[s].current.instanceColor) bodyRefs[s].current.instanceColor.needsUpdate = true;
-    }
-    hills.current.instanceMatrix.needsUpdate = true;
-    if (hills.current.instanceColor) hills.current.instanceColor.needsUpdate = true;
-  }, [data]);
-
-  const rockMat = useMemo(() => new THREE.MeshLambertMaterial({ flatShading: true }), []);
-  const snowMat = useMemo(() => new THREE.MeshLambertMaterial({ color: "#f4f7fb", flatShading: true }), []);
-  const hillMat = useMemo(() => new THREE.MeshLambertMaterial({ flatShading: true }), []);
-
-  return (
-    <>
-      <instancedMesh ref={b5} args={[undefined, undefined, Math.max(1, data.segBody[0])]} material={rockMat} frustumCulled={false}>
-        <coneGeometry args={[1, 1, 5]} />
-      </instancedMesh>
-      <instancedMesh ref={b6} args={[undefined, undefined, Math.max(1, data.segBody[1])]} material={rockMat} frustumCulled={false}>
-        <coneGeometry args={[1, 1, 6]} />
-      </instancedMesh>
-      <instancedMesh ref={b7} args={[undefined, undefined, Math.max(1, data.segBody[2])]} material={rockMat} frustumCulled={false}>
-        <coneGeometry args={[1, 1, 7]} />
-      </instancedMesh>
-      <instancedMesh ref={c5} args={[undefined, undefined, Math.max(1, data.segCap[0])]} material={snowMat} frustumCulled={false}>
-        <coneGeometry args={[1, 1, 5]} />
-      </instancedMesh>
-      <instancedMesh ref={c6} args={[undefined, undefined, Math.max(1, data.segCap[1])]} material={snowMat} frustumCulled={false}>
-        <coneGeometry args={[1, 1, 6]} />
-      </instancedMesh>
-      <instancedMesh ref={c7} args={[undefined, undefined, Math.max(1, data.segCap[2])]} material={snowMat} frustumCulled={false}>
-        <coneGeometry args={[1, 1, 7]} />
-      </instancedMesh>
-      <instancedMesh ref={hills} args={[undefined, undefined, data.hills.length]} material={hillMat} frustumCulled={false}>
-        <icosahedronGeometry args={[1, 0]} />
-      </instancedMesh>
-    </>
-  );
+  const mat = useMemo(() => new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), []);
+  return <mesh geometry={geo} material={mat} frustumCulled={false} />;
 }
 
 /* ------------------------- parliament + ballot ------------------------- */
