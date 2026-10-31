@@ -1,15 +1,25 @@
-import { AGE_STATS, DAY_SECONDS, GRAVITY, SPRINT_MULT, WALL_RADIUS, type AgeGroup } from "./constants";
+import { AGE_STATS, COYOTE_S, DAY_SECONDS, DOUBLE_JUMP_VY, GRAVITY, SPRINT_MULT, WALL_RADIUS, type AgeGroup } from "./constants";
 import { clamp } from "./rng";
 import { resolve, type World } from "./worldgen";
 
-export interface Body { x: number; y: number; z: number; vx: number; vy: number; vz: number; stamina: number; face: number; sprinting: boolean }
-export const newBody = (x: number, z: number): Body => ({ x, y: 0, z, vx: 0, vy: 0, vz: 0, stamina: 100, face: 0, sprinting: false });
+export interface Body {
+  x: number; y: number; z: number; vx: number; vy: number; vz: number;
+  stamina: number; face: number; sprinting: boolean;
+  jumps: number;      // 0 grounded · 1 after ground/coyote jump · 2 after double jump
+  jumpLatch: boolean; // one press = one jump (prevents hold-to-double-jump)
+  airT: number;       // seconds since last grounded (coyote-time window)
+}
+export const newBody = (x: number, z: number): Body => ({ x, y: 0, z, vx: 0, vy: 0, vz: 0, stamina: 100, face: 0, sprinting: false, jumps: 0, jumpLatch: false, airT: 0 });
 
 export interface MoveInput { f: number; r: number; sprint: boolean; jump: boolean }
 
 /**
  * Deterministic movement step. Camera-relative: yaw is the camera heading;
  * forward is (-sin yaw, -cos yaw).
+ *
+ * Jump feel: coyote time lets you jump just after walking off an edge, and the
+ * latch means each press fires exactly one jump — tap Space again mid-air for
+ * the double-jump flip.
  */
 export function stepBody(
   b: Body, inp: MoveInput, dt: number, age: AgeGroup, world: World,
@@ -26,13 +36,34 @@ export function stepBody(
   b.sprinting = inp.sprint && moving && b.stamina > 2;
   const speed = A.speed * (opts.speedScale ?? 1) * (b.sprinting ? SPRINT_MULT : 1);
   b.stamina = clamp(b.stamina + (b.sprinting ? -20 : 12 * A.regen) * dt, 0, maxSt);
-  const k = Math.min(1, dt * 10);
+  // slightly floatier steering while airborne — momentum keeps you committed
+  const k = Math.min(1, dt * (b.y > 0.05 ? 6.5 : 10));
   b.vx += (dx * speed - b.vx) * k;
   b.vz += (dz * speed - b.vz) * k;
-  if (b.y <= 0 && inp.jump) { b.vy = A.jump; b.y = 0.01; }
+
+  // ---- jump / double jump (edge-detected via latch) ----
+  if (inp.jump && !b.jumpLatch) {
+    b.jumpLatch = true;
+    if (b.y <= 0.02 || b.airT < COYOTE_S) {
+      b.vy = A.jump;                       // ground (or coyote) jump
+      if (b.y <= 0) b.y = 0.01;
+      b.jumps = 1;
+    } else if (b.jumps < 2) {
+      b.vy = A.jump * DOUBLE_JUMP_VY;      // mid-air double jump — a touch weaker
+      b.jumps = 2;
+    }
+  }
+  if (!inp.jump) b.jumpLatch = false;
+
   b.vy -= GRAVITY * dt;
   b.y = Math.max(0, b.y + b.vy * dt);
-  if (b.y === 0) b.vy = 0;
+  if (b.y === 0) {
+    b.vy = 0;
+    b.jumps = 0;
+    b.airT = 0;
+  } else {
+    b.airT += dt;
+  }
   b.x += b.vx * dt; b.z += b.vz * dt;
   resolve(b, 0.45, world);
   const rr = Math.hypot(b.x, b.z);

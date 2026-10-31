@@ -1,8 +1,8 @@
 import {
   AGE_STATS, ANIMAL_SET, BALLOT, CARRY_RADIUS, CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
-  ESCAPE_LOST_S, FARM_RADIUS, GRAVEYARD, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
-  ITEM_RESPAWN_S, JUMP_COST, JUNGLE_RADIUS, MAX_CARRY, PICKUP_RADIUS,
+  ESCAPE_LOST_S, FARM_RADIUS, FLIP_S, GRAVEYARD, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
+  ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUNGLE_RADIUS, LAND_SQUASH_S, MAX_CARRY, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, RESCUE_POINTS,
   RESCUE_RADIUS, SPAWN, STAR_DECAY_S, TOTAL_VOTES, WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
   ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, type AnimalKind, type Appearance, type Zone, zoneOf, ZONE_TOAST,
@@ -56,6 +56,8 @@ export class GameEngine {
   hp = 100; stamina = 100;
   inv: { def: number; count: number }[] = []; // pocketed food, used from the HUD item bar
   hurtT = 0;                // red damage-flash timer
+  flipT = 0;                // double-jump front-flip timer (FLIP_S → 0)
+  squashT = 0;              // landing squash-and-stretch timer (LAND_SQUASH_S → 0)
   lastGain: { hp: number; stamina: number; at: number } = { hp: 0, stamina: 0, at: 0 }; // bumped on every eat
   private exhaustedAnnounced = false;
   private pocketFullT = 0;  // throttles the "pockets full" toast
@@ -162,6 +164,7 @@ export class GameEngine {
     this.player = newBody(SPAWN.x, SPAWN.z);
     this.hp = 100; this.stamina = 100; this.stars = 0; this.starTimer = 0;
     this.inv = []; this.hurtT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0;
+    this.flipT = 0; this.squashT = 0;
     this.carriedVotes = []; this.delivered = 0; this.points = 0; this.rescues = 0; this.caughtCount = 0;
     this.detainedT = 0; this.invulnT = 8; this.elapsed = 0; this.won = false; this.clock = 0.3;
     for (const v of this.votes) { v.state = "world"; const p = freeSpot(this.rnd, this.world, 16, 330); v.x = p.x; v.z = p.z; }
@@ -314,20 +317,27 @@ export class GameEngine {
     /* --- player --- */
     this.pocketFullT = Math.max(0, this.pocketFullT - dt);
     this.hurtT = Math.max(0, this.hurtT - dt);
+    this.flipT = Math.max(0, this.flipT - dt);
+    this.squashT = Math.max(0, this.squashT - dt);
     if (this.detainedT > 0) {
       this.detainedT -= dt;
       p.vx = p.vz = 0;
     } else {
       this.invulnT = Math.max(0, this.invulnT - dt);
       const prevY = p.y;
+      const prevJumps = p.jumps;
       p.stamina = this.stamina; // engine stamina is the single source of truth
       stepBody(p, { f: this.input.f, r: this.input.r, sprint: this.input.sprint, jump: this.input.jump }, dt, this.look.age, this.world, { yaw: this.input.yaw });
       this.stamina = p.stamina; // sprinting drains / walking regenerates (see stepBody)
-      if (prevY <= 0 && p.y > 0) {
+      if (p.jumps === 1 && prevJumps === 0) {
         sfx.jump();
         this.stamina = Math.max(0, this.stamina - JUMP_COST);
+      } else if (p.jumps === 2 && prevJumps === 1) {
+        sfx.jump2();
+        this.stamina = Math.max(0, this.stamina - JUMP2_COST);
+        this.flipT = FLIP_S;
       }
-      if (prevY > 0 && p.y === 0) sfx.land();
+      if (prevY > 0 && p.y === 0) { sfx.land(); this.squashT = LAND_SQUASH_S; }
       if (this.stamina <= 0.5 && !this.exhaustedAnnounced) {
         this.exhaustedAnnounced = true;
         this.toast("😮‍💨 Exhausted! Walk a little to catch your breath, or eat something.", "info");

@@ -721,7 +721,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
           <div className="max-w-[220px] rounded-xl bg-black/40 px-3 py-2 text-xs leading-relaxed text-white/90 backdrop-blur-md">
             <b className="text-yellow-300">Goal:</b> snatch 🗳 votes, deliver them at the Parliament ballot box. Rescue pink-bubbled friends with <b>E</b>. Dodge the police — sprint with <b>Shift</b>!
             <div className="mt-1 text-amber-200/90">⚡ Sprinting drains energy · run over 🥭☕🩹 food to pocket it, then tap the bag (or press <b>1-8</b>) to eat: heals ❤ and refills ⚡.</div>
-            {!touch && <div className="mt-1 text-white/70">WASD move · Shift sprint · Space jump · E rescue · 1-8 eat · right-click drop · M map · P pause</div>}
+            {!touch && <div className="mt-1 text-white/70">WASD move · Shift sprint · Space jump ×2 (flip!) · E rescue · 1-8 eat · right-click drop · M map · P pause</div>}
           </div>
         )}
       </div>
@@ -850,7 +850,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       {!touch && (
         <div className="absolute bottom-3 left-1/2 z-10 hidden -translate-x-1/2 flex-col items-center gap-1.5 md:flex">
           <div className="hidden whitespace-nowrap rounded-full bg-black/45 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/75 backdrop-blur-md lg:block">
-            WASD move · Shift sprint · Space jump · E rescue · 1-8 eat
+            WASD move · Shift sprint · Space jump ×2 · E rescue · 1-8 eat
           </div>
           <CoordsChip px={hud.px} pz={hud.pz} />
         </div>

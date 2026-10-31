@@ -413,7 +413,7 @@ export const rigOf = (g: THREE.Object3D): CharRig => g.userData.rig as CharRig;
 /* ------------------------------------------------------------------ */
 /* Posing — walk / run / jump / idle / sit + auto-blink & expressions  */
 /* ------------------------------------------------------------------ */
-export interface PoseOpts { phase?: number; airborne?: boolean; detained?: boolean; zombie?: boolean }
+export interface PoseOpts { phase?: number; airborne?: boolean; detained?: boolean; zombie?: boolean; vy?: number; flip?: number; squash?: number }
 
 function updateBlink(g: THREE.Object3D, rig: CharRig, t: number) {
   const st = g.userData.blink as { next: number; t: number; amt: number } | undefined;
@@ -465,23 +465,52 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
   body.rotation.y = 0;
 
   if (o.airborne) {
-    legs[0].rotation.x = -0.75; legs[1].rotation.x = 0.45;
-    arms[0].rotation.x = -2.5; arms[1].rotation.x = -2.5;
-    arms[0].rotation.z = 0.25; arms[1].rotation.z = -0.25;
-    body.rotation.x = -0.1;
-    body.rotation.y = 0.14;
+    // mid-air front flip after a double jump — one full rotation over FLIP_S
+    if (o.flip && o.flip > 0) {
+      const p = 1 - Math.min(1, o.flip);        // 0 → 1 through the flip
+      body.rotation.x = -Math.PI * 2 * p;       // full front flip
+      body.rotation.y = 0;
+      body.rotation.z = 0;
+      legs[0].rotation.x = -1.5; legs[1].rotation.x = -1.25; // tight tuck
+      arms[0].rotation.x = -1.15; arms[1].rotation.x = -1.15;
+      arms[0].rotation.z = 0.32; arms[1].rotation.z = -0.32;
+      head.position.y = HEAD_Y;
+      body.position.y = 0;
+      body.scale.y = 1.05; body.scale.x = body.scale.z = 0.96;
+      return;
+    }
+    const rising = (o.vy ?? 0) > 0;
+    if (rising) {
+      // launch: arms thrown up, legs trailing, body stretched
+      legs[0].rotation.x = -0.75; legs[1].rotation.x = 0.45;
+      arms[0].rotation.x = -2.6; arms[1].rotation.x = -2.4;
+      arms[0].rotation.z = 0.3; arms[1].rotation.z = -0.3;
+      body.rotation.x = -0.12;
+      body.scale.y = 1.07; body.scale.x = body.scale.z = 0.96;
+    } else {
+      // falling: superhero arms out, legs reaching for the ground
+      legs[0].rotation.x = -0.5; legs[1].rotation.x = 0.3;
+      arms[0].rotation.x = -0.85; arms[1].rotation.x = -0.85;
+      arms[0].rotation.z = 1.15; arms[1].rotation.z = -1.15;
+      body.rotation.x = 0.06;
+      body.scale.y = 0.97; body.scale.x = body.scale.z = 1.02;
+    }
+    body.rotation.y = 0.1;
+    body.rotation.z = 0;
     head.position.y = HEAD_Y;
     body.position.y = 0;
-    body.scale.y = 1.06; body.scale.x = body.scale.z = 0.97;
     return;
   }
+
+  // landing squash-and-stretch: peaks mid-way, eases back to 1
+  const sq = o.squash ? Math.sin(Math.min(1, o.squash) * Math.PI) * 0.16 : 0;
 
   const sp = Math.min(1.6, speed / 4.5);
   if (sp < 0.06) {
     const b = Math.sin(t * 2 + phase);
-    body.position.y = b * 0.02;
-    body.scale.y = 1 + b * 0.014;
-    body.scale.x = body.scale.z = 1;
+    body.position.y = b * 0.02 - sq * 0.35;
+    body.scale.y = (1 + b * 0.014) * (1 - sq);
+    body.scale.x = body.scale.z = 1 + sq * 0.7;
     body.rotation.z = Math.sin(t * 0.7 + phase) * 0.022; // gentle weight shift
     head.position.y = HEAD_Y + b * 0.012;
     legs[0].rotation.x = legs[1].rotation.x = 0;
@@ -503,9 +532,9 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
   arms[0].rotation.z = 0.12;
   arms[1].rotation.z = -0.12;
   const bounce = Math.abs(Math.cos(freq));
-  body.position.y = bounce * 0.06 * sp;
-  body.scale.y = 1 - bounce * 0.035 * sp;
-  body.scale.x = body.scale.z = 1 + bounce * 0.02 * sp;
+  body.position.y = bounce * 0.06 * sp - sq * 0.35;
+  body.scale.y = (1 - bounce * 0.035 * sp) * (1 - sq);
+  body.scale.x = body.scale.z = (1 + bounce * 0.02 * sp) * (1 + sq * 0.7);
   body.rotation.x = Math.min(0.3, sp * 0.13) + (sprinting ? 0.14 : 0);
   body.rotation.z = Math.sin(freq) * 0.035 * sp; // hip roll adds life
   head.position.y = HEAD_Y + bounce * 0.045 * sp; // head bobs on stride

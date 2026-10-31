@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  ANIMAL_SET, CIVIL_NAMES, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, PANTS_COLORS, SHIRT_COLORS, SKIN_TONES,
+  ANIMAL_SET, CIVIL_NAMES, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, PANTS_COLORS, SHIRT_COLORS, SKIN_TONES,
   TOTAL_VOTES, type Appearance,
 } from "@/lib/game/constants";
 import type { GameEngine } from "@/lib/game/engine";
@@ -45,6 +45,9 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     poseCharacter(mesh, Math.hypot(p.vx, p.vz), performance.now() / 1000, {
       airborne: p.y > 0.12,
       detained: engine.detainedT > 0,
+      vy: p.vy,
+      flip: engine.flipT > 0 ? engine.flipT / FLIP_S : 0,
+      squash: engine.squashT > 0 ? engine.squashT / LAND_SQUASH_S : 0,
     });
 
     // carried votes orbit the player's head (rendered by <Pickups>)

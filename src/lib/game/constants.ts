@@ -10,6 +10,13 @@ export const SPAWN = { x: 0, z: 6 } as const;
 export const DAY_SECONDS = 360;
 export const GRAVITY = 22;
 
+/* ---------- jump feel ---------- */
+export const COYOTE_S = 0.12;        // grace window to jump after walking off an edge
+export const DOUBLE_JUMP_VY = 0.92;  // double-jump power as a fraction of the ground jump
+export const JUMP2_COST = 8;         // extra stamina for the mid-air double jump
+export const FLIP_S = 0.55;          // front-flip duration after a double jump
+export const LAND_SQUASH_S = 0.16;   // landing squash-and-stretch duration
+
 /** Parliament + ballot box where stolen votes are delivered. */
 export const PARLIAMENT = { x: 0, z: -196 } as const;
 export const BALLOT = { x: 0, z: -174 } as const;

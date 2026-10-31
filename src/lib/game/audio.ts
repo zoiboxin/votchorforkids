@@ -75,6 +75,7 @@ export const sfx = {
   eat: () => { tone(520, 0.08, "square", 0.22); tone(392, 0.1, "square", 0.2, undefined, 0.07); },
   deliver: () => [523, 659, 784, 1047].forEach((f, i) => tone(f, 0.16, "triangle", 0.4, undefined, i * 0.07)),
   jump: () => tone(300, 0.18, "sine", 0.3, 620),
+  jump2: () => { tone(430, 0.16, "sine", 0.3, 900); tone(620, 0.1, "triangle", 0.18, 980, 0.05); }, // double-jump whoosh
   land: () => noise(0.08, 0.14, 900),
   caught: () => { tone(392, 0.3, "sawtooth", 0.3, 180); tone(311, 0.4, "sawtooth", 0.25, 140, 0.15); },
   rescue: () => [659, 784, 988].forEach((f, i) => tone(f, 0.14, "sine", 0.4, undefined, i * 0.08)),

@@ -22,7 +22,7 @@ const CONTROLS: [string, string][] = [
   ["W A S D / Arrows", "Run around the city"],
   ["Mouse drag", "Look around"],
   ["Shift", "Sprint — drains ⚡ energy fast"],
-  ["Space", "Jump (costs a little energy)"],
+  ["Space", "Jump — press again mid-air for a double-jump flip! 🤸"],
   ["E", "Rescue a detained friend"],
   ["1 – 8", "Eat pocketed food ❤⚡ — or tap the bag bottom-left"],
   ["Right-click slot", "Drop food back on the ground"],
