@@ -591,13 +591,15 @@ export function buildAnimal(kind: AnimalKind3): THREE.Group {
   const root = new THREE.Group();
   const body = new THREE.Group();
   root.add(body);
-  const rig: { legs: THREE.Group[]; head: THREE.Group; body: THREE.Group } = { legs: [], head: new THREE.Group(), body };
+  const rig: { legs: THREE.Group[]; head: THREE.Group; body: THREE.Group; tail?: THREE.Group; wings?: THREE.Group[] } = {
+    legs: [], head: new THREE.Group(), body,
+  };
 
   const conf = {
-    cow: { c: "#f7f2e8", s: 1.5, headY: 0.95, headZ: 0.85, spots: true },
-    chicken: { c: "#fff3d6", s: 0.55, headY: 0.5, headZ: 0.4, spots: false },
-    deer: { c: "#c98a4b", s: 1.1, headY: 1.0, headZ: 0.8, spots: false },
-    monkey: { c: "#8a5a3a", s: 0.7, headY: 0.75, headZ: 0.55, spots: false },
+    cow: { c: "#f7f2e8", s: 1.5, headY: 0.95, headZ: 0.85 },
+    chicken: { c: "#fff3d6", s: 0.55, headY: 0.5, headZ: 0.4 },
+    deer: { c: "#c98a4b", s: 1.1, headY: 1.0, headZ: 0.8 },
+    monkey: { c: "#8a5a3a", s: 0.7, headY: 0.75, headZ: 0.55 },
   }[kind];
   const dark = kind === "cow" ? "#3a3a3a" : kind === "deer" ? "#8a5a2b" : "#6a4426";
   const belly = kind === "cow" ? "#f7f2e8" : "#e8d5b0";
@@ -614,40 +616,73 @@ export function buildAnimal(kind: AnimalKind3): THREE.Group {
   const hToon = new Bucket(), hUnlit = new Bucket();
   hToon.add(sphere(0.3, 12, 9), conf.c, false, 0, 0, 0, 0, 0, 0, 0.95, 0.9, 1);
   hToon.add(sphere(0.16, 8, 6), kind === "cow" ? "#ffc0cb" : belly, false, 0, -0.08, 0.24, 0, 0, 0, 1, 0.75, 0.8);
+  // nostrils + a tiny smile for the furry kinds
+  if (kind !== "chicken") {
+    hToon.add(sphere(0.024, 5, 4), dark, false, -0.055, -0.12, 0.33);
+    hToon.add(sphere(0.024, 5, 4), dark, false, 0.055, -0.12, 0.33);
+    hUnlit.add(torus(0.045, 0.011, Math.PI), SMILE, true, 0, -0.155, 0.3, 0, 0, Math.PI);
+  }
   // big cartoon eyes with glints
   for (const s of [-1, 1]) {
     hUnlit.add(sphere(0.082, 8, 6), "#ffffff", true, s * 0.14, 0.1, 0.22, 0, 0, 0, 1, 1.25, 0.55);
     hUnlit.add(sphere(0.04, 6, 5), EYE_B, true, s * 0.145, 0.105, 0.272);
     hUnlit.add(sphere(0.014, 5, 4), GLINT, true, s * 0.16, 0.135, 0.288);
   }
+
   if (kind === "cow") {
-    hToon.add(cone(0.06, 0.14, 6), "#e8e0d0", false, -0.2, 0.24, 0, 0, 0, 0.6);
-    hToon.add(cone(0.06, 0.14, 6), "#e8e0d0", false, 0.2, 0.24, 0, 0, 0, -0.6);
+    // curved horns + soft ears
+    for (const s of [-1, 1]) {
+      hToon.add(cone(0.055, 0.17, 6), "#e8e0d0", false, s * 0.22, 0.27, 0, 0, 0, s * 0.85);
+      hToon.add(sphere(0.09, 6, 5), "#3a3a3a", false, s * 0.3, 0.06, -0.02, 0, 0, 0, 0.4, 0.85, 0.6);
+    }
+    // irregular hide spots
+    const spots: [number, number, number, number][] = [
+      [0.28, 0.84, 0.18, 0.15], [-0.3, 0.76, -0.1, 0.17], [0.05, 0.88, -0.34, 0.13],
+      [-0.18, 0.86, 0.3, 0.11], [0.22, 0.66, -0.28, 0.1], [-0.04, 0.62, 0.42, 0.09],
+    ];
+    for (const [sx, sy, sz, r] of spots) bToon.add(sphere(r, 7, 5), "#3a3a3a", false, sx, sy, sz, 0, 0, 0, 1, 0.55, 1.1);
+    // party collar + bell
+    bToon.add(torus(0.24, 0.045, Math.PI * 2), "#e0483a", false, 0, 0.72, 0.5, -Math.PI / 2, 0, 0);
+    bToon.add(sphere(0.085, 8, 6), GOLD, false, 0, 0.5, 0.64);
   }
   if (kind === "deer") {
-    hToon.add(cone(0.04, 0.3, 5), "#8a5a2b", false, -0.12, 0.4, 0, 0, 0, 0.25);
-    hToon.add(cone(0.04, 0.3, 5), "#8a5a2b", false, 0.12, 0.4, 0, 0, 0, -0.25);
-  }
-  for (const s of [-1, 1]) hToon.add(sphere(0.07, 6, 5), dark, false, s * 0.28, 0.02, -0.02, 0, 0, 0, 0.5, 0.9, 0.6);
-
-  const legOffsets: [number, number][] = [[-0.24, 0.34], [0.24, 0.34], [-0.24, -0.34], [0.24, -0.34]];
-  legOffsets.forEach(([x, z], i) => {
-    legB[i].add(capsule(0.075, 0.3), dark, false, 0, -0.2, 0);
-  });
-  if (kind === "chicken") {
-    bToon.add(sphere(0.1, 8, 6), "#e8443a", false, 0, 0.95, 0.05);
-    hToon.add(cone(0.05, 0.18, 5), "#ffb347", false, 0, -0.04, 0.4, Math.PI / 2);
+    // branched antlers + long oval ears
+    for (const s of [-1, 1]) {
+      hToon.add(cone(0.035, 0.34, 5), "#8a5a2b", false, s * 0.13, 0.44, -0.02, 0, 0, s * 0.4);
+      hToon.add(cone(0.024, 0.2, 5), "#8a5a2b", false, s * 0.21, 0.5, -0.04, -0.35, 0, s * 0.95);
+      hToon.add(sphere(0.09, 6, 5), "#8a5a2b", false, s * 0.27, 0.14, -0.04, 0, 0, 0, 0.4, 1.05, 0.55);
+    }
+    // fawn spots along the spine
+    const dsp: [number, number, number][] = [[0.09, 0.9, 0.08], [-0.1, 0.92, -0.06], [0.12, 0.88, -0.22], [-0.14, 0.85, 0.14], [0.05, 0.93, -0.32]];
+    for (const [sx, sy, sz] of dsp) bToon.add(sphere(0.055, 6, 5), "#fff6e8", false, sx, sy, sz, 0, 0, 0, 1, 0.55, 1.25);
   }
   if (kind === "monkey") {
     hToon.add(sphere(0.18, 8, 6), "#d8b088", false, 0, 0, 0.18, 0, 0, 0, 0.8, 0.8, 0.6);
-    bToon.add(sphere(0.07, 6, 5), "#8a5a3a", false, 0, 0.72, -0.5);
-    bToon.add(sphere(0.06, 6, 5), "#8a5a3a", false, 0, 0.86, -0.56);
-    bToon.add(sphere(0.05, 6, 5), "#8a5a3a", false, 0, 0.96, -0.5);
+    // round saucer ears
+    for (const s of [-1, 1]) {
+      hToon.add(sphere(0.1, 6, 5), "#6a4426", false, s * 0.3, 0.04, -0.02, 0, 0, 0, 0.35, 0.95, 0.65);
+      hToon.add(sphere(0.05, 6, 5), "#d8b088", false, s * 0.33, 0.04, 0.03, 0, 0, 0, 0.35, 0.6, 0.5);
+    }
+    // warm belly patch
+    bToon.add(sphere(0.22, 8, 6), "#d8b088", false, 0, 0.56, 0.3, 0, 0, 0, 0.8, 0.95, 0.6);
   }
-  if (conf.spots) {
-    for (let i = 0; i < 4; i++)
-      bToon.add(sphere(0.13, 7, 5), "#3a3a3a", false, Math.cos(i * 2.2) * 0.3, 0.75 + (i % 2) * 0.1, Math.sin(i * 2.2) * 0.4, 0, 0, 0, 1, 0.5, 1);
+  if (kind === "chicken") {
+    // comb now sits ON the head (three bumps), beak + wattle
+    hToon.add(sphere(0.075, 6, 5), "#e8443a", false, 0, 0.27, 0.08);
+    hToon.add(sphere(0.062, 6, 5), "#e8443a", false, 0, 0.28, -0.02);
+    hToon.add(sphere(0.05, 6, 5), "#e8443a", false, 0, 0.25, -0.11);
+    hToon.add(cone(0.05, 0.18, 5), "#ffb347", false, 0, -0.04, 0.4, Math.PI / 2);
+    hToon.add(sphere(0.05, 6, 5), "#e0483a", false, 0, -0.18, 0.33);
+    // fan of tail feathers
+    bToon.add(cone(0.075, 0.32, 5), "#f0e6c8", false, 0, 0.84, -0.42, -0.55, 0, 0);
+    bToon.add(cone(0.06, 0.26, 5), "#e0d5b8", false, -0.12, 0.8, -0.4, -0.6, 0, 0.5);
+    bToon.add(cone(0.06, 0.26, 5), "#e0d5b8", false, 0.12, 0.8, -0.4, -0.6, 0, -0.5);
   }
+  const legOffsets: [number, number][] = [[-0.24, 0.34], [0.24, 0.34], [-0.24, -0.34], [0.24, -0.34]];
+  legOffsets.forEach(([x, z], i) => {
+    if (kind === "chicken") legB[i].add(capsule(0.05, 0.3), "#ffb347", false, 0, -0.2, 0);
+    else legB[i].add(capsule(0.075, 0.3), dark, false, 0, -0.2, 0);
+  });
 
   const legPos: [number, number][] = [[-0.24, 0.34], [0.24, 0.34], [-0.24, -0.34], [0.24, -0.34]];
   legPos.forEach(([x, z], i) => {
@@ -659,30 +694,108 @@ export function buildAnimal(kind: AnimalKind3): THREE.Group {
     rig.legs.push(leg);
   });
 
+  // animatable tails (cow swish, deer flick, monkey curl)
+  if (kind === "cow" || kind === "deer" || kind === "monkey") {
+    const tail = new THREE.Group();
+    const tB = new Bucket();
+    if (kind === "cow") {
+      tB.add(capsule(0.035, 0.28), dark, false, 0, -0.17, -0.05, 0.5, 0, 0);
+      tB.add(sphere(0.07, 6, 5), "#6a4426", false, 0, -0.34, -0.14);
+      tail.position.set(0, 0.8, -0.42);
+    } else if (kind === "deer") {
+      tB.add(sphere(0.09, 6, 5), "#fff6e8", false, 0, -0.06, -0.05, 0, 0, 0, 0.75, 1.15, 0.6);
+      tail.position.set(0, 0.84, -0.44);
+    } else {
+      const pts: [number, number, number, number][] = [[0, 0.07, -0.06, 0.055], [0, 0.23, -0.1, 0.05], [0, 0.37, -0.06, 0.045], [0, 0.45, 0.06, 0.04], [0, 0.43, 0.18, 0.034]];
+      for (const [px, py, pz, r] of pts) tB.add(sphere(r, 6, 5), "#6a4426", false, px, py, pz);
+      tail.position.set(0, 0.76, -0.4);
+    }
+    const tm = tB.mesh("toon");
+    if (tm) tail.add(tm);
+    body.add(tail);
+    rig.tail = tail;
+  }
+
+  // chicken wings — separate pivots so they can flap
+  if (kind === "chicken") {
+    const wings: THREE.Group[] = [];
+    for (const s of [-1, 1]) {
+      const wing = new THREE.Group();
+      wing.position.set(s * 0.3, 0.72, 0.02);
+      const wB = new Bucket();
+      wB.add(sphere(0.17, 8, 6), "#f7eecb", false, 0, -0.09, 0, 0, 0, 0, 0.4, 1, 1.25);
+      const wm = wB.mesh("toon");
+      if (wm) wing.add(wm);
+      body.add(wing);
+      wings.push(wing);
+    }
+    rig.wings = wings;
+  }
+
   const bm = bToon.mesh("toon"); if (bm) body.add(bm);
   const hm = hToon.mesh("toon"); if (hm) head.add(hm);
   const hu = hUnlit.mesh("basic"); if (hu) head.add(hu);
 
   root.scale.setScalar(conf.s);
   root.userData.rig = rig;
+  root.userData.kind = kind;
   return root;
 }
 
 export function poseAnimal(g: THREE.Object3D, speed: number, t: number, phase = 0) {
-  const rig = g.userData.rig as { legs: THREE.Group[]; head: THREE.Group; body: THREE.Group } | undefined;
+  const rig = g.userData.rig as {
+    legs: THREE.Group[]; head: THREE.Group; body: THREE.Group; tail?: THREE.Group; wings?: THREE.Group[];
+  } | undefined;
   if (!rig) return;
+  const kind = g.userData.kind as AnimalKind3 | undefined;
+
   // integrated stride phase (same fix as poseCharacter — no phase jumps
   // when the animal speeds up / slows down)
-  const st = (g.userData.gait ??= { lastT: t, ph: phase });
+  const st = (g.userData.gait ??= { lastT: t, ph: phase, idle: 0 });
   const dt = Math.min(0.1, Math.max(0, t - st.lastT));
   st.lastT = t;
   st.ph += dt * (6 + speed * 2);
   const sp = Math.min(1.4, speed / 3.5);
+  // how long the animal has stood still — long enough → start grazing
+  st.idle = speed < 0.5 ? Math.min(120, st.idle + dt) : 0;
+  const graze = sstep(1.6, 2.6, st.idle);
+  const gp = st.idle;
+
+  // diagonal trot + gallop bounce + running lean
   const k = Math.sin(st.ph) * sp * 0.7;
   rig.legs.forEach((l, i) => { l.rotation.x = (i % 2 === 0 ? k : -k) * (i < 2 ? 1 : -1); });
-  rig.body.position.y = Math.abs(Math.cos(st.ph)) * 0.04 * sp;
-  rig.head.rotation.x = Math.sin(t * 1.5 + phase) * 0.08;
-  rig.head.rotation.z = Math.sin(t * 0.9 + phase) * 0.05;
+  const hop = Math.abs(Math.cos(st.ph));
+  const breath = (1 - graze) * Math.sin(t * 2.1 + phase);
+  rig.body.position.y = hop * 0.05 * sp + breath * 0.012;
+  rig.body.rotation.x = sp * 0.09 * (1 - graze) + (kind === "chicken" ? graze * 0.2 : 0);
+  rig.body.scale.set(1 - breath * 0.008, 1 + breath * 0.014, 1 - breath * 0.008);
+
+  // head — stride bob + curious look-around, or dips down to graze / peck
+  let dip = 0;
+  if (graze > 0) {
+    const cyc = kind === "chicken"
+      ? Math.max(0, Math.sin(gp * 5.2))                              // quick pecks
+      : Math.pow(Math.max(0, Math.sin(gp * 1.7 - 0.4)), 1.5);        // slow graze
+    dip = cyc * (kind === "chicken" ? 0.75 : 0.95) * graze;
+  }
+  rig.head.rotation.x = -hop * 0.045 * sp * (1 - graze) + dip;
+  rig.head.rotation.y = (Math.sin(t * 0.55 + phase) * 0.3 + Math.sin(t * 0.23 + phase * 2) * 0.12) * (1 - graze) * (1 - sp * 0.55);
+  rig.head.rotation.z = Math.sin(t * 0.9 + phase) * 0.05 * (1 - graze);
+
+  // tail — lazy sway while grazing, happy wag on the move
+  if (rig.tail) {
+    rig.tail.rotation.y = Math.sin(t * (graze > 0.5 ? 1.3 : 2.6 + sp * 2.4) + phase) * (graze > 0.5 ? 0.22 : 0.28 + sp * 0.2);
+    rig.tail.rotation.x = hop * 0.1 * sp;
+  }
+
+  // chicken wings — folded flutter at rest, rapid flap while running
+  if (rig.wings) {
+    const flap = sp > 0.25
+      ? 0.3 + Math.abs(Math.sin(t * 21 + phase)) * 0.75
+      : Math.max(0, Math.sin(t * 1.6 + phase)) * 0.18;
+    rig.wings[0].rotation.z = -flap;
+    rig.wings[1].rotation.z = flap;
+  }
 }
 
 /* ------------------------------------------------------------------ */

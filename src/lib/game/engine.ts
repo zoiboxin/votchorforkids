@@ -23,7 +23,7 @@ export interface Npc {
   name: string; speed: number; alertT: number;
 }
 export interface Zombie { id: number; x: number; z: number; vx: number; vz: number; face: number; phase: number; touchCd: number }
-export interface Animal { id: number; kind: AnimalKind; x: number; z: number; vx: number; vz: number; face: number; tx: number; tz: number; timer: number; phase: number }
+export interface Animal { id: number; kind: AnimalKind; x: number; z: number; vx: number; vz: number; face: number; tx: number; tz: number; timer: number; phase: number; resting: boolean }
 export interface ItemEnt { id: number; def: number; x: number; z: number; active: boolean; respawn: number }
 export interface VoteEnt { id: number; x: number; z: number; state: "world" | "carried" | "delivered" }
 
@@ -145,7 +145,7 @@ export class GameEngine {
     for (const set of ANIMAL_SET)
       for (let i = 0; i < set.count; i++) {
         const p = freeSpot(r, this.world, set.zone === "farm" ? CITY_RADIUS + 10 : FARM_RADIUS + 10, set.zone === "farm" ? FARM_RADIUS - 8 : JUNGLE_RADIUS - 30);
-        this.animals.push({ id: this.nid(), kind: set.kind, x: p.x, z: p.z, vx: 0, vz: 0, face: 0, tx: p.x, tz: p.z, timer: range(r, 0, 5), phase: Math.random() * 6 });
+        this.animals.push({ id: this.nid(), kind: set.kind, x: p.x, z: p.z, vx: 0, vz: 0, face: 0, tx: p.x, tz: p.z, timer: range(r, 0, 5), phase: Math.random() * 6, resting: false });
         ai++;
       }
     // items
@@ -299,6 +299,23 @@ export class GameEngine {
     if (d.kind === "fruit" || d.kind === "drink") sfx.eat(); else sfx.rescue();
     this.exhaustedAnnounced = false; // energy came back — allow the exhausted hint next time
     this.toast(`${d.emoji} ${d.msg}`, "good");
+  }
+
+  /** Pick a nearby free patch of grass for an animal to wander to (local hops, not cross-map treks). */
+  private grazeSpot(an: Animal, farm: boolean): { x: number; z: number } | null {
+    const minR = farm ? CITY_RADIUS + 6 : FARM_RADIUS + 6;
+    const maxR = farm ? FARM_RADIUS - 10 : JUNGLE_RADIUS - 30;
+    for (let i = 0; i < 12; i++) {
+      const a = this.rnd() * Math.PI * 2, d = 7 + this.rnd() * 16;
+      const x = an.x + Math.cos(a) * d, z = an.z + Math.sin(a) * d;
+      const rr = Math.hypot(x, z);
+      if (rr < minR || rr > maxR) continue;
+      const chk = { x, z };
+      resolve(chk, 0.6, this.world);
+      if (Math.abs(chk.x - x) > 0.05 || Math.abs(chk.z - z) > 0.05) continue;
+      return chk;
+    }
+    return null;
   }
 
   /* ---------------- main update ---------------- */
@@ -502,17 +519,30 @@ export class GameEngine {
       const d2p = dist2(an.x, an.z, p.x, p.z);
       const fleeR = an.kind === "cow" ? 4.5 : 6;
       if (d2p < fleeR * fleeR) {
+        an.resting = false; // panic overrides grazing
         const dx = an.x - p.x, dz = an.z - p.z, d = Math.hypot(dx, dz) || 1;
         const fs = an.kind === "cow" ? 2.4 : an.kind === "chicken" ? 4.6 : an.kind === "deer" ? 6.2 : 5;
         stepNpc(an, an.x + (dx / d) * 8, an.z + (dz / d) * 8, fs, dt, this.world);
       } else {
-        if (an.timer <= 0 || dist2(an.x, an.z, an.tx, an.tz) < 2) {
+        const arrived = dist2(an.x, an.z, an.tx, an.tz) < 2;
+        if (an.timer <= 0 || (arrived && !an.resting)) {
           const farm = an.kind === "cow" || an.kind === "chicken";
-          const base = farm ? CITY_RADIUS + 10 : FARM_RADIUS + 10;
-          const t = freeSpot(this.rnd, this.world, base, farm ? FARM_RADIUS - 8 : JUNGLE_RADIUS - 30);
-          an.tx = t.x; an.tz = t.z; an.timer = range(this.rnd, 4, 12);
+          if (!an.resting) {
+            // reached the spot (or ran out of time en route) → stop and graze a while
+            an.resting = true;
+            an.tx = an.x; an.tz = an.z;
+            an.timer = range(this.rnd, 2.5, 6.5);
+          } else {
+            // rest over → amble to a nearby patch of grass
+            an.resting = false;
+            const spot = this.grazeSpot(an, farm);
+            if (spot) { an.tx = spot.x; an.tz = spot.z; }
+            an.timer = range(this.rnd, 5, 12);
+          }
         }
-        stepNpc(an, an.tx, an.tz, an.kind === "cow" ? 1.1 : an.kind === "chicken" ? 1.6 : 1.8, dt, this.world);
+        if (!an.resting) {
+          stepNpc(an, an.tx, an.tz, an.kind === "cow" ? 1.1 : an.kind === "chicken" ? 1.6 : 1.8, dt, this.world);
+        }
       }
     }
 
