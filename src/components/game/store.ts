@@ -116,6 +116,8 @@ export interface GameStore {
   showHelp: boolean;
   victoryOpen: boolean;
   paused: boolean;
+  /** true while the browser pointer is hard-bound to the game (pointer lock) */
+  mouseLocked: boolean;
   settings: Settings;
   runsPlayed: number;
   bestScore: number;
@@ -139,6 +141,7 @@ export interface GameStore {
   toggleHelp: () => void;
   setVictoryOpen: (v: boolean) => void;
   setPaused: (p: boolean) => void;
+  setMouseLocked: (v: boolean) => void;
   patchSettings: (p: Partial<Settings>) => void;
   recordRun: (score: number, votes?: number, rescues?: number, caught?: number, won?: boolean, timeMs?: number) => RunRecord;
   clearHistory: () => void;
@@ -222,6 +225,7 @@ export const useGame = create<GameStore>()((set, get) => ({
   toggleHelp: () => set((s) => ({ showHelp: !s.showHelp })),
   setVictoryOpen: (v) => set({ victoryOpen: v }),
   setPaused: (p) => set({ paused: p }),
+  setMouseLocked: (v) => set({ mouseLocked: v }),
   patchSettings: (p) => {
     set((s) => {
       const settings = { ...s.settings, ...p };

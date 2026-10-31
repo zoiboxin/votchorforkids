@@ -452,6 +452,7 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
   const { legs, arms, body, head } = rig;
   const phase = o.phase ?? 0;
   const HEAD_Y = 1.84;
+  const FLIP_PIVOT = 0.98; // hip height — pivot for the double-jump flip
 
   updateBlink(g, rig, t);
 
@@ -481,6 +482,7 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
 
   if (o.detained) {
     body.position.y = -0.34 + Math.sin(t * 2.2 + phase) * 0.015;
+    body.position.z = 0;
     body.rotation.x = 0.12;
     body.rotation.y = 0;
     body.rotation.z = 0;
@@ -496,15 +498,19 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
   // mid-air front flip after a double jump — one hard-cut cartoon move
   if (o.airborne && o.flip && o.flip > 0) {
     const p = 1 - Math.min(1, o.flip);        // 0 → 1 through the flip
-    body.rotation.x = -Math.PI * 2 * p;       // full front flip
+    const th = Math.PI * 2 * p;               // head leads forward → a true FRONT flip
+    body.rotation.x = th;
     body.rotation.y = 0;
     body.rotation.z = 0;
+    // spin around the waist, not the feet: shift the body so the pivot stays
+    // fixed at hip height (the offset vanishes exactly at 0 and 2π — seamless)
+    body.position.y = FLIP_PIVOT * (1 - Math.cos(th));
+    body.position.z = -FLIP_PIVOT * Math.sin(th);
     legs[0].rotation.x = -1.5; legs[1].rotation.x = -1.25; // tight tuck
     arms[0].rotation.x = -1.15; arms[1].rotation.x = -1.15;
     arms[0].rotation.z = 0.32; arms[1].rotation.z = -0.32;
     head.position.y = HEAD_Y;
     head.rotation.set(0, 0, 0);
-    body.position.y = 0;
     body.scale.set(0.96, 1.05, 0.96);
     return;
   }
@@ -573,6 +579,7 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
   // landing squash-and-stretch: peaks mid-way, eases back to 1
   const sq = o.squash ? Math.sin(Math.min(1, o.squash) * Math.PI) * 0.16 : 0;
   body.position.y = _ground.by - sq * 0.35;
+  body.position.z = 0; // clear any residue if a flip was interrupted by landing
   body.rotation.set(_ground.brx, _ground.bry, _ground.brz);
   body.scale.set(_ground.bsx * (1 + sq * 0.7), _ground.bsy * (1 - sq), _ground.bsx * (1 + sq * 0.7));
   head.position.y = _ground.hy;

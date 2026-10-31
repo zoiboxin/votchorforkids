@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Heart, Zap, Star, Sun, Moon, Vote, MapPin, Volume2, VolumeX, Pause, Play as PlayIcon,
   Keyboard, Gauge, CircleHelp, Flag, Home, Settings as SettingsIcon, CheckCircle2, Siren, Info, ShieldCheck,
-  ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon,
+  ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon, Mouse,
 } from "lucide-react";
 import type { GameEngine } from "@/lib/game/engine";
 import { ITEMS, INV_SLOTS } from "@/lib/game/constants";
@@ -512,7 +512,20 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
   const paused = useGame((s) => s.paused);
   const setPaused = useGame((s) => s.setPaused);
   const victoryOpen = useGame((s) => s.victoryOpen);
+  const mouseLocked = useGame((s) => s.mouseLocked);
   const [bigMap, setBigMap] = useState(false);
+  // after the cursor gets hard-bound, remind the player how to free it (4 s)
+  const [lockTip, setLockTip] = useState(false);
+  useEffect(() => {
+    if (!mouseLocked) { setLockTip(false); return; }
+    setLockTip(true);
+    const t = setTimeout(() => setLockTip(false), 4000);
+    return () => clearTimeout(t);
+  }, [mouseLocked]);
+  // opening the big map needs a visible cursor
+  useEffect(() => {
+    if (bigMap && document.pointerLockElement) document.exitPointerLock();
+  }, [bigMap]);
 
   const hr = hud.clock * 24;
   const time = `${String(Math.floor(hr)).padStart(2, "0")}:${String(Math.floor((hr % 1) * 60)).padStart(2, "0")}`;
@@ -721,10 +734,38 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
           <div className="max-w-[220px] rounded-xl bg-black/40 px-3 py-2 text-xs leading-relaxed text-white/90 backdrop-blur-md">
             <b className="text-yellow-300">Goal:</b> snatch 🗳 votes, deliver them at the Parliament ballot box. Rescue pink-bubbled friends with <b>E</b>. Dodge the police — sprint with <b>Shift</b>!
             <div className="mt-1 text-amber-200/90">⚡ Sprinting drains energy · run over 🥭☕🩹 food to pocket it, then tap the bag (or press <b>1-8</b>) to eat: heals ❤ and refills ⚡.</div>
-            {!touch && <div className="mt-1 text-white/70">WASD move · Shift sprint · Space jump ×2 (flip!) · E rescue · 1-8 eat · right-click drop · M map · P pause</div>}
+            {!touch && <div className="mt-1 text-white/70">WASD move · mouse steers the camera (click = lock cursor, Esc = free) · Shift sprint · Space jump ×2 (flip!) · E rescue · 1-8 eat · right-click drop · M map · P pause</div>}
           </div>
         )}
       </div>
+
+      {/* mouse steering hint — the cursor is bound to the game while playing */}
+      {!touch && !paused && !victoryOpen && !hud.detained && (
+        <div className="absolute left-1/2 top-16 -translate-x-1/2">
+          <AnimatePresence mode="wait">
+            {mouseLocked ? (
+              lockTip ? (
+                <motion.div
+                  key="lock-tip" role="status"
+                  initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+                  className="rounded-full bg-black/45 px-4 py-1.5 text-xs font-bold text-white/90 backdrop-blur-md"
+                >
+                  Mouse locked to the game — press <b className="text-yellow-300">Esc</b> to free the cursor
+                </motion.div>
+              ) : null
+            ) : (
+              <motion.div
+                key="steer-tip" role="status"
+                initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+                className="flex items-center gap-1.5 rounded-full bg-black/45 px-4 py-1.5 text-xs font-bold text-white/90 backdrop-blur-md"
+              >
+                <Mouse size={13} aria-hidden />
+                <span>Move the mouse to steer — click to lock the cursor</span>
+              </motion.div>
+            )}
+          </AnimatePresence>
+        </div>
+      )}
 
       {/* prompt */}
       {hud.prompt && (

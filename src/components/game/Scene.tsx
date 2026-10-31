@@ -81,15 +81,45 @@ export function useGameInput(engine: GameEngine | null) {
     const blur = () => { keys.clear(); applyKey(); };
 
     let dragging = false;
-    const md = (e: MouseEvent) => { dragging = true; if (e.button === 0) sfx.click(); };
+    const md = (e: MouseEvent) => {
+      dragging = e.target instanceof HTMLCanvasElement; // drag-look only starts on the world, not on HUD
+      if (e.button === 0) sfx.click();
+    };
     const mu = () => { dragging = false; };
     const mm = (e: MouseEvent) => {
-      if (useGame.getState().screen !== "play") return;
-      if (document.pointerLockElement || dragging) {
-        engine.input.yaw -= e.movementX * 0.0028;
-        engine.input.pitch = Math.min(0.95, Math.max(-0.25, engine.input.pitch + e.movementY * 0.002));
-      }
+      const s = useGame.getState();
+      if (s.screen !== "play" || s.paused || s.victoryOpen) return;
+      // mouse is bound to the game: steer when the cursor is hard-locked (FPS
+      // style), whenever it glides over the open world, or while drag-looking
+      if (!document.pointerLockElement && !(e.target instanceof HTMLCanvasElement) && !dragging) return;
+      engine.input.yaw -= e.movementX * 0.0028;
+      engine.input.pitch = Math.min(0.95, Math.max(-0.25, engine.input.pitch + e.movementY * 0.002));
     };
+
+    // click the world to hard-bind the cursor (pointer lock) — Esc frees it again.
+    // Free mouse-look above already works without it; this just hides the cursor
+    // for the full game feel. Silent no-op where pointer lock is unavailable.
+    const grab = (e: MouseEvent) => {
+      const s = useGame.getState();
+      if (s.screen !== "play" || s.paused || s.victoryOpen || s.touch) return;
+      if (document.pointerLockElement || !(e.target instanceof HTMLCanvasElement)) return;
+      try {
+        const r = e.target.requestPointerLock() as unknown as Promise<void> | undefined;
+        if (r && typeof r.catch === "function") r.catch(() => { /* free look keeps working */ });
+      } catch { /* pointer lock unsupported — free mouse-look still works */ }
+    };
+    const plc = () => useGame.getState().setMouseLocked(!!document.pointerLockElement);
+    // a late/rejected lock attempt must never clear a LIVE lock (Chrome fires
+    // pointerlockerror during its post-Escape cooldown even when a later
+    // request succeeded — only clear the flag when truly unlocked)
+    const ple = () => { if (!document.pointerLockElement) useGame.getState().setMouseLocked(false); };
+    // free the cursor whenever a menu, modal or the victory screen takes over
+    const lockWatch = setInterval(() => {
+      const s = useGame.getState();
+      if (document.pointerLockElement && (s.screen !== "play" || s.paused || s.victoryOpen)) {
+        document.exitPointerLock();
+      }
+    }, 250);
 
     // touch look (right half of screen, handled globally)
     let touchId: number | null = null, lx = 0, ly = 0;
@@ -120,6 +150,9 @@ export function useGameInput(engine: GameEngine | null) {
     addEventListener("mousedown", md);
     addEventListener("mouseup", mu);
     addEventListener("mousemove", mm);
+    addEventListener("click", grab);
+    document.addEventListener("pointerlockchange", plc);
+    document.addEventListener("pointerlockerror", ple);
     addEventListener("touchstart", ts, { passive: true });
     addEventListener("touchmove", tm, { passive: true });
     addEventListener("touchend", te);
@@ -134,6 +167,10 @@ export function useGameInput(engine: GameEngine | null) {
       removeEventListener("mousedown", md);
       removeEventListener("mouseup", mu);
       removeEventListener("mousemove", mm);
+      removeEventListener("click", grab);
+      document.removeEventListener("pointerlockchange", plc);
+      document.removeEventListener("pointerlockerror", ple);
+      clearInterval(lockWatch);
       removeEventListener("touchstart", ts);
       removeEventListener("touchmove", tm);
       removeEventListener("touchend", te);

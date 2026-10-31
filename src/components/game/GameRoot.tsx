@@ -45,6 +45,7 @@ export function GameRoot() {
         engineRef.current = eng;
         setEngine(eng);
         (window as unknown as { __vc?: unknown }).__vc = { engine: eng, world: WORLD };
+        (window as unknown as { __vcStore?: unknown }).__vcStore = useGame; // debug/test hook
       } else {
         eng.reset(look);
         eng.setToast((msg, kind) => pushToast(msg, kind));
