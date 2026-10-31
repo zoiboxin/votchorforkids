@@ -3,18 +3,20 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import * as THREE from "three";
-import { Play, Trophy, Info, Sparkles } from "lucide-react";
+import { Play, Trophy, Sparkles, ArrowLeft, Dices, HelpCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-  AGE_STATS, HAIR_COLORS, HAIR_STYLES, PANTS_COLORS, SHIRT_COLORS, SHOE_COLORS, SKIN_TONES,
+  AGE_STATS, HAIR_COLORS, HAIR_STYLES, OUTFIT_PRESETS, PANTS_COLORS, SHIRT_COLORS, SHOE_COLORS, SKIN_TONES,
+  randomAppearance,
   type AgeGroup, type Appearance, type HairStyle,
 } from "@/lib/game/constants";
 import { buildCharacter, poseCharacter } from "@/lib/game/character";
-import { primeAudio, sfx, startMusic } from "@/lib/game/audio";
+import { sfx } from "@/lib/game/audio";
 import { useGame, type ScoreRow } from "./store";
+import { HowToPlay } from "./Panels";
 
 /* --------------------- 3D preview --------------------- */
 function Preview({ look }: { look: Appearance }) {
@@ -122,6 +124,26 @@ function StylePicker({ value, onChange }: { value: HairStyle; onChange: (h: Hair
   );
 }
 
+function PresetRow({ onPick }: { onPick: (p: Partial<Appearance>) => void }) {
+  return (
+    <div>
+      <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-white/70">Quick outfits</div>
+      <div className="grid grid-cols-3 gap-2">
+        {OUTFIT_PRESETS.map((p) => (
+          <button
+            key={p.id}
+            onClick={() => { sfx.click(); onPick(p.look); }}
+            className="rounded-xl border-2 border-white/15 bg-white/5 p-1.5 text-center transition-all hover:scale-105 hover:border-yellow-300/60"
+          >
+            <div className="text-lg">{p.emoji}</div>
+            <div className="text-[10px] font-bold leading-tight text-white/85">{p.label}</div>
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 /* --------------------- leaderboard --------------------- */
 export function Leaderboard({ compact = false }: { compact?: boolean }) {
   const scores = useGame((s) => s.scores);
@@ -135,7 +157,7 @@ export function Leaderboard({ compact = false }: { compact?: boolean }) {
       ) : (
         <ScrollArea className={compact ? "h-36" : "h-48"}>
           <div className="pr-2">
-            {scores.map((s, i) => (
+            {scores.map((s: ScoreRow, i: number) => (
               <div key={s.id} className="flex items-center gap-2 border-b border-white/10 py-1.5 text-sm text-white last:border-0">
                 <span className={`w-6 text-center font-black ${i === 0 ? "text-yellow-300" : i === 1 ? "text-slate-200" : i === 2 ? "text-amber-600" : "text-white/50"}`}>
                   {i + 1}
@@ -157,13 +179,16 @@ export function Leaderboard({ compact = false }: { compact?: boolean }) {
 export function Creator({ onStart }: { onStart: () => void }) {
   const look = useGame((s) => s.look);
   const setLook = useGame((s) => s.setLook);
+  const applyLook = useGame((s) => s.applyLook);
   const playerName = useGame((s) => s.playerName);
   const setName = useGame((s) => s.setName);
+  const setScreen = useGame((s) => s.setScreen);
+  const runsPlayed = useGame((s) => s.runsPlayed);
   const [starting, setStarting] = useState(false);
+  const [help, setHelp] = useState(false);
 
   useEffect(() => {
-    fetch("/api/scores").then((r) => r.json()).then((d) => useGame.getState().setScores(d.scores ?? [])).catch(() => {});
-    const unlock = () => { primeAudio(); startMusic(); window.removeEventListener("pointerdown", unlock); };
+    const unlock = () => { sfx.click(); window.removeEventListener("pointerdown", unlock); };
     window.addEventListener("pointerdown", unlock);
     return () => window.removeEventListener("pointerdown", unlock);
   }, []);
@@ -180,37 +205,61 @@ export function Creator({ onStart }: { onStart: () => void }) {
       />
       <div className="absolute inset-0 bg-gradient-to-b from-slate-950/70 via-slate-900/55 to-slate-950/80" />
 
-      <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-4 py-8 lg:flex-row lg:items-stretch">
+      <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-6 px-4 py-6 lg:flex-row lg:items-stretch">
         {/* left: title + preview */}
         <div className="flex flex-1 flex-col items-center justify-center gap-4">
+          <Button
+            variant="ghost" size="sm" onClick={() => { sfx.click(); setScreen("landing"); }}
+            className="self-start rounded-full border border-white/20 bg-black/30 text-white/85 backdrop-blur hover:bg-black/50"
+          >
+            <ArrowLeft size={15} className="mr-1" /> Back
+          </Button>
           <div className="text-center">
-            <h1 className="text-5xl font-black tracking-tight text-white drop-shadow-[0_4px_0_rgba(0,0,0,0.45)] sm:text-6xl">
+            <h1 className="text-4xl font-black tracking-tight text-white drop-shadow-[0_4px_0_rgba(0,0,0,0.45)] sm:text-5xl">
               Vote<span className="text-yellow-300">Chor!</span>
             </h1>
-            <p className="mt-1 text-lg font-bold text-emerald-300">The Great Parliament Run 🏃‍♀️💨</p>
+            <p className="mt-1 text-base font-bold text-emerald-300">Build your runner 🏃‍♀️💨</p>
             <p className="mx-auto mt-2 max-w-md text-sm text-white/80">
               Sneak through the city, snatch the missing <b className="text-yellow-300">16 votes</b> and deliver them to the
               Parliament ballot box — before the cartoon police catch you!
             </p>
           </div>
-          <div className="relative h-[340px] w-[300px] overflow-hidden rounded-3xl border-2 border-white/20 bg-gradient-to-b from-sky-400/40 to-emerald-500/30 shadow-2xl sm:h-[400px] sm:w-[340px]">
+          <div className="relative h-[320px] w-[280px] overflow-hidden rounded-3xl border-2 border-white/20 bg-gradient-to-b from-sky-400/40 to-emerald-500/30 shadow-2xl sm:h-[380px] sm:w-[330px]">
             <Preview look={look} />
             <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/50 to-transparent" />
             <div className="absolute bottom-2 left-0 right-0 text-center text-xs font-bold text-white/80">
-              {ready ? playerName : "Name your hero below"} · {look.girl ? "👧" : "👦"} {look.age}
+              {ready ? playerName : "Name your hero below"} · {look.girl ? "👧" : "👦"} {look.age}{look.glasses ? " · 👓" : ""}
             </div>
           </div>
           <div className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-xs text-white/85 backdrop-blur">
             <Sparkles size={14} className="text-yellow-300" />
-            Day-night city · zombies after dark · cute cows & cheeky monkeys
+            {runsPlayed > 0 ? `${runsPlayed} runs played — make hero #${runsPlayed + 1} even better!` : "Day-night city · zombies after dark · cute cows & cheeky monkeys"}
           </div>
         </div>
 
         {/* right: customization */}
         <div className="flex w-full flex-col gap-4 lg:w-[420px]">
           <div className="rounded-2xl border border-white/15 bg-black/40 p-4 backdrop-blur-md">
-            <div className="mb-3 flex items-center gap-2 font-black text-white">
-              <Info size={16} className="text-emerald-300" /> Create your hero
+            <div className="mb-3 flex items-center justify-between">
+              <div className="flex items-center gap-2 font-black text-white">
+                <Sparkles size={16} className="text-emerald-300" /> Create your hero
+              </div>
+              <div className="flex gap-1.5">
+                <Button
+                  size="sm" variant="outline" aria-label="Randomize appearance"
+                  onClick={() => { sfx.click(); applyLook(randomAppearance()); }}
+                  className="h-8 rounded-full border-white/25 bg-white/10 px-3 text-xs font-black text-white hover:bg-white/20"
+                >
+                  <Dices size={14} className="mr-1" /> Random
+                </Button>
+                <Button
+                  size="sm" variant="outline" aria-label="How to play"
+                  onClick={() => { sfx.click(); setHelp(true); }}
+                  className="h-8 w-8 rounded-full border-white/25 bg-white/10 p-0 text-white hover:bg-white/20"
+                >
+                  <HelpCircle size={14} />
+                </Button>
+              </div>
             </div>
             <div className="space-y-4">
               <div>
@@ -223,6 +272,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
                   maxLength={16}
                 />
               </div>
+              <PresetRow onPick={update} />
               <AgeCards value={look.age} onChange={(age) => update({ age })} />
               <Swatches label="Skin" colors={SKIN_TONES} value={look.skin} onChange={(skin) => update({ skin })} />
               <Swatches label="Shirt" colors={SHIRT_COLORS} value={look.shirt} onChange={(shirt) => update({ shirt })} />
@@ -237,6 +287,10 @@ export function Creator({ onStart }: { onStart: () => void }) {
               <div className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-2">
                 <span className="text-sm font-bold text-white/85">🧢 Wear a cap</span>
                 <Switch checked={look.cap} onCheckedChange={(cap) => { sfx.click(); update({ cap }); }} />
+              </div>
+              <div className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-2">
+                <span className="text-sm font-bold text-white/85">👓 Glasses</span>
+                <Switch checked={look.glasses} onCheckedChange={(glasses) => { sfx.click(); update({ glasses }); }} />
               </div>
             </div>
           </div>
@@ -259,10 +313,12 @@ export function Creator({ onStart }: { onStart: () => void }) {
             points, chai restores energy, and zombies only come out at night…
           </div>
           <div className="pb-4 text-center text-[11px] text-white/40">
-            Rebuilt with Next.js 16 · React Three Fiber · TypeScript
+            Your hero is saved on this device — no account needed.
           </div>
         </div>
       </div>
+
+      <HowToPlay open={help} onOpenChange={setHelp} />
     </div>
   );
 }

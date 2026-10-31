@@ -9,6 +9,7 @@ import { sfx, startMusic, stopMusic } from "@/lib/game/audio";
 import { useGameInput } from "./Scene";
 import { Hud } from "./Hud";
 import { Creator } from "./Creator";
+import { Landing } from "./Landing";
 import { VictoryModal } from "./VictoryModal";
 
 const Scene = dynamic(() => import("./Scene").then((m) => m.Scene), {
@@ -33,6 +34,8 @@ export function GameRoot() {
 
   const startGame = useCallback(() => {
     useGame.getState().setScreen("connecting");
+    useGame.getState().setPaused(false);
+    useGame.getState().setVictoryOpen(false);
     sfx.click();
     startMusic();
     setTimeout(() => {
@@ -46,7 +49,6 @@ export function GameRoot() {
         eng.reset(look);
         eng.setToast((msg, kind) => pushToast(msg, kind));
       }
-      useGame.getState().setVictoryOpen(false);
       useGame.getState().setScreen("play");
       eng.start();
     }, 650);
@@ -55,7 +57,8 @@ export function GameRoot() {
   const backToMenu = useCallback(() => {
     stopMusic();
     if (engineRef.current) engineRef.current.running = false;
-    setScreen("creator");
+    useGame.getState().setPaused(false);
+    setScreen("landing");
   }, [setScreen]);
 
   useGameInput(engineRef.current);
@@ -67,6 +70,7 @@ export function GameRoot() {
     const id = setInterval(() => {
       if (eng.won && !useGame.getState().victoryOpen) {
         useGame.getState().setVictoryOpen(true);
+        useGame.getState().recordRun(useGame.getState().hud.points);
       }
     }, 400);
     return () => clearInterval(id);
@@ -74,6 +78,8 @@ export function GameRoot() {
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-sky-300">
+      {screen === "landing" && <Landing />}
+
       {screen === "creator" && <Creator onStart={startGame} />}
 
       {(screen === "connecting" || screen === "play") && engine && (

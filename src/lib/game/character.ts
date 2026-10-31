@@ -326,9 +326,14 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
     }
   }
 
-  /* elder glasses */
-  if (a.age === "old" && style !== "bald" && !police && !zombie) {
-    for (const sd of [-1, 1]) headUnlit.add(torus(0.082, 0.014, Math.PI * 2), "#333333", true, sd * 0.155, 0.03, 0.385);
+  /* glasses — explicit cosmetic (elders get them automatically, unless bald) */
+  const wantGlasses = !police && !zombie && (a.glasses || (a.age === "old" && style !== "bald"));
+  if (wantGlasses) {
+    for (const sd of [-1, 1]) {
+      headUnlit.add(torus(0.082, 0.014, Math.PI * 2), "#333333", true, sd * 0.155, 0.03, 0.385);
+      // faint glass lens so it reads clearly up close
+      headToon.add(cyl(0.07, 0.07, 0.012, 10), "#bfe3ff", true, sd * 0.155, 0.03, 0.388, Math.PI / 2);
+    }
     headUnlit.add(box(0.1, 0.014, 0.014), "#333333", true, 0, 0.03, 0.385);
   }
 

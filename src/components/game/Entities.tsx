@@ -108,13 +108,14 @@ export function Npcs({ engine }: { engine: GameEngine }) {
       hair: pick(HAIR_COLORS),
       hairStyle: pick(HAIR_STYLES).id,
       cap: r() < 0.25,
+      glasses: r() < 0.2,
       age: pick(["kid", "teen", "young", "old"] as const),
       girl: r() < 0.5,
     }));
     const map = new Map<number, NpcView>();
     engine.cops.forEach((c, i) => {
       const mesh = buildCharacter(
-        { skin: pick(SKIN_TONES), shirt: "#2b4a8f", pants: "#1d2a4a", shoe: "#111111", hair: pick(["#1a1210", "#5a3a1a", "#4a4a58"] as const), hairStyle: pick(["bowl", "spiky", "bald"] as const), cap: true, age: pick(["young", "young", "old"] as const), girl: false },
+        { skin: pick(SKIN_TONES), shirt: "#2b4a8f", pants: "#1d2a4a", shoe: "#111111", hair: pick(["#1a1210", "#5a3a1a", "#4a4a58"] as const), hairStyle: pick(["bowl", "spiky", "bald"] as const), cap: true, glasses: false, age: pick(["young", "young", "old"] as const), girl: false },
         { police: true, mustache: i % 3 === 0 },
       );
       const tag = nameTag("POLICE", "rgba(30,50,120,0.85)");
@@ -174,7 +175,7 @@ export function Npcs({ engine }: { engine: GameEngine }) {
 export function Zombies({ engine }: { engine: GameEngine }) {
   const views = useMemo(
     () => new Map(engine.zombies.map((z) => [z.id, buildCharacter(
-      { skin: "#8fbf6f", shirt: "#7a8a5a", pants: "#4a5240", shoe: "#3a3a2a", hair: "#3a4a2a", hairStyle: "bowl", cap: false, age: "young", girl: false },
+      { skin: "#8fbf6f", shirt: "#7a8a5a", pants: "#4a5240", shoe: "#3a3a2a", hair: "#3a4a2a", hairStyle: "bowl", cap: false, glasses: false, age: "young", girl: false },
       { zombie: true },
     )])),
     [engine],

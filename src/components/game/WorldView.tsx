@@ -953,7 +953,7 @@ function Flowers() {
 }
 
 /* --------- mountains: procedural ridged silhouettes (no more plain cones) --------- */
-const ROCK_COLS = ["#8d8478", "#7d7468", "#96897a", "#8b8f9a", "#847a6d"];
+const ROCK_COLS = ["#989083", "#867d70", "#a29586", "#939aa6", "#8d8375"];
 const HILL_COLS = ["#5d8a4a", "#527e42", "#68964f", "#4e7a40"];
 const BASE_GRASS = new THREE.Color("#71875c");
 const SCRUB_COL = new THREE.Color("#5c6e54");
@@ -1063,15 +1063,30 @@ function buildMountainGeometry(peaks: Peak[]): THREE.BufferGeometry {
       }
       rings.push(ring);
     }
-    // jagged, slightly off-centre summit
+    // jagged, slightly off-centre summit — often a twin-point ridge, which reads
+    // as a real knife-edge summit instead of a perfect cone tip
     const ax = (hash2(p.seed, 8.4) - 0.5) * p.w * 0.05;
     const az = (hash2(p.seed, 6.1) - 0.5) * p.w * 0.05;
+    const apexBaseY = -4 + (p.topT + 0.025 + hash2(p.seed, 4.2) * 0.035) * p.h;
     const apex = {
       x: p.x + (ax * cR - az * sR) * p.sx,
-      y: -4 + (p.topT + 0.025 + hash2(p.seed, 4.2) * 0.035) * p.h + (hash2(p.seed, 2.7) - 0.5) * p.h * 0.015,
+      y: apexBaseY + (hash2(p.seed, 2.7) - 0.5) * p.h * 0.015,
       z: p.z + (ax * sR + az * cR) * p.sz,
       j: 0,
     };
+    const twin = !p.green && hash2(p.seed, 12.9) < 0.62;
+    const apexes = [apex];
+    if (twin) {
+      const ta = p.rot + (hash2(p.seed, 15.3) < 0.5 ? 1 : -1) * (0.05 + hash2(p.seed, 17.7) * 0.07);
+      const td = p.w * (0.035 + hash2(p.seed, 19.1) * 0.045);
+      apexes.push({
+        x: p.x + Math.cos(ta) * td * p.sx,
+        y: apexBaseY - p.h * (0.035 + hash2(p.seed, 21.3) * 0.05),
+        z: p.z + Math.sin(ta) * td * p.sz,
+        j: 0,
+      });
+    }
+    const top = rings[H - 1];
     for (let i = 0; i < H - 1; i++) {
       const lo = rings[i], hi = rings[i + 1];
       for (let j = 0; j < R; j++) {
@@ -1082,10 +1097,22 @@ function buildMountainGeometry(peaks: Peak[]): THREE.BufferGeometry {
         face(A.x, A.y, A.z, D.x, D.y, D.z, C.x, C.y, C.z, jAvg, p);
       }
     }
-    const top = rings[H - 1];
-    for (let j = 0; j < R; j++) {
-      const A = top[j], B = top[(j + 1) % R];
-      face(A.x, A.y, A.z, apex.x, apex.y, apex.z, B.x, B.y, B.z, (A.j + B.j) / 2, p);
+    if (apexes.length === 1) {
+      for (let j = 0; j < R; j++) {
+        const A = top[j], B = top[(j + 1) % R];
+        face(A.x, A.y, A.z, apex.x, apex.y, apex.z, B.x, B.y, B.z, (A.j + B.j) / 2, p);
+      }
+    } else {
+      const [aA, aB] = apexes;
+      const half = Math.floor(R / 2);
+      for (let j = 0; j < R; j++) {
+        const A = top[j], B = top[(j + 1) % R];
+        const ax2 = j < half ? aA : aB;
+        face(A.x, A.y, A.z, ax2.x, ax2.y, ax2.z, B.x, B.y, B.z, (A.j + B.j) / 2, p);
+      }
+      // seam triangles closing the ridge between the two summit points
+      face(top[half].x, top[half].y, top[half].z, aB.x, aB.y, aB.z, aA.x, aA.y, aA.z, top[half].j, p);
+      face(top[0].x, top[0].y, top[0].z, aA.x, aA.y, aA.z, aB.x, aB.y, aB.z, top[0].j, p);
     }
   }
 
@@ -1101,50 +1128,52 @@ function Mountains() {
     const r = mulberry32(7);
     // Major peaks — heights cluster by sector so some directions are huge snowy
     // ranges and others are low rocky hills, instead of a uniform spike fence.
+    // Wide bases (h/w < ~1) + strong flank asymmetry keep silhouettes massif-like,
+    // never isoceles-triangle.
     const majors: Peak[] = Array.from({ length: 26 }, (_, i) => {
       const a = (i / 26) * Math.PI * 2 + range(r, -0.06, 0.06);
       const cl = 0.5 + 0.5 * Math.sin(2 * a + 1.7) * Math.sin(3 * a + 0.6); // 0..1
-      const h = 66 + cl * 122 + range(r, -12, 12);
+      const h = 58 + cl * 96 + range(r, -10, 10);
       const d = 424 + cl * 48 + range(r, -22, 22);
-      const w = range(r, 54, 118);
+      const w = range(r, 96, 172) + cl * 52;
       return {
         x: Math.cos(a) * d, z: Math.sin(a) * d, h, w,
         rot: range(r, 0, Math.PI * 2),
-        sx: range(r, 0.8, 1.2), sz: range(r, 0.8, 1.2),
+        sx: range(r, 0.78, 1.22), sz: range(r, 0.78, 1.22),
         ci: i % ROCK_COLS.length, tint: range(r, -0.045, 0.055),
-        snow: h > 135 ? range(r, 0.5, 0.62) : h > 100 ? range(r, 0.58, 0.72) : range(r, 0.74, 0.9),
+        snow: h > 120 ? range(r, 0.5, 0.62) : h > 88 ? range(r, 0.58, 0.72) : range(r, 0.74, 0.9),
         seed: 11 + i * 3.17,
-        k: range(r, 1.2, 1.75),
-        skew: range(r, 0.1, 0.22),
-        amp: [range(r, 0.14, 0.26), range(r, 0.09, 0.17), range(r, 0.05, 0.11)],
+        k: range(r, 1.25, 1.85),
+        skew: range(r, 0.14, 0.3),
+        amp: [range(r, 0.18, 0.34), range(r, 0.1, 0.19), range(r, 0.05, 0.12)],
         ph: [range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28)],
-        jit: range(r, 0.16, 0.28),
-        topT: range(r, 0.78, 0.9),
+        jit: range(r, 0.18, 0.32),
+        topT: range(r, 0.6, 0.85),
         green: false,
       };
     });
-    // Shoulder peaks — cluster beside majors to form ranges.
+    // Shoulder peaks — cluster beside majors to form connected massifs.
     const shoulders: Peak[] = [];
     majors.forEach((m, i) => {
-      const nSh = r() < 0.45 ? 2 : r() < 0.75 ? 1 : 0;
+      const nSh = r() < 0.35 ? 3 : r() < 0.7 ? 2 : 1;
       for (let k = 0; k < nSh; k++) {
-        const a = Math.atan2(m.z, m.x) + (k === 0 ? 1 : -1) * range(r, 0.025, 0.07);
-        const d = Math.hypot(m.x, m.z) + range(r, -40, 60);
-        const h = m.h * range(r, 0.4, 0.68);
+        const a = Math.atan2(m.z, m.x) + (k === 0 ? 1 : -1) * range(r, 0.02, 0.065);
+        const d = Math.hypot(m.x, m.z) + range(r, -46, 56);
+        const h = m.h * range(r, 0.42, 0.7);
         shoulders.push({
           x: Math.cos(a) * d, z: Math.sin(a) * d, h,
-          w: m.w * range(r, 0.5, 0.78),
+          w: m.w * range(r, 0.52, 0.85),
           rot: range(r, 0, Math.PI * 2),
-          sx: range(r, 0.85, 1.15), sz: range(r, 0.85, 1.15),
+          sx: range(r, 0.85, 1.18), sz: range(r, 0.85, 1.18),
           ci: (i + k + 1) % ROCK_COLS.length, tint: range(r, -0.04, 0.05),
           snow: h > 78 ? range(r, 0.6, 0.74) : h > 45 ? range(r, 0.72, 0.85) : range(r, 0.85, 0.96),
           seed: 71 + i * 7.7 + k * 2.9,
           k: range(r, 1.2, 1.7),
-          skew: range(r, 0.08, 0.2),
-          amp: [range(r, 0.13, 0.24), range(r, 0.08, 0.16), range(r, 0.04, 0.1)],
+          skew: range(r, 0.1, 0.24),
+          amp: [range(r, 0.15, 0.28), range(r, 0.09, 0.17), range(r, 0.04, 0.11)],
           ph: [range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28)],
-          jit: range(r, 0.14, 0.24),
-          topT: range(r, 0.8, 0.9),
+          jit: range(r, 0.15, 0.26),
+          topT: range(r, 0.62, 0.88),
           green: false,
         });
       }
@@ -1154,7 +1183,7 @@ function Mountains() {
       const a = range(r, 0, Math.PI * 2), d = range(r, 408, 448);
       return {
         x: Math.cos(a) * d, z: Math.sin(a) * d,
-        h: range(r, 14, 30), w: range(r, 26, 56),
+        h: range(r, 14, 30), w: range(r, 30, 62),
         rot: range(r, 0, Math.PI * 2),
         sx: range(r, 0.85, 1.2), sz: range(r, 0.85, 1.2),
         ci: i % HILL_COLS.length, tint: range(r, -0.05, 0.06),

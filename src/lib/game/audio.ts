@@ -3,6 +3,8 @@
 let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
 let muted = false;
+let sfxVol = 0.8;   // 0..1 user setting (SFX)
+let musicVol = 0.7; // 0..1 user setting (music)
 
 function ac(): AudioContext | null {
   if (typeof window === "undefined") return null;
@@ -23,27 +25,36 @@ export function setMuted(m: boolean) {
   if (master) master.gain.value = m ? 0 : 0.32;
 }
 export const isMuted = () => muted;
+/** Apply the two user volume sliders (0..1 each). */
+export function setVolumes(sfx01: number, music01: number) {
+  sfxVol = Math.max(0, Math.min(1, sfx01));
+  musicVol = Math.max(0, Math.min(1, music01));
+}
 export const primeAudio = () => void ac();
 
-function tone(freq: number, dur: number, type: OscillatorType, vol = 0.5, slideTo?: number, delay = 0) {
+function tone(freq: number, dur: number, type: OscillatorType, vol = 0.5, slideTo?: number, delay = 0, isMusic = false) {
   const c = ac();
   if (!c || !master || muted) return;
+  const v = vol * (isMusic ? musicVol : sfxVol) * 2.2; // scale 0..1 sliders into tone range
+  if (v <= 0.001) return;
   const t0 = c.currentTime + delay;
   const o = c.createOscillator(), g = c.createGain();
   o.type = type;
   o.frequency.setValueAtTime(freq, t0);
   if (slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(30, slideTo), t0 + dur);
   g.gain.setValueAtTime(0, t0);
-  g.gain.linearRampToValueAtTime(vol, t0 + 0.012);
+  g.gain.linearRampToValueAtTime(v, t0 + 0.012);
   g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
   o.connect(g).connect(master);
   o.start(t0);
   o.stop(t0 + dur + 0.05);
 }
 
-function noise(dur: number, vol = 0.25, hp = 400, delay = 0) {
+function noise(dur: number, vol = 0.25, hp = 400, delay = 0, isMusic = false) {
   const c = ac();
   if (!c || !master || muted) return;
+  const v = vol * (isMusic ? musicVol : sfxVol) * 2.2;
+  if (v <= 0.001) return;
   const t0 = c.currentTime + delay;
   const len = Math.floor(c.sampleRate * dur);
   const buf = c.createBuffer(1, len, c.sampleRate);
@@ -54,7 +65,7 @@ function noise(dur: number, vol = 0.25, hp = 400, delay = 0) {
   const f = c.createBiquadFilter();
   f.type = "highpass"; f.frequency.value = hp;
   const g = c.createGain();
-  g.gain.value = vol;
+  g.gain.value = v;
   src.connect(f).connect(g).connect(master);
   src.start(t0);
 }
@@ -85,15 +96,15 @@ export function startMusic() {
   const c = ac();
   if (!c || musicTimer) return;
   musicTimer = setInterval(() => {
-    if (muted || document.hidden) return;
+    if (muted || document.hidden || musicVol <= 0.001) return;
     const bar = Math.floor(step / 8) % 4;
     const root = ROOTS[bar];
-    if (step % 8 === 0) tone(root / 2, 0.5, "sine", 0.16);
+    if (step % 8 === 0) tone(root / 2, 0.5, "sine", 0.16, undefined, 0, true);
     if (step % 2 === 0) {
       const n = root * Math.pow(2, SCALE[(step * 3 + bar) % SCALE.length] / 12);
-      tone(n, 0.22, "triangle", 0.07);
+      tone(n, 0.22, "triangle", 0.07, undefined, 0, true);
     }
-    if (step % 4 === 2) noise(0.03, 0.04, 3000);
+    if (step % 4 === 2) noise(0.03, 0.04, 3000, 0, true);
     step = (step + 1) % 32;
   }, 260);
 }

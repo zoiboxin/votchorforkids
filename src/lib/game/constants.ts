@@ -36,6 +36,7 @@ export interface Appearance {
   hair: string;
   hairStyle: HairStyle;
   cap: boolean;
+  glasses: boolean;
   age: AgeGroup;
   girl: boolean;
 }
@@ -68,9 +69,77 @@ export const defaultAppearance = (): Appearance => ({
   hair: HAIR_COLORS[0],
   hairStyle: "spiky",
   cap: true,
+  glasses: false,
   age: "young",
   girl: false,
 });
+
+/** Merge saved/legacy appearances that may predate newer fields. */
+export function normalizeAppearance(a: Partial<Appearance> | null | undefined): Appearance {
+  return { ...defaultAppearance(), ...(a ?? {}) };
+}
+
+/* ---------- Outfit presets & randomizer (character creator) ---------- */
+export interface OutfitPreset { id: string; label: string; emoji: string; look: Partial<Appearance> }
+export const OUTFIT_PRESETS: readonly OutfitPreset[] = [
+  {
+    id: "cricket", label: "Cricket Star", emoji: "🏏",
+    look: { shirt: "#7bc043", pants: "#444a55", shoe: "#f5f5f5", hair: "#1a1210", hairStyle: "spiky", cap: true, glasses: false, age: "kid" },
+  },
+  {
+    id: "bollywood", label: "Film Hero", emoji: "🎬",
+    look: { shirt: "#e91e8c", pants: "#2b3556", shoe: "#e0483a", hair: "#1a1210", hairStyle: "ponytail", cap: false, glasses: false, age: "young", girl: true },
+  },
+  {
+    id: "detective", label: "Detective", emoji: "🕵️",
+    look: { shirt: "#f1e9d2", pants: "#4a3b2a", shoe: "#3b2314", hair: "#5a3a1a", hairStyle: "bowl", cap: false, glasses: true, age: "teen" },
+  },
+  {
+    id: "nana", label: "Wise Elder", emoji: "🧓",
+    look: { shirt: "#f5a524", pants: "#7a3b3b", shoe: "#3b2314", hair: "#d8d8d8", hairStyle: "bald", cap: false, glasses: true, age: "old" },
+  },
+  {
+    id: "maverick", label: "Daredevil", emoji: "🛹",
+    look: { shirt: "#00b4d8", pants: "#8a5aa8", shoe: "#111111", hair: "#b03030", hairStyle: "mohawk", cap: false, glasses: true, age: "teen" },
+  },
+  {
+    id: "dancer", label: "Bhangra King", emoji: "💃",
+    look: { shirt: "#ff6b35", pants: "#2a6f4f", shoe: "#e0483a", hair: "#e8c15a", hairStyle: "curly", cap: false, glasses: false, age: "young" },
+  },
+];
+
+/** Random look for the 🎲 button. */
+export function randomAppearance(rnd: () => number = Math.random): Appearance {
+  const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(rnd() * arr.length)];
+  const styles = HAIR_STYLES.map((h) => h.id);
+  const ages = Object.keys(AGE_STATS) as AgeGroup[];
+  return {
+    skin: pick(SKIN_TONES),
+    shirt: pick(SHIRT_COLORS),
+    pants: pick(PANTS_COLORS),
+    shoe: pick(SHOE_COLORS),
+    hair: pick(HAIR_COLORS),
+    hairStyle: pick(styles),
+    cap: rnd() < 0.45,
+    glasses: rnd() < 0.3,
+    age: pick(ages),
+    girl: rnd() < 0.5,
+  };
+}
+
+/** Funny strings for the landing-page marquee ticker. */
+export const TICKER_LINES: readonly string[] = [
+  "🗳️ BREAKING: 16 votes missing from Parliament — police baffled!",
+  "🚨 Wanted: one very fast child with pockets full of democracy.",
+  "🐄 Cows block main road again — farmers apologise, cows do not.",
+  "🧟 Graveyard neighbours request quiet after sunset. Zombies disagree.",
+  "🪑 Parliament announces new record: most seats sat upon!",
+  "🍵 Chai stalls report record profits during police chase season.",
+  "🐒 Monkey union demands better mango benefits.",
+  "🏃 Local kid outruns entire police squad — 'it was cardio', says kid.",
+  "⚖️ Court rules: hiding behind a cow is technically legal.",
+  "📻 Poll prediction: 100% chance of running.",
+];
 
 /* ---------- Pickups ---------- */
 export interface ItemDef { name: string; hp: number; stamina: number; color: string; msg: string; kind: "fruit" | "kit" | "drink" }
