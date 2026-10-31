@@ -194,6 +194,50 @@ function VotePips({ carried }: { carried: number }) {
   );
 }
 
+/* ------------- floating +health / +energy chips after eating (1.6s) ------------- */
+function GainFlash() {
+  const gain = useGame((s) => s.hud.gain);
+  const [flash, setFlash] = useState<typeof gain | null>(null);
+  const [shownAt, setShownAt] = useState(0);
+  // adjust-state-during-render pattern: react to a new gain bump without an effect
+  if (gain.at !== shownAt) {
+    setShownAt(gain.at);
+    setFlash(gain.at && (gain.hp > 0 || gain.stamina > 0) ? { ...gain } : null);
+  }
+  // auto-hide shortly after the chip pops
+  useEffect(() => {
+    if (!flash) return;
+    const t = setTimeout(() => setFlash(null), 1600);
+    return () => clearTimeout(t);
+  }, [flash]);
+  return (
+    <AnimatePresence>
+      {flash && (
+        <motion.div
+          key={flash.at}
+          aria-hidden
+          initial={{ opacity: 0, y: 12, scale: 0.75 }}
+          animate={{ opacity: 1, y: -4, scale: 1 }}
+          exit={{ opacity: 0, y: -18, scale: 0.9 }}
+          transition={{ type: "spring", stiffness: 330, damping: 21 }}
+          className="pointer-events-none absolute left-[14rem] top-8 z-20 flex flex-col items-start gap-1"
+        >
+          {flash.hp > 0 && (
+            <span className="w-fit rounded-full border border-rose-200/40 bg-rose-500/90 px-2.5 py-0.5 text-xs font-black text-white shadow-lg shadow-rose-900/40">
+              +{flash.hp} ❤
+            </span>
+          )}
+          {flash.stamina > 0 && (
+            <span className="w-fit rounded-full border border-amber-200/40 bg-amber-400/95 px-2.5 py-0.5 text-xs font-black text-amber-950 shadow-lg shadow-amber-900/40">
+              +{flash.stamina} ⚡
+            </span>
+          )}
+        </motion.div>
+      )}
+    </AnimatePresence>
+  );
+}
+
 /* ------------- food pockets: fixed 8-slot hotbar (old-game bottom-left bar, revived) ------------- */
 function ItemBar({ engine, vertical = false }: { engine: GameEngine; vertical?: boolean }) {
   const inv = useGame((s) => s.hud.inv);
@@ -220,6 +264,10 @@ function ItemBar({ engine, vertical = false }: { engine: GameEngine; vertical?: 
                 className={`flex ${size} items-center justify-center rounded-xl border-2 border-dashed border-white/25 bg-black/20`}
               >
                 <Package size={15} className="text-white/30" />
+                {/* faint hotkey label on empty slots too — teaches the 1-8 mapping */}
+                <span className="absolute -bottom-1 -left-1 flex h-3.5 w-3.5 items-center justify-center rounded bg-black/55 text-[8px] font-black text-white/45">
+                  {keyNo}
+                </span>
               </span>
             );
           }
@@ -501,7 +549,8 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       }
       if (e.code === "KeyM") { e.preventDefault(); setBigMap(true); return; }
       if (e.code === "KeyP" || e.code === "Escape") { e.preventDefault(); togglePause(); }
-      const dig = /^Digit([1-8])$/.exec(e.code);
+      // top-row Digit keys AND keypad Numpad keys both eat pocketed food
+      const dig = /^(?:Digit|Numpad)([1-8])$/.exec(e.code);
       if (dig) {
         const slot = useGame.getState().hud.inv[Number(dig[1]) - 1];
         if (slot) engine.useItem(slot.def);
@@ -590,6 +639,8 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
           ))}
         </motion.div>
       </div>
+      {/* floating +❤/+⚡ chip right after a snack is eaten */}
+      <GainFlash />
 
       {/* top-center: objective tracker + zone/clock */}
       <div className="absolute left-3 right-3 top-[172px] flex flex-col items-center gap-1.5 sm:left-1/2 sm:right-auto sm:top-3 sm:-translate-x-1/2">
@@ -799,7 +850,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       {!touch && (
         <div className="absolute bottom-3 left-1/2 z-10 hidden -translate-x-1/2 flex-col items-center gap-1.5 md:flex">
           <div className="hidden whitespace-nowrap rounded-full bg-black/45 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/75 backdrop-blur-md lg:block">
-            WASD move · Shift sprint · Space jump · E rescue
+            WASD move · Shift sprint · Space jump · E rescue · 1-8 eat
           </div>
           <CoordsChip px={hud.px} pz={hud.pz} />
         </div>

@@ -7,6 +7,9 @@ const nextConfig: NextConfig = {
     ignoreBuildErrors: true,
   },
   reactStrictMode: false,
+  // The dev-tools bubble sits bottom-left by default and covers the in-game
+  // food hotbar (players thought the inventory was broken / only 1 slot).
+  devIndicators: false,
 };
 
 export default nextConfig;

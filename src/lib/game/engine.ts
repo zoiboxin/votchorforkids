@@ -36,6 +36,8 @@ export interface HudData {
   civilians: number; police: number; won: boolean; elapsed: number;
   inv: { def: number; count: number }[]; hurt: boolean; sprinting: boolean; exhausted: boolean;
   px: number; pz: number; // player world coords — bottom-center location chip
+  /** bump timestamp + amounts of the last eaten item — HUD plays a floating +❤/+⚡ chip */
+  gain: { hp: number; stamina: number; at: number };
 }
 
 export type ToastFn = (msg: string, kind?: "info" | "good" | "bad") => void;
@@ -54,6 +56,7 @@ export class GameEngine {
   hp = 100; stamina = 100;
   inv: { def: number; count: number }[] = []; // pocketed food, used from the HUD item bar
   hurtT = 0;                // red damage-flash timer
+  lastGain: { hp: number; stamina: number; at: number } = { hp: 0, stamina: 0, at: 0 }; // bumped on every eat
   private exhaustedAnnounced = false;
   private pocketFullT = 0;  // throttles the "pockets full" toast
   clock = 0.3;
@@ -284,6 +287,12 @@ export class GameEngine {
     this.hp = clamp(this.hp + d.hp, 0, 100);
     this.stamina = clamp(this.stamina + d.stamina, 0, 100);
     this.player.stamina = this.stamina; // keep the movement body in sync
+    // record what this snack actually restored so the HUD can float +❤/+⚡ chips
+    this.lastGain = {
+      hp: Math.round(d.hp > 0 ? Math.min(d.hp, Math.max(0, 100 - (this.hp - d.hp))) : 0),
+      stamina: Math.round(d.stamina > 0 ? Math.min(d.stamina, Math.max(0, 100 - (this.stamina - d.stamina))) : 0),
+      at: Date.now(),
+    };
     if (d.kind === "fruit" || d.kind === "drink") sfx.eat(); else sfx.rescue();
     this.exhaustedAnnounced = false; // energy came back — allow the exhausted hint next time
     this.toast(`${d.emoji} ${d.msg}`, "good");
@@ -525,6 +534,7 @@ export class GameEngine {
       inv: this.inv.map((s) => ({ def: s.def, count: s.count })),
       hurt: this.hurtT > 0, sprinting: p.sprinting, exhausted: this.stamina <= 0.5,
       px: Math.round(this.player.x), pz: Math.round(this.player.z),
+      gain: this.lastGain,
     };
   }
 

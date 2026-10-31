@@ -127,3 +127,13 @@ export function GameRoot() {
     </div>
   );
 }
+
+/* Next.js 16's dev-tools bubble mounts bottom-left exactly where the in-game
+   food hotbar lives — players thought the inventory was broken ("only 1 slot").
+   nextjs-portal only exists in `next dev`, so hiding it is a dev-only cosmetic fix. */
+if (typeof document !== "undefined" && !document.getElementById("vc-hide-next-devtools")) {
+  const s = document.createElement("style");
+  s.id = "vc-hide-next-devtools";
+  s.textContent = "nextjs-portal{display:none!important}";
+  document.head.appendChild(s);
+}

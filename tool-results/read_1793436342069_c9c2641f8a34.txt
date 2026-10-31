@@ -1,0 +1,815 @@
+     1→     1→"use client";
+     2→     2→
+     3→     3→import { useEffect, useRef, useState } from "react";
+     4→     4→import { AnimatePresence, motion } from "framer-motion";
+     5→     5→import {
+     6→     6→  Heart, Zap, Star, Sun, Moon, Vote, MapPin, Volume2, VolumeX, Pause, Play as PlayIcon,
+     7→     7→  Keyboard, Gauge, CircleHelp, Flag, Home, Settings as SettingsIcon, CheckCircle2, Siren, Info, ShieldCheck,
+     8→     8→  ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon,
+     9→     9→} from "lucide-react";
+    10→    10→import type { GameEngine } from "@/lib/game/engine";
+    11→    11→import { ITEMS, INV_SLOTS } from "@/lib/game/constants";
+    12→    12→import { useGame } from "./store";
+    13→    13→import { setMuted as setAudioMuted, sfx, stopMusic, startMusic } from "@/lib/game/audio";
+    14→    14→import { Button } from "@/components/ui/button";
+    15→    15→import { HowToPlay, SettingsDialog } from "./Panels";
+    16→    16→
+    17→    17→/* ------- shared world-map canvas painting (156px minimap + 440px big map) ------- */
+    18→    18→function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine, night: boolean) {
+    19→    19→  const K = S / 700;          // world units → px
+    20→    20→  const U = S / 156;          // scale for the hand-tuned 156px marker sizes
+    21→    21→  const dot = (x: number, z: number, r: number, col: string, alpha = 1) => {
+    22→    22→    c.globalAlpha = alpha;
+    23→    23→    c.fillStyle = col;
+    24→    24→    c.beginPath();
+    25→    25→    c.arc(S / 2 + x * K, S / 2 + z * K, r, 0, 6.3);
+    26→    26→    c.fill();
+    27→    27→    c.globalAlpha = 1;
+    28→    28→  };
+    29→    29→  c.clearRect(0, 0, S, S);
+    30→    30→  dot(0, 0, 335 * K, "#2d5a2e");
+    31→    31→  dot(0, 0, 200 * K, "#7a8f3f");
+    32→    32→  dot(0, 0, 130 * K, "#8d8a80");
+    33→    33→  dot(-185, 165, 42 * K, "#3a3a46");
+    34→    34→  if (S > 300) {
+    35→    35→    // big map only: zone rings, graveyard fence and district labels
+    36→    36→    c.strokeStyle = "rgba(255,255,255,0.22)";
+    37→    37→    c.lineWidth = 1;
+    38→    38→    for (const r of [245, 320, 390]) { c.beginPath(); c.arc(S / 2, S / 2, r * K, 0, 6.3); c.stroke(); }
+    39→    39→    c.beginPath(); c.arc(S / 2 - 255 * K, S / 2 + 215 * K, 45 * K, 0, 6.3); c.stroke();
+    40→    40→    c.fillStyle = "rgba(255,255,255,0.55)";
+    41→    41→    c.font = `700 ${Math.round(7 * U)}px ui-sans-serif, system-ui, sans-serif`;
+    42→    42→    c.textAlign = "center";
+    43→    43→    c.fillText("CITY", S / 2, S / 2 + 90 * K);
+    44→    44→    c.fillText("FARMLAND", S / 2, S / 2 + 290 * K);
+    45→    45→    c.fillText("JUNGLE", S / 2 - 270 * K, S / 2 - 255 * K);
+    46→    46→    c.fillText("GRAVEYARD", S / 2 - 255 * K, S / 2 + 265 * K);
+    47→    47→  }
+    48→    48→  // parliament
+    49→    49→  c.fillStyle = "#e0483a";
+    50→    50→  c.fillRect(S / 2 - 4 * U, S / 2 - 118 * K - 3 * U, 8 * U, 6 * U);
+    51→    51→  // ballot
+    52→    52→  c.fillStyle = "#f7c948";
+    53→    53→  c.beginPath(); c.arc(S / 2, S / 2 - 100 * K, 2.6 * U, 0, 6.3); c.fill();
+    54→    54→  for (const it of engine.items) if (it.active) dot(it.x, it.z, 1.1 * U, "#ffd166", 0.8);
+    55→    55→  for (const v of engine.votes) if (v.state === "world") dot(v.x, v.z, 2.2 * U, "#f7c948");
+    56→    56→  for (const cop of engine.cops) {
+    57→    57→    const chasing = cop.mode === "chase";
+    58→    58→    dot(cop.x, cop.z, (chasing ? 3 : 2) * U, chasing ? "#ff4d4d" : "#6aa0ff");
+    59→    59→  }
+    60→    60→  for (const cv of engine.civs) if (cv.mode === "detained") dot(cv.x, cv.z, 3 * U, "#ff8fa3");
+    61→    61→  if (night) for (const zb of engine.zombies) dot(zb.x, zb.z, 2.4 * U, "#c084fc");
+    62→    62→  dot(engine.player.x, engine.player.z, 3.6 * U, "#ffffff");
+    63→    63→}
+    64→    64→
+    65→    65→/* ----------------------------- minimap ----------------------------- */
+    66→    66→function Minimap({ engine, onOpen }: { engine: GameEngine; onOpen: () => void }) {
+    67→    67→  const ref = useRef<HTMLCanvasElement>(null);
+    68→    68→  const hud = useGame((s) => s.hud);
+    69→    69→  useEffect(() => {
+    70→    70→    const c = ref.current?.getContext("2d");
+    71→    71→    if (c) drawWorldMap(c, 156, engine, hud.night > 0.5);
+    72→    72→  }, [engine, hud]);
+    73→    73→  return (
+    74→    74→    <button
+    75→    75→      data-ui type="button" onClick={onOpen}
+    76→    76→      title="Open the big world map (M)"
+    77→    77→      aria-label="Open the big world map"
+    78→    78→      className="pointer-events-auto relative block origin-top-right scale-[0.72] cursor-pointer transition-transform hover:scale-90 sm:scale-100 sm:hover:scale-105"
+    79→    79→    >
+    80→    80→      <canvas ref={ref} width={156} height={156} aria-hidden className="rounded-xl border-2 border-white/30 shadow-lg" />
+    81→    81→      <span className="absolute -top-1.5 left-1/2 -translate-x-1/2 rounded-full border border-white/30 bg-black/70 px-1.5 text-[9px] font-black leading-3 text-white">N</span>
+    82→    82→      <span className="absolute -bottom-1.5 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-black/70 px-1.5 text-[8px] font-black uppercase tracking-widest text-white/85">M — big map</span>
+    83→    83→    </button>
+    84→    84→  );
+    85→    85→}
+    86→    86→
+    87→    87→/* ----------------------------- big map overlay ----------------------------- */
+    88→    88→const BIG_MAP_S = 440;
+    89→    89→const MAP_LEGEND: [string, string][] = [
+    90→    90→  ["#ffffff", "You"], ["#f7c948", "Votes"], ["#ffd166", "Food"], ["#6aa0ff", "Police"],
+    91→    91→  ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ["#c084fc", "Zombies · night"],
+    92→    92→];
+    93→    93→function BigMap({ engine, onClose }: { engine: GameEngine; onClose: () => void }) {
+    94→    94→  const ref = useRef<HTMLCanvasElement>(null);
+    95→    95→  const hud = useGame((s) => s.hud);
+    96→    96→  useEffect(() => {
+    97→    97→    const c = ref.current?.getContext("2d");
+    98→    98→    if (c) drawWorldMap(c, BIG_MAP_S, engine, hud.night > 0.5);
+    99→    99→  }, [engine, hud]);
+   100→   100→  return (
+   101→   101→    <motion.div
+   102→   102→      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+   103→   103→      data-ui role="dialog" aria-label="Big map of the world"
+   104→   104→      className="pointer-events-auto absolute inset-0 z-30 flex items-center justify-center bg-slate-950/70 p-3 backdrop-blur-sm"
+   105→   105→      onClick={onClose}
+   106→   106→    >
+   107→   107→      <motion.div
+   108→   108→        initial={{ scale: 0.92, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0 }}
+   109→   109→        transition={{ type: "spring", stiffness: 280, damping: 24 }}
+   110→   110→        onClick={(e) => e.stopPropagation()}
+   111→   111→        className="w-[min(94vw,480px)] rounded-3xl border border-white/20 bg-slate-900/95 p-4 shadow-2xl"
+   112→   112→      >
+   113→   113→        <div className="mb-2 flex items-center justify-between">
+   114→   114→          <div className="text-sm font-black uppercase tracking-widest text-white">
+   115→   115→            <MapIcon size={14} className="mr-1 inline text-yellow-300" /> World map
+   116→   116→          </div>
+   117→   117→          <Button size="icon" variant="ghost" aria-label="Close big map" onClick={onClose} className="h-8 w-8 rounded-lg bg-white/10 text-white hover:bg-white/20">
+   118→   118→            <X size={16} />
+   119→   119→          </Button>
+   120→   120→        </div>
+   121→   121→        <canvas
+   122→   122→          ref={ref} width={BIG_MAP_S} height={BIG_MAP_S} aria-label="World map canvas"
+   123→   123→          className="h-[min(78vw,440px)] w-[min(78vw,440px)] rounded-2xl border border-white/20"
+   124→   124→        />
+   125→   125→        <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[10px] font-bold text-white/80">
+   126→   126→          {MAP_LEGEND.map(([col, label]) => (
+   127→   127→            <span key={label} className="flex items-center gap-1">
+   128→   128→              <span className="inline-block h-2 w-2 rounded-full" style={{ background: col }} aria-hidden /> {label}
+   129→   129→            </span>
+   130→   130→          ))}
+   131→   131→        </div>
+   132→   132→        <div className="mt-1 text-center text-[10px] font-black uppercase tracking-widest text-white/45">M or Esc to close</div>
+   133→   133→      </motion.div>
+   134→   134→    </motion.div>
+   135→   135→  );
+   136→   136→}
+   137→   137→
+   138→   138→/* ------------- bottom-center location chip — tap to copy "X · Z" ------------- */
+   139→   139→function CoordsChip({ px, pz }: { px: number; pz: number }) {
+   140→   140→  const [copied, setCopied] = useState(false);
+   141→   141→  const copy = async () => {
+   142→   142→    try { await navigator.clipboard.writeText(`X ${px} · Z ${pz}`); } catch { /* clipboard unavailable */ }
+   143→   143→    setCopied(true);
+   144→   144→    setTimeout(() => setCopied(false), 1600);
+   145→   145→  };
+   146→   146→  return (
+   147→   147→    <button
+   148→   148→      data-ui type="button" onClick={copy}
+   149→   149→      title="Click to copy your coordinates"
+   150→   150→      aria-label={`Your location: X ${px}, Z ${pz}. Click to copy.`}
+   151→   151→      className="pointer-events-auto flex items-center gap-1.5 rounded-full border border-white/25 bg-black/55 px-3 py-1 text-[10px] font-black tabular-nums tracking-wide text-white/90 backdrop-blur-md transition-colors hover:border-amber-300/70 hover:text-amber-200"
+   152→   152→    >
+   153→   153→      {copied ? <Check size={11} className="text-emerald-300" /> : <MapPin size={11} className="text-yellow-300" />}
+   154→   154→      <span>X {px} · Z {pz}</span>
+   155→   155→      <span className="hidden items-center gap-0.5 rounded bg-white/10 px-1 text-[8px] font-black uppercase tracking-widest text-white/55 sm:flex">
+   156→   156→        <Copy size={9} /> copy
+   157→   157→      </span>
+   158→   158→    </button>
+   159→   159→  );
+   160→   160→}
+   161→   161→
+   162→   162→/* ----------------------------- bars ----------------------------- */
+   163→   163→function Bar({ v, color, icon, low = false }: { v: number; color: string; icon: React.ReactNode; low?: boolean }) {
+   164→   164→  return (
+   165→   165→    <div className="flex items-center gap-1.5">
+   166→   166→      <span className="text-white drop-shadow">{icon}</span>
+   167→   167→      <div className={`h-3.5 w-28 overflow-hidden rounded-full border border-white/30 bg-black/35 sm:w-36 ${low ? "animate-pulse ring-1 ring-rose-300/70" : ""}`}>
+   168→   168→        <div className={`h-full rounded-full ${color} transition-[width] duration-200`} style={{ width: `${v}%` }} />
+   169→   169→      </div>
+   170→   170→    </div>
+   171→   171→  );
+   172→   172→}
+   173→   173→
+   174→   174→/* --------------------- carried-vote pips (3 slots) --------------------- */
+   175→   175→function VotePips({ carried }: { carried: number }) {
+   176→   176→  return (
+   177→   177→    <div className="flex items-center gap-1.5">
+   178→   178→      <Vote size={16} className="text-yellow-300" />
+   179→   179→      <div className="flex gap-1" aria-label={`Carrying ${carried} of 3 votes`}>
+   180→   180→        {Array.from({ length: 3 }, (_, i) => (
+   181→   181→          <motion.div
+   182→   182→            key={i}
+   183→   183→            animate={i < carried ? { scale: [1, 1.35, 1] } : { scale: 1 }}
+   184→   184→            transition={i < carried ? { repeat: Infinity, duration: 1.3, delay: i * 0.15 } : { duration: 0.2 }}
+   185→   185→            className={`h-3.5 w-3.5 rounded-full border ${
+   186→   186→              i < carried
+   187→   187→                ? "border-yellow-100 bg-gradient-to-br from-yellow-200 to-amber-400 shadow-[0_0_7px_rgba(250,204,21,0.85)]"
+   188→   188→                : "border-white/30 bg-black/40"
+   189→   189→            }`}
+   190→   190→          />
+   191→   191→        ))}
+   192→   192→      </div>
+   193→   193→    </div>
+   194→   194→  );
+   195→   195→}
+   196→   196→
+   197→   197→/* ------------- food pockets: fixed 8-slot hotbar (old-game bottom-left bar, revived) ------------- */
+   198→   198→function ItemBar({ engine, vertical = false }: { engine: GameEngine; vertical?: boolean }) {
+   199→   199→  const inv = useGame((s) => s.hud.inv);
+   200→   200→  const touch = useGame((s) => s.touch);
+   201→   201→  // Fixed hotbar: always INV_SLOTS boxes; pocketed food fills them from the left.
+   202→   202→  // Slot n matches the Digit-n hotkey (hud.inv[n-1]) on desktop.
+   203→   203→  const cells = Array.from({ length: INV_SLOTS }, (_, i) => inv[i] ?? null);
+   204→   204→  const size = vertical ? "h-10 w-10" : "h-10 w-10 sm:h-12 sm:w-12";
+   205→   205→  return (
+   206→   206→    <div
+   207→   207→      data-ui
+   208→   208→      role="toolbar"
+   209→   209→      aria-label="Food pockets — click a snack to eat it and restore health or energy"
+   210→   210→      className={`pointer-events-auto rounded-2xl bg-black/35 p-1.5 backdrop-blur-md ${vertical ? "" : "inline-block"}`}
+   211→   211→    >
+   212→   212→      <div className={`flex flex-wrap gap-1 ${vertical ? "max-w-[13rem]" : "max-w-[13rem] lg:max-w-none lg:flex-nowrap"}`}>
+   213→   213→        {cells.map((slot, i) => {
+   214→   214→          const keyNo = i + 1;
+   215→   215→          if (!slot) {
+   216→   216→            return (
+   217→   217→              <span
+   218→   218→                key={`empty-${i}`}
+   219→   219→                aria-hidden
+   220→   220→                className={`flex ${size} items-center justify-center rounded-xl border-2 border-dashed border-white/25 bg-black/20`}
+   221→   221→              >
+   222→   222→                <Package size={15} className="text-white/30" />
+   223→   223→              </span>
+   224→   224→            );
+   225→   225→          }
+   226→   226→          const d = ITEMS[slot.def];
+   227→   227→          return (
+   228→   228→            <motion.button
+   229→   229→              key={slot.def}
+   230→   230→              layout
+   231→   231→              initial={{ scale: 0.5, opacity: 0 }}
+   232→   232→              animate={{ scale: 1, opacity: 1 }}
+   233→   233→              whileTap={{ scale: 0.88 }}
+   234→   234→              transition={{ type: "spring", stiffness: 380, damping: 20 }}
+   235→   235→              onClick={() => engine.useItem(slot.def)}
+   236→   236→              onContextMenu={!vertical ? (e) => { e.preventDefault(); engine.dropItem(slot.def); } : undefined}
+   237→   237→              title={`${d.name} — +${d.hp} ❤ ${d.stamina > 0 ? `+${d.stamina} ⚡` : ""} · click to eat${touch ? "" : " · right-click to drop"}`}
+   238→   238→              aria-label={`Use ${d.name}: restores ${d.hp} health and ${d.stamina} energy`}
+   239→   239→              className={`relative flex ${size} items-center justify-center rounded-xl border-2 border-white/30 bg-white/10 shadow-lg backdrop-blur-md transition-colors hover:border-amber-300/80 hover:bg-amber-400/25`}
+   240→   240→            >
+   241→   241→              <span className="text-lg leading-none sm:text-2xl" aria-hidden>{d.emoji}</span>
+   242→   242→              {slot.count > 1 && (
+   243→   243→                <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full border border-black/40 bg-amber-400 px-1 text-[10px] font-black text-amber-950">
+   244→   244→                  {slot.count}
+   245→   245→                </span>
+   246→   246→              )}
+   247→   247→              <span className="absolute -bottom-1 -left-1 flex h-3.5 w-3.5 items-center justify-center rounded bg-black/75 text-[8px] font-black text-white/90">
+   248→   248→                {keyNo}
+   249→   249→              </span>
+   250→   250→            </motion.button>
+   251→   251→          );
+   252→   252→        })}
+   253→   253→      </div>
+   254→   254→      <div className="mt-1 w-fit rounded-lg bg-black/60 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-white/75">
+   255→   255→        {touch ? "tap slot = eat it" : "1-8 use · right-click drop"}
+   256→   256→      </div>
+   257→   257→    </div>
+   258→   258→  );
+   259→   259→}
+   260→   260→
+   261→   261→/* ------------- danger compass: arrow toward nearest chasing cop ------------- */
+   262→   262→function DangerCompass({ engine }: { engine: GameEngine }) {
+   263→   263→  const hud = useGame((s) => s.hud);
+   264→   264→  if (!hud.policeNear || hud.detained) return null;
+   265→   265→  let best: { d: number; a: number } | null = null;
+   266→   266→  for (const cop of engine.cops) {
+   267→   267→    if (cop.mode !== "chase") continue;
+   268→   268→    const dx = cop.x - engine.player.x, dz = cop.z - engine.player.z;
+   269→   269→    const d = Math.hypot(dx, dz);
+   270→   270→    if (!best || d < best.d) best = { d, a: Math.atan2(dx, dz) };
+   271→   271→  }
+   272→   272→  if (!best) return null;
+   273→   273→  // 0° = straight ahead of the camera; positive = clockwise (to the right)
+   274→   274→  const deg = ((best.a - engine.input.yaw) * 180) / Math.PI;
+   275→   275→  return (
+   276→   276→    <motion.div
+   277→   277→      initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }}
+   278→   278→      className="pointer-events-none absolute left-1/2 top-1/2 z-[5]"
+   279→   279→      aria-label={`Police ${Math.round(best.d)} meters away`}
+   280→   280→    >
+   281→   281→      <div style={{ transform: `rotate(${deg}deg)` }}>
+   282→   282→        <div
+   283→   283→          className="flex flex-col items-center"
+   284→   284→          style={{ transform: `translate(-50%, -128px)` }}
+   285→   285→        >
+   286→   286→          <motion.span animate={{ y: [0, 4, 0] }} transition={{ repeat: Infinity, duration: 0.8 }}>
+   287→   287→            <ChevronUp size={26} className="text-rose-400 drop-shadow-[0_1px_4px_rgba(0,0,0,0.8)]" strokeWidth={3.5} />
+   288→   288→          </motion.span>
+   289→   289→          <span className="rounded-full bg-rose-600/85 px-1.5 text-[9px] font-black leading-4 text-white shadow">
+   290→   290→            🚓 {Math.round(best.d)}m
+   291→   291→          </span>
+   292→   292→        </div>
+   293→   293→      </div>
+   294→   294→    </motion.div>
+   295→   295→  );
+   296→   296→}
+   297→   297→
+   298→   298→/* ----------------------------- FPS counter ----------------------------- */
+   299→   299→function FpsCounter() {
+   300→   300→  const [fps, setFps] = useState(0);
+   301→   301→  useEffect(() => {
+   302→   302→    let frames = 0, last = performance.now(), raf = 0;
+   303→   303→    const tick = () => {
+   304→   304→      frames++;
+   305→   305→      const now = performance.now();
+   306→   306→      if (now - last >= 500) { setFps(Math.round((frames * 1000) / (now - last))); frames = 0; last = now; }
+   307→   307→      raf = requestAnimationFrame(tick);
+   308→   308→    };
+   309→   309→    raf = requestAnimationFrame(tick);
+   310→   310→    return () => cancelAnimationFrame(raf);
+   311→   311→  }, []);
+   312→   312→  return (
+   313→   313→    <div aria-label="Frames per second" className="rounded-lg bg-black/40 px-2 py-0.5 text-[10px] font-black tabular-nums text-emerald-300 backdrop-blur">
+   314→   314→      {fps} FPS
+   315→   315→    </div>
+   316→   316→  );
+   317→   317→}
+   318→   318→
+   319→   319→/* ----------------------------- mobile controls ----------------------------- */
+   320→   320→function Joystick({ engine }: { engine: GameEngine }) {
+   321→   321→  const [knob, setKnob] = useState({ x: 0, y: 0 });
+   322→   322→  const ref = useRef<HTMLDivElement>(null);
+   323→   323→  const activeId = useRef<number | null>(null);
+   324→   324→
+   325→   325→  const move = (cx: number, cy: number) => {
+   326→   326→    const el = ref.current;
+   327→   327→    if (!el) return;
+   328→   328→    const r = el.getBoundingClientRect();
+   329→   329→    const dx = Math.max(-1, Math.min(1, (cx - (r.left + r.width / 2)) / (r.width / 2)));
+   330→   330→    const dy = Math.max(-1, Math.min(1, (cy - (r.top + r.height / 2)) / (r.height / 2)));
+   331→   331→    setKnob({ x: dx * 34, y: dy * 34 });
+   332→   332→    engine.touchMove.active = true;
+   333→   333→    engine.input.f = -dy;
+   334→   334→    engine.input.r = dx;
+   335→   335→  };
+   336→   336→  const end = () => {
+   337→   337→    activeId.current = null;
+   338→   338→    engine.touchMove.active = false;
+   339→   339→    engine.input.f = 0; engine.input.r = 0;
+   340→   340→    setKnob({ x: 0, y: 0 });
+   341→   341→  };
+   342→   342→
+   343→   343→  return (
+   344→   344→    <div
+   345→   345→      ref={ref} data-ui
+   346→   346→      className="relative h-32 w-32 rounded-full border-2 border-white/40 bg-white/10 backdrop-blur-sm"
+   347→   347→      onTouchStart={(e) => {
+   348→   348→        e.preventDefault();
+   349→   349→        const t = e.changedTouches[0];
+   350→   350→        activeId.current = t.identifier;
+   351→   351→        move(t.clientX, t.clientY);
+   352→   352→      }}
+   353→   353→      onTouchMove={(e) => {
+   354→   354→        e.preventDefault();
+   355→   355→        for (const t of Array.from(e.changedTouches))
+   356→   356→          if (t.identifier === activeId.current) move(t.clientX, t.clientY);
+   357→   357→      }}
+   358→   358→      onTouchEnd={end}
+   359→   359→      onTouchCancel={end}
+   360→   360→    >
+   361→   361→      <div
+   362→   362→        className="absolute left-1/2 top-1/2 h-14 w-14 -translate-x-1/2 -translate-y-1/2 rounded-full border-2 border-white/60 bg-white/30"
+   363→   363→        style={{ transform: `translate(calc(-50% + ${knob.x}px), calc(-50% + ${knob.y}px))` }}
+   364→   364→      />
+   365→   365→    </div>
+   366→   366→  );
+   367→   367→}
+   368→   368→
+   369→   369→function MobileButtons({ engine }: { engine: GameEngine }) {
+   370→   370→  const [sprint, setSprint] = useState(false);
+   371→   371→  return (
+   372→   372→    <div data-ui className="flex flex-col items-end gap-3">
+   373→   373→      <button
+   374→   374→        aria-label="Jump"
+   375→   375→        className="h-16 w-16 rounded-full border-2 border-white/50 bg-amber-400/80 text-lg font-black text-amber-950 shadow-lg active:scale-95"
+   376→   376→        onTouchStart={(e) => {
+   377→   377→          e.preventDefault();
+   378→   378→          engine.input.jump = true;
+   379→   379→          setTimeout(() => { engine.input.jump = false; }, 120);
+   380→   380→        }}
+   381→   381→      >JUMP</button>
+   382→   382→      <button
+   383→   383→        aria-label="Rescue"
+   384→   384→        className="h-16 w-16 rounded-full border-2 border-white/50 bg-emerald-400/80 text-lg font-black text-emerald-950 shadow-lg active:scale-95"
+   385→   385→        onTouchStart={(e) => { e.preventDefault(); engine.interact(); }}
+   386→   386→      >E</button>
+   387→   387→      <button
+   388→   388→        aria-label="Toggle sprint"
+   389→   389→        className={`h-14 w-14 rounded-full border-2 border-white/50 text-sm font-black shadow-lg active:scale-95 ${sprint ? "bg-rose-500/90 text-white" : "bg-white/25 text-white"}`}
+   390→   390→        onClick={() => { const s = !sprint; setSprint(s); engine.touchMove.sprint = s; }}
+   391→   391→      ><Gauge className="mx-auto" /></button>
+   392→   392→    </div>
+   393→   393→  );
+   394→   394→}
+   395→   395→
+   396→   396→/* ----------------------------- pause menu ----------------------------- */
+   397→   397→function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void }) {
+   398→   398→  const setPaused = useGame((s) => s.setPaused);
+   399→   399→  const [help, setHelp] = useState(false);
+   400→   400→  const [settingsOpen, setSettingsOpen] = useState(false);
+   401→   401→  const hud = useGame((s) => s.hud);
+   402→   402→
+   403→   403→  const resume = () => {
+   404→   404→    sfx.click();
+   405→   405→    engine.running = true;
+   406→   406→    startMusic();
+   407→   407→    setPaused(false);
+   408→   408→  };
+   409→   409→
+   410→   410→  const secs = Math.floor(hud.elapsed);
+   411→   411→  const mm = String(Math.floor(secs / 60)).padStart(2, "0");
+   412→   412→  const ss = String(secs % 60).padStart(2, "0");
+   413→   413→
+   414→   414→  return (
+   415→   415→    <motion.div
+   416→   416→      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+   417→   417→      className="pointer-events-auto absolute inset-0 z-20 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm"
+   418→   418→      data-ui
+   419→   419→    >
+   420→   420→      <motion.div
+   421→   421→        initial={{ scale: 0.9, y: 14 }} animate={{ scale: 1, y: 0 }}
+   422→   422→        transition={{ type: "spring", stiffness: 260, damping: 22 }}
+   423→   423→        className="w-[min(92vw,380px)] rounded-3xl border border-white/20 bg-slate-900/95 p-6 text-white shadow-2xl"
+   424→   424→      >
+   425→   425→        <div className="mb-1 text-center text-3xl font-black text-yellow-300">Paused ⏸</div>
+   426→   426→        <p className="mb-4 text-center text-xs text-white/60">Run time {mm}:{ss} · score {hud.points} · votes {hud.delivered}/{hud.total}</p>
+   427→   427→        <div className="space-y-2">
+   428→   428→          <Button onClick={resume} className="h-12 w-full rounded-2xl bg-gradient-to-r from-amber-400 to-yellow-300 text-lg font-black text-amber-950">
+   429→   429→            <PlayIcon size={18} className="mr-2" fill="currentColor" /> Resume
+   430→   430→          </Button>
+   431→   431→          <Button onClick={() => setHelp(true)} variant="outline" className="h-11 w-full rounded-2xl border-white/25 bg-white/10 font-bold text-white hover:bg-white/20">
+   432→   432→            <CircleHelp size={16} className="mr-2" /> How to play
+   433→   433→          </Button>
+   434→   434→          <Button onClick={() => setSettingsOpen(true)} variant="outline" className="h-11 w-full rounded-2xl border-white/25 bg-white/10 font-bold text-white hover:bg-white/20">
+   435→   435→            <SettingsIcon size={16} className="mr-2" /> Settings
+   436→   436→          </Button>
+   437→   437→          <Button onClick={onQuit} variant="outline" className="h-11 w-full rounded-2xl border-rose-300/40 bg-rose-500/15 font-bold text-rose-200 hover:bg-rose-500/30">
+   438→   438→            <Home size={16} className="mr-2" /> Quit to menu
+   439→   439→          </Button>
+   440→   440→        </div>
+   441→   441→        {hud.delivered > 0 && (
+   442→   442→          <p className="mt-3 text-center text-[11px] text-emerald-300/90">
+   443→   443→            This run: {hud.delivered} votes delivered · {hud.rescues} rescued · {hud.points} pts
+   444→   444→          </p>
+   445→   445→        )}
+   446→   446→      </motion.div>
+   447→   447→      <HowToPlay open={help} onOpenChange={setHelp} />
+   448→   448→      <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+   449→   449→    </motion.div>
+   450→   450→  );
+   451→   451→}
+   452→   452→
+   453→   453→/* ----------------------------- main HUD ----------------------------- */
+   454→   454→export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => void }) {
+   455→   455→  const hud = useGame((s) => s.hud);
+   456→   456→  const toasts = useGame((s) => s.toasts);
+   457→   457→  const dropToast = useGame((s) => s.dropToast);
+   458→   458→  const muted = useGame((s) => s.muted);
+   459→   459→  const setMuted = useGame((s) => s.setMuted);
+   460→   460→  const touch = useGame((s) => s.touch);
+   461→   461→  const showHelp = useGame((s) => s.showHelp);
+   462→   462→  const toggleHelp = useGame((s) => s.toggleHelp);
+   463→   463→  const showFps = useGame((s) => s.settings.showFps);
+   464→   464→  const paused = useGame((s) => s.paused);
+   465→   465→  const setPaused = useGame((s) => s.setPaused);
+   466→   466→  const victoryOpen = useGame((s) => s.victoryOpen);
+   467→   467→  const [bigMap, setBigMap] = useState(false);
+   468→   468→
+   469→   469→  const hr = hud.clock * 24;
+   470→   470→  const time = `${String(Math.floor(hr)).padStart(2, "0")}:${String(Math.floor((hr % 1) * 60)).padStart(2, "0")}`;
+   471→   471→  const night = hud.night > 0.5;
+   472→   472→  const graceT = engine.invulnT > 0 && hud.elapsed < 10 && !hud.detained;
+   473→   473→  const runSecs = Math.floor(hud.elapsed);
+   474→   474→  const runTime = `${String(Math.floor(runSecs / 60)).padStart(2, "0")}:${String(runSecs % 60).padStart(2, "0")}`;
+   475→   475→  const ZONE_TINT: Record<string, string> = {
+   476→   476→    City: "text-sky-200",
+   477→   477→    Farmland: "text-lime-200",
+   478→   478→    Jungle: "text-emerald-200",
+   479→   479→    Graveyard: "text-violet-200",
+   480→   480→    "Mountain Wall": "text-slate-200",
+   481→   481→  };
+   482→   482→
+   483→   483→  const togglePause = () => {
+   484→   484→    if (victoryOpen) return;
+   485→   485→    const next = !useGame.getState().paused;
+   486→   486→    sfx.click();
+   487→   487→    engine.running = !next;
+   488→   488→    if (next) stopMusic(); else startMusic();
+   489→   489→    setPaused(next);
+   490→   490→  };
+   491→   491→
+   492→   492→  // P / Escape toggles pause · 1-8 eats pocketed food · M opens the big map
+   493→   493→  useEffect(() => {
+   494→   494→    const onKey = (e: KeyboardEvent) => {
+   495→   495→      if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
+   496→   496→      if (useGame.getState().victoryOpen) return;
+   497→   497→      if (bigMap) {
+   498→   498→        // the map swallows M / Esc so it always closes first
+   499→   499→        if (e.code === "KeyM" || e.code === "Escape") { e.preventDefault(); setBigMap(false); }
+   500→   500→        return;
+   501→   501→      }
+   502→   502→      if (e.code === "KeyM") { e.preventDefault(); setBigMap(true); return; }
+   503→   503→      if (e.code === "KeyP" || e.code === "Escape") { e.preventDefault(); togglePause(); }
+   504→   504→      const dig = /^Digit([1-8])$/.exec(e.code);
+   505→   505→      if (dig) {
+   506→   506→        const slot = useGame.getState().hud.inv[Number(dig[1]) - 1];
+   507→   507→        if (slot) engine.useItem(slot.def);
+   508→   508→      }
+   509→   509→    };
+   510→   510→    addEventListener("keydown", onKey);
+   511→   511→    return () => removeEventListener("keydown", onKey);
+   512→   512→  }, [victoryOpen, engine, bigMap, togglePause]);
+   513→   513→
+   514→   514→  useEffect(() => {
+   515→   515→    if (!toasts.length) return;
+   516→   516→    const t = setTimeout(() => dropToast(toasts[0].id), 3200);
+   517→   517→    return () => clearTimeout(t);
+   518→   518→  }, [toasts, dropToast]);
+   519→   519→
+   520→   520→  // auto-hide the help card on touch devices so the view stays clear
+   521→   521→  useEffect(() => {
+   522→   522→    if (!touch) return;
+   523→   523→    const t = setTimeout(() => useGame.setState({ showHelp: false }), 9000);
+   524→   524→    return () => clearTimeout(t);
+   525→   525→  }, [touch]);
+   526→   526→
+   527→   527→  const toastIcon = (kind: string) =>
+   528→   528→    kind === "good" ? <CheckCircle2 size={15} className="mt-0.5 shrink-0" /> :
+   529→   529→    kind === "bad" ? <Siren size={15} className="mt-0.5 shrink-0" /> :
+   530→   530→    <Info size={15} className="mt-0.5 shrink-0" />;
+   531→   531→
+   532→   532→  return (
+   533→   533→    <div className="pointer-events-none absolute inset-0 select-none font-sans">
+   534→   534→      {/* police proximity vignette */}
+   535→   535→      <div
+   536→   536→        className={`absolute inset-0 transition-opacity duration-300 ${hud.policeNear ? "opacity-100" : "opacity-0"}`}
+   537→   537→        style={{ boxShadow: "inset 0 0 90px 18px rgba(220,40,40,0.26)" }}
+   538→   538→      />
+   539→   539→
+   540→   540→      {/* damage flash — police hit or zombie catch */}
+   541→   541→      <AnimatePresence>
+   542→   542→        {hud.hurt && (
+   543→   543→          <motion.div
+   544→   544→            key="hurt-flash"
+   545→   545→            aria-hidden
+   546→   546→            initial={{ opacity: 0.95 }}
+   547→   547→            animate={{ opacity: 0.4 }}
+   548→   548→            exit={{ opacity: 0 }}
+   549→   549→            transition={{ duration: 0.28, ease: "easeOut" }}
+   550→   550→            className="absolute inset-0"
+   551→   551→            style={{ boxShadow: "inset 0 0 150px 46px rgba(220,38,38,0.55)" }}
+   552→   552→          />
+   553→   553→        )}
+   554→   554→      </AnimatePresence>
+   555→   555→
+   556→   556→      {/* low-hp heartbeat vignette */}
+   557→   557→      {hud.hp <= 30 && !hud.detained && (
+   558→   558→        <motion.div
+   559→   559→          aria-hidden
+   560→   560→          className="absolute inset-0"
+   561→   561→          animate={{ opacity: [0.35, 0.85, 0.35] }}
+   562→   562→          transition={{ repeat: Infinity, duration: 1.15, ease: "easeInOut" }}
+   563→   563→          style={{ boxShadow: "inset 0 0 110px 26px rgba(190,18,60,0.4)" }}
+   564→   564→        />
+   565→   565→      )}
+   566→   566→
+   567→   567→      {/* directional warning toward the closest chasing cop */}
+   568→   568→      <AnimatePresence>{hud.policeNear && <DangerCompass engine={engine} />}</AnimatePresence>
+   569→   569→
+   570→   570→      {/* top-left: vitals */}
+   571→   571→      <div className="absolute left-3 top-3 flex flex-col gap-1.5 rounded-2xl bg-black/35 p-3 backdrop-blur-md">
+   572→   572→        <Bar v={hud.hp} color="bg-gradient-to-r from-rose-500 to-rose-400" icon={<Heart size={16} className="text-rose-300" fill="currentColor" />} low={hud.hp <= 30} />
+   573→   573→        <Bar v={hud.stamina} color="bg-gradient-to-r from-amber-500 to-yellow-300" icon={<Zap size={16} className="text-amber-300" fill="currentColor" />} low={hud.stamina <= 15} />
+   574→   574→        {hud.exhausted && (
+   575→   575→          <div className="animate-pulse text-[10px] font-black uppercase tracking-wider text-amber-300">
+   576→   576→            😮‍💨 Exhausted — walking to recover…
+   577→   577→          </div>
+   578→   578→        )}
+   579→   579→        <div className="mt-1 flex items-center gap-2 text-sm text-white">
+   580→   580→          <VotePips carried={hud.carried} />
+   581→   581→          <span className="ml-1 rounded-full bg-yellow-400/90 px-2 py-0.5 text-xs font-black text-yellow-950">
+   582→   582→            {hud.delivered}/{hud.total} delivered
+   583→   583→          </span>
+   584→   584→        </div>
+   585→   585→        <motion.div layout className="flex items-center gap-0.5" aria-label={`Wanted level ${hud.stars} of 5`}>
+   586→   586→          {Array.from({ length: 5 }, (_, i) => (
+   587→   587→            <motion.span key={i} animate={i < hud.stars ? { scale: [1, 1.35, 1] } : { scale: 1 }} transition={{ repeat: i < hud.stars ? Infinity : 0, duration: 1.1, delay: i * 0.12 }}>
+   588→   588→              <Star size={16} className={i < hud.stars ? "text-red-400" : "text-white/25"} fill={i < hud.stars ? "currentColor" : "none"} />
+   589→   589→            </motion.span>
+   590→   590→          ))}
+   591→   591→        </motion.div>
+   592→   592→      </div>
+   593→   593→
+   594→   594→      {/* top-center: objective tracker + zone/clock */}
+   595→   595→      <div className="absolute left-3 right-3 top-[172px] flex flex-col items-center gap-1.5 sm:left-1/2 sm:right-auto sm:top-3 sm:-translate-x-1/2">
+   596→   596→        <div className="flex items-center gap-2">
+   597→   597→          <div className="rounded-full bg-black/35 px-3 py-1 text-xs font-bold text-white backdrop-blur-md sm:px-4 sm:py-1.5 sm:text-sm">
+   598→   598→            <MapPin size={14} className={`mr-1 inline ${ZONE_TINT[hud.zone] ?? "text-emerald-300"}`} />
+   599→   599→            <span className={ZONE_TINT[hud.zone] ?? ""}>{hud.zone}</span> · {time} {night ? <Moon size={14} className="inline text-indigo-200" /> : <Sun size={14} className="inline text-yellow-300" />}
+   600→   600→          </div>
+   601→   601→          <div className="hidden rounded-full bg-black/35 px-3 py-1 text-xs font-bold tabular-nums text-white backdrop-blur-md sm:block sm:text-sm">
+   602→   602→            <Timer size={14} className="mr-1 inline text-sky-200" />{runTime}
+   603→   603→          </div>
+   604→   604→        </div>
+   605→   605→        {/* objective progress */}
+   606→   606→        <div className="flex w-52 flex-col rounded-xl bg-black/35 px-3 py-1.5 backdrop-blur-md sm:w-64">
+   607→   607→          <div className="flex items-center justify-between text-[11px] font-black text-white/90">
+   608→   608→            <span className="flex items-center gap-1"><Flag size={11} className="text-emerald-300" /> {hud.won ? "Democracy saved!" : "Deliver votes to Parliament"}</span>
+   609→   609→            <span className="text-yellow-300">{hud.delivered}/{hud.total}</span>
+   610→   610→          </div>
+   611→   611→          <div className="mt-1 h-2 overflow-hidden rounded-full bg-white/15">
+   612→   612→            <motion.div
+   613→   613→              className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-yellow-300"
+   614→   614→              animate={{ width: `${(hud.delivered / hud.total) * 100}%` }}
+   615→   615→              transition={{ type: "spring", stiffness: 120, damping: 20 }}
+   616→   616→            />
+   617→   617→          </div>
+   618→   618→        </div>
+   619→   619→        {/* spawn grace shield */}
+   620→   620→        <AnimatePresence>
+   621→   621→          {graceT && (
+   622→   622→            <motion.div
+   623→   623→              initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+   624→   624→              className="flex items-center gap-1.5 rounded-full border border-emerald-300/40 bg-emerald-500/25 px-3 py-1 text-xs font-black text-emerald-100 backdrop-blur"
+   625→   625→            >
+   626→   626→              <ShieldCheck size={14} /> Sneak shield: police can&apos;t spot you ({Math.ceil(engine.invulnT)}s)
+   627→   627→            </motion.div>
+   628→   628→          )}
+   629→   629→        </AnimatePresence>
+   630→   630→      </div>
+   631→   631→
+   632→   632→      {/* top-right: minimap + score */}
+   633→   633→      <div className="absolute right-3 top-3 flex flex-col items-end gap-2">
+   634→   634→        <Minimap engine={engine} onOpen={() => setBigMap(true)} />
+   635→   635→        <div className="pointer-events-auto flex items-center gap-2">
+   636→   636→          <motion.div
+   637→   637→            key={hud.points}
+   638→   638→            initial={{ scale: 1.3 }}
+   639→   639→            animate={{ scale: 1 }}
+   640→   640→            transition={{ type: "spring", stiffness: 400, damping: 16 }}
+   641→   641→            className="rounded-xl bg-black/35 px-3 py-1 text-sm font-black tabular-nums text-yellow-300 backdrop-blur-md"
+   642→   642→            aria-label="Score"
+   643→   643→          >
+   644→   644→            {hud.points} pts
+   645→   645→          </motion.div>
+   646→   646→          {showFps && <FpsCounter />}
+   647→   647→          <Button
+   648→   648→            size="icon" variant="ghost" aria-label={muted ? "Unmute" : "Mute"}
+   649→   649→            className="h-9 w-9 rounded-xl bg-black/35 text-white backdrop-blur-md hover:bg-black/50"
+   650→   650→            onClick={() => { const m = !muted; setMuted(m); setAudioMuted(m); }}
+   651→   651→          >
+   652→   652→            {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
+   653→   653→          </Button>
+   654→   654→          <Button
+   655→   655→            size="icon" variant="ghost" aria-label="Toggle controls help"
+   656→   656→            className="h-9 w-9 rounded-xl bg-black/35 text-white backdrop-blur-md hover:bg-black/50"
+   657→   657→            onClick={toggleHelp}
+   658→   658→          >
+   659→   659→            {showHelp ? <Keyboard size={16} /> : <CircleHelp size={16} />}
+   660→   660→          </Button>
+   661→   661→          <Button
+   662→   662→            size="icon" variant="ghost" aria-label="Pause game"
+   663→   663→            className="h-9 w-9 rounded-xl bg-black/35 text-white backdrop-blur-md hover:bg-black/50"
+   664→   664→            onClick={togglePause}
+   665→   665→          >
+   666→   666→            <Pause size={16} />
+   667→   667→          </Button>
+   668→   668→        </div>
+   669→   669→        {showHelp && (
+   670→   670→          <div className="max-w-[220px] rounded-xl bg-black/40 px-3 py-2 text-xs leading-relaxed text-white/90 backdrop-blur-md">
+   671→   671→            <b className="text-yellow-300">Goal:</b> snatch 🗳 votes, deliver them at the Parliament ballot box. Rescue pink-bubbled friends with <b>E</b>. Dodge the police — sprint with <b>Shift</b>!
+   672→   672→            <div className="mt-1 text-amber-200/90">⚡ Sprinting drains energy · run over 🥭☕🩹 food to pocket it, then tap the bag (or press <b>1-8</b>) to eat: heals ❤ and refills ⚡.</div>
+   673→   673→            {!touch && <div className="mt-1 text-white/70">WASD move · Shift sprint · Space jump · E rescue · 1-8 eat · right-click drop · M map · P pause</div>}
+   674→   674→          </div>
+   675→   675→        )}
+   676→   676→      </div>
+   677→   677→
+   678→   678→      {/* prompt */}
+   679→   679→      {hud.prompt && (
+   680→   680→        <div role="status" className="absolute bottom-36 left-1/2 -translate-x-1/2 animate-pulse rounded-full bg-emerald-500/90 px-5 py-2 font-black text-white shadow-xl sm:bottom-28">
+   681→   681→          {hud.prompt}
+   682→   682→        </div>
+   683→   683→      )}
+   684→   684→
+   685→   685→      {/* toasts */}
+   686→   686→      <div className="absolute bottom-24 left-1/2 z-10 flex w-[90%] max-w-md -translate-x-1/2 flex-col items-center gap-1.5 sm:bottom-24">
+   687→   687→        <AnimatePresence>
+   688→   688→          {toasts.map((t) => (
+   689→   689→            <motion.div
+   690→   690→              key={t.id}
+   691→   691→              layout
+   692→   692→              initial={{ opacity: 0, y: 16, scale: 0.94 }}
+   693→   693→              animate={{ opacity: 1, y: 0, scale: 1 }}
+   694→   694→              exit={{ opacity: 0, scale: 0.92, transition: { duration: 0.18 } }}
+   695→   695→              className={`flex max-w-full items-start gap-1.5 rounded-2xl px-4 py-1.5 text-center text-sm font-bold shadow-lg backdrop-blur-md ${
+   696→   696→                t.kind === "good" ? "bg-emerald-500/85 text-white" : t.kind === "bad" ? "bg-rose-600/85 text-white" : "bg-slate-800/80 text-white"
+   697→   697→              }`}
+   698→   698→            >
+   699→   699→              {toastIcon(t.kind)}
+   700→   700→              <span>{t.msg}</span>
+   701→   701→            </motion.div>
+   702→   702→          ))}
+   703→   703→        </AnimatePresence>
+   704→   704→      </div>
+   705→   705→
+   706→   706→      {/* detained overlay */}
+   707→   707→      <AnimatePresence>
+   708→   708→        {hud.detained && (
+   709→   709→          <motion.div
+   710→   710→            role="alert"
+   711→   711→            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+   712→   712→            className="absolute inset-0 z-10 flex items-center justify-center bg-rose-950/40 backdrop-blur-[2px]"
+   713→   713→          >
+   714→   714→            <motion.div
+   715→   715→              initial={{ scale: 2.6, rotate: -24, opacity: 0 }}
+   716→   716→              animate={{ scale: 1, rotate: -8, opacity: 1 }}
+   717→   717→              transition={{ type: "spring", stiffness: 200, damping: 15 }}
+   718→   718→              className="rounded-3xl border-4 border-rose-400/70 bg-black/60 px-10 py-7 text-center"
+   719→   719→            >
+   720→   720→              <div className="text-4xl font-black tracking-wide text-rose-300">CAUGHT! 😵</div>
+   721→   721→              <div className="mt-1 text-white">Time-out: {Math.ceil(hud.detainLeft)}s</div>
+   722→   722→              <div className="mx-auto mt-3 h-2.5 w-44 overflow-hidden rounded-full bg-white/15">
+   723→   723→                <motion.div
+   724→   724→                  className="h-full rounded-full bg-rose-400"
+   725→   725→                  animate={{ width: `${(1 - hud.detainLeft / 8) * 100}%` }}
+   726→   726→                  transition={{ ease: "linear", duration: 0.2 }}
+   727→   727→                />
+   728→   728→              </div>
+   729→   729→            </motion.div>
+   730→   730→          </motion.div>
+   731→   731→        )}
+   732→   732→      </AnimatePresence>
+   733→   733→
+   734→   734→      {/* pause menu */}
+   735→   735→      <AnimatePresence>
+   736→   736→        {paused && (
+   737→   737→          <PauseMenu
+   738→   738→            engine={engine}
+   739→   739→            onQuit={() => {
+   740→   740→              if (onQuit) { onQuit(); return; }
+   741→   741→              // fallback when no GameRoot handler is wired
+   742→   742→              engine.running = false;
+   743→   743→              stopMusic();
+   744→   744→              setPaused(false);
+   745→   745→              useGame.getState().setVictoryOpen(false);
+   746→   746→              useGame.getState().recordRun(useGame.getState().hud.points, useGame.getState().hud.delivered, useGame.getState().hud.rescues, engine.caughtCount, false, Math.round(useGame.getState().hud.elapsed * 1000));
+   747→   747→              useGame.getState().setScreen("landing");
+   748→   748→            }}
+   749→   749→          />
+   750→   750→        )}
+   751→   751→      </AnimatePresence>
+   752→   752→
+   753→   753→      {/* food pockets — desktop: bottom-left corner */}
+   754→   754→      {!touch && (
+   755→   755→        <div className="absolute bottom-3 left-3 z-10">
+   756→   756→          <ItemBar engine={engine} />
+   757→   757→        </div>
+   758→   758→      )}
+   759→   759→
+   760→   760→      {/* mobile controls */}
+   761→   761→      {touch && !paused && (
+   762→   762→        <>
+   763→   763→          <div className="absolute bottom-[10rem] left-4 z-10"><ItemBar engine={engine} vertical /></div>
+   764→   764→          <div className="absolute bottom-6 left-4 z-10"><Joystick engine={engine} /></div>
+   765→   765→          <div className="absolute bottom-6 right-4 z-10"><MobileButtons engine={engine} /></div>
+   766→   766→        </>
+   767→   767→      )}
+   768→   768→
+   769→   769→      {/* win flag hint */}
+   770→   770→      {hud.won && (
+   771→   771→        <div className="absolute left-1/2 top-16 -translate-x-1/2 rounded-full bg-yellow-400/90 px-4 py-1.5 text-sm font-black text-yellow-950 shadow-lg">
+   772→   772→          <Flag size={14} className="mr-1 inline" /> All votes delivered — free roam & keep rescuing!
+   773→   773→        </div>
+   774→   774→      )}
+   775→   775→
+   776→   776→      {/* bottom-right: big-map shortcut + coords (narrow) + city life */}
+   777→   777→      <div className="absolute bottom-3 right-3 z-10 flex flex-col items-end gap-1.5">
+   778→   778→        {!touch && (
+   779→   779→          <button
+   780→   780→            data-ui type="button" onClick={() => setBigMap(true)} title="Big map (M)"
+   781→   781→            aria-label="Open big map"
+   782→   782→            className="pointer-events-auto flex items-center gap-1 rounded-lg bg-black/45 px-2 py-1 text-[9px] font-black uppercase tracking-widest text-white/80 backdrop-blur-md transition-colors hover:bg-black/70 hover:text-yellow-200"
+   783→   783→          >
+   784→   784→            <MapIcon size={11} /> M — big map
+   785→   785→          </button>
+   786→   786→        )}
+   787→   787→        {!touch && (
+   788→   788→          <div className="md:hidden">
+   789→   789→            <CoordsChip px={hud.px} pz={hud.pz} />
+   790→   790→          </div>
+   791→   791→        )}
+   792→   792→        <div className="rounded-xl bg-black/30 px-3 py-1 text-xs text-white/80 backdrop-blur-md">
+   793→   793→          🚓 {hud.police} police · 🧍 {hud.civilians} civilians
+   794→   794→        </div>
+   795→   795→      </div>
+   796→   796→
+   797→   797→      {/* bottom-center: controls hint + location chip (old-game footer, revived) —
+   798→   798→          narrow desktops hide the center stack and tuck the coords chip bottom-right instead */}
+   799→   799→      {!touch && (
+   800→   800→        <div className="absolute bottom-3 left-1/2 z-10 hidden -translate-x-1/2 flex-col items-center gap-1.5 md:flex">
+   801→   801→          <div className="hidden whitespace-nowrap rounded-full bg-black/45 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/75 backdrop-blur-md lg:block">
+   802→   802→            WASD move · Shift sprint · Space jump · E rescue
+   803→   803→          </div>
+   804→   804→          <CoordsChip px={hud.px} pz={hud.pz} />
+   805→   805→        </div>
+   806→   806→      )}
+   807→   807→
+   808→   808→      {/* big world map overlay */}
+   809→   809→      <AnimatePresence>
+   810→   810→        {bigMap && <BigMap engine={engine} onClose={() => setBigMap(false)} />}
+   811→   811→      </AnimatePresence>
+   812→   812→    </div>
+   813→   813→  );
+   814→   814→}
+   815→   815→
