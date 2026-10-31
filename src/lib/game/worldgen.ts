@@ -1,57 +1,263 @@
-import { CITY_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, WORLD_SEED } from "./constants";
+import { CITY_RADIUS, FARM_RADIUS, GRAVEYARD, WORLD_SEED } from "./constants";
 import { mulberry32, range } from "./rng";
 
 export interface BoxCollider { x: number; z: number; w: number; d: number } // half extents
 export interface CircleCollider { x: number; z: number; r: number }
-export interface Building extends BoxCollider { h: number; color: number; roof: number }
+
+/**
+ * Building kinds:
+ * 0 tower/office (flat roof, window grid)   1 shop (awning + sign + storefront)
+ * 2 home (pyramid roof + yard)              3 mall
+ * 4 school                                  5 hospital
+ * 6 barn
+ */
+export interface Building extends BoxCollider { h: number; color: number; roof: number; kind: 0 | 1 | 2 | 3 | 4 | 5 | 6; awn: number; fz: 1 | -1 }
 export interface Tree { x: number; z: number; r: number; s: number; kind: 0 | 1 }
 export interface Flower { x: number; z: number; c: number; s: number }
+export interface Car { x: number; z: number; rot: number; c: number }
+export interface Lamp { x: number; z: number }
+export interface Bench { x: number; z: number; rot: number }
+export interface Field { x: number; z: number; w: number; d: number; rot: number; crop: number }
+export interface Silo { x: number; z: number }
+export interface Umbrella { x: number; z: number; c: number }
+
 export interface World {
   buildings: Building[];
   trees: Tree[];
   flowers: Flower[];
   boxes: BoxCollider[];
   circles: CircleCollider[];
+  cars: Car[];
+  lamps: Lamp[];
+  benches: Bench[];
+  fields: Field[];
+  silos: Silo[];
+  umbrellas: Umbrella[];
+  windmills: { x: number; z: number; rot: number }[];
 }
 
-const PALETTE = [0xe9c46a, 0xf4a261, 0xe76f51, 0x2a9d8f, 0x8ecae6, 0xf7b2bd, 0xcdb4db, 0xffb4a2];
-const ROOFS = [0xd62828, 0x457b9d, 0x8a5a44, 0x588157];
+/* ---------------- town layout (GTA-style grid) ---------------- */
+export const ROADS = [-135, -67.5, 0, 67.5, 135]; // road centre lines, both axes
+export const ROAD_W = 14;                          // full width
+export const RING_R = 216;                         // ring highway centre radius
+export const RING_W = 12;
+export const AVENUE = { x: 0, z0: -135, z1: -188, w: 14 }; // grand avenue to parliament
+export const PARK = { x: -33.75, z: -33.75, r: 27 };
+export const MALL = { x: 33.75, z: 47 };
+export const SCHOOL = { x: -33.75, z: 114 };
+export const HOSPITAL = { x: 101.25, z: 106 };
+
+const TOWER_COLS = [0x9fc4d8, 0xb8d0da, 0xc9d2cf, 0xa8b8c4, 0xd8cfc0, 0x8fb0a8, 0xc4b8d0, 0xb0c4b8];
+const TOWER_ROOF = 0x3d434c;
+const OFFICE_COLS = [0xe0c9a0, 0xc9b8a0, 0xd8d2c4, 0xbfae94, 0xc4cec4, 0xd0c0b0];
+const SHOP_COLS = [0xf4a261, 0xe76f51, 0x2a9d8f, 0xf7b2bd, 0xffb4a2, 0xe9c46a, 0x8ecae6, 0xcdb4db];
+const AWN_COLS = [0xd62828, 0x2a6f4f, 0xe07b39, 0x7a3b8f, 0x1d7a8f, 0xb03030];
+const HOME_COLS = [0xf2e3c6, 0xf7d9c4, 0xd9e8dd, 0xe8d0e8, 0xfdf0d5, 0xd8e4f0, 0xf5c9b8, 0xe4efd9];
+const HOME_ROOFS = [0xc0392b, 0x8a5a44, 0x457b9d, 0x588157, 0xb0553a, 0x6d4a7a];
+const CAR_COLS = [0xe0483a, 0x2a9d8f, 0xf0c040, 0xf2f2f2, 0x8a5aa8, 0xff8c42, 0x4aa3df, 0x67b05f];
+const CROP_COLS = [0x9ec24a, 0xd8c25a, 0x6faf4e];
 
 export function generateWorld(seed = WORLD_SEED): World {
   const rnd = mulberry32(seed);
   const buildings: Building[] = [];
-  for (let i = -2; i < 2; i++)
-    for (let j = -1; j < 2; j++)
-      for (const a of [-1, 1])
-        for (const b of [-1, 1]) {
-          const w = range(rnd, 13, 18) / 2, d = range(rnd, 13, 18) / 2, h = range(rnd, 9, 40);
-          buildings.push({
-            x: i * 60 + 30 + a * 11, z: j * 60 + 30 + b * 11, w, d, h,
-            color: PALETTE[buildings.length % PALETTE.length],
-            roof: ROOFS[buildings.length % ROOFS.length],
-          });
-        }
-  const boxes: BoxCollider[] = buildings.map(({ x, z, w, d }) => ({ x, z, w, d }));
-  boxes.push({ x: 0, z: -116, w: 35, d: 5 }); // Parliament
+  const benches: Bench[] = [];
+  const umbrellas: Umbrella[] = [];
+  const lamps: Lamp[] = [];
+  const cars: Car[] = [];
+  const push = (
+    x: number, z: number, w: number, d: number, h: number,
+    kind: Building["kind"], color: number, roof: number, awn = 0, fz: 1 | -1 = 1,
+  ) => buildings.push({ x, z, w, d, h, color, roof, kind, awn, fz });
 
+  /* ---- downtown towers (2 blocks × 4 towers) ---- */
+  for (const [bx, bz] of [[33.75, -33.75], [-33.75, 33.75]] as const) {
+    for (const a of [-1, 1]) for (const b of [-1, 1]) {
+      const tall = rnd() < 0.5;
+      push(
+        bx + a * 12.5, bz + b * 12.5,
+        range(rnd, 8.5, 12), range(rnd, 8.5, 12),
+        tall ? range(rnd, 38, 58) : range(rnd, 22, 38),
+        0, TOWER_COLS[buildings.length % TOWER_COLS.length], TOWER_ROOF,
+      );
+    }
+  }
+
+  /* ---- shopping streets (3 blocks, 5 shops facing the road + plaza) ---- */
+  const SHOP_BLOCKS = [[101.25, -33.75], [33.75, 101.25], [-101.25, 33.75]] as const;
+  for (let si = 0; si < SHOP_BLOCKS.length; si++) {
+    const [bx, bz] = SHOP_BLOCKS[si];
+    for (let i = 0; i < 5; i++) {
+      const c = SHOP_COLS[(buildings.length + i) % SHOP_COLS.length];
+      push(bx + (i - 2) * 11.5, bz + 21.5, 5.2, 3.6, range(rnd, 7, 9.2), 1, c,
+        AWN_COLS[(i + si) % AWN_COLS.length], AWN_COLS[(i + si + 2) % AWN_COLS.length], 1);
+      benches.push({ x: bx + (i - 2) * 11.5 + 4.5, z: bz + 13, rot: 0 });
+    }
+    umbrellas.push({ x: bx - 8, z: bz - 4, c: si % 2 }, { x: bx + 8, z: bz - 4, c: (si + 1) % 2 });
+    // two small offices at the back of the block
+    push(bx - 13, bz - 16, 6.5, 5, range(rnd, 12, 17), 0, OFFICE_COLS[buildings.length % OFFICE_COLS.length], TOWER_ROOF);
+    push(bx + 13, bz - 16, 6.5, 5, range(rnd, 12, 17), 0, OFFICE_COLS[buildings.length % OFFICE_COLS.length], TOWER_ROOF);
+    lamps.push({ x: bx - 27.5, z: bz + 27.5 }, { x: bx + 27.5, z: bz - 27.5 });
+  }
+
+  /* ---- midtown mixed blocks (offices / shops / homes) ---- */
+  const MIXED = [[-101.25, -33.75], [101.25, 33.75], [-33.75, -101.25], [101.25, -101.25]] as const;
+  for (const [bx, bz] of MIXED) {
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) {
+      const lx = bx + (i - 1) * 17, lz = bz + (j - 0.5) * 17.5;
+      const roll = rnd();
+      if (roll < 0.45) {
+        push(lx, lz, 6.5, 5.5, range(rnd, 13, 23), 0, OFFICE_COLS[buildings.length % OFFICE_COLS.length], TOWER_ROOF);
+      } else if (roll < 0.78) {
+        const fz: 1 | -1 = j === 0 ? -1 : 1;
+        push(lx, lz, 5.5, 4, range(rnd, 7.2, 9), 1, SHOP_COLS[buildings.length % SHOP_COLS.length],
+          TOWER_ROOF, AWN_COLS[buildings.length % AWN_COLS.length], fz);
+      } else {
+        push(lx, lz, 4.4, 3.8, range(rnd, 5.2, 6.4), 2, HOME_COLS[buildings.length % HOME_COLS.length],
+          HOME_ROOFS[buildings.length % HOME_ROOFS.length], 0, lz > bz ? 1 : -1);
+      }
+    }
+  }
+
+  /* ---- suburb home blocks (4 blocks × 6 homes with yards) ---- */
+  const HOME_BLOCKS = [[-101.25, 101.25], [101.25, -101.25], [-101.25, -101.25], [33.75, -101.25]] as const;
+  for (const [bx, bz] of HOME_BLOCKS) {
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) {
+      const fz: 1 | -1 = bz < 0 ? 1 : -1;
+      push(bx + (i - 1) * 17.5, bz + (j - 0.5) * 17.5, 4.2, 3.6, range(rnd, 5.2, 6.6), 2,
+        HOME_COLS[buildings.length % HOME_COLS.length],
+        HOME_ROOFS[buildings.length % HOME_ROOFS.length], 0, fz);
+    }
+  }
+
+  /* ---- landmarks ---- */
+  push(MALL.x, MALL.z, 20, 11, 15, 3, 0xe8e4da, 0x9aa5b1);                 // MEGA MALL
+  push(SCHOOL.x, SCHOOL.z, 16, 5.5, 9, 4, 0xf2d59b, 0xb0553a);             // school
+  push(HOSPITAL.x, HOSPITAL.z, 13, 6.5, 17, 5, 0xf4f6f8, 0xc7ccd4);        // hospital
+  // mall + hospital parking cars
+  for (let i = 0; i < 4; i++) for (const zr of [-6, 5]) {
+    cars.push({ x: MALL.x - 15 + i * 10, z: MALL.z - 26 + zr, rot: Math.PI / 2, c: (i + (zr > 0 ? 2 : 0)) % CAR_COLS.length });
+  }
+  for (let i = 0; i < 3; i++) cars.push({ x: HOSPITAL.x - 10 + i * 10, z: HOSPITAL.z - 15, rot: Math.PI / 2, c: (i + 4) % CAR_COLS.length });
+  lamps.push(
+    { x: MALL.x - 21, z: MALL.z - 27 }, { x: MALL.x + 21, z: MALL.z - 27 },
+    { x: MALL.x - 21, z: MALL.z - 5 }, { x: MALL.x + 21, z: MALL.z - 5 },
+    { x: HOSPITAL.x - 16, z: HOSPITAL.z - 16 }, { x: HOSPITAL.x + 16, z: HOSPITAL.z - 16 },
+    { x: SCHOOL.x - 18, z: SCHOOL.z - 20 }, { x: SCHOOL.x + 18, z: SCHOOL.z - 20 },
+  );
+  // park benches around the fountain + school yard + mall front
+  for (let i = 0; i < 4; i++) {
+    const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
+    benches.push({ x: PARK.x + Math.cos(a) * 6.8, z: PARK.z + Math.sin(a) * 6.8, rot: -a + Math.PI / 2 });
+  }
+  benches.push({ x: SCHOOL.x - 8, z: SCHOOL.z - 17, rot: Math.PI }, { x: SCHOOL.x + 2, z: SCHOOL.z - 17, rot: Math.PI }, { x: SCHOOL.x + 10, z: SCHOOL.z - 17, rot: Math.PI });
+  benches.push({ x: MALL.x - 8, z: MALL.z - 32.5, rot: 0 }, { x: MALL.x + 8, z: MALL.z - 32.5, rot: 0 });
+
+  /* ---- parked cars along road edges ---- */
+  for (const k of ROADS) {
+    for (const vertical of [true, false]) {
+      let side = 1;
+      for (let d = -238; d <= 238; d += 48, side = -side) {
+        if (ROADS.some((o) => Math.abs(d - o) < 15)) continue;
+        cars.push(vertical
+          ? { x: k + side * 5.2, z: d + range(rnd, -4, 4), rot: side > 0 ? 0 : Math.PI, c: Math.floor(rnd() * CAR_COLS.length) }
+          : { x: d + range(rnd, -4, 4), z: k + side * 5.2, rot: side > 0 ? Math.PI / 2 : -Math.PI / 2, c: Math.floor(rnd() * CAR_COLS.length) });
+      }
+    }
+  }
+
+  /* ---- street lamps: 2 per intersection + ring + avenue ---- */
+  for (const kx of ROADS) for (const kz of ROADS) {
+    lamps.push({ x: kx + 8.5, z: kz + 8.5 }, { x: kx - 8.5, z: kz - 8.5 });
+  }
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2;
+    lamps.push({ x: Math.cos(a) * (RING_R + RING_W / 2 + 2), z: Math.sin(a) * (RING_R + RING_W / 2 + 2) });
+  }
+  lamps.push({ x: 9, z: -150 }, { x: -9, z: -164 }, { x: 9, z: -178 });
+
+  /* ---- central park trees + landmark trees ---- */
   const trees: Tree[] = [];
-  while (trees.length < 560) {
-    const a = range(rnd, 0, Math.PI * 2);
-    const r = trees.length < 500 ? range(rnd, 205, 320) : range(rnd, 135, 195);
+  const addTree = (x: number, z: number, s: number, kind: 0 | 1) =>
+    trees.push({ x, z, r: 0.7 * s, s, kind });
+  for (let i = 0; i < 8; i++) {
+    const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
+    addTree(PARK.x + Math.cos(a) * 21, PARK.z + Math.sin(a) * 21, range(rnd, 0.72, 0.95), 1);
+  }
+  addTree(SCHOOL.x - 12, SCHOOL.z - 16, 0.8, 1);
+  addTree(SCHOOL.x + 12, SCHOOL.z - 16, 0.85, 1);
+  addTree(MALL.x - 24, MALL.z - 29, 0.8, 0);
+  addTree(MALL.x + 24, MALL.z - 29, 0.8, 0);
+
+  /* ---- farm: barns, silos, crop fields, windmills ---- */
+  const barns = [[292, -84], [258, 196], [-286, 64]] as const;
+  for (const [x, z] of barns) push(x, z, 8, 5.5, 7, 6, 0xc0442e, 0x7a3322);
+  const silos: Silo[] = barns.map(([x, z]) => ({ x: x + 11.5, z: z + 2 }));
+  const fields: Field[] = [
+    { x: 268, z: -56, rot: 0.3, crop: 0 }, { x: 298, z: -116, rot: -0.2, crop: 1 },
+    { x: 244, z: 150, rot: 0.5, crop: 0 }, { x: 272, z: 132, rot: -0.4, crop: 2 },
+    { x: -266, z: 92, rot: 0.2, crop: 1 }, { x: -244, z: -140, rot: -0.3, crop: 2 },
+  ].map((f) => ({ ...f, w: 12, d: 8 }) as Field);
+  const windmills = [
+    { x: 288, z: -46, rot: 0 }, { x: 232, z: 108, rot: 1.2 }, { x: -282, z: 130, rot: 2.1 },
+  ];
+
+  /* ---- jungle forest (dense ring) + decorative outer band ---- */
+  let n = 0;
+  while (n < 540) {
+    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 326, 372);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < 48) continue;
-    const s = range(rnd, 0.8, 1.5);
-    trees.push({ x, z, r: 0.7 * s, s, kind: rnd() < 0.75 ? 0 : 1 });
+    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
+    addTree(x, z, range(rnd, 0.85, 1.55), rnd() < 0.75 ? 0 : 1);
+    n++;
+  }
+  for (let i = 0; i < 44; i++) {
+    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 372, 394);
+    addTree(Math.cos(a) * r, Math.sin(a) * r, range(rnd, 0.9, 1.5), rnd() < 0.7 ? 0 : 1);
   }
 
-  // Flowers & little bushes scattered in farmland + city lawns (no colliders).
+  /* ---- sparse farmland trees (avoid fields & buildings) ---- */
+  n = 0;
+  while (n < 70) {
+    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 250, 316);
+    const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
+    if (fields.some((f) => Math.abs(x - f.x) < f.w + 3 && Math.abs(z - f.z) < f.d + 3)) continue;
+    if (buildings.some((b) => Math.abs(x - b.x) < b.w + 3 && Math.abs(z - b.z) < b.d + 3)) continue;
+    addTree(x, z, range(rnd, 0.8, 1.3), rnd() < 0.5 ? 0 : 1);
+    n++;
+  }
+
+  /* ---- flowers: farm ring, park, home yards ---- */
   const flowers: Flower[] = [];
-  for (let i = 0; i < 240; i++) {
-    const a = range(rnd, 0, Math.PI * 2), d = range(rnd, CITY_RADIUS + 4, FARM_RADIUS - 6);
-    flowers.push({ x: Math.cos(a) * d, z: Math.sin(a) * d, c: range(rnd, 0, 1), s: range(rnd, 0.5, 1) });
+  const addFlower = (x: number, z: number) =>
+    flowers.push({ x, z, c: rnd(), s: range(rnd, 0.5, 1) });
+  for (let i = 0; i < 200; i++) {
+    const a = range(rnd, 0, Math.PI * 2), d = range(rnd, CITY_RADIUS + 6, FARM_RADIUS - 8);
+    const x = Math.cos(a) * d, z = Math.sin(a) * d;
+    if (fields.some((f) => Math.abs(x - f.x) < f.w + 1 && Math.abs(z - f.z) < f.d + 1)) continue;
+    addFlower(x, z);
+  }
+  for (let i = 0; i < 34; i++) {
+    const a = range(rnd, 0, Math.PI * 2), d = range(rnd, 10, PARK.r - 3);
+    const x = PARK.x + Math.cos(a) * d, z = PARK.z + Math.sin(a) * d;
+    if (Math.abs(x - PARK.x) < 5.5 || Math.abs(z - PARK.z) < 5.5) continue; // keep paths clear
+    addFlower(x, z);
+  }
+  for (const b of buildings) {
+    if (b.kind !== 2) continue;
+    for (let i = 0; i < 4; i++) addFlower(b.x + range(rnd, -3.4, 3.4), b.z + b.fz * (b.d + range(rnd, 1.6, 4.6)));
   }
 
-  return { buildings, trees, flowers, boxes, circles: trees.map(({ x, z, r }) => ({ x, z, r })) };
+  /* ---- colliders ---- */
+  const boxes: BoxCollider[] = buildings.map(({ x, z, w, d }) => ({ x, z, w, d }));
+  const circles: CircleCollider[] = trees.map(({ x, z, r }) => ({ x, z, r }));
+  circles.push({ x: PARK.x - 11, z: PARK.z + 11, r: 8.2 });               // park pond
+  circles.push({ x: PARK.x, z: PARK.z, r: 3.6 });                          // fountain
+  for (const c of cars) circles.push({ x: c.x, z: c.z, r: 1.55 });
+  for (const s of silos) circles.push({ x: s.x, z: s.z, r: 3.3 });
+  for (const w of windmills) circles.push({ x: w.x, z: w.z, r: 0.8 });
+
+  return { buildings, trees, flowers, boxes, circles, cars, lamps, benches, fields, silos, umbrellas, windmills };
 }
 
 /** Push a point out of every collider it overlaps. */
@@ -66,8 +272,9 @@ export function resolve(p: { x: number; z: number }, radius: number, world: Worl
   }
   for (const c of world.circles) {
     const dx = p.x - c.x, dz = p.z - c.z;
-    if (Math.abs(dx) > 3.2 || Math.abs(dz) > 3.2) continue;
-    const rr = c.r + radius, d2 = dx * dx + dz * dz;
+    const rr = c.r + radius;
+    if (Math.abs(dx) > rr || Math.abs(dz) > rr) continue;
+    const d2 = dx * dx + dz * dz;
     if (d2 < rr * rr) {
       const d = Math.sqrt(d2) || 0.01;
       p.x = c.x + (dx / d) * rr;

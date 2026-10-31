@@ -1,7 +1,7 @@
 import {
   AGE_STATS, ANIMAL_SET, BALLOT, CARRY_RADIUS, CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
-  ESCAPE_LOST_S, FARM_RADIUS, GRAVEYARD, ITEMS, ITEM_COUNT, ITEM_RESPAWN_S, MAX_CARRY, PICKUP_RADIUS,
+  ESCAPE_LOST_S, FARM_RADIUS, GRAVEYARD, ITEMS, ITEM_COUNT, ITEM_RESPAWN_S, JUNGLE_RADIUS, MAX_CARRY, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, RESCUE_POINTS,
   RESCUE_RADIUS, SPAWN, STAR_DECAY_S, TOTAL_VOTES, WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
   ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, type AnimalKind, type Appearance, type Zone, zoneOf, ZONE_TOAST,
@@ -86,7 +86,7 @@ export class GameEngine {
   private spawnAll() {
     const r = this.rnd;
     // votes
-    const bands: [number, number][] = [[18, 110], [140, 192], [212, 300]];
+    const bands: [number, number][] = [[16, 120], [150, 215], [235, 335]];
     for (let i = 0; i < TOTAL_VOTES; i++) {
       const [a, b] = bands[i < 7 ? 0 : i < 12 ? 1 : 2];
       const p = freeSpot(r, this.world, a, b);
@@ -111,13 +111,13 @@ export class GameEngine {
     let ai = 0;
     for (const set of ANIMAL_SET)
       for (let i = 0; i < set.count; i++) {
-        const p = freeSpot(r, this.world, set.zone === "farm" ? CITY_RADIUS + 10 : FARM_RADIUS + 10, set.zone === "farm" ? FARM_RADIUS - 8 : 320);
+        const p = freeSpot(r, this.world, set.zone === "farm" ? CITY_RADIUS + 10 : FARM_RADIUS + 10, set.zone === "farm" ? FARM_RADIUS - 8 : JUNGLE_RADIUS - 30);
         this.animals.push({ id: this.nid(), kind: set.kind, x: p.x, z: p.z, vx: 0, vz: 0, face: 0, tx: p.x, tz: p.z, timer: range(r, 0, 5), phase: Math.random() * 6 });
         ai++;
       }
     // items
     for (let i = 0; i < ITEM_COUNT; i++) {
-      const p = freeSpot(r, this.world, 10, 310);
+      const p = freeSpot(r, this.world, 10, 340);
       this.items.push({ id: this.nid(), def: Math.floor(r() * ITEMS.length), x: p.x, z: p.z, active: true, respawn: 0 });
     }
   }
@@ -132,7 +132,7 @@ export class GameEngine {
     this.hp = 100; this.stamina = 100; this.stars = 0; this.starTimer = 0;
     this.carriedVotes = []; this.delivered = 0; this.points = 0; this.rescues = 0; this.caughtCount = 0;
     this.detainedT = 0; this.invulnT = 0; this.elapsed = 0; this.won = false; this.clock = 0.3;
-    for (const v of this.votes) { v.state = "world"; const p = freeSpot(this.rnd, this.world, 18, 300); v.x = p.x; v.z = p.z; }
+    for (const v of this.votes) { v.state = "world"; const p = freeSpot(this.rnd, this.world, 16, 330); v.x = p.x; v.z = p.z; }
     for (const it of this.items) { it.active = true; it.respawn = 0; }
     for (const c of this.civs) c.mode = "wander";
     this.running = true;
@@ -389,8 +389,9 @@ export class GameEngine {
         stepNpc(an, an.x + (dx / d) * 8, an.z + (dz / d) * 8, fs, dt, this.world);
       } else {
         if (an.timer <= 0 || dist2(an.x, an.z, an.tx, an.tz) < 2) {
-          const base = an.kind === "cow" || an.kind === "chicken" ? CITY_RADIUS + 10 : FARM_RADIUS + 10;
-          const t = freeSpot(this.rnd, this.world, base, base + 80);
+          const farm = an.kind === "cow" || an.kind === "chicken";
+          const base = farm ? CITY_RADIUS + 10 : FARM_RADIUS + 10;
+          const t = freeSpot(this.rnd, this.world, base, farm ? FARM_RADIUS - 8 : JUNGLE_RADIUS - 30);
           an.tx = t.x; an.tz = t.z; an.timer = range(this.rnd, 4, 12);
         }
         stepNpc(an, an.tx, an.tz, an.kind === "cow" ? 1.1 : an.kind === "chicken" ? 1.6 : 1.8, dt, this.world);

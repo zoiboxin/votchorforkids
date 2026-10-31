@@ -1,18 +1,18 @@
 /** VoteChor 2.0 — shared constants. Tuned for a fast, kid-friendly cartoon chase game. */
 
 export const WORLD_SEED = 1337;
-export const WALL_RADIUS = 322;
-export const CITY_RADIUS = 130;
-export const FARM_RADIUS = 200;
-export const JUNGLE_RADIUS = 335;
-export const GRAVEYARD = { x: -185, z: 165, r: 42 } as const;
+export const WALL_RADIUS = 375;
+export const CITY_RADIUS = 245;
+export const FARM_RADIUS = 320;
+export const JUNGLE_RADIUS = 400;
+export const GRAVEYARD = { x: -255, z: 215, r: 45 } as const;
 export const SPAWN = { x: 0, z: 6 } as const;
-export const DAY_SECONDS = 300;
+export const DAY_SECONDS = 360;
 export const GRAVITY = 22;
 
 /** Parliament + ballot box where stolen votes are delivered. */
-export const PARLIAMENT = { x: 0, z: -116 } as const;
-export const BALLOT = { x: 0, z: -100 } as const;
+export const PARLIAMENT = { x: 0, z: -196 } as const;
+export const BALLOT = { x: 0, z: -174 } as const;
 
 export type AgeGroup = "kid" | "teen" | "young" | "old";
 
@@ -95,7 +95,7 @@ export const DELIVER_RADIUS = 4;
 export const DROP_SCATTER = 3.2;
 
 /* ---------- Police ---------- */
-export const POLICE_COUNT = 7;
+export const POLICE_COUNT = 9;
 export const POLICE_SPEED = 5.9;
 export const POLICE_SPRINT = 7.6;
 export const DETECT_BASE = 13;
@@ -107,7 +107,7 @@ export const STAR_DECAY_S = 45;
 export const ESCAPE_LOST_S = 4.5;
 
 /* ---------- Civilians & rescue ---------- */
-export const CIVILIAN_COUNT = 14;
+export const CIVILIAN_COUNT = 18;
 export const RESCUE_RADIUS = 3.4;
 export const RESCUE_POINTS = 60;
 

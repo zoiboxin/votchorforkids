@@ -6,7 +6,10 @@ import * as THREE from "three";
 import {
   BALLOT, CITY_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, PARLIAMENT,
 } from "@/lib/game/constants";
-import { generateWorld, type World } from "@/lib/game/worldgen";
+import {
+  AVENUE, generateWorld, HOSPITAL, MALL, PARK, ROAD_W, ROADS, RING_R, RING_W, SCHOOL,
+  type World,
+} from "@/lib/game/worldgen";
 import { buildBallotBox } from "@/lib/game/character";
 import { mulberry32, range } from "@/lib/game/rng";
 import { nightFactor } from "@/lib/game/sim";
@@ -33,45 +36,71 @@ function Ring({ a, b, color, y }: { a: number; b: number; color: string; y: numb
   );
 }
 
+/* ------------------------- roads: grid + ring highway + avenue ------------------------- */
 function Roads() {
+  const SPAN = 250;
   const dashes = useMemo(() => {
     const out: { x: number; z: number; rot: number }[] = [];
-    for (const k of [-120, -60, 0, 60, 120]) {
-      for (let d = -130; d <= 130; d += 8) {
+    for (const k of ROADS)
+      for (let d = -SPAN; d <= SPAN; d += 9) {
+        if (ROADS.some((o) => Math.abs(d - o) < 11)) continue; // keep intersections clear
         out.push({ x: k, z: d, rot: 0 });
         out.push({ x: d, z: k, rot: Math.PI / 2 });
       }
-    }
+    for (let d = AVENUE.z0 + 6; d >= AVENUE.z1 + 5; d -= 8) out.push({ x: AVENUE.x, z: d, rot: 0 });
     return out;
   }, []);
+  const ringDashes = useMemo(() => Array.from({ length: 56 }, (_, i) => (i / 56) * Math.PI * 2), []);
+
   const ref = useRef<THREE.InstancedMesh>(null!);
+  const ringRef = useRef<THREE.InstancedMesh>(null!);
   const lane = useRef<THREE.InstancedMesh>(null!);
   useLayoutEffect(() => {
     dashes.forEach((d, i) => {
-      tmp.position.set(d.x, 0.09, d.z);
+      tmp.position.set(d.x, 0.12, d.z);
       tmp.rotation.set(-Math.PI / 2, 0, d.rot);
       tmp.scale.set(0.35, 2.4, 1);
       tmp.updateMatrix();
       ref.current.setMatrixAt(i, tmp.matrix);
     });
-    tmp.rotation.set(0, 0, 0); tmp.scale.setScalar(1);
     ref.current.instanceMatrix.needsUpdate = true;
+    ringDashes.forEach((a, i) => {
+      tmp.position.set(Math.cos(a) * RING_R, 0.12, Math.sin(a) * RING_R);
+      tmp.rotation.set(-Math.PI / 2, 0, -a);
+      tmp.scale.set(0.35, 3.2, 1);
+      tmp.updateMatrix();
+      ringRef.current.setMatrixAt(i, tmp.matrix);
+    });
+    ringRef.current.instanceMatrix.needsUpdate = true;
+    tmp.rotation.set(0, 0, 0);
+    tmp.scale.setScalar(1);
     let i = 0;
-    for (const k of [-120, -60, 0, 60, 120]) {
+    for (const k of ROADS) {
       tmp.rotation.set(-Math.PI / 2, 0, 0);
-      tmp.position.set(k, 0.07, 0); tmp.scale.set(14, 270, 1); tmp.updateMatrix();
+      tmp.position.set(k, 0.07, 0); tmp.scale.set(ROAD_W, SPAN * 2, 1); tmp.updateMatrix();
       lane.current.setMatrixAt(i++, tmp.matrix);
-      tmp.position.set(0, 0.07, k); tmp.scale.set(270, 14, 1); tmp.updateMatrix();
+      tmp.position.set(0, 0.07, k); tmp.scale.set(SPAN * 2, ROAD_W, 1); tmp.updateMatrix();
       lane.current.setMatrixAt(i++, tmp.matrix);
     }
+    tmp.position.set(AVENUE.x, 0.07, (AVENUE.z0 + AVENUE.z1) / 2);
+    tmp.scale.set(AVENUE.w, AVENUE.z0 - AVENUE.z1, 1); tmp.updateMatrix();
+    lane.current.setMatrixAt(i++, tmp.matrix);
     tmp.rotation.set(0, 0, 0); tmp.scale.setScalar(1);
     lane.current.instanceMatrix.needsUpdate = true;
-  }, [dashes]);
+  }, [dashes, ringDashes]);
   return (
     <>
-      <instancedMesh ref={lane} args={[undefined, undefined, 10]}>
+      <instancedMesh ref={lane} args={[undefined, undefined, 11]}>
         <planeGeometry />
         <meshLambertMaterial color="#4a4a52" />
+      </instancedMesh>
+      <mesh rotation-x={-Math.PI / 2} position-y={0.08}>
+        <ringGeometry args={[RING_R - RING_W / 2, RING_R + RING_W / 2, 96]} />
+        <meshLambertMaterial color="#45454d" />
+      </mesh>
+      <instancedMesh ref={ringRef} args={[undefined, undefined, ringDashes.length]}>
+        <planeGeometry />
+        <meshBasicMaterial color="#f8f4e8" />
       </instancedMesh>
       <instancedMesh ref={ref} args={[undefined, undefined, dashes.length]}>
         <planeGeometry />
@@ -81,38 +110,108 @@ function Roads() {
   );
 }
 
-/* ------------------------- buildings ------------------------- */
+/* ------------------------- buildings (towers / shops / homes / landmarks) ------------------------- */
 function Buildings() {
   const walls = useRef<THREE.InstancedMesh>(null!);
-  const roofs = useRef<THREE.InstancedMesh>(null!);
+  const flats = useRef<THREE.InstancedMesh>(null!);
+  const pyrms = useRef<THREE.InstancedMesh>(null!);
+  const trims = useRef<THREE.InstancedMesh>(null!);
+  const doors = useRef<THREE.InstancedMesh>(null!);
+  const counts = useMemo(() => {
+    let flats = 0, pyrms = 0, trims = 0, doors = 0;
+    for (const b of WORLD.buildings) {
+      if (b.kind === 2 || b.kind === 6) pyrms++; else flats++;
+      if (b.kind === 1) trims += 2; // awning + sign
+      if (b.kind === 1 || b.kind === 2) doors++;
+    }
+    return { flats, pyrms, trims, doors };
+  }, []);
+
   useLayoutEffect(() => {
-    WORLD.buildings.forEach((b, i) => {
+    let wi = 0, fi = 0, pi = 0, ti = 0, di = 0;
+    WORLD.buildings.forEach((b) => {
+      tmp.rotation.set(0, 0, 0);
       tmp.position.set(b.x, b.h / 2, b.z);
       tmp.scale.set(b.w * 2, b.h, b.d * 2);
-      tmp.rotation.set(0, 0, 0);
       tmp.updateMatrix();
-      walls.current.setMatrixAt(i, tmp.matrix);
-      walls.current.setColorAt(i, col.setHex(b.color));
-      tmp.position.y = b.h + 0.6;
-      tmp.scale.set(b.w * 2 + 1.2, 1.2, b.d * 2 + 1.2);
-      tmp.updateMatrix();
-      roofs.current.setMatrixAt(i, tmp.matrix);
-      roofs.current.setColorAt(i, col.setHex(b.roof));
+      walls.current.setMatrixAt(wi, tmp.matrix);
+      walls.current.setColorAt(wi, col.setHex(b.color));
+      wi++;
+      if (b.kind === 2 || b.kind === 6) {
+        const rh = b.kind === 6 ? 3.4 : 2.3;
+        tmp.position.set(b.x, b.h + rh / 2, b.z);
+        tmp.rotation.set(0, Math.PI / 4, 0);
+        tmp.scale.set(b.w * 2 * 0.78, rh, b.d * 2 * 0.78);
+        tmp.updateMatrix();
+        pyrms.current.setMatrixAt(pi, tmp.matrix);
+        pyrms.current.setColorAt(pi, col.setHex(b.roof));
+        pi++;
+      } else {
+        tmp.position.set(b.x, b.h + 0.45, b.z);
+        tmp.rotation.set(0, 0, 0);
+        tmp.scale.set(b.w * 2 + 1.1, 0.9, b.d * 2 + 1.1);
+        tmp.updateMatrix();
+        flats.current.setMatrixAt(fi, tmp.matrix);
+        flats.current.setColorAt(fi, col.setHex(b.roof));
+        fi++;
+      }
+      if (b.kind === 1) {
+        tmp.rotation.set(0, 0, 0);
+        tmp.position.set(b.x, 3.5, b.z + b.fz * (b.d + 0.85));
+        tmp.scale.set(b.w * 1.85, 0.45, 2.1);
+        tmp.updateMatrix();
+        trims.current.setMatrixAt(ti, tmp.matrix);
+        trims.current.setColorAt(ti, col.setHex(b.awn));
+        ti++;
+        tmp.position.set(b.x, 5.9, b.z + b.fz * (b.d + 0.16));
+        tmp.scale.set(b.w * 1.5, 1.15, 0.35);
+        tmp.updateMatrix();
+        trims.current.setMatrixAt(ti, tmp.matrix);
+        trims.current.setColorAt(ti, col.setHex(b.roof));
+        ti++;
+      }
+      if (b.kind === 1 || b.kind === 2) {
+        tmp.rotation.set(0, 0, 0);
+        tmp.position.set(b.kind === 2 ? b.x + b.fz * 0.9 : b.x, 1.25, b.z + b.fz * (b.d + 0.1));
+        tmp.scale.set(1.4, 2.5, 1);
+        tmp.updateMatrix();
+        doors.current.setMatrixAt(di, tmp.matrix);
+        di++;
+      }
     });
     walls.current.instanceMatrix.needsUpdate = true;
-    roofs.current.instanceMatrix.needsUpdate = true;
-    if (walls.current.instanceColor) walls.current.instanceColor.needsUpdate = true;
-    if (roofs.current.instanceColor) roofs.current.instanceColor.needsUpdate = true;
-  }, []);
+    flats.current.instanceMatrix.needsUpdate = true;
+    pyrms.current.instanceMatrix.needsUpdate = true;
+    trims.current.instanceMatrix.needsUpdate = true;
+    doors.current.instanceMatrix.needsUpdate = true;
+    walls.current.count = wi; flats.current.count = fi; pyrms.current.count = pi;
+    trims.current.count = ti; doors.current.count = di;
+    for (const m of [walls, flats, pyrms, trims]) {
+      if (m.current.instanceColor) m.current.instanceColor.needsUpdate = true;
+    }
+  }, [counts]);
+
   return (
     <>
       <instancedMesh ref={walls} args={[undefined, undefined, WORLD.buildings.length]}>
         <boxGeometry />
         <meshLambertMaterial />
       </instancedMesh>
-      <instancedMesh ref={roofs} args={[undefined, undefined, WORLD.buildings.length]}>
+      <instancedMesh ref={flats} args={[undefined, undefined, Math.max(1, counts.flats)]}>
         <boxGeometry />
         <meshLambertMaterial />
+      </instancedMesh>
+      <instancedMesh ref={pyrms} args={[undefined, undefined, Math.max(1, counts.pyrms)]}>
+        <coneGeometry args={[1, 1, 4]} />
+        <meshLambertMaterial flatShading />
+      </instancedMesh>
+      <instancedMesh ref={trims} args={[undefined, undefined, Math.max(1, counts.trims)]}>
+        <boxGeometry />
+        <meshLambertMaterial />
+      </instancedMesh>
+      <instancedMesh ref={doors} args={[undefined, undefined, Math.max(1, counts.doors)]}>
+        <boxGeometry />
+        <meshLambertMaterial color="#4a382c" />
       </instancedMesh>
     </>
   );
@@ -238,20 +337,20 @@ function Forest() {
   return (
     <>
       <instancedMesh ref={trunks} args={[undefined, undefined, WORLD.trees.length]} material={trunkMat}>
-        <cylinderGeometry args={[0.34, 0.52, 3.2, 7]} />
+        <cylinderGeometry args={[0.34, 0.52, 3.2, 5]} />
       </instancedMesh>
       <instancedMesh ref={tiers} args={[undefined, undefined, Math.max(1, n.pine * 3)]} material={pineMat}>
-        <coneGeometry args={[1, 1, 8]} />
+        <coneGeometry args={[1, 1, 6]} />
       </instancedMesh>
       <instancedMesh ref={blobs} args={[undefined, undefined, Math.max(1, n.round * 5)]} material={blobMat}>
-        <sphereGeometry args={[1, 9, 7]} />
+        <sphereGeometry args={[1, 6, 4]} />
       </instancedMesh>
     </>
   );
 }
 
 /* ------------------------- windows (day glass / night glow) ------------------------- */
-interface WinInst { x: number; y: number; z: number; ry: number }
+interface WinInst { x: number; y: number; z: number; ry: number; w: number; h: number }
 
 function Windows({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
   const glass = useRef<THREE.InstancedMesh>(null!);
@@ -261,22 +360,31 @@ function Windows({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
     const panes: WinInst[] = [];
     const lit: WinInst[] = [];
     for (const b of WORLD.buildings) {
-      const floors = Math.min(5, Math.max(1, Math.floor((b.h - 3) / 4)));
-      const cols = Math.max(1, Math.min(3, Math.floor(b.w * 2 / 5)));
+      if (b.kind === 3) continue; // mall has a glass atrium instead
+      let floors: number, y0: number, dy: number, pw: number, ph: number, cols: number, sp: number;
+      switch (b.kind) {
+        case 0: floors = Math.min(6, Math.floor((b.h - 4) / 4.2)); y0 = 4.4; dy = 4.1; pw = 1.2; ph = 1.5; cols = Math.max(1, Math.min(3, Math.floor(b.w * 2 / 5))); sp = 3.1; break;
+        case 1: floors = 1; y0 = 2.4; dy = 0; pw = 1.9; ph = 1.9; cols = 2; sp = 5.0; break;
+        case 2: floors = 1; y0 = 3.6; dy = 0; pw = 0.95; ph = 1.05; cols = 2; sp = 3.0; break;
+        case 4: floors = 2; y0 = 3.6; dy = 3.0; pw = 1.5; ph = 1.3; cols = 3; sp = 3.2; break;
+        case 5: floors = 3; y0 = 3.8; dy = 3.6; pw = 1.3; ph = 1.4; cols = 3; sp = 3.2; break;
+        default: floors = 1; y0 = 4.2; dy = 0; pw = 1.1; ph = 1.0; cols = 2; sp = 4.0; break; // barn
+      }
+      const spread = Math.min(sp, (b.w * 2) / (cols + 0.6));
       for (let f = 0; f < floors; f++) {
-        const y = 4.2 + f * 4.1;
-        if (y > b.h - 2) break;
+        const y = y0 + f * dy;
+        if (y > b.h - 1.8) break;
         for (let c = 0; c < cols; c++) {
-          const off = (c - (cols - 1) / 2) * 3.1;
+          const off = (c - (cols - 1) / 2) * spread;
           // front/back faces (±z)
           for (const sd of [-1, 1]) {
-            const w: WinInst = { x: b.x + off, y, z: b.z + sd * (b.d + 0.07), ry: sd > 0 ? 0 : Math.PI };
+            const w: WinInst = { x: b.x + off, y, z: b.z + sd * (b.d + 0.07), ry: sd > 0 ? 0 : Math.PI, w: pw, h: ph };
             panes.push(w);
             if (r() < 0.68) lit.push(w);
           }
           // side faces (±x)
           for (const sd of [-1, 1]) {
-            const w: WinInst = { x: b.x + sd * (b.w + 0.07), y, z: b.z + off, ry: sd > 0 ? Math.PI / 2 : -Math.PI / 2 };
+            const w: WinInst = { x: b.x + sd * (b.w + 0.07), y, z: b.z + off, ry: sd > 0 ? Math.PI / 2 : -Math.PI / 2, w: pw, h: ph };
             panes.push(w);
             if (r() < 0.68) lit.push(w);
           }
@@ -290,7 +398,7 @@ function Windows({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
     panes.forEach((w, i) => {
       tmp.position.set(w.x, w.y, w.z);
       tmp.rotation.set(0, w.ry, 0);
-      tmp.scale.set(1.15, 1.4, 1);
+      tmp.scale.set(w.w, w.h, 1);
       tmp.updateMatrix();
       glass.current.setMatrixAt(i, tmp.matrix);
     });
@@ -300,7 +408,7 @@ function Windows({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
     lit.forEach((w, i) => {
       tmp.position.set(w.x, w.y, w.z);
       tmp.rotation.set(0, w.ry, 0);
-      tmp.scale.set(1.15, 1.4, 1);
+      tmp.scale.set(w.w, w.h, 1);
       tmp.updateMatrix();
       glow.current.setMatrixAt(i, tmp.matrix);
     });
@@ -332,6 +440,455 @@ function Windows({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
         <planeGeometry />
         <meshBasicMaterial ref={glowMat} color="#ffd76a" transparent opacity={0} depthWrite={false} />
       </instancedMesh>
+    </>
+  );
+}
+
+/* ------------------------- cars: parked + ring traffic ------------------------- */
+const CAR_COL_HEX = ["#e0483a", "#2a9d8f", "#f0c040", "#f2f2f2", "#8a5aa8", "#ff8c42", "#4aa3df", "#67b05f"];
+
+function placeCar(
+  body: THREE.InstancedMesh, cab: THREE.InstancedMesh, trim: THREE.InstancedMesh,
+  wheels: THREE.InstancedMesh | null,
+  i: number, x: number, y: number, z: number, rot: number, c: number,
+) {
+  const fx = Math.sin(rot), fz = Math.cos(rot);
+  const cs = Math.cos(rot), sn = Math.sin(rot);
+  tmp.rotation.set(0, rot, 0);
+  tmp.position.set(x, y + 0.52, z);
+  tmp.scale.set(1.9, 1.0, 4.4);
+  tmp.updateMatrix();
+  body.setMatrixAt(i, tmp.matrix);
+  body.setColorAt(i, col.set(CAR_COL_HEX[c % CAR_COL_HEX.length]));
+  tmp.position.set(x - fx * 0.4, y + 1.3, z - fz * 0.4);
+  tmp.scale.set(1.66, 0.62, 2.05);
+  tmp.updateMatrix();
+  cab.setMatrixAt(i, tmp.matrix);
+  cab.setColorAt(i, col.set("#9fd0e4"));
+  tmp.position.set(x, y + 0.16, z);
+  tmp.scale.set(2.02, 0.32, 4.55);
+  tmp.updateMatrix();
+  trim.setMatrixAt(i, tmp.matrix);
+  trim.setColorAt(i, col.set("#14181d"));
+  if (wheels) {
+    for (let k = 0; k < 4; k++) {
+      const lx = k % 2 === 0 ? -0.98 : 0.98;
+      const lz = k < 2 ? -1.42 : 1.42;
+      tmp.rotation.set(0, rot, Math.PI / 2);
+      tmp.position.set(x + lx * cs + lz * sn, y + 0.42, z - lx * sn + lz * cs);
+      tmp.scale.setScalar(1);
+      tmp.updateMatrix();
+      wheels.setMatrixAt(i * 4 + k, tmp.matrix);
+    }
+  }
+}
+
+function Cars() {
+  const body = useRef<THREE.InstancedMesh>(null!);
+  const cab = useRef<THREE.InstancedMesh>(null!);
+  const trim = useRef<THREE.InstancedMesh>(null!);
+  const wheels = useRef<THREE.InstancedMesh>(null!);
+  useLayoutEffect(() => {
+    WORLD.cars.forEach((c, i) => placeCar(body.current, cab.current, trim.current, wheels.current, i, c.x, 0, c.z, c.rot, c.c));
+    body.current.instanceMatrix.needsUpdate = true;
+    cab.current.instanceMatrix.needsUpdate = true;
+    trim.current.instanceMatrix.needsUpdate = true;
+    wheels.current.instanceMatrix.needsUpdate = true;
+    if (body.current.instanceColor) body.current.instanceColor.needsUpdate = true;
+    if (cab.current.instanceColor) cab.current.instanceColor.needsUpdate = true;
+    if (trim.current.instanceColor) trim.current.instanceColor.needsUpdate = true;
+  }, []);
+  const n = Math.max(1, WORLD.cars.length);
+  return (
+    <>
+      <instancedMesh ref={body} args={[undefined, undefined, n]}>
+        <boxGeometry />
+        <meshLambertMaterial />
+      </instancedMesh>
+      <instancedMesh ref={cab} args={[undefined, undefined, n]}>
+        <boxGeometry />
+        <meshLambertMaterial />
+      </instancedMesh>
+      <instancedMesh ref={trim} args={[undefined, undefined, n]}>
+        <boxGeometry />
+        <meshLambertMaterial />
+      </instancedMesh>
+      <instancedMesh ref={wheels} args={[undefined, undefined, n * 4]}>
+        <cylinderGeometry args={[0.42, 0.42, 0.34, 6]} />
+        <meshLambertMaterial color="#171a1f" />
+      </instancedMesh>
+    </>
+  );
+}
+
+/** Little cars cruising the ring highway, GTA-style. */
+function RingTraffic() {
+  const N = 10;
+  const data = useMemo(() => Array.from({ length: N }, (_, i) => ({
+    r: i % 2 === 0 ? RING_R - 2.7 : RING_R + 2.7,
+    dir: i % 2 === 0 ? 1 : -1,
+    a: (i / N) * Math.PI * 2,
+    sp: 0.05 + (i % 3) * 0.014,
+    c: (i * 3 + 1) % CAR_COL_HEX.length,
+  })), []);
+  const body = useRef<THREE.InstancedMesh>(null!);
+  const cab = useRef<THREE.InstancedMesh>(null!);
+  const trim = useRef<THREE.InstancedMesh>(null!);
+  const wheels = useRef<THREE.InstancedMesh>(null!);
+  useFrame((s) => {
+    data.forEach((d, i) => {
+      const a = d.a + s.clock.elapsedTime * d.sp * d.dir;
+      const rot = d.dir > 0 ? -a : Math.PI + a;
+      placeCar(body.current, cab.current, trim.current, wheels.current, i, Math.cos(a) * d.r, 0.07, Math.sin(a) * d.r, rot, d.c);
+    });
+    body.current.instanceMatrix.needsUpdate = true;
+    cab.current.instanceMatrix.needsUpdate = true;
+    trim.current.instanceMatrix.needsUpdate = true;
+    wheels.current.instanceMatrix.needsUpdate = true;
+    if (body.current.instanceColor) body.current.instanceColor.needsUpdate = true;
+    if (cab.current.instanceColor) cab.current.instanceColor.needsUpdate = true;
+    if (trim.current.instanceColor) trim.current.instanceColor.needsUpdate = true;
+  });
+  return (
+    <>
+      <instancedMesh ref={body} args={[undefined, undefined, N]} frustumCulled={false}>
+        <boxGeometry />
+        <meshLambertMaterial />
+      </instancedMesh>
+      <instancedMesh ref={cab} args={[undefined, undefined, N]} frustumCulled={false}>
+        <boxGeometry />
+        <meshLambertMaterial />
+      </instancedMesh>
+      <instancedMesh ref={trim} args={[undefined, undefined, N]} frustumCulled={false}>
+        <boxGeometry />
+        <meshLambertMaterial />
+      </instancedMesh>
+      <instancedMesh ref={wheels} args={[undefined, undefined, N * 4]} frustumCulled={false}>
+        <cylinderGeometry args={[0.42, 0.42, 0.34, 6]} />
+        <meshLambertMaterial color="#171a1f" />
+      </instancedMesh>
+    </>
+  );
+}
+
+/* ------------------------- street lamps (glow at night) ------------------------- */
+function Lamps({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
+  const pole = useRef<THREE.InstancedMesh>(null!);
+  const head = useRef<THREE.InstancedMesh>(null!);
+  const glow = useRef<THREE.InstancedMesh>(null!);
+  const n = Math.max(1, WORLD.lamps.length);
+  useLayoutEffect(() => {
+    WORLD.lamps.forEach((l, i) => {
+      tmp.rotation.set(0, 0, 0);
+      tmp.position.set(l.x, 2.8, l.z);
+      tmp.scale.setScalar(1);
+      tmp.updateMatrix();
+      pole.current.setMatrixAt(i, tmp.matrix);
+      tmp.position.set(l.x, 5.62, l.z);
+      tmp.updateMatrix();
+      head.current.setMatrixAt(i, tmp.matrix);
+      glow.current.setMatrixAt(i, tmp.matrix);
+    });
+    pole.current.instanceMatrix.needsUpdate = true;
+    head.current.instanceMatrix.needsUpdate = true;
+    glow.current.instanceMatrix.needsUpdate = true;
+  }, []);
+  const glowMat = useRef<THREE.MeshBasicMaterial>(null!);
+  useFrame(() => {
+    const nf = nightFactor(clockRef.current);
+    if (glowMat.current) {
+      glowMat.current.opacity = Math.max(0, nf - 0.3) * 1.4 * (0.85 + Math.sin(performance.now() / 620) * 0.08);
+      glow.current.visible = glowMat.current.opacity > 0.02;
+    }
+  });
+  return (
+    <>
+      <instancedMesh ref={pole} args={[undefined, undefined, n]}>
+        <cylinderGeometry args={[0.09, 0.14, 5.6, 6]} />
+        <meshLambertMaterial color="#3a3f46" />
+      </instancedMesh>
+      <instancedMesh ref={head} args={[undefined, undefined, n]}>
+        <sphereGeometry args={[0.34, 8, 6]} />
+        <meshLambertMaterial color="#2f333a" />
+      </instancedMesh>
+      <instancedMesh ref={glow} args={[undefined, undefined, n]} frustumCulled={false} visible={false}>
+        <sphereGeometry args={[0.62, 8, 6]} />
+        <meshBasicMaterial ref={glowMat} color="#ffd76a" transparent opacity={0} depthWrite={false} />
+      </instancedMesh>
+    </>
+  );
+}
+
+/* ------------------------- central park ------------------------- */
+function Park() {
+  const jet = useRef<THREE.Mesh>(null!);
+  useFrame((s) => {
+    if (jet.current) {
+      const p = 1 + Math.sin(s.clock.elapsedTime * 2.6) * 0.22;
+      jet.current.scale.set(p, 1 + Math.sin(s.clock.elapsedTime * 3.1) * 0.3, p);
+    }
+  });
+  return (
+    <group position={[PARK.x, 0, PARK.z]}>
+      <mesh rotation-x={-Math.PI / 2} position-y={0.08}>
+        <circleGeometry args={[PARK.r, 48]} />
+        <meshLambertMaterial color="#5fb657" />
+      </mesh>
+      <mesh rotation-x={-Math.PI / 2} position-y={0.09}>
+        <planeGeometry args={[PARK.r * 2, 7]} />
+        <meshLambertMaterial color="#d9cfb2" />
+      </mesh>
+      <mesh rotation-x={-Math.PI / 2} position-y={0.09}>
+        <planeGeometry args={[7, PARK.r * 2]} />
+        <meshLambertMaterial color="#d9cfb2" />
+      </mesh>
+      {/* pond (collider at PARK.x-11, PARK.z+11) */}
+      <group position={[-11, 0, 11]}>
+        <mesh rotation-x={-Math.PI / 2} position-y={0.11}>
+          <circleGeometry args={[7.4, 32]} />
+          <meshLambertMaterial color="#4fa8d8" />
+        </mesh>
+        <mesh rotation-x={-Math.PI / 2} position-y={0.1}>
+          <ringGeometry args={[7.4, 8.7, 32]} />
+          <meshLambertMaterial color="#b8b0a0" />
+        </mesh>
+      </group>
+      {/* fountain */}
+      <mesh position-y={0.5}><cylinderGeometry args={[3, 3.3, 1, 16]} /><meshLambertMaterial color="#cfc4ae" /></mesh>
+      <mesh position-y={0.99}><cylinderGeometry args={[2.55, 2.55, 0.14, 16]} /><meshLambertMaterial color="#5db4e0" /></mesh>
+      <mesh position-y={1.75}><cylinderGeometry args={[0.45, 0.62, 1.6, 10]} /><meshLambertMaterial color="#cfc4ae" /></mesh>
+      <mesh position-y={2.62}><cylinderGeometry args={[1.25, 1, 0.45, 12]} /><meshLambertMaterial color="#cfc4ae" /></mesh>
+      <mesh ref={jet} position-y={3.35}><coneGeometry args={[0.3, 1.5, 8]} /><meshLambertMaterial color="#9fd8f0" transparent opacity={0.85} /></mesh>
+    </group>
+  );
+}
+
+function Benches() {
+  const seat = useRef<THREE.InstancedMesh>(null!);
+  const back = useRef<THREE.InstancedMesh>(null!);
+  const n = Math.max(1, WORLD.benches.length);
+  useLayoutEffect(() => {
+    WORLD.benches.forEach((b, i) => {
+      tmp.rotation.set(0, b.rot, 0);
+      tmp.position.set(b.x, 0.55, b.z);
+      tmp.scale.set(1.9, 0.16, 0.6);
+      tmp.updateMatrix();
+      seat.current.setMatrixAt(i, tmp.matrix);
+      tmp.position.set(b.x - 0.26 * Math.sin(b.rot), 0.98, b.z - 0.26 * Math.cos(b.rot));
+      tmp.scale.set(1.9, 0.55, 0.12);
+      tmp.updateMatrix();
+      back.current.setMatrixAt(i, tmp.matrix);
+    });
+    seat.current.instanceMatrix.needsUpdate = true;
+    back.current.instanceMatrix.needsUpdate = true;
+  }, []);
+  return (
+    <>
+      <instancedMesh ref={seat} args={[undefined, undefined, n]}>
+        <boxGeometry />
+        <meshLambertMaterial color="#8a5a33" />
+      </instancedMesh>
+      <instancedMesh ref={back} args={[undefined, undefined, n]}>
+        <boxGeometry />
+        <meshLambertMaterial color="#7a4a28" />
+      </instancedMesh>
+    </>
+  );
+}
+
+function Umbrellas() {
+  const pole = useRef<THREE.InstancedMesh>(null!);
+  const canopy = useRef<THREE.InstancedMesh>(null!);
+  const cols = ["#e0483a", "#2a9d8f"];
+  const n = Math.max(1, WORLD.umbrellas.length);
+  useLayoutEffect(() => {
+    WORLD.umbrellas.forEach((u, i) => {
+      tmp.rotation.set(0, 0, 0);
+      tmp.position.set(u.x, 1.35, u.z);
+      tmp.scale.setScalar(1);
+      tmp.updateMatrix();
+      pole.current.setMatrixAt(i, tmp.matrix);
+      tmp.position.set(u.x, 2.85, u.z);
+      tmp.updateMatrix();
+      canopy.current.setMatrixAt(i, tmp.matrix);
+      canopy.current.setColorAt(i, col.set(cols[u.c % cols.length]));
+    });
+    pole.current.instanceMatrix.needsUpdate = true;
+    canopy.current.instanceMatrix.needsUpdate = true;
+    if (canopy.current.instanceColor) canopy.current.instanceColor.needsUpdate = true;
+  }, []);
+  return (
+    <>
+      <instancedMesh ref={pole} args={[undefined, undefined, n]}>
+        <cylinderGeometry args={[0.06, 0.06, 2.7, 6]} />
+        <meshLambertMaterial color="#e8e2d4" />
+      </instancedMesh>
+      <instancedMesh ref={canopy} args={[undefined, undefined, n]}>
+        <coneGeometry args={[1.75, 0.85, 8]} />
+        <meshLambertMaterial flatShading />
+      </instancedMesh>
+    </>
+  );
+}
+
+/* ------------------------- farmland: fields, silos, windmills ------------------------- */
+const CROP_COL_HEX = ["#9ec24a", "#d8c25a", "#6faf4e"];
+
+function Farm() {
+  const crops = useRef<THREE.InstancedMesh>(null!);
+  const cropData = useMemo(() => {
+    const out: { x: number; z: number; rot: number; crop: number }[] = [];
+    for (const f of WORLD.fields) {
+      for (let lx = -f.w + 1; lx <= f.w - 1; lx += 1.8)
+        for (let lz = -f.d + 1.1; lz <= f.d - 1.1; lz += 2.0) {
+          const c = Math.cos(f.rot), s = Math.sin(f.rot);
+          out.push({ x: f.x + lx * c + lz * s, z: f.z - lx * s + lz * c, rot: f.rot, crop: f.crop });
+        }
+    }
+    return out;
+  }, []);
+  useLayoutEffect(() => {
+    cropData.forEach((c, i) => {
+      tmp.rotation.set(0, c.rot, 0);
+      tmp.position.set(c.x, 0.32, c.z);
+      tmp.scale.setScalar(1);
+      tmp.updateMatrix();
+      crops.current.setMatrixAt(i, tmp.matrix);
+      crops.current.setColorAt(i, col.set(CROP_COL_HEX[c.crop]));
+    });
+    crops.current.instanceMatrix.needsUpdate = true;
+    if (crops.current.instanceColor) crops.current.instanceColor.needsUpdate = true;
+  }, [cropData]);
+
+  const siloB = useRef<THREE.InstancedMesh>(null!);
+  const siloT = useRef<THREE.InstancedMesh>(null!);
+  useLayoutEffect(() => {
+    WORLD.silos.forEach((s, i) => {
+      tmp.rotation.set(0, 0, 0);
+      tmp.position.set(s.x, 5.5, s.z);
+      tmp.scale.setScalar(1);
+      tmp.updateMatrix();
+      siloB.current.setMatrixAt(i, tmp.matrix);
+      tmp.position.set(s.x, 11.02, s.z);
+      tmp.updateMatrix();
+      siloT.current.setMatrixAt(i, tmp.matrix);
+    });
+    siloB.current.instanceMatrix.needsUpdate = true;
+    siloT.current.instanceMatrix.needsUpdate = true;
+  }, []);
+
+  return (
+    <>
+      {WORLD.fields.map((f, i) => (
+        <group key={i} position={[f.x, 0, f.z]} rotation-y={f.rot}>
+          <mesh rotation-x={-Math.PI / 2} position-y={0.05}>
+            <planeGeometry args={[f.w * 2, f.d * 2]} />
+            <meshLambertMaterial color="#6b4f35" />
+          </mesh>
+        </group>
+      ))}
+      <instancedMesh ref={crops} args={[undefined, undefined, Math.max(1, cropData.length)]}>
+        <boxGeometry args={[0.6, 0.55, 1.35]} />
+        <meshLambertMaterial />
+      </instancedMesh>
+      <instancedMesh ref={siloB} args={[undefined, undefined, Math.max(1, WORLD.silos.length)]}>
+        <cylinderGeometry args={[3, 3, 11, 12]} />
+        <meshLambertMaterial color="#ccd2d8" />
+      </instancedMesh>
+      <instancedMesh ref={siloT} args={[undefined, undefined, Math.max(1, WORLD.silos.length)]}>
+        <sphereGeometry args={[3, 12, 6, 0, Math.PI * 2, 0, Math.PI / 2]} />
+        <meshLambertMaterial color="#b8bec6" />
+      </instancedMesh>
+      <Windmills />
+    </>
+  );
+}
+
+function Windmills() {
+  const rotors = useRef<(THREE.Group | null)[]>([]);
+  useFrame((_, dt) => {
+    rotors.current.forEach((r) => { if (r) r.rotation.z += dt * 0.85; });
+  });
+  return (
+    <>
+      {WORLD.windmills.map((w, i) => (
+        <group key={i} position={[w.x, 0, w.z]} rotation-y={w.rot}>
+          <mesh position-y={5.5}><cylinderGeometry args={[0.42, 0.68, 11, 8]} /><meshLambertMaterial color="#e8e2d4" /></mesh>
+          <group ref={(g) => { rotors.current[i] = g; }} position={[0, 11, 0.55]} rotation-z={i * 0.7}>
+            {[0, 1, 2, 3].map((k) => (
+              <mesh key={k} rotation-z={k * Math.PI / 2} position={[0, 2.1, 0]}>
+                <boxGeometry args={[0.5, 4.2, 0.14]} />
+                <meshLambertMaterial color="#f8f4e8" />
+              </mesh>
+            ))}
+          </group>
+          <mesh position={[0, 11, 1.05]}><boxGeometry args={[0.12, 1.7, 0.9]} /><meshLambertMaterial color="#c0442e" /></mesh>
+        </group>
+      ))}
+    </>
+  );
+}
+
+/* ------------------------- landmarks: mall front, school yard, hospital cross ------------------------- */
+function Landmarks() {
+  return (
+    <>
+      {/* MEGA MALL — glass atrium, roof sign, parking lot */}
+      <group position={[MALL.x, 0, MALL.z]}>
+        <mesh rotation-x={-Math.PI / 2} position={[0.25, 0.07, -26]}>
+          <planeGeometry args={[46, 26]} />
+          <meshLambertMaterial color="#565660" />
+        </mesh>
+        <mesh position={[0, 4.6, -11.06]}>
+          <planeGeometry args={[26, 9]} />
+          <meshLambertMaterial color="#a8d4e8" side={THREE.DoubleSide} />
+        </mesh>
+        <mesh position={[0, 1.9, -11.2]}>
+          <boxGeometry args={[6.5, 3.8, 0.5]} />
+          <meshLambertMaterial color="#3a3f46" />
+        </mesh>
+        <mesh position={[0, 17.4, 0]}>
+          <boxGeometry args={[24, 3.2, 1]} />
+          <meshLambertMaterial color="#d62828" />
+        </mesh>
+        {[-7.8, -2.6, 2.6, 7.8].map((x) => (
+          <mesh key={x} position={[x, 17.4, -0.75]}>
+            <boxGeometry args={[2.6, 2.1, 0.4]} />
+            <meshLambertMaterial color="#f8f4e8" />
+          </mesh>
+        ))}
+        {[-9, 9].map((x) => (
+          <mesh key={x} position={[x, 16.3, 0]}>
+            <boxGeometry args={[0.5, 2.2, 0.5]} />
+            <meshLambertMaterial color="#8a8f98" />
+          </mesh>
+        ))}
+      </group>
+      {/* School — yard, running track, flag, basketball hoop */}
+      <group position={[SCHOOL.x, 0, SCHOOL.z]}>
+        <mesh rotation-x={-Math.PI / 2} position={[0, 0.07, -18]}>
+          <circleGeometry args={[14, 40]} />
+          <meshLambertMaterial color="#7ec868" />
+        </mesh>
+        <mesh rotation-x={-Math.PI / 2} position={[0, 0.08, -18]} scale={[1, 0.72, 1]}>
+          <ringGeometry args={[10.5, 12.3, 40]} />
+          <meshLambertMaterial color="#d8734a" />
+        </mesh>
+        <mesh position={[-10, 3.5, -12]}><cylinderGeometry args={[0.1, 0.12, 7, 6]} /><meshLambertMaterial color="#8a8a98" /></mesh>
+        <mesh position={[-8.9, 6.2, -12]} rotation-y={Math.PI / 2}><planeGeometry args={[2.2, 1.3]} /><meshBasicMaterial color="#ff9933" side={THREE.DoubleSide} /></mesh>
+        <mesh position={[12, 2.5, -10]}><cylinderGeometry args={[0.12, 0.14, 5, 6]} /><meshLambertMaterial color="#3a3f46" /></mesh>
+        <mesh position={[12, 4.7, -10.35]}><boxGeometry args={[2.6, 1.7, 0.16]} /><meshLambertMaterial color="#f4f6f8" /></mesh>
+        <mesh position={[12, 3.95, -10.7]} rotation-x={Math.PI / 2}><torusGeometry args={[0.55, 0.08, 6, 14]} /><meshLambertMaterial color="#ff6b35" /></mesh>
+      </group>
+      {/* Hospital — big red cross + entrance canopy */}
+      <group position={[HOSPITAL.x, 0, HOSPITAL.z]}>
+        <mesh position={[0, 12.4, -6.62]}><boxGeometry args={[1.7, 5.2, 0.22]} /><meshBasicMaterial color="#d62828" /></mesh>
+        <mesh position={[0, 12.4, -6.62]}><boxGeometry args={[5.2, 1.7, 0.22]} /><meshBasicMaterial color="#d62828" /></mesh>
+        <mesh position={[0, 3.5, -8.2]}><boxGeometry args={[7, 0.5, 3.2]} /><meshLambertMaterial color="#c7ccd4" /></mesh>
+        {[-3, 3].map((x) => (
+          <mesh key={x} position={[x, 1.7, -9.4]}><cylinderGeometry args={[0.14, 0.14, 3.4, 6]} /><meshLambertMaterial color="#9aa0a8" /></mesh>
+        ))}
+      </group>
     </>
   );
 }
@@ -389,7 +946,7 @@ function Flowers() {
   }, []);
   return (
     <instancedMesh ref={ref} args={[undefined, undefined, WORLD.flowers.length]}>
-      <sphereGeometry args={[0.22, 6, 5]} />
+      <sphereGeometry args={[0.22, 5, 3]} />
       <meshLambertMaterial />
     </instancedMesh>
   );
@@ -416,19 +973,19 @@ function Mountains() {
 
   const data = useMemo(() => {
     const r = mulberry32(7);
-    // Major peaks — ring around the map, each with its own silhouette.
+    // Major peaks — ring around the (now much bigger) map, each with its own silhouette.
     const majors: Peak[] = Array.from({ length: 26 }, (_, i) => {
       const a = (i / 26) * Math.PI * 2 + range(r, -0.06, 0.06);
-      const d = range(r, 348, 418);
-      const h = range(r, 85, 178);
-      const w = range(r, 52, 96);
+      const d = range(r, 430, 502);
+      const h = range(r, 95, 185);
+      const w = range(r, 58, 100);
       return {
         x: Math.cos(a) * d, z: Math.sin(a) * d, h, w,
         rot: range(r, 0, Math.PI * 2),
         sx: range(r, 0.8, 1.2), sz: range(r, 0.8, 1.2),
         ci: i % ROCK_COLS.length, tint: range(r, -0.045, 0.055),
         seg: (i % 3) as 0 | 1 | 2,
-        snow: h > 125 ? range(r, 0.5, 0.64) : h > 98 ? range(r, 0.6, 0.75) : range(r, 0.78, 0.94),
+        snow: h > 130 ? range(r, 0.5, 0.64) : h > 105 ? range(r, 0.6, 0.75) : range(r, 0.78, 0.94),
       };
     });
     // Shoulder peaks — cluster beside majors to form ranges.
@@ -437,7 +994,7 @@ function Mountains() {
       const nSh = r() < 0.45 ? 2 : r() < 0.75 ? 1 : 0;
       for (let k = 0; k < nSh; k++) {
         const a = Math.atan2(m.z, m.x) + (k === 0 ? 1 : -1) * range(r, 0.02, 0.055);
-        const d = Math.hypot(m.x, m.z) + range(r, -26, 44);
+        const d = Math.hypot(m.x, m.z) + range(r, -28, 46);
         const h = m.h * range(r, 0.36, 0.6);
         shoulders.push({
           x: Math.cos(a) * d, z: Math.sin(a) * d, h,
@@ -446,13 +1003,13 @@ function Mountains() {
           sx: range(r, 0.85, 1.15), sz: range(r, 0.85, 1.15),
           ci: (i + k + 1) % ROCK_COLS.length, tint: range(r, -0.04, 0.05),
           seg: ((i + k + 1) % 3) as 0 | 1 | 2,
-          snow: h > 75 ? range(r, 0.58, 0.72) : range(r, 0.82, 0.96),
+          snow: h > 78 ? range(r, 0.58, 0.72) : range(r, 0.82, 0.96),
         });
       }
     });
-    // Rounded low-poly foothills, kept outside the playable jungle ring.
+    // Rounded low-poly foothills, kept outside the playable ring.
     const hills = Array.from({ length: 44 }, (_, i) => {
-      const a = range(r, 0, Math.PI * 2), d = range(r, 342, 382);
+      const a = range(r, 0, Math.PI * 2), d = range(r, 408, 448);
       return { x: Math.cos(a) * d, z: Math.sin(a) * d, h: range(r, 9, 26), w: range(r, 24, 54), ci: i % HILL_COLS.length, tint: range(r, -0.05, 0.06) };
     });
     const segBody = [0, 0, 0], segCap = [0, 0, 0];
@@ -556,6 +1113,10 @@ function Parliament() {
   }, [colXs]);
   return (
     <group position={[PARLIAMENT.x, 0, PARLIAMENT.z]}>
+      <mesh rotation-x={-Math.PI / 2} position={[0, 0.05, 6]}>
+        <circleGeometry args={[32, 48]} />
+        <meshLambertMaterial color="#cfc4ae" />
+      </mesh>
       <mesh position-y={9}><boxGeometry args={[70, 18, 14]} /><meshLambertMaterial color="#e8e0d0" /></mesh>
       <mesh position-y={18.6}><boxGeometry args={[72, 1.4, 16]} /><meshLambertMaterial color="#cfc4ae" /></mesh>
       <mesh position-y={24}><sphereGeometry args={[9, 18, 12]} /><meshLambertMaterial color="#7fc8a9" /></mesh>
@@ -591,15 +1152,15 @@ function Clouds() {
   const ref = useRef<THREE.InstancedMesh>(null!);
   const data = useMemo(() => {
     const r = mulberry32(31);
-    return Array.from({ length: 14 }, () => ({
-      x: range(r, -500, 500), y: range(r, 90, 150), z: range(r, -500, 500),
-      s: range(r, 14, 30), v: range(r, 1.2, 3.2), off: range(r, 0, 9),
+    return Array.from({ length: 16 }, () => ({
+      x: range(r, -560, 560), y: range(r, 95, 155), z: range(r, -560, 560),
+      s: range(r, 15, 32), v: range(r, 1.2, 3.2), off: range(r, 0, 9),
     }));
   }, []);
   useFrame((s) => {
     const t = s.clock.elapsedTime;
     data.forEach((c, i) => {
-      const x = ((c.x + t * c.v + 520) % 1040) - 520;
+      const x = ((c.x + t * c.v + 580) % 1160) - 580;
       for (let k = 0; k < 3; k++) {
         tmp.position.set(x + k * c.s * 0.55, c.y + Math.sin(t * 0.5 + c.off + k) * 1.5, c.z + (k === 1 ? c.s * 0.3 : 0));
         tmp.scale.setScalar(k === 1 ? c.s * 0.8 : c.s * 0.6);
@@ -610,7 +1171,7 @@ function Clouds() {
     ref.current.instanceMatrix.needsUpdate = true;
   });
   return (
-    <instancedMesh ref={ref} args={[undefined, undefined, 42]} frustumCulled={false}>
+    <instancedMesh ref={ref} args={[undefined, undefined, 48]} frustumCulled={false}>
       <sphereGeometry args={[1, 8, 6]} />
       <meshLambertMaterial color="#ffffff" emissive="#d8e8f8" emissiveIntensity={0.35} />
     </instancedMesh>
@@ -702,7 +1263,7 @@ function Env({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
     sky.copy(DAY).lerp(NIGHT, n);
     if (dk > 0) sky.lerp(DUSK, dk * 0.6);
     scene.background = sky;
-    scene.fog = new THREE.Fog(sky, 70, n > 0.5 ? 270 : 470);
+    scene.fog = new THREE.Fog(sky, 90, n > 0.5 ? 300 : 580);
     hemi.current.intensity = 0.35 + 0.55 * (1 - n);
     sun.current.intensity = 0.25 + 0.95 * (1 - n);
     sun.current.position.set(Math.cos(PI2 * (clock - 0.25)) * 200, Math.max(24, h * 200), 90);
@@ -719,14 +1280,22 @@ export function WorldView({ clockRef }: { clockRef: React.MutableRefObject<numbe
   return (
     <>
       <Env clockRef={clockRef} />
-      <Disc r={700} color="#3f7a36" y={-0.12} />
-      <Disc r={CITY_RADIUS} color="#a09c92" y={0} />
+      <Disc r={780} color="#3f7a36" y={-0.12} />
+      <Disc r={CITY_RADIUS} color="#9a968c" y={0} />
       <Ring a={CITY_RADIUS} b={FARM_RADIUS} color="#9cb84e" y={0.02} />
       <Ring a={FARM_RADIUS} b={JUNGLE_RADIUS} color="#2d7a3a" y={0.03} />
       <Disc r={GRAVEYARD.r} color="#3a3a46" y={0.06} x={GRAVEYARD.x} z={GRAVEYARD.z} />
       <Roads />
       <Buildings />
       <Windows clockRef={clockRef} />
+      <Cars />
+      <RingTraffic />
+      <Lamps clockRef={clockRef} />
+      <Park />
+      <Benches />
+      <Umbrellas />
+      <Farm />
+      <Landmarks />
       <Forest />
       <Graves />
       <Flowers />
