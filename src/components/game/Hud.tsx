@@ -810,7 +810,10 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
               className="rounded-3xl border-4 border-rose-400/70 bg-black/60 px-10 py-7 text-center"
             >
               <div className="text-4xl font-black tracking-wide text-rose-300">CAUGHT! 😵</div>
-              <div className="mt-1 text-white">Time-out: {Math.ceil(hud.detainLeft)}s</div>
+              <div className="mt-1 text-white">Police time-out: {Math.ceil(hud.detainLeft)}s</div>
+              <div className="mt-1 text-xs font-bold text-rose-200/90">
+                Then you respawn at a random city spot — fresh start, police far away!
+              </div>
               <div className="mx-auto mt-3 h-2.5 w-44 overflow-hidden rounded-full bg-white/15">
                 <motion.div
                   className="h-full rounded-full bg-rose-400"

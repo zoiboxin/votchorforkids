@@ -138,6 +138,19 @@ export class GameEngine {
     this.toast(msg, "good");
   }
 
+  /** Random free city spot for the post-detention respawn — comfortably away from every cop. */
+  private cityRespawnSpot(): { x: number; z: number } {
+    for (let i = 0; i < 24; i++) {
+      const t = freeSpot(this.rnd, this.world, 10, CITY_RADIUS - 10);
+      let ok = true;
+      for (const cop of this.cops) {
+        if (dist2(t.x, t.z, cop.x, cop.z) < 45 * 45) { ok = false; break; }
+      }
+      if (ok) return t;
+    }
+    return freeSpot(this.rnd, this.world, 10, CITY_RADIUS - 10); // fallback: any city spot
+  }
+
   private spawnAll() {
     const r = this.rnd;
     // votes
@@ -245,8 +258,8 @@ export class GameEngine {
     cop.tx = spot.x; cop.tz = spot.z;
     sfx.caught();
     this.toast(carried > 0
-      ? `Caught! The police took back ${carried} vote${carried > 1 ? "s" : ""}… ⭐ Wanted level up!`
-      : "Caught for suspicious giggling! Sit in the time-out corner…", "bad");
+      ? `Caught! The police took back ${carried} vote${carried > 1 ? "s" : ""}… ⭐ Wanted up! Sit out ${DETAIN_SECONDS}s, then respawn in the city.`
+      : `Caught for suspicious giggling! Sit out ${DETAIN_SECONDS}s — then respawn somewhere new in the city.`, "bad");
   }
 
   private deliver() {
@@ -365,8 +378,17 @@ export class GameEngine {
       this.detainedT -= dt;
       p.vx = p.vz = 0;
       if (this.detainedT <= 0) {
-        // time served — fresh start: wanted badge gone, cops are already walking away
-        this.clearWanted("⏰ Time served! You're free — the police went back. Play on!");
+        // time served — respawn at a random city spot far from every cop, badge cleared
+        const spot = this.cityRespawnSpot();
+        this.player.x = spot.x; this.player.z = spot.z;
+        this.player.y = 0; this.player.vx = 0; this.player.vz = 0;
+        // re-aim every walking-home cop away from the fresh respawn
+        for (const cop of this.cops) {
+          if (cop.mode !== "return") continue;
+          const far = this.spotAwayFromPlayer(60);
+          cop.tx = far.x; cop.tz = far.z;
+        }
+        this.clearWanted("⏰ Time served! You respawned at a new city spot — the police are far away. Play on!");
       }
     } else {
       this.invulnT = Math.max(0, this.invulnT - dt);

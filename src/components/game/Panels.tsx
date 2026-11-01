@@ -52,8 +52,9 @@ export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange:
           <section className="rounded-2xl bg-white/5 p-3">
             <div className="mb-1.5 flex items-center gap-2 font-black text-rose-300"><ShieldAlert size={15} /> The police</div>
             <p className="leading-relaxed text-white/85">
-              Cops patrol and chase what they can see. Break line of sight behind buildings to lose them. Getting caught drops your
-              votes and raises your <b>wanted stars</b> ⭐. You start each run with a short <b className="text-emerald-300">sneak shield</b> — police can&apos;t spot you for the first few seconds.
+              Cops patrol and chase what they can see. Break line of sight behind buildings to lose them — get far enough away and they
+              give up, go back to patrol, and your <b>wanted stars</b> ⭐ are cleared! Getting caught drops your votes: sit out a
+              <b className="text-rose-200"> 20-second time-out</b>, then you <b className="text-emerald-300">respawn at a random city spot</b> with a clean slate. You start each run with a short <b className="text-emerald-300">sneak shield</b> — police can&apos;t spot you for the first few seconds.
             </p>
           </section>
 
