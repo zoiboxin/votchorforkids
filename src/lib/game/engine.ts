@@ -63,6 +63,7 @@ export class GameEngine {
   private pocketFullT = 0;  // throttles the "pockets full" toast
   clock = 0.3;
   stars = 0; starTimer = 0;
+  chased = false; // true while (or just after) any cop is hunting the player
   carriedVotes: VoteEnt[] = [];
   votes: VoteEnt[] = [];
   cops: Npc[] = [];
@@ -116,6 +117,27 @@ export class GameEngine {
     return { x: SPAWN.x + 105, z: SPAWN.z };
   }
 
+  /** A free spot at least `minD` units away from the player — where cops walk to when they give up. */
+  private spotAwayFromPlayer(minD: number): { x: number; z: number } {
+    const p = this.player;
+    let pick = { x: p.x + minD, z: p.z + minD };
+    for (let i = 0; i < 10; i++) {
+      const t = freeSpot(this.rnd, this.world, 10, 120);
+      pick = t;
+      if (dist2(t.x, t.z, p.x, p.z) > minD * minD) break;
+    }
+    return pick;
+  }
+
+  /** Player is home free — drop the wanted badge so they look/feel normal again. */
+  private clearWanted(msg: string) {
+    this.stars = 0;
+    this.starTimer = 0;
+    this.chased = false;
+    sfx.rescue();
+    this.toast(msg, "good");
+  }
+
   private spawnAll() {
     const r = this.rnd;
     // votes
@@ -162,7 +184,7 @@ export class GameEngine {
   reset(look: Appearance) {
     this.look = look;
     this.player = newBody(SPAWN.x, SPAWN.z);
-    this.hp = 100; this.stamina = 100; this.stars = 0; this.starTimer = 0;
+    this.hp = 100; this.stamina = 100; this.stars = 0; this.starTimer = 0; this.chased = false;
     this.inv = []; this.hurtT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0;
     this.flipT = 0; this.squashT = 0;
     this.carriedVotes = []; this.delivered = 0; this.points = 0; this.rescues = 0; this.caughtCount = 0;
@@ -217,9 +239,9 @@ export class GameEngine {
     this.hurtT = HURT_FLASH_S;
     this.detainedT = DETAIN_SECONDS;
     this.invulnT = RELEASE_GRACE_S; // long grace after release — time to run the other way
-    // the catcher celebrates, then walks ALL the way back to a far patrol spot
+    // the catcher celebrates, then walks ALL the way back — far away from the player
     cop.mode = "celebrate"; cop.timer = 2.5;
-    const spot = this.safeCopSpot();
+    const spot = this.spotAwayFromPlayer(70);
     cop.tx = spot.x; cop.tz = spot.z;
     sfx.caught();
     this.toast(carried > 0
@@ -342,6 +364,10 @@ export class GameEngine {
     if (this.detainedT > 0) {
       this.detainedT -= dt;
       p.vx = p.vz = 0;
+      if (this.detainedT <= 0) {
+        // time served — fresh start: wanted badge gone, cops are already walking away
+        this.clearWanted("⏰ Time served! You're free — the police went back. Play on!");
+      }
     } else {
       this.invulnT = Math.max(0, this.invulnT - dt);
       const prevY = p.y;
@@ -435,16 +461,17 @@ export class GameEngine {
           stepNpc(cop, cop.tx, cop.tz, POLICE_SPEED * 0.6, dt, this.world);
           if (this.invulnT <= 0 && this.detainedT <= 0 && d2p < detect * detect && lineClear(cop.x, cop.z, p.x, p.z, this.world)) {
             cop.mode = "chase"; cop.alertT = ESCAPE_LOST_S; cop.timer = 0;
+            this.chased = true;
             sfx.alert();
             this.toast("🚨 Police spotted you! RUN!", "bad");
           }
           break;
         }
         case "chase": {
-          // player is sitting out the time-out — stop hovering, walk away so the
+          // player is sitting out the time-out — stop hovering, walk AWAY so the
           // release never turns into an instant re-catch
           if (this.detainedT > 0) {
-            const wander = freeSpot(this.rnd, this.world, 10, 120);
+            const wander = this.spotAwayFromPlayer(60);
             cop.tx = wander.x; cop.tz = wander.z;
             cop.mode = "return"; cop.timer = 0; cop.alertT = 0;
             break;
@@ -453,7 +480,7 @@ export class GameEngine {
           stepNpc(cop, p.x, p.z, spd, dt, this.world);
           cop.alertT = d2p < detect * detect * 3 ? ESCAPE_LOST_S : cop.alertT - dt;
           if (d2p < 1.9 * 1.9 && this.detainedT <= 0 && this.invulnT <= 0) { this.catchPlayer(cop); }
-          else if (cop.alertT <= 0) { cop.mode = "return"; cop.timer = 0; if (this.stars > 0) this.toast("You lost them! Phew…", "info"); }
+          else if (cop.alertT <= 0) { cop.mode = "return"; cop.timer = 0; }
           break;
         }
         case "celebrate":
@@ -464,9 +491,24 @@ export class GameEngine {
           if (dist2(cop.x, cop.z, cop.tx, cop.tz) < 4) cop.mode = "patrol";
           else stepNpc(cop, cop.tx, cop.tz, POLICE_SPEED * 0.7, dt, this.world);
           if (this.invulnT <= 0 && this.detainedT <= 0 && d2p < detect * 0.8 * (detect * 0.8) && lineClear(cop.x, cop.z, p.x, p.z, this.world)) {
-            cop.mode = "chase"; cop.alertT = ESCAPE_LOST_S; sfx.alert();
+            cop.mode = "chase"; cop.alertT = ESCAPE_LOST_S; this.chased = true; sfx.alert();
           }
           break;
+        }
+      }
+    }
+
+    /* --- escape sweep: player got far / out of reach → police give up & go back --- */
+    if (this.chased && this.detainedT <= 0) {
+      let anyChase = false;
+      for (const cop of this.cops) if (cop.mode === "chase") { anyChase = true; break; }
+      if (!anyChase) {
+        this.clearWanted("🎉 You escaped! The police went back — wanted badge cleared. Play on!");
+        // send every heading-home cop to a spot far away from the player
+        for (const cop of this.cops) {
+          if (cop.mode !== "return") continue;
+          const far = this.spotAwayFromPlayer(75);
+          cop.tx = far.x; cop.tz = far.z;
         }
       }
     }
