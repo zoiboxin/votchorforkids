@@ -1006,6 +1006,41 @@ function ridgeMul(p: Peak, a: number): number {
 const profile = (t: number, k: number) =>
   Math.pow(1 - t, k) * (1 + 0.14 * Math.pow(Math.sin(Math.min(1, t) * Math.PI), 2));
 
+/** Peaks must keep their lowest ring outside this radius — the player wall is at 375. */
+const MOUNTAIN_CLEAR_R = 384;
+
+/** Smallest horizontal distance to origin reached by a peak's base ring. */
+function baseMinRadius(p: Peak): number {
+  const R = p.green ? 10 : 9 + (Math.floor(p.seed) % 3) * 2;
+  const baseR = p.w / 2;
+  let minD = Infinity;
+  for (let j = 0; j < R; j++) {
+    const a = (j / R) * Math.PI * 2;
+    const jRad = (hash2(p.seed, j * 9.1) - 0.5) * p.jit; // ring i = 0 (base)
+    const rr = baseR * profile(0, p.k) * ridgeMul(p, a) * (1 + jRad);
+    const lx = Math.cos(a) * rr * p.sx, lz = Math.sin(a) * rr * p.sz;
+    const cR = Math.cos(p.rot), sR = Math.sin(p.rot);
+    minD = Math.min(minD, Math.hypot(p.x + lx * cR - lz * sR, p.z + lx * sR + lz * cR));
+  }
+  return minD;
+}
+
+/**
+ * Mountain bases are wide and jittered, so several reached INSIDE the playable
+ * wall (worst base vertex at r≈285 with the wall at 375) — the player could walk
+ * straight into them. Nudge each peak radially outward just far enough that its
+ * base ring clears MOUNTAIN_CLEAR_R. Shapes/silhouettes are preserved.
+ */
+function clearPeaks(peaks: Peak[]) {
+  for (const p of peaks) {
+    const m = baseMinRadius(p);
+    if (m < MOUNTAIN_CLEAR_R) {
+      const f = MOUNTAIN_CLEAR_R / m;
+      p.x *= f; p.z *= f;
+    }
+  }
+}
+
 /** Bake every peak & foothill into one merged geometry with per-face rock/snow/grass colors. */
 function buildMountainGeometry(peaks: Peak[]): THREE.BufferGeometry {
   const pos: number[] = [];
@@ -1208,7 +1243,9 @@ function Mountains() {
         green: true,
       };
     });
-    return buildMountainGeometry([...majors, ...shoulders, ...hills]);
+    const peaks = [...majors, ...shoulders, ...hills];
+    clearPeaks(peaks);
+    return buildMountainGeometry(peaks);
   }, []);
 
   const mat = useMemo(() => new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), []);

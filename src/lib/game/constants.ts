@@ -202,7 +202,7 @@ export const DELIVER_RADIUS = 4;
 export const DROP_SCATTER = 3.2;
 
 /* ---------- Police ---------- */
-export const POLICE_COUNT = 9;
+export const POLICE_COUNT = 12;
 export const POLICE_SPEED = 5.9;
 export const POLICE_SPRINT = 7.6;
 export const DETECT_BASE = 13;
@@ -215,7 +215,7 @@ export const STAR_DECAY_S = 45;
 export const ESCAPE_LOST_S = 4.5;
 
 /* ---------- Civilians & rescue ---------- */
-export const CIVILIAN_COUNT = 18;
+export const CIVILIAN_COUNT = 88; // 12 police + 88 civilians = 100 bots, like the old game's room capacity
 export const RESCUE_RADIUS = 3.4;
 export const RESCUE_POINTS = 60;
 

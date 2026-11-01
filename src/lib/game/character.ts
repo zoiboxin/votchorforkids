@@ -603,10 +603,10 @@ export function buildAnimal(kind: AnimalKind3): THREE.Group {
   };
 
   const conf = {
-    cow: { c: "#f7f2e8", s: 1.5, headY: 0.95, headZ: 0.85 },
-    chicken: { c: "#fff3d6", s: 0.55, headY: 0.5, headZ: 0.4 },
-    deer: { c: "#c98a4b", s: 1.1, headY: 1.0, headZ: 0.8 },
-    monkey: { c: "#8a5a3a", s: 0.7, headY: 0.75, headZ: 0.55 },
+    cow: { c: "#f7f2e8", s: 1.7, headY: 0.95, headZ: 0.85 },
+    chicken: { c: "#fff3d6", s: 0.95, headY: 0.5, headZ: 0.4 },
+    deer: { c: "#c98a4b", s: 1.45, headY: 1.0, headZ: 0.8 },
+    monkey: { c: "#8a5a3a", s: 1.1, headY: 0.75, headZ: 0.55 },
   }[kind];
   const dark = kind === "cow" ? "#3a3a3a" : kind === "deer" ? "#8a5a2b" : "#6a4426";
   const belly = kind === "cow" ? "#f7f2e8" : "#e8d5b0";

@@ -138,6 +138,50 @@ export function generateWorld(seed = WORLD_SEED): World {
     }
   }
 
+  /* ---- Delhi-style central vista + full parliament district ----
+   * Built BEFORE the fringe cottages so cottages never spawn on these plots.
+   * Fills the once-empty grounds around Sansad Bhavan: second secretariat row,
+   * flank offices, a vista mall, a national museum, shop arcades and annexe homes. */
+  const SANDSTONE = 0xd8c8a4;
+  // North Block / South Block style offices flanking the vista
+  push(-28, -170, 11, 16, 13, 0, SANDSTONE, TOWER_ROOF);
+  push(28, -170, 11, 16, 13, 0, SANDSTONE, TOWER_ROOF);
+  // second secretariat row beside the podium — Lutyens-style ring around the house
+  push(-33, -194, 11, 14, 12, 0, SANDSTONE, TOWER_ROOF);
+  push(33, -194, 11, 14, 12, 0, SANDSTONE, TOWER_ROOF);
+  // outer flank offices
+  push(-46, -192, 11, 14, 13, 0, SANDSTONE, TOWER_ROOF);
+  push(46, -192, 11, 14, 13, 0, SANDSTONE, TOWER_ROOF);
+  // vista mall (west of the podium) + national museum (east)
+  push(-52, -176, 14, 11, 14, 3, 0xe8e4da, 0x9aa5b1);
+  push(52, -174, 14, 11, 12, 0, SANDSTONE, TOWER_ROOF);
+  // shop arcades facing the vista court (east + west of the gate)
+  for (const side of [-1, 1] as const) {
+    for (let i = 0; i < 3; i++) {
+      push(side * (20 + i * 10.5), -146 - i * 2, 5.2, 3.6, range(rnd, 7, 9.2), 1,
+        SHOP_COLS[buildings.length % SHOP_COLS.length],
+        AWN_COLS[(buildings.length + 1) % AWN_COLS.length],
+        AWN_COLS[(buildings.length + 3) % AWN_COLS.length], -1);
+    }
+  }
+  // benches on the mall/museum forecourt
+  benches.push({ x: -52, z: -165, rot: 0 }, { x: 52, z: -164, rot: 0 });
+  // annexe homes tucked behind the flank offices, inside the ring highway
+  for (const side of [-1, 1] as const) {
+    push(side * 34, -204, 4.2, 3.6, range(rnd, 5.2, 6.6), 2,
+      HOME_COLS[buildings.length % HOME_COLS.length],
+      HOME_ROOFS[buildings.length % HOME_ROOFS.length], 0, -1);
+    push(side * 43, -202, 4.2, 3.6, range(rnd, 5.2, 6.6), 2,
+      HOME_COLS[buildings.length % HOME_COLS.length],
+      HOME_ROOFS[buildings.length % HOME_ROOFS.length], 0, -1);
+  }
+  // India-Gate-style arch legs (the span is drawn by <VistaGate>)
+  push(GATE.x - 10.5, GATE.z, 2.6, 2.6, 14, 0, SANDSTONE, TOWER_ROOF);
+  push(GATE.x + 10.5, GATE.z, 2.6, 2.6, 14, 0, SANDSTONE, TOWER_ROOF);
+  // protest banner arch poles over the main road (cloth drawn by <ProtestBanner>)
+  push(PROTEST_CAMP.x - 13.5, PROTEST_CAMP.z, 1.5, 1.5, 10.5, 0, 0x8a6b4a, TOWER_ROOF);
+  push(PROTEST_CAMP.x + 13.5, PROTEST_CAMP.z, 1.5, 1.5, 10.5, 0, 0x8a6b4a, TOWER_ROOF);
+
   /* ---- suburban fringe cottages (between the grid and the ring highway) ---- */
   let fc = 0;
   while (fc < 18) {
@@ -153,18 +197,6 @@ export function generateWorld(seed = WORLD_SEED): World {
       HOME_ROOFS[buildings.length % HOME_ROOFS.length], 0, z > 0 ? -1 : 1);
     fc++;
   }
-
-  /* ---- Delhi-style central vista: secretariat blocks + gate legs + protest props ---- */
-  const SANDSTONE = 0xd8c8a4;
-  // North Block / South Block style offices flanking the vista
-  push(-28, -170, 11, 16, 13, 0, SANDSTONE, TOWER_ROOF);
-  push(28, -170, 11, 16, 13, 0, SANDSTONE, TOWER_ROOF);
-  // India-Gate-style arch legs (the span is drawn by <VistaGate>)
-  push(GATE.x - 10.5, GATE.z, 2.6, 2.6, 14, 0, SANDSTONE, TOWER_ROOF);
-  push(GATE.x + 10.5, GATE.z, 2.6, 2.6, 14, 0, SANDSTONE, TOWER_ROOF);
-  // protest banner arch poles over the main road (cloth drawn by <ProtestBanner>)
-  push(PROTEST_CAMP.x - 13.5, PROTEST_CAMP.z, 1.5, 1.5, 10.5, 0, 0x8a6b4a, TOWER_ROOF);
-  push(PROTEST_CAMP.x + 13.5, PROTEST_CAMP.z, 1.5, 1.5, 10.5, 0, 0x8a6b4a, TOWER_ROOF);
 
   /* ---- landmarks ---- */
   push(MALL.x, MALL.z, 20, 11, 15, 3, 0xe8e4da, 0x9aa5b1);                 // MEGA MALL
@@ -249,10 +281,10 @@ export function generateWorld(seed = WORLD_SEED): World {
       si++;
     }
   }
-  // a proud cluster right on the parliament plaza, clear of the podium
+  // a proud cluster right on the parliament plaza, clear of the podium and secretariats
   for (let i = 0; i < 6; i++) {
     signs.push({
-      x: (i % 2 === 0 ? -1 : 1) * (17 + (i >> 1) * 3.4), z: -166 - (i % 3) * 2.4,
+      x: (i % 2 === 0 ? -1 : 1) * (13 + (i >> 1) * 3), z: -166 - (i % 3) * 2.4,
       rot: (i % 2 === 0 ? 1 : -1) * 0.4,
       text: SLOGANS[(si + i) % SLOGANS.length], c: (si + i) % 3,
     });

@@ -240,7 +240,8 @@ export function Animals({ engine }: { engine: GameEngine }) {
 /* Items + votes + shadows — all instanced (a handful of draw calls)   */
 /* ------------------------------------------------------------------ */
 const dummy = new THREE.Object3D();
-const ANIMAL_SCALES: Record<string, number> = { cow: 1.5, chicken: 0.55, deer: 1.1, monkey: 0.7 };
+/** Shadow-blob radius multiplier per animal kind — matches buildAnimal conf.s. */
+const ANIMAL_SCALES: Record<string, number> = { cow: 1.7, chicken: 0.95, deer: 1.45, monkey: 1.1 };
 
 export function Pickups({ engine }: { engine: GameEngine }) {
   const { voteMesh, foodMeshes, kinds } = useMemo(() => {
