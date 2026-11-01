@@ -82,6 +82,7 @@ export const sfx = {
   rescue: () => [659, 784, 988].forEach((f, i) => tone(f, 0.14, "sine", 0.4, undefined, i * 0.08)),
   zombie: () => tone(140 + Math.random() * 40, 0.5, "sawtooth", 0.16, 90),
   alert: () => tone(740, 0.1, "square", 0.22, 988),
+  siren: () => { tone(620, 0.26, "square", 0.15, 900); tone(900, 0.26, "square", 0.15, 620, 0.26); tone(620, 0.3, "square", 0.12, 900, 0.52); },
   win: () => [523, 659, 784, 1047, 1319].forEach((f, i) => tone(f, 0.3, "triangle", 0.42, undefined, i * 0.12)),
   lose: () => [400, 340, 280, 220].forEach((f, i) => tone(f, 0.28, "sawtooth", 0.25, undefined, i * 0.16)),
   click: () => tone(700, 0.05, "triangle", 0.25),

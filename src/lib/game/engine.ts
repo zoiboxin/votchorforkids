@@ -1,15 +1,16 @@
 import {
-  AGE_STATS, ANIMAL_SET, BALLOT, CARRY_RADIUS, CAR_HIT_CD, CAR_HIT_DMG, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT,
-  CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, DAY_SECONDS,
+  AGE_STATS, ANIMAL_SET, BALLOT, CARRY_RADIUS, CAR_HIT_CD, CAR_HIT_DMG, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
+  CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, CONFISCATE_FINE, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
   ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
   ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUNGLE_RADIUS, LAND_SQUASH_S, MAX_CARRY, MAX_CIV_HELD, PICKUP_RADIUS,
-  POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, RELEASE_GRACE_S, RESCUE_POINTS,
-  RESCUE_RADIUS, SPAWN, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
-  ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, type AnimalKind, type Appearance, type Zone, zoneOf, ZONE_TOAST,
+  POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, RELEASE_GRACE_S, RESCUE_POINTS,
+  RESCUE_RADIUS, SPAWN, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, VAN_AXLE, VAN_LOAD_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
+  WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
+  ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, stationCage, stationGate, type AnimalKind, type Appearance, type Zone, zoneOf, ZONE_TOAST,
 } from "./constants";
 import { clamp, mulberry32, range } from "./rng";
-import { freeSpot, lineClear, resolve, RING_R, type World } from "./worldgen";
+import { freeSpot, lineClear, resolve, RING_R, ROADS, type World } from "./worldgen";
 import { advanceClock, nightFactor, newBody, stepBody, stepNpc, type Body } from "./sim";
 import { sfx } from "./audio";
 
@@ -28,6 +29,8 @@ export interface Npc {
   copCd?: number;
   /** main-road marcher: stays on the protest strip instead of roaming the city */
   protest?: boolean;
+  /** civilian only: id of the police van driving them to the station (unset = no van yet) */
+  vanId?: number;
 }
 export interface Zombie { id: number; x: number; z: number; vx: number; vz: number; face: number; phase: number; touchCd: number }
 export interface Animal { id: number; kind: AnimalKind; x: number; z: number; vx: number; vz: number; face: number; tx: number; tz: number; timer: number; phase: number; resting: boolean }
@@ -43,6 +46,20 @@ export interface TrafficCar {
   x: number; z: number; rot: number;               // derived each step — solid for collision
 }
 
+export type VanState = "idle" | "dispatch" | "load" | "toStation" | "unload" | "return";
+/** Police van — drives captured players & civilians from the arrest spot to the nearest station. */
+export interface PoliceVan {
+  id: number; station: number;                     // home station index
+  x: number; z: number; rot: number;
+  state: VanState;
+  /** road-following waypoints; the last one is the exact goal */
+  path: { x: number; z: number }[];
+  goal: { x: number; z: number };                  // ultimate destination (for stall rebuilds)
+  timer: number; stallT: number; rebuilds: number;
+  prisoner: { kind: "player" } | { kind: "civ"; id: number } | null;
+}
+export type ArrestState = "free" | "called" | "riding" | "locked";
+
 export interface HudData {
   hp: number; stamina: number; stars: number; carried: number; delivered: number; total: number;
   points: number; rescues: number; support: number; zone: Zone; clock: number; night: number;
@@ -52,11 +69,48 @@ export interface HudData {
   px: number; pz: number; // player world coords — bottom-center location chip
   /** bump timestamp + amounts of the last eaten item — HUD plays a floating +❤/+⚡ chip */
   gain: { hp: number; stamina: number; at: number };
+  /** arrest pipeline stage — HUD swaps the banner text accordingly */
+  arrest: ArrestState; station: string;
 }
 
 export type ToastFn = (msg: string, kind?: "info" | "good" | "bad") => void;
 
 const dist2 = (ax: number, az: number, bx: number, bz: number) => (ax - bx) * (ax - bx) + (az - bz) * (az - bz);
+
+/** Index of the road line closest to a coordinate. */
+const nearestRoadIdx = (v: number): number => {
+  let bi = 0, bd = Infinity;
+  for (let i = 0; i < ROADS.length; i++) {
+    const d = Math.abs(ROADS[i] - v);
+    if (d < bd) { bd = d; bi = i; }
+  }
+  return bi;
+};
+
+/**
+ * Route a van along the street grid — long legs always follow road centre lines
+ * (guaranteed clear of buildings), with short entry/exit hops at each end.
+ * Path: sideways hop onto a road → drive along it → turn → exit hop to the goal.
+ */
+function roadPath(fx: number, fz: number, tx: number, tz: number): { x: number; z: number }[] {
+  const R0x = ROADS[nearestRoadIdx(fx)];
+  const R1z = ROADS[nearestRoadIdx(tz)];
+  const R1x = ROADS[nearestRoadIdx(tx)];
+  const pts = [
+    { x: R0x, z: fz },      // hop onto the vertical road nearest the start
+    { x: R0x, z: R1z },     // cruise along it to the horizontal road nearest the goal
+    { x: R1x, z: R1z },     // turn and cruise to the goal's road
+    { x: tx, z: tz },       // short exit hop (goal sits near R1x by construction)
+  ];
+  // drop near-duplicate waypoints (van may already be on a road line)
+  const out: { x: number; z: number }[] = [];
+  for (const p of pts) {
+    const prev = out.length ? out[out.length - 1] : { x: fx, z: fz };
+    if (Math.hypot(p.x - prev.x, p.z - prev.z) > 1.6) out.push(p);
+  }
+  if (!out.length) out.push({ x: tx, z: tz });
+  return out;
+}
 
 export class GameEngine {
   world: World;
@@ -86,10 +140,17 @@ export class GameEngine {
   animals: Animal[] = [];
   items: ItemEnt[] = [];
   traffic: TrafficCar[] = [];
+  vans: PoliceVan[] = [];
   fxQueue: Fx[] = [];
 
   faintT = 0;   // >0 while the world spins after a car bonk — input is ignored, stars orbit
   carHitCd = 0; // old-game hitCd — no double-bonks from the same bumper
+
+  /** Arrest pipeline: called (van coming) → riding (in the van) → locked (at the station) → free. */
+  arrest: ArrestState = "free";
+  arrestStation = -1;
+  playerInVan = false;
+  private vanNeeded = false;
 
   points = 0; rescues = 0; caughtCount = 0;
   delivered = 0;
@@ -156,7 +217,7 @@ export class GameEngine {
     this.toast(msg, "good");
   }
 
-  /** Random free city spot for the post-detention respawn — comfortably away from every cop. */
+  /** Random free city spot — still used for the dizzy-stun respawn. */
   private cityRespawnSpot(): { x: number; z: number } {
     for (let i = 0; i < 24; i++) {
       const t = freeSpot(this.rnd, this.world, 10, CITY_RADIUS - 10);
@@ -169,6 +230,28 @@ export class GameEngine {
     return freeSpot(this.rnd, this.world, 10, CITY_RADIUS - 10); // fallback: any city spot
   }
 
+  /** Index of the station closest to a point — vans always take the nearest one. */
+  private nearestStationIdx(x: number, z: number): number {
+    let best = 0, bd = Infinity;
+    for (let i = 0; i < POLICE_STATIONS.length; i++) {
+      const s = POLICE_STATIONS[i];
+      const d = (s.x - x) * (s.x - x) + (s.z - z) * (s.z - z);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  private civById(id: number): Npc | undefined { return this.civs.find((c) => c.id === id); }
+
+  /** True if some van is actually on its way to (or carrying) this civilian. */
+  private vanAssigned(c: Npc): boolean {
+    for (const v of this.vans) {
+      const pr = v.prisoner;
+      if (pr && pr.kind === "civ" && pr.id === c.id) return true;
+    }
+    return false;
+  }
+
   /** Civilians currently in detention — capped so police arrests never empty the city. */
   private heldCivs(): number {
     let n = 0;
@@ -178,8 +261,8 @@ export class GameEngine {
 
   private spawnAll() {
     const r = this.rnd;
-    // votes
-    const bands: [number, number][] = [[16, 120], [150, 215], [235, 335]];
+    // votes — spread across the bigger city
+    const bands: [number, number][] = [[16, 140], [160, 260], [280, 380]];
     for (let i = 0; i < TOTAL_VOTES; i++) {
       const [a, b] = bands[i < 7 ? 0 : i < 12 ? 1 : 2];
       const p = freeSpot(r, this.world, a, b);
@@ -220,8 +303,15 @@ export class GameEngine {
       }
     // items
     for (let i = 0; i < ITEM_COUNT; i++) {
-      const p = freeSpot(r, this.world, 10, 340);
+      const p = freeSpot(r, this.world, 10, 430);
       this.items.push({ id: this.nid(), def: Math.floor(r() * ITEMS.length), x: p.x, z: p.z, active: true, respawn: 0 });
+    }
+    // police van fleet — one van per station, parked at its gate
+    for (let i = 0; i < POLICE_STATIONS.length; i++) {
+      const st = POLICE_STATIONS[i];
+      const g = stationGate(st);
+      const ix = g.x + Math.sign(st.x) * 4, iz = g.z + Math.sign(st.z) * 4;
+      this.vans.push({ id: this.nid(), station: i, x: ix, z: iz, rot: Math.atan2(st.x - ix, st.z - iz), state: "idle", path: [], goal: { x: ix, z: iz }, timer: 0, stallT: 0, rebuilds: 0, prisoner: null });
     }
     // ring-road traffic — two lanes, both directions, mixed body styles
     for (let i = 0; i < TRAFFIC_COUNT; i++) {
@@ -253,9 +343,20 @@ export class GameEngine {
     this.flipT = 0; this.squashT = 0; this.faintT = 0; this.carHitCd = 0;
     this.carriedVotes = []; this.delivered = 0; this.points = 0; this.rescues = 0; this.caughtCount = 0;
     this.detainedT = 0; this.invulnT = 8; this.elapsed = 0; this.won = false; this.clock = 0.3;
-    for (const v of this.votes) { v.state = "world"; const p = freeSpot(this.rnd, this.world, 16, 330); v.x = p.x; v.z = p.z; }
+    this.arrest = "free"; this.arrestStation = -1; this.playerInVan = false; this.vanNeeded = false;
+    for (const v of this.votes) { v.state = "world"; const p = freeSpot(this.rnd, this.world, 16, 420); v.x = p.x; v.z = p.z; }
     for (const it of this.items) { it.active = true; it.respawn = 0; }
-    for (const c of this.civs) c.mode = "wander";
+    for (const c of this.civs) { c.mode = "wander"; c.vanId = undefined; }
+    // send every van home and park it at its gate
+    for (const van of this.vans) {
+      const st = POLICE_STATIONS[van.station];
+      const g = stationGate(st);
+      van.x = g.x + Math.sign(st.x) * 4; van.z = g.z + Math.sign(st.z) * 4;
+      van.rot = Math.atan2(st.x - van.x, st.z - van.z);
+      van.goal = { x: van.x, z: van.z };
+      van.path = []; van.timer = 0; van.stallT = 0; van.rebuilds = 0;
+      van.state = "idle"; van.prisoner = null;
+    }
     // scatter cops away from spawn & calm them down so restarts are fair
     for (const cop of this.cops) {
       const sp = this.safeCopSpot();
@@ -295,23 +396,26 @@ export class GameEngine {
   }
 
   private catchPlayer(cop: Npc) {
-    const carried = this.carriedVotes.length;
-    this.dropVotes(this.player.x, this.player.z);
     this.caughtCount++;
     this.stars = Math.min(5, this.stars + 1);
     this.starTimer = STAR_DECAY_S;
     this.hp = Math.max(1, this.hp - 8);
     this.hurtT = HURT_FLASH_S;
-    this.detainedT = DETAIN_SECONDS;
-    this.invulnT = RELEASE_GRACE_S; // long grace after release — time to run the other way
+    this.detainedT = DETAIN_SECONDS;   // frozen during the van ride — counts down once locked up
+    this.invulnT = RELEASE_GRACE_S;
+    this.arrest = "called";
+    this.arrestStation = this.nearestStationIdx(this.player.x, this.player.z);
+    this.vanNeeded = true;             // updateVans() dispatches the nearest free van
     // the catcher celebrates, then walks ALL the way back — far away from the player
     cop.mode = "celebrate"; cop.timer = 2.5;
     const spot = this.spotAwayFromPlayer(70);
     cop.tx = spot.x; cop.tz = spot.z;
     sfx.caught();
+    sfx.siren();
+    const carried = this.carriedVotes.length;
     this.toast(carried > 0
-      ? `Caught! The police took back ${carried} vote${carried > 1 ? "s" : ""}… ⭐ Wanted up! Sit out ${DETAIN_SECONDS}s, then respawn in the city.`
-      : `Caught for suspicious giggling! Sit out ${DETAIN_SECONDS}s — then respawn somewhere new in the city.`, "bad");
+      ? `🚔 Caught! Police called a van — you and your ${carried} vote${carried > 1 ? "s" : ""} are going to the station…`
+      : `🚔 Caught for suspicious giggling! A police van is coming to take you in…`, "bad");
   }
 
   private deliver() {
@@ -340,6 +444,12 @@ export class GameEngine {
   }
 
   private dizzyRespawn() {
+    // if a van was taking us in, call it off
+    for (const van of this.vans) {
+      if (van.prisoner?.kind === "player") this.abortVan(van);
+    }
+    this.playerInVan = false;
+    this.arrest = "free"; this.arrestStation = -1; this.vanNeeded = false;
     this.player.x = SPAWN.x; this.player.z = SPAWN.z; this.player.y = 0;
     this.player.vx = this.player.vz = 0;
     this.hp = 60;
@@ -348,6 +458,204 @@ export class GameEngine {
     this.invulnT = 3;
     this.dropVotes(SPAWN.x + 2, SPAWN.z + 2);
     this.toast("Whoa, everything is spinning… a kind chaiwala helped you.", "bad");
+  }
+
+  /* ---------------- police van fleet: arrest transport ---------------- */
+
+  /** Drive a van along its waypoint path; returns true once the FINAL goal is reached. */
+  private stepVan(v: PoliceVan, dt: number): boolean {
+    const target = v.path[0];
+    if (!target) return true;
+    const dx = target.x - v.x, dz = target.z - v.z;
+    const d = Math.hypot(dx, dz);
+    if (d > 0.05) {
+      const step = Math.min(d, VAN_SPEED * dt);
+      const pt = { x: v.x + (dx / d) * step, z: v.z + (dz / d) * step };
+      resolve(pt, VAN_RADIUS, this.world); // slide around the odd parked car
+      const got = Math.hypot(pt.x - v.x, pt.z - v.z);
+      // stall watchdog: wedged against a corner → skip the waypoint, rebuild if hopeless
+      if (got < step * 0.25) {
+        v.stallT += dt;
+        if (v.stallT > 1.0) {
+          v.stallT = 0;
+          if (v.path.length > 1) v.path.shift();
+          else if (v.rebuilds < 4) { v.rebuilds++; v.path = roadPath(v.x, v.z, v.goal.x, v.goal.z); }
+          else return true; // give up gracefully — close enough for a cartoon van
+        }
+      } else v.stallT = 0;
+      v.x = pt.x; v.z = pt.z;
+      const tr = Math.atan2(dx, dz);
+      let dd = tr - v.rot; dd = Math.atan2(Math.sin(dd), Math.cos(dd));
+      v.rot += dd * Math.min(1, dt * 5);
+    }
+    if (d < 3) {
+      v.path.shift();
+      return v.path.length === 0;
+    }
+    return false;
+  }
+
+  /** Van aborted mid-job (prisoner rescued/freed) — drive home and park. */
+  private abortVan(van: PoliceVan, civ?: Npc | undefined) {
+    if (civ && civ.vanId === van.id) civ.vanId = undefined;
+    van.prisoner = null;
+    const st = POLICE_STATIONS[van.station];
+    const g = stationGate(st);
+    const home = { x: g.x + Math.sign(st.x) * 4, z: g.z + Math.sign(st.z) * 4 };
+    van.goal = home;
+    van.path = roadPath(van.x, van.z, home.x, home.z);
+    van.state = "return";
+  }
+
+  /** The van doors open at the station: impound carried votes in the cage + fine, start the lock-up clock. */
+  private lockUpPlayer(stationIdx: number) {
+    const st = POLICE_STATIONS[stationIdx];
+    const gate = stationGate(st);
+    const p = this.player;
+    p.x = gate.x; p.z = gate.z; p.y = 0; p.vx = p.vz = p.vy = 0;
+    this.playerInVan = false;
+    this.arrest = "locked";
+    this.arrestStation = stationIdx;
+    const cage = stationCage(st);
+    const taken = this.carriedVotes.length;
+    for (const v of this.carriedVotes) {
+      const a = Math.random() * Math.PI * 2, d = range(this.rnd, 0.6, 2.6);
+      v.x = cage.x + Math.cos(a) * d; v.z = cage.z + Math.sin(a) * d; v.state = "world";
+    }
+    this.carriedVotes = [];
+    this.points = Math.max(0, this.points - CONFISCATE_FINE);
+    this.detainedT = DETAIN_SECONDS;
+    this.toast(taken > 0
+      ? `⚖️ Locked up at ${st.name}! ${taken} vote${taken > 1 ? "s" : ""} impounded in the cage + ${CONFISCATE_FINE} point fine — steal them back after release!`
+      : `⚖️ Locked up at ${st.name}! ${CONFISCATE_FINE} point fine — behave out there!`, "bad");
+  }
+
+  /** Run the whole van fleet: dispatch → pickup → transport → jail → return home. */
+  private updateVans(dt: number) {
+    const p = this.player;
+    /* --- dispatching: player van first, then vans for detained civilians --- */
+    if (this.vanNeeded) {
+      let best: PoliceVan | null = null, bd = Infinity;
+      for (const v of this.vans) {
+        if (v.state !== "idle") continue;
+        const d = (v.x - p.x) * (v.x - p.x) + (v.z - p.z) * (v.z - p.z);
+        if (d < bd) { bd = d; best = v; }
+      }
+      if (best) {
+        best.state = "dispatch"; best.prisoner = { kind: "player" };
+        best.goal = { x: p.x, z: p.z };
+        best.path = roadPath(best.x, best.z, p.x, p.z);
+        best.rebuilds = 0; best.stallT = 0;
+        this.vanNeeded = false;
+        sfx.siren();
+      }
+    }
+    for (const c of this.civs) {
+      if (c.mode !== "detained") { c.vanId = undefined; continue; } // lazy cleanup — never trust a stale claim
+      if (this.vanAssigned(c)) continue; // a van is genuinely handling this civ
+      let best: PoliceVan | null = null, bd = Infinity;
+      for (const v of this.vans) {
+        if (v.state !== "idle") continue;
+        const d = (v.x - c.x) * (v.x - c.x) + (v.z - c.z) * (v.z - c.z);
+        if (d < bd) { bd = d; best = v; }
+      }
+      if (!best) break; // fleet busy — retry next frame
+      best.state = "dispatch"; best.prisoner = { kind: "civ", id: c.id };
+      best.goal = { x: c.x, z: c.z };
+      best.path = roadPath(best.x, best.z, c.x, c.z);
+      best.rebuilds = 0; best.stallT = 0;
+      c.vanId = best.id;
+    }
+
+    /* --- driving --- */
+    for (const van of this.vans) {
+      const pr = van.prisoner;
+      switch (van.state) {
+        case "idle":
+          break;
+        case "dispatch": {
+          if (pr?.kind === "civ") {
+            const c = this.civById(pr.id);
+            if (!c || c.mode !== "detained") { this.abortVan(van, c); break; }
+            // the runner drags the pickup point along — re-route periodically
+            van.goal = { x: c.x, z: c.z };
+            if (van.path.length === 0 || Math.hypot(van.path[van.path.length - 1].x - c.x, van.path[van.path.length - 1].z - c.z) > 18) {
+              van.path = roadPath(van.x, van.z, c.x, c.z);
+            }
+          }
+          if (this.stepVan(van, dt)) { van.state = "load"; van.timer = VAN_LOAD_S; }
+          break;
+        }
+        case "load": {
+          van.timer -= dt;
+          if (pr?.kind === "civ") {
+            const c = this.civById(pr.id);
+            if (!c || c.mode !== "detained") { this.abortVan(van, c); break; }
+            c.x += (van.x - c.x) * Math.min(1, dt * 4); c.z += (van.z - c.z) * Math.min(1, dt * 4);
+          } else if (pr?.kind === "player") {
+            p.x += (van.x - p.x) * Math.min(1, dt * 4); p.z += (van.z - p.z) * Math.min(1, dt * 4);
+          }
+          if (van.timer <= 0) {
+            if (pr?.kind === "player") {
+              this.playerInVan = true;
+              this.arrest = "riding";
+              this.toast("🚓 In the van! Riding to the police station…", "info");
+            } else if (pr?.kind === "civ") {
+              const c = this.civById(pr.id);
+              if (c) { c.timer = CIV_JAIL_S; c.x = van.x; c.z = van.z; }
+            }
+            const st = POLICE_STATIONS[van.station];
+            const g = stationGate(st);
+            van.goal = { x: g.x, z: g.z };
+            van.path = roadPath(van.x, van.z, g.x, g.z);
+            van.rebuilds = 0; van.stallT = 0;
+            van.state = "toStation";
+            sfx.siren();
+          }
+          break;
+        }
+        case "toStation": {
+          if (this.stepVan(van, dt)) { van.state = "unload"; van.timer = VAN_UNLOAD_S; }
+          if (pr?.kind === "player") { p.x = van.x; p.z = van.z; p.y = 0; p.vx = p.vz = p.vy = 0; }
+          else if (pr?.kind === "civ") {
+            const c = this.civById(pr.id);
+            if (c) { c.x = van.x; c.z = van.z; }
+          }
+          break;
+        }
+        case "unload": {
+          van.timer -= dt;
+          if (van.timer <= 0) {
+            const st = POLICE_STATIONS[van.station];
+            if (pr?.kind === "player") {
+              this.lockUpPlayer(van.station);
+            } else if (pr?.kind === "civ") {
+              const c = this.civById(pr.id);
+              if (c && c.mode === "detained") {
+                const cage = stationCage(st);
+                const slot = c.id % 5;
+                c.x = cage.x + [0, -1.6, 1.6, -1.6, 1.6][slot];
+                c.z = cage.z + [0, -1.6, -1.6, 1.6, 1.6][slot];
+                c.vanId = undefined;
+                if (dist2(c.x, c.z, p.x, p.z) < 60 * 60) this.toast(`${c.name} was driven to the ${st.name} cage — press E there to free them!`, "info");
+              } else if (c) c.vanId = undefined;
+            }
+            van.prisoner = null;
+            const g = stationGate(st);
+            const home = { x: g.x + Math.sign(st.x) * 4, z: g.z + Math.sign(st.z) * 4 };
+            van.goal = home;
+            van.path = roadPath(van.x, van.z, home.x, home.z);
+            van.rebuilds = 0; van.stallT = 0;
+            van.state = "return";
+          }
+          break;
+        }
+        case "return": {
+          if (this.stepVan(van, dt)) van.state = "idle";
+          break;
+        }
+      }
+    }
   }
 
   /* ---------------- inventory (food in pockets) ---------------- */
@@ -429,21 +737,40 @@ export class GameEngine {
     this.faintT = Math.max(0, this.faintT - dt);
     this.carHitCd = Math.max(0, this.carHitCd - dt);
     if (this.detainedT > 0) {
-      this.detainedT -= dt;
-      p.vx = p.vz = 0;
-      if (this.detainedT <= 0) {
-        // time served — respawn at a random city spot far from every cop, badge cleared
-        const spot = this.cityRespawnSpot();
-        this.player.x = spot.x; this.player.z = spot.z;
-        this.player.y = 0; this.player.vx = 0; this.player.vz = 0;
-        // re-aim every walking-home cop away from the fresh respawn
-        for (const cop of this.cops) {
-          if (cop.mode !== "return") continue;
-          const far = this.spotAwayFromPlayer(60);
-          cop.tx = far.x; cop.tz = far.z;
+      // the clock only runs once the player is locked up at the station (or dizzy-stunned) —
+      // while the van is being called or riding, time itself is frozen
+      const counting = this.arrest === "locked" || this.arrest === "free";
+      if (counting) {
+        this.detainedT -= dt;
+        if (this.detainedT <= 0) {
+          if (this.arrest === "locked") {
+            // time served — released right at the station gate, badge cleared, cops pushed back
+            const st = POLICE_STATIONS[this.arrestStation];
+            this.arrest = "free"; this.arrestStation = -1;
+            this.invulnT = RELEASE_GRACE_S;
+            for (const cop of this.cops) {
+              if (dist2(cop.x, cop.z, p.x, p.z) < 45 * 45) {
+                const far = this.spotAwayFromPlayer(70);
+                cop.tx = far.x; cop.tz = far.z;
+                if (cop.mode === "chase" || cop.mode === "celebrate") { cop.mode = "return"; cop.timer = 0; }
+              }
+            }
+            this.clearWanted(`🚪 Released at the ${st.name} gate — time served, play on!`);
+          } else {
+            // dizzy-stun expiry — fresh random city spot far from every cop
+            const spot = this.cityRespawnSpot();
+            this.player.x = spot.x; this.player.z = spot.z;
+            this.player.y = 0; this.player.vx = 0; this.player.vz = 0;
+            for (const cop of this.cops) {
+              if (cop.mode !== "return") continue;
+              const far = this.spotAwayFromPlayer(60);
+              cop.tx = far.x; cop.tz = far.z;
+            }
+            this.clearWanted("⏰ Time served! You respawned at a new city spot — the police are far away. Play on!");
+          }
         }
-        this.clearWanted("⏰ Time served! You respawned at a new city spot — the police are far away. Play on!");
       }
+      p.vx = p.vz = 0;
     } else {
       this.invulnT = Math.max(0, this.invulnT - dt);
       const prevY = p.y;
@@ -513,6 +840,24 @@ export class GameEngine {
       }
     }
 
+    /* --- police van fleet: transport prisoners to the nearest station --- */
+    this.updateVans(dt);
+    // vans are solid — shove the player out of their footprint (no bonk, police don't ram kids)
+    if (this.detainedT <= 0) {
+      for (const van of this.vans) {
+        const fx = Math.sin(van.rot), fz = Math.cos(van.rot);
+        for (const off of [VAN_AXLE, -VAN_AXLE]) {
+          const cx = van.x + fx * off, cz = van.z + fz * off;
+          const dx = p.x - cx, dz = p.z - cz, rr = VAN_RADIUS + 0.55;
+          const d2v = dx * dx + dz * dz;
+          if (d2v >= rr * rr) continue;
+          const d = Math.sqrt(d2v) || 0.01;
+          p.x = cx + (dx / d) * rr;
+          p.z = cz + (dz / d) * rr;
+        }
+      }
+    }
+
     // wanted star decay
     if (this.stars > 0) {
       this.starTimer -= dt;
@@ -520,20 +865,22 @@ export class GameEngine {
     }
 
     /* --- votes --- */
-    if (this.carriedVotes.length < MAX_CARRY && !this.won) {
-      for (const v of this.votes) {
-        if (v.state !== "world") continue;
-        if (dist2(p.x, p.z, v.x, v.z) < CARRY_RADIUS * CARRY_RADIUS) {
-          v.state = "carried";
-          this.carriedVotes.push(v);
-          this.points += POINTS_PICKUP;
-          sfx.pickup();
-          this.toast(`Vote snatched! (${this.carriedVotes.length}/${MAX_CARRY} carried)`, "good");
-          break;
+    if (this.detainedT <= 0 && !this.won) {
+      if (this.carriedVotes.length < MAX_CARRY) {
+        for (const v of this.votes) {
+          if (v.state !== "world") continue;
+          if (dist2(p.x, p.z, v.x, v.z) < CARRY_RADIUS * CARRY_RADIUS) {
+            v.state = "carried";
+            this.carriedVotes.push(v);
+            this.points += POINTS_PICKUP;
+            sfx.pickup();
+            this.toast(`Vote snatched! (${this.carriedVotes.length}/${MAX_CARRY} carried)`, "good");
+            break;
+          }
         }
       }
+      if (this.carriedVotes.length > 0 && dist2(p.x, p.z, BALLOT.x, BALLOT.z) < DELIVER_RADIUS * DELIVER_RADIUS) this.deliver();
     }
-    if (this.carriedVotes.length > 0 && dist2(p.x, p.z, BALLOT.x, BALLOT.z) < DELIVER_RADIUS * DELIVER_RADIUS) this.deliver();
 
     /* --- items: walk over food to pocket it, use it later from the HUD --- */
     for (const it of this.items) {
@@ -542,6 +889,7 @@ export class GameEngine {
         if (it.respawn <= 0) it.active = true;
         continue;
       }
+      if (this.detainedT > 0) continue; // locked up — no foraging from the cell
       if (dist2(p.x, p.z, it.x, it.z) < PICKUP_RADIUS * PICKUP_RADIUS) {
         const d = ITEMS[it.def];
         let slot = this.inv.find((s) => s.def === it.def);
@@ -796,6 +1144,8 @@ export class GameEngine {
       points: this.points, rescues: this.rescues, support: this.rescues,
       zone: this.zone, clock: this.clock, night: nightFactor(this.clock),
       detained: this.detainedT > 0, detainLeft: Math.max(0, this.detainedT),
+      arrest: this.arrest,
+      station: this.arrestStation >= 0 ? POLICE_STATIONS[this.arrestStation].name : "",
       prompt, policeNear,
       civilians: this.civs.length, police: this.cops.length,
       won: this.won, elapsed: this.elapsed,

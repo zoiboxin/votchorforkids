@@ -4,13 +4,13 @@ import { useLayoutEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  BALLOT, CITY_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, PARLIAMENT,
+  BALLOT, CITY_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, PARLIAMENT, POLICE_STATIONS, stationCage, stationGate,
 } from "@/lib/game/constants";
 import {
   AVENUE, GATE, generateWorld, HOSPITAL, MALL, MAIN_ROAD, PARK, ROAD_W, ROADS, RING_R, RING_W, SCHOOL, PROTEST_CAMP,
   type World,
 } from "@/lib/game/worldgen";
-import { buildBallotBox } from "@/lib/game/character";
+import { buildBallotBox, nameTag } from "@/lib/game/character";
 import { mulberry32, range } from "@/lib/game/rng";
 import { nightFactor } from "@/lib/game/sim";
 import type { GameEngine } from "@/lib/game/engine";
@@ -39,7 +39,7 @@ function Ring({ a, b, color, y }: { a: number; b: number; color: string; y: numb
 
 /* ------------------------- roads: grid + main road + ring highway + vista ------------------------- */
 function Roads() {
-  const SPAN = 250;
+  const SPAN = 320;
   const dashes = useMemo(() => {
     const out: { x: number; z: number; rot: number }[] = [];
     for (const k of ROADS)
@@ -102,7 +102,7 @@ function Roads() {
   }, [dashes, ringDashes]);
   return (
     <>
-      <instancedMesh ref={lane} args={[undefined, undefined, 11]}>
+      <instancedMesh ref={lane} args={[undefined, undefined, 2 * ROADS.length + 2]}>
         <planeGeometry />
         <meshLambertMaterial color="#4a4a52" />
       </instancedMesh>
@@ -1071,8 +1071,8 @@ function ridgeMul(p: Peak, a: number): number {
 const profile = (t: number, k: number) =>
   Math.pow(1 - t, k) * (1 + 0.14 * Math.pow(Math.sin(Math.min(1, t) * Math.PI), 2));
 
-/** Peaks must keep their lowest ring outside this radius — the player wall is at 375. */
-const MOUNTAIN_CLEAR_R = 384;
+/** Peaks must keep their lowest ring outside this radius — the player wall is at 452. */
+const MOUNTAIN_CLEAR_R = 462;
 
 /** Smallest horizontal distance to origin reached by a peak's base ring. */
 function baseMinRadius(p: Peak): number {
@@ -1458,6 +1458,177 @@ function BallotBox() {
   );
 }
 
+/* ------------------------- police stations: signs, beacons, jail cages ------------------------- */
+function makePoliceSignTexture(): THREE.CanvasTexture {
+  const c = document.createElement("canvas");
+  c.width = 256; c.height = 96;
+  const ctx = c.getContext("2d")!;
+  ctx.fillStyle = "#1d2a4a";
+  ctx.fillRect(0, 0, 256, 96);
+  ctx.strokeStyle = "#f7c948";
+  ctx.lineWidth = 6;
+  ctx.strokeRect(4, 4, 248, 88);
+  ctx.font = "700 44px ui-sans-serif, system-ui, sans-serif";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillStyle = "#f2f4f0";
+  ctx.fillText("POLICE", 128, 40);
+  ctx.font = "26px system-ui, sans-serif";
+  ctx.fillText("🚓 🚨", 128, 74);
+  const tex = new THREE.CanvasTexture(c);
+  tex.anisotropy = 4;
+  return tex;
+}
+
+function PoliceStations() {
+  const signTex = useMemo(() => makePoliceSignTexture(), []);
+  const rails = useRef<THREE.InstancedMesh>(null!);
+  const beaconMat = useMemo(() => new THREE.MeshBasicMaterial({ color: "#ff4d5e", transparent: true, opacity: 0.95 }), []);
+  // one gate sign post + board per station
+  const signs = useMemo(() => POLICE_STATIONS.map((st) => {
+    const g = stationGate(st);
+    return { x: g.x + Math.sign(st.x) * 8.5, z: g.z + Math.sign(st.z) * 8.5, rot: Math.atan2(-Math.sign(st.x), -Math.sign(st.z)) };
+  }), []);
+  // cage perimeter rails: 8 segments × 2 heights per station, one instanced draw call
+  useLayoutEffect(() => {
+    let i = 0;
+    for (const st of POLICE_STATIONS) {
+      const cg = stationCage(st);
+      const R = 3.4;
+      const corners = [[-R, -R], [R, -R], [R, R], [-R, R]] as const;
+      for (let s = 0; s < 4; s++) {
+        const [ax, az] = corners[s], [bx, bz] = corners[(s + 1) % 4];
+        const mx = cg.x + (ax + bx) / 2, mz = cg.z + (az + bz) / 2;
+        const len = Math.hypot(bx - ax, bz - az);
+        const horiz = Math.abs(bz - az) < 0.01;
+        for (const y of [1.35, 2.45]) {
+          tmp.rotation.set(0, horiz ? 0 : Math.PI / 2, 0);
+          tmp.position.set(mx, y, mz);
+          tmp.scale.set(len, 0.09, 0.09);
+          tmp.updateMatrix();
+          rails.current.setMatrixAt(i++, tmp.matrix);
+        }
+      }
+    }
+    rails.current.instanceMatrix.needsUpdate = true;
+    tmp.rotation.set(0, 0, 0); tmp.scale.setScalar(1);
+  }, []);
+  // beacons blink red ↔ amber like a parked patrol car's light bar
+  useFrame(() => {
+    const t = performance.now() / 1000;
+    beaconMat.color.set(t % 0.9 < 0.45 ? "#ff4d5e" : "#ffc45e");
+  });
+  return (
+    <>
+      {POLICE_STATIONS.map((st, i) => {
+        const cg = stationCage(st);
+        const g = stationGate(st);
+        const s = signs[i];
+        return (
+          <group key={i}>
+            {/* gate asphalt pad where the van parks */}
+            <mesh rotation-x={-Math.PI / 2} position={[g.x, 0.05, g.z]}>
+              <circleGeometry args={[3.6, 20]} />
+              <meshLambertMaterial color="#3f3f47" />
+            </mesh>
+            {/* rooftop beacon */}
+            <mesh position={[st.x, 10.6, st.z]}>
+              <sphereGeometry args={[0.42, 10, 8]} />
+              <meshBasicMaterial material={beaconMat} />
+            </mesh>
+            {/* jail cage floor */}
+            <mesh rotation-x={-Math.PI / 2} position={[cg.x, 0.04, cg.z]}>
+              <circleGeometry args={[3.8, 20]} />
+              <meshLambertMaterial color="#8d8d96" />
+            </mesh>
+            {/* gate sign post + double-sided board */}
+            <mesh position={[s.x, 2.5, s.z]}>
+              <cylinderGeometry args={[0.09, 0.12, 5, 6]} />
+              <meshLambertMaterial color="#3a3f46" />
+            </mesh>
+            <group position={[s.x, 5.4, s.z]} rotation-y={s.rot}>
+              <mesh>
+                <planeGeometry args={[4.6, 1.75]} />
+                <meshBasicMaterial map={signTex} side={THREE.DoubleSide} />
+              </mesh>
+            </group>
+          </group>
+        );
+      })}
+      <instancedMesh ref={rails} args={[undefined, undefined, POLICE_STATIONS.length * 8]}>
+        <boxGeometry />
+        <meshLambertMaterial color="#7a86a0" />
+      </instancedMesh>
+    </>
+  );
+}
+
+/* ------------------------- police van fleet (engine-driven) ------------------------- */
+interface VanRig { group: THREE.Group; lightA: THREE.MeshBasicMaterial; lightB: THREE.MeshBasicMaterial; tag: THREE.Sprite }
+
+function buildPoliceVan(): VanRig {
+  const group = new THREE.Group();
+  const white = new THREE.MeshLambertMaterial({ color: "#f2f4f0" });
+  const navy = new THREE.MeshLambertMaterial({ color: "#1d2a4a" });
+  const glass = new THREE.MeshLambertMaterial({ color: "#a8d8ea" });
+  const dark = new THREE.MeshLambertMaterial({ color: "#2a2f38" });
+  const body = new THREE.Mesh(new THREE.BoxGeometry(2.2, 1.5, 5.2), white);
+  body.position.y = 1.05;
+  const stripe = new THREE.Mesh(new THREE.BoxGeometry(2.26, 0.42, 5.24), navy);
+  stripe.position.y = 0.95;
+  const cab = new THREE.Mesh(new THREE.BoxGeometry(2.0, 0.78, 1.7), glass);
+  cab.position.set(0, 2.16, 1.55);
+  const bumpF = new THREE.Mesh(new THREE.BoxGeometry(2.3, 0.3, 0.24), dark);
+  bumpF.position.set(0, 0.62, 2.66);
+  const bumpR = bumpF.clone(); bumpR.position.z = -2.66;
+  const lightA = new THREE.MeshBasicMaterial({ color: "#ff4d5e" });
+  const lightB = new THREE.MeshBasicMaterial({ color: "#ffc45e" });
+  const lampA = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 0.34), lightA);
+  lampA.position.set(-0.32, 2.66, 1.4);
+  const lampB = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.18, 0.34), lightB);
+  lampB.position.set(0.32, 2.66, 1.4);
+  const barBase = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.1, 0.4), dark);
+  barBase.position.set(0, 2.58, 1.4);
+  group.add(body, stripe, cab, bumpF, bumpR, lampA, lampB, barBase);
+  for (const [sx, sz] of [[-1, 1], [1, 1], [-1, -1], [1, -1]] as const) {
+    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.34, 10), new THREE.MeshLambertMaterial({ color: "#171a1f" }));
+    wheel.rotation.z = Math.PI / 2;
+    wheel.position.set(sx * 1.08, 0.5, sz * 1.7);
+    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.44, 8), new THREE.MeshLambertMaterial({ color: "#c9ced8" }));
+    hub.rotation.z = Math.PI / 2;
+    hub.position.set(sx * 1.1, 0.5, sz * 1.7);
+    group.add(wheel, hub);
+  }
+  const headA = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.16, 0.1), new THREE.MeshBasicMaterial({ color: "#ffe08a" }));
+  headA.position.set(-0.72, 1.3, 2.62);
+  const headB = headA.clone(); headB.position.x = 0.72;
+  const tailA = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.16, 0.1), new THREE.MeshBasicMaterial({ color: "#ff5f4a" }));
+  tailA.position.set(-0.72, 1.3, -2.62);
+  const tailB = tailA.clone(); tailB.position.x = 0.72;
+  group.add(headA, headB, tailA, tailB);
+  const tag = nameTag("POLICE VAN", "rgba(29,42,74,0.88)");
+  tag.position.y = 3.5;
+  group.add(tag);
+  return { group, lightA, lightB, tag };
+}
+
+function PoliceVans({ engine }: { engine: GameEngine }) {
+  const rigs = useMemo(() => engine.vans.map(() => buildPoliceVan()), [engine]);
+  useFrame(() => {
+    const t = performance.now() / 1000;
+    const active = t % 0.5 < 0.25;
+    engine.vans.forEach((van, i) => {
+      const rig = rigs[i];
+      rig.group.position.set(van.x, 0, van.z);
+      rig.group.rotation.y = van.rot;
+      const busy = van.state !== "idle";
+      rig.lightA.color.set(busy ? (active ? "#ff4d5e" : "#5a1f28") : "#8a2a36");
+      rig.lightB.color.set(busy ? (active ? "#5a4a1f" : "#ffc45e") : "#8a7a36");
+      rig.tag.visible = busy;
+    });
+  });
+  return <>{rigs.map((r, i) => <primitive object={r.group} key={i} />)}</>;
+}
+
 /* ------------------------- sky life ------------------------- */
 function Clouds() {
   const ref = useRef<THREE.InstancedMesh>(null!);
@@ -1603,9 +1774,11 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
       <Disc r={GRAVEYARD.r} color="#3a3a46" y={0.06} x={GRAVEYARD.x} z={GRAVEYARD.z} />
       <Roads />
       <Buildings />
+      <PoliceStations />
       <Windows clockRef={clockRef} />
       <Cars />
       <RingTraffic engine={engine} />
+      <PoliceVans engine={engine} />
       <Lamps clockRef={clockRef} />
       <Park />
       <Benches />

@@ -8,7 +8,7 @@ import {
   ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon, Mouse,
 } from "lucide-react";
 import type { GameEngine } from "@/lib/game/engine";
-import { DETAIN_SECONDS, ITEMS, INV_SLOTS } from "@/lib/game/constants";
+import { DETAIN_SECONDS, ITEMS, INV_SLOTS, POLICE_STATIONS } from "@/lib/game/constants";
 import { useGame } from "./store";
 import { setMuted as setAudioMuted, sfx, stopMusic, startMusic } from "@/lib/game/audio";
 import { Button } from "@/components/ui/button";
@@ -16,7 +16,7 @@ import { HowToPlay, SettingsDialog } from "./Panels";
 
 /* ------- shared world-map canvas painting (156px minimap + 440px big map) ------- */
 function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine, night: boolean) {
-  const K = S / 700;          // world units → px
+  const K = S / 940;          // world units → px (fits the bigger 452-radius wall)
   const U = S / 156;          // scale for the hand-tuned 156px marker sizes
   const dot = (x: number, z: number, r: number, col: string, alpha = 1) => {
     c.globalAlpha = alpha;
@@ -27,30 +27,45 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     c.globalAlpha = 1;
   };
   c.clearRect(0, 0, S, S);
-  dot(0, 0, 335 * K, "#2d5a2e");
-  dot(0, 0, 200 * K, "#7a8f3f");
-  dot(0, 0, 130 * K, "#8d8a80");
-  dot(-185, 165, 42 * K, "#3a3a46");
+  dot(0, 0, 455 * K, "#2d5a2e");
+  dot(0, 0, 385 * K, "#7a8f3f");
+  dot(0, 0, 330 * K, "#8d8a80");
+  dot(-255, 215, 45 * K, "#3a3a46");
   if (S > 300) {
     // big map only: zone rings, graveyard fence and district labels
     c.strokeStyle = "rgba(255,255,255,0.22)";
     c.lineWidth = 1;
-    for (const r of [245, 320, 390]) { c.beginPath(); c.arc(S / 2, S / 2, r * K, 0, 6.3); c.stroke(); }
+    for (const r of [330, 385, 455]) { c.beginPath(); c.arc(S / 2, S / 2, r * K, 0, 6.3); c.stroke(); }
     c.beginPath(); c.arc(S / 2 - 255 * K, S / 2 + 215 * K, 45 * K, 0, 6.3); c.stroke();
     c.fillStyle = "rgba(255,255,255,0.55)";
     c.font = `700 ${Math.round(7 * U)}px ui-sans-serif, system-ui, sans-serif`;
     c.textAlign = "center";
-    c.fillText("CITY", S / 2, S / 2 + 90 * K);
-    c.fillText("FARMLAND", S / 2, S / 2 + 290 * K);
-    c.fillText("JUNGLE", S / 2 - 270 * K, S / 2 - 255 * K);
+    c.fillText("CITY", S / 2, S / 2 + 120 * K);
+    c.fillText("FARMLAND", S / 2, S / 2 + 357 * K);
+    c.fillText("JUNGLE", S / 2 - 300 * K, S / 2 - 285 * K);
     c.fillText("GRAVEYARD", S / 2 - 255 * K, S / 2 + 265 * K);
   }
   // parliament
   c.fillStyle = "#e0483a";
-  c.fillRect(S / 2 - 4 * U, S / 2 - 118 * K - 3 * U, 8 * U, 6 * U);
+  c.fillRect(S / 2 - 4 * U, S / 2 - 196 * K - 3 * U, 8 * U, 6 * U);
   // ballot
   c.fillStyle = "#f7c948";
-  c.beginPath(); c.arc(S / 2, S / 2 - 100 * K, 2.6 * U, 0, 6.3); c.fill();
+  c.beginPath(); c.arc(S / 2, S / 2 - 170 * K, 2.6 * U, 0, 6.3); c.fill();
+  // police stations — white squares with a navy badge
+  for (const st of POLICE_STATIONS) {
+    const sx = S / 2 + st.x * K, sz = S / 2 + st.z * K;
+    const r = 4.6 * U;
+    c.fillStyle = "#f2f4f0";
+    c.strokeStyle = "#1d2a4a";
+    c.lineWidth = Math.max(1, U);
+    c.beginPath(); c.rect(sx - r, sz - r, r * 2, r * 2); c.fill(); c.stroke();
+    c.fillStyle = "#1d2a4a";
+    c.font = `900 ${Math.round(6.5 * U)}px ui-sans-serif, system-ui, sans-serif`;
+    c.textAlign = "center"; c.textBaseline = "middle";
+    c.fillText("P", sx, sz + 0.5);
+  }
+  // police vans on an arrest run
+  for (const van of engine.vans) if (van.state !== "idle") dot(van.x, van.z, 2.6 * U, "#ff4d5e", 0.95);
   for (const it of engine.items) if (it.active) dot(it.x, it.z, 1.1 * U, "#ffd166", 0.8);
   for (const v of engine.votes) if (v.state === "world") dot(v.x, v.z, 2.2 * U, "#f7c948");
   for (const cop of engine.cops) {
@@ -88,7 +103,7 @@ function Minimap({ engine, onOpen }: { engine: GameEngine; onOpen: () => void })
 const BIG_MAP_S = 440;
 const MAP_LEGEND: [string, string][] = [
   ["#ffffff", "You"], ["#f7c948", "Votes"], ["#ffd166", "Food"], ["#6aa0ff", "Police"],
-  ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ["#c084fc", "Zombies · night"],
+  ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ["#c084fc", "Zombies · night"], ["#1d2a4a", "Police stn"],
 ];
 function BigMap({ engine, onClose }: { engine: GameEngine; onClose: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -796,7 +811,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         </AnimatePresence>
       </div>
 
-      {/* detained overlay */}
+      {/* detained / arrest-transport overlay */}
       <AnimatePresence>
         {hud.detained && (
           <motion.div
@@ -810,17 +825,33 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
               transition={{ type: "spring", stiffness: 200, damping: 15 }}
               className="rounded-3xl border-4 border-rose-400/70 bg-black/60 px-10 py-7 text-center"
             >
-              <div className="text-4xl font-black tracking-wide text-rose-300">CAUGHT! 😵</div>
-              <div className="mt-1 text-white">Police time-out: {Math.ceil(hud.detainLeft)}s</div>
+              <div className="text-4xl font-black tracking-wide text-rose-300">
+                {hud.arrest === "riding" ? "IN THE VAN! 🚓" : hud.arrest === "called" ? "CAUGHT! 🚔" : "LOCKED UP! 😵"}
+              </div>
+              <div className="mt-1 text-white">
+                {hud.arrest === "called" && "A police van is on its way — sirens and everything!"}
+                {hud.arrest === "riding" && `Riding to ${hud.station}…`}
+                {hud.arrest === "locked" && `${hud.station} — time left: ${Math.ceil(hud.detainLeft)}s`}
+              </div>
               <div className="mt-1 text-xs font-bold text-rose-200/90">
-                Then you respawn at a random city spot — fresh start, police far away!
+                {hud.arrest === "locked"
+                  ? "Your votes are impounded in the station cage — steal them back after they let you out the gate!"
+                  : "The van takes you to the nearest police station — your votes get impounded there!"}
               </div>
               <div className="mx-auto mt-3 h-2.5 w-44 overflow-hidden rounded-full bg-white/15">
-                <motion.div
-                  className="h-full rounded-full bg-rose-400"
-                  animate={{ width: `${(1 - hud.detainLeft / DETAIN_SECONDS) * 100}%` }}
-                  transition={{ ease: "linear", duration: 0.2 }}
-                />
+                {hud.arrest === "locked" ? (
+                  <motion.div
+                    className="h-full rounded-full bg-rose-400"
+                    animate={{ width: `${(1 - hud.detainLeft / DETAIN_SECONDS) * 100}%` }}
+                    transition={{ ease: "linear", duration: 0.2 }}
+                  />
+                ) : (
+                  <motion.div
+                    className="h-full w-1/3 rounded-full bg-rose-400"
+                    animate={{ x: ["-100%", "300%"] }}
+                    transition={{ repeat: Infinity, ease: "linear", duration: 1.1 }}
+                  />
+                )}
               </div>
             </motion.div>
           </motion.div>

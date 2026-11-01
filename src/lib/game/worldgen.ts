@@ -1,4 +1,4 @@
-import { CITY_RADIUS, FARM_RADIUS, GRAVEYARD, PARLIAMENT, WORLD_SEED } from "./constants";
+import { CITY_RADIUS, FARM_RADIUS, GRAVEYARD, PARLIAMENT, POLICE_STATIONS, WORLD_SEED, stationCage, stationGate } from "./constants";
 import { mulberry32, range } from "./rng";
 
 export interface BoxCollider { x: number; z: number; w: number; d: number } // half extents
@@ -9,9 +9,9 @@ export interface CircleCollider { x: number; z: number; r: number }
  * 0 tower/office (flat roof, window grid)   1 shop (awning + sign + storefront)
  * 2 home (pyramid roof + yard)              3 mall
  * 4 school                                  5 hospital
- * 6 barn
+ * 6 barn                                    7 police station (white, flat roof, garage)
  */
-export interface Building extends BoxCollider { h: number; color: number; roof: number; kind: 0 | 1 | 2 | 3 | 4 | 5 | 6; awn: number; fz: 1 | -1 }
+export interface Building extends BoxCollider { h: number; color: number; roof: number; kind: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7; awn: number; fz: 1 | -1 }
 export interface Tree { x: number; z: number; r: number; s: number; kind: 0 | 1 }
 export interface Flower { x: number; z: number; c: number; s: number }
 export interface Car { x: number; z: number; rot: number; c: number; /** body style: 0 sedan · 1 hatchback · 2 van */ t: number }
@@ -39,11 +39,11 @@ export interface World {
 }
 
 /* ---------------- town layout (GTA-style grid + Delhi-style central vista) ---------------- */
-export const ROADS = [-135, -67.5, 0, 67.5, 135]; // road centre lines, both axes
+export const ROADS = [-202.5, -135, -67.5, 0, 67.5, 135, 202.5]; // road centre lines, both axes — 7×7 grid city
 export const ROAD_W = 14;                          // full width
 /** The MAIN ROAD: x=0 south of the grid — wider, protest march lives here (old-game homage). */
-export const MAIN_ROAD = { x: 0, z0: -135, z1: 216, w: 24 };
-export const RING_R = 216;                         // ring highway centre radius
+export const MAIN_ROAD = { x: 0, z0: -135, z1: 295, w: 24 };
+export const RING_R = 288;                         // ring highway centre radius
 export const RING_W = 12;
 export const AVENUE = { x: 0, z0: -135, z1: -188, w: 24 }; // central vista up to parliament
 export const PARK = { x: -33.75, z: -33.75, r: 27 };
@@ -182,14 +182,45 @@ export function generateWorld(seed = WORLD_SEED): World {
   push(PROTEST_CAMP.x - 13.5, PROTEST_CAMP.z, 1.5, 1.5, 10.5, 0, 0x8a6b4a, TOWER_ROOF);
   push(PROTEST_CAMP.x + 13.5, PROTEST_CAMP.z, 1.5, 1.5, 10.5, 0, 0x8a6b4a, TOWER_ROOF);
 
-  /* ---- suburban fringe cottages (between the grid and the ring highway) ---- */
+  /* ---- outer suburb home blocks (between the new outer road and the ring highway) ----
+   * Pushed BEFORE the fringe cottages so cottages never overlap these plots. */
+  const OUTER_BLOCKS = [
+    [-168.75, -245.25], [168.75, -245.25], [-168.75, 245.25], [168.75, 245.25],
+    [-245.25, -168.75], [245.25, -168.75], [-245.25, 168.75], [245.25, 168.75],
+  ] as const;
+  for (const [bx, bz] of OUTER_BLOCKS) {
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) {
+      const fz: 1 | -1 = bz < 0 ? 1 : -1;
+      push(bx + (i - 1) * 17.5, bz + (j - 0.5) * 17.5, 4.2, 3.6, range(rnd, 5.2, 6.6), 2,
+        HOME_COLS[buildings.length % HOME_COLS.length],
+        HOME_ROOFS[buildings.length % HOME_ROOFS.length], 0, fz);
+    }
+  }
+
+  /* ---- police stations: one per quadrant, white kind-7 block with a van gate + jail cage ----
+   * Pushed BEFORE fringe cottages so cottages never spawn on the station plots. */
+  const POLICE_WALL = 0xf2f4f0;
+  const POLICE_ROOF = 0x2b3556;
+  for (const st of POLICE_STATIONS) {
+    push(st.x, st.z, 13, 10, 9.5, 7, POLICE_WALL, POLICE_ROOF);
+    // evidence cage fence posts (bars drawn by <PoliceStations>)
+    const cage = stationCage(st);
+    for (const [px, pz] of [[cage.x - 3.4, cage.z - 3.4], [cage.x + 3.4, cage.z - 3.4], [cage.x - 3.4, cage.z + 3.4], [cage.x + 3.4, cage.z + 3.4], [cage.x - 3.4, cage.z], [cage.x + 3.4, cage.z], [cage.x, cage.z - 3.4], [cage.x, cage.z + 3.4]] as const)
+      push(px, pz, 0.35, 0.35, 2.6, 0, 0x6a7284, POLICE_ROOF);
+    const gate = stationGate(st);
+    lamps.push({ x: gate.x + Math.sign(st.x) * 5, z: gate.z });
+    lamps.push({ x: gate.x, z: gate.z + Math.sign(st.z) * 5 });
+  }
+
+  /* ---- suburban fringe cottages (between the outer grid road and the ring highway) ---- */
   let fc = 0;
-  while (fc < 18) {
-    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 168, 205);
+  while (fc < 26) {
+    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 225, 268);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    // clear of every grid road line (+ sidewalks) and of existing buildings
+    // clear of every grid road line (+ sidewalks) and of existing buildings & stations
     if (ROADS.some((o) => Math.abs(x - o) < 12 || Math.abs(z - o) < 12)) continue;
     if (buildings.some((b) => Math.abs(x - b.x) < b.w + 6 && Math.abs(z - b.z) < b.d + 6)) continue;
+    if (POLICE_STATIONS.some((st) => Math.hypot(x - st.x, z - st.z) < 32)) continue;
     if (Math.hypot(x - MALL.x, z - MALL.z) < 30 || Math.hypot(x - SCHOOL.x, z - SCHOOL.z) < 26) continue;
     if (Math.hypot(x - HOSPITAL.x, z - HOSPITAL.z) < 26) continue;
     push(x, z, 4.4, 3.8, range(rnd, 5, 6.2), 2,
@@ -225,11 +256,13 @@ export function generateWorld(seed = WORLD_SEED): World {
   for (const k of ROADS) {
     for (const vertical of [true, false]) {
       let side = 1;
-      for (let d = -238; d <= 238; d += 48, side = -side) {
+      for (let d = -306; d <= 306; d += 48, side = -side) {
         if (ROADS.some((o) => Math.abs(d - o) < 15)) continue;
         // the wide main road (k=0 vertical) needs deeper parking + no cars past its ends
         const main = vertical && k === 0;
         if (main && (d < MAIN_ROAD.z0 + 45 || d > MAIN_ROAD.z1 - 8)) continue;
+        // keep station gates clear so the van always has room to stop
+        if (POLICE_STATIONS.some((st) => { const g = stationGate(st); return Math.hypot((vertical ? k + side * 5.2 : d) - g.x, (vertical ? d : k + side * 5.2) - g.z) < 18; })) continue;
         const off = main ? 9.5 : 5.2;
         cars.push(vertical
           ? { x: k + side * off, z: d + range(rnd, -4, 4), rot: side > 0 ? 0 : Math.PI, c: Math.floor(rnd() * CAR_COLS.length), t: Math.floor(rnd() * 3) }
@@ -270,7 +303,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   ];
   const signs: Sign[] = [];
   let si = 0;
-  for (let z = -110; z <= 195; z += 24) {
+  for (let z = -110; z <= 280; z += 24) {
     for (const side of [-1, 1]) {
       if (si >= SLOGANS.length * 2) break;
       signs.push({
@@ -290,37 +323,37 @@ export function generateWorld(seed = WORLD_SEED): World {
     });
   }
 
-  /* ---- farm: barns, silos, crop fields, windmills ---- */
-  const barns = [[292, -84], [258, 196], [-286, 64]] as const;
+  /* ---- farm: barns, silos, crop fields, windmills (moved out to the wider farm ring) ---- */
+  const barns = [[348, -100], [306, 222], [-342, 76]] as const;
   for (const [x, z] of barns) push(x, z, 8, 5.5, 7, 6, 0xc0442e, 0x7a3322);
   const silos: Silo[] = barns.map(([x, z]) => ({ x: x + 11.5, z: z + 2 }));
   const fields: Field[] = [
-    { x: 268, z: -56, rot: 0.3, crop: 0 }, { x: 298, z: -116, rot: -0.2, crop: 1 },
-    { x: 244, z: 150, rot: 0.5, crop: 0 }, { x: 272, z: 132, rot: -0.4, crop: 2 },
-    { x: -266, z: 92, rot: 0.2, crop: 1 }, { x: -244, z: -140, rot: -0.3, crop: 2 },
+    { x: 336, z: -70, rot: 0.3, crop: 0 }, { x: 356, z: -130, rot: -0.2, crop: 1 },
+    { x: 300, z: 182, rot: 0.5, crop: 0 }, { x: 334, z: 162, rot: -0.4, crop: 2 },
+    { x: -330, z: 112, rot: 0.2, crop: 1 }, { x: -302, z: -172, rot: -0.3, crop: 2 },
   ].map((f) => ({ ...f, w: 12, d: 8 }) as Field);
   const windmills = [
-    { x: 288, z: -46, rot: 0 }, { x: 232, z: 108, rot: 1.2 }, { x: -282, z: 130, rot: 2.1 },
+    { x: 348, z: -56, rot: 0 }, { x: 330, z: 160, rot: 1.2 }, { x: -338, z: 158, rot: 2.1 },
   ];
 
   /* ---- jungle forest (dense ring) + decorative outer band ---- */
   let n = 0;
-  while (n < 540) {
-    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 326, 372);
+  while (n < 560) {
+    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 392, 438);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
     addTree(x, z, range(rnd, 0.85, 1.55), rnd() < 0.75 ? 0 : 1);
     n++;
   }
-  for (let i = 0; i < 44; i++) {
-    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 372, 394);
+  for (let i = 0; i < 46; i++) {
+    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 438, 456);
     addTree(Math.cos(a) * r, Math.sin(a) * r, range(rnd, 0.9, 1.5), rnd() < 0.7 ? 0 : 1);
   }
 
   /* ---- sparse farmland trees (avoid fields & buildings) ---- */
   n = 0;
-  while (n < 70) {
-    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 250, 316);
+  while (n < 80) {
+    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 336, 378);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
     if (fields.some((f) => Math.abs(x - f.x) < f.w + 3 && Math.abs(z - f.z) < f.d + 3)) continue;

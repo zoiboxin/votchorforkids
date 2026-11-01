@@ -1,10 +1,10 @@
 /** VoteChor 2.0 — shared constants. Tuned for a fast, kid-friendly cartoon chase game. */
 
 export const WORLD_SEED = 1337;
-export const WALL_RADIUS = 375;
-export const CITY_RADIUS = 245;
-export const FARM_RADIUS = 320;
-export const JUNGLE_RADIUS = 400;
+export const WALL_RADIUS = 452;
+export const CITY_RADIUS = 330;
+export const FARM_RADIUS = 385;
+export const JUNGLE_RADIUS = 455;
 export const GRAVEYARD = { x: -255, z: 215, r: 45 } as const;
 export const SPAWN = { x: 0, z: 6 } as const;
 export const DAY_SECONDS = 360;
@@ -20,6 +20,19 @@ export const LAND_SQUASH_S = 0.16;   // landing squash-and-stretch duration
 /** Parliament + ballot box where stolen votes are delivered. */
 export const PARLIAMENT = { x: 0, z: -196 } as const;
 export const BALLOT = { x: 0, z: -170 } as const;
+
+/* ---------- Police stations (one per city quadrant, with a van gate + jail cage) ---------- */
+export interface StationDef { x: number; z: number; name: string }
+export const POLICE_STATIONS: readonly StationDef[] = [
+  { x: -168.75, z: -168.75, name: "Gulmohar Chowki" },
+  { x: 168.75, z: -168.75, name: "Ring Road Chowki" },
+  { x: -168.75, z: 168.75, name: "Lake View Chowki" },
+  { x: 168.75, z: 168.75, name: "Banyan Chowki" },
+];
+/** Where the van stops & the player is released — the block-side facing town. */
+export const stationGate = (s: StationDef) => ({ x: s.x - Math.sign(s.x) * 17, z: s.z - Math.sign(s.z) * 17 });
+/** Fenced evidence cage behind the station — confiscated votes & jailed bots live here. */
+export const stationCage = (s: StationDef) => ({ x: s.x + Math.sign(s.x) * 14, z: s.z + Math.sign(s.z) * 14 });
 
 export type AgeGroup = "kid" | "teen" | "young" | "old";
 
@@ -202,20 +215,20 @@ export const DELIVER_RADIUS = 4;
 export const DROP_SCATTER = 3.2;
 
 /* ---------- Police ---------- */
-export const POLICE_COUNT = 12;
+export const POLICE_COUNT = 18; // more police for the bigger city
 export const POLICE_SPEED = 5.9;
 export const POLICE_SPRINT = 7.6;
 export const DETECT_BASE = 13;
 export const DETECT_CARRY_BONUS = 9;
 export const DETECT_STAR_BONUS = 2.2;
 export const CATCH_RADIUS = 1.35;
-export const DETAIN_SECONDS = 20; // long enough that the catcher walks far away before release
+export const DETAIN_SECONDS = 14; // lock-up time at the station — the van ride adds travel drama
 export const RELEASE_GRACE_S = 10; // post-release grace — cops can't spot or catch you while it lasts
 export const STAR_DECAY_S = 45;
 export const ESCAPE_LOST_S = 4.5;
 
 /* ---------- Civilians & rescue ---------- */
-export const CIVILIAN_COUNT = 88; // 12 police + 88 civilians = 100 bots, like the old game's room capacity
+export const CIVILIAN_COUNT = 94; // 18 police + 94 civilians = 112 bots in the bigger city
 export const RESCUE_RADIUS = 3.4;
 export const RESCUE_POINTS = 60;
 
@@ -225,6 +238,7 @@ export const CIV_DETAIN_S = 25;   // an arrested civilian waits in the pink bubb
 export const CIV_COP_CD = 18;     // after an arrest the cop patrols normally before hunting another civilian
 export const CIV_FLEE_MULT = 1.9; // panic speed multiplier while a cop is chasing
 export const MAX_CIV_HELD = 4;    // never arrest more than this many civilians at once — keep the city lively
+export const CIV_JAIL_S = 40;     // once the van delivers a civ to the station cage, they wait this long
 
 /* ---------- Zombies ---------- */
 export const ZOMBIE_COUNT = 9;
@@ -242,6 +256,14 @@ export const ANIMAL_SET: { kind: AnimalKind; count: number; zone: "farm" | "jung
   { kind: "deer", count: 4, zone: "jungle" },
   { kind: "monkey", count: 4, zone: "jungle" },
 ];
+
+/* ---------- Police van fleet: arrest transport to the nearest station ---------- */
+export const VAN_SPEED = 22;       // u/s — vans respond fast, sirens on
+export const VAN_LOAD_S = 1.6;     // seconds to load a prisoner at the capture point
+export const VAN_UNLOAD_S = 1.2;   // seconds to unload at the station
+export const VAN_AXLE = 1.7;       // front/rear axle offset for the solid footprint
+export const VAN_RADIUS = 1.25;    // axle-circle radius for collisions
+export const CONFISCATE_FINE = 40; // support points the police fine you on lock-up
 
 /* ---------- Ring-road traffic & the cartoon car bonk (old-game hurt() homage) ---------- */
 export const TRAFFIC_COUNT = 12; // cars cruising the ring highway, two lanes, both directions

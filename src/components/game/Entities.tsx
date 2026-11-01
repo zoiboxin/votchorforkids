@@ -55,8 +55,9 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     clockRef.current = engine.clock;
     if (lantern.current) lantern.current.intensity = nightFactor(engine.clock) * 26;
 
-    // player mesh
+    // player mesh (hidden while riding in the police van — the van is the star then)
     const p = engine.player;
+    mesh.visible = !engine.playerInVan;
     mesh.position.set(p.x, p.y, p.z);
     let d = p.face - mesh.rotation.y;
     d = Math.atan2(Math.sin(d), Math.cos(d));
