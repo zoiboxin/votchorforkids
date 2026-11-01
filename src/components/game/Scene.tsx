@@ -108,7 +108,20 @@ export function useGameInput(engine: GameEngine | null) {
         if (r && typeof r.catch === "function") r.catch(() => { /* free look keeps working */ });
       } catch { /* pointer lock unsupported — free mouse-look still works */ }
     };
-    const plc = () => useGame.getState().setMouseLocked(!!document.pointerLockElement);
+    const plc = () => {
+      const locked = !!document.pointerLockElement;
+      useGame.getState().setMouseLocked(locked);
+      if (!locked) {
+        // Esc while the cursor is hard-bound is swallowed by the browser to exit
+        // pointer lock — the page never sees that keydown. So treat an unexpected
+        // unlock (no menu/modal/map already open) as "Esc pressed" → pause menu.
+        const s = useGame.getState();
+        if (s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen) {
+          engine.running = false; // match togglePause: freeze the simulation too
+          s.setPaused(true);
+        }
+      }
+    };
     // a late/rejected lock attempt must never clear a LIVE lock (Chrome fires
     // pointerlockerror during its post-Escape cooldown even when a later
     // request succeeded — only clear the flag when truly unlocked)

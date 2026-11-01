@@ -126,9 +126,11 @@ export function Npcs({ engine }: { engine: GameEngine }) {
       mesh.add(tag);
       map.set(c.id, { mesh, tag });
     });
+    const PROTEST_TAGS = ["✊ GIVE VOTES BACK", "✊ VOTE CHOR GO!", "✊ WE WANT VOTES", "✊ KIDS FOR DEMOCRACY", "✊ CHAI > CORRUPTION", "✊ HONK FOR VOTES"];
     engine.civs.forEach((c, i) => {
       const mesh = buildCharacter(civLooks[i]);
-      const tag = nameTag(c.name);
+      // protest marchers carry a slogan placard tag instead of their name
+      const tag = nameTag(c.protest ? PROTEST_TAGS[i % PROTEST_TAGS.length] : c.name, c.protest ? "rgba(181,67,42,0.85)" : undefined);
       tag.position.y = 2.95;
       mesh.add(tag);
       const bubble = helpBubble();

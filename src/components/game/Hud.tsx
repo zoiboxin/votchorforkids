@@ -513,7 +513,8 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
   const setPaused = useGame((s) => s.setPaused);
   const victoryOpen = useGame((s) => s.victoryOpen);
   const mouseLocked = useGame((s) => s.mouseLocked);
-  const [bigMap, setBigMap] = useState(false);
+  const bigMap = useGame((s) => s.bigMapOpen);
+  const setBigMap = useGame((s) => s.setBigMapOpen);
   // after the cursor gets hard-bound, remind the player how to free it (4 s)
   const [lockTip, setLockTip] = useState(false);
   useEffect(() => {
@@ -734,7 +735,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
           <div className="max-w-[220px] rounded-xl bg-black/40 px-3 py-2 text-xs leading-relaxed text-white/90 backdrop-blur-md">
             <b className="text-yellow-300">Goal:</b> snatch 🗳 votes, deliver them at the Parliament ballot box. Rescue pink-bubbled friends with <b>E</b>. Dodge the police — sprint with <b>Shift</b>!
             <div className="mt-1 text-amber-200/90">⚡ Sprinting drains energy · run over 🥭☕🩹 food to pocket it, then tap the bag (or press <b>1-8</b>) to eat: heals ❤ and refills ⚡.</div>
-            {!touch && <div className="mt-1 text-white/70">WASD move · mouse steers the camera (click = lock cursor, Esc = free) · Shift sprint · Space jump ×2 (flip!) · E rescue · 1-8 eat · right-click drop · M map · P pause</div>}
+            {!touch && <div className="mt-1 text-white/70">WASD move · mouse steers the camera (click = lock cursor) · Shift sprint · Space jump ×2 (flip!) · E rescue · 1-8 eat · right-click drop · M map · Esc / P pause</div>}
           </div>
         )}
       </div>
@@ -750,7 +751,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
                   initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
                   className="rounded-full bg-black/45 px-4 py-1.5 text-xs font-bold text-white/90 backdrop-blur-md"
                 >
-                  Mouse locked to the game — press <b className="text-yellow-300">Esc</b> to free the cursor
+                  Mouse locked to the game — press <b className="text-yellow-300">Esc</b> to pause
                 </motion.div>
               ) : null
             ) : (

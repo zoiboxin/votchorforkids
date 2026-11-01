@@ -19,7 +19,7 @@ export const LAND_SQUASH_S = 0.16;   // landing squash-and-stretch duration
 
 /** Parliament + ballot box where stolen votes are delivered. */
 export const PARLIAMENT = { x: 0, z: -196 } as const;
-export const BALLOT = { x: 0, z: -174 } as const;
+export const BALLOT = { x: 0, z: -170 } as const;
 
 export type AgeGroup = "kid" | "teen" | "young" | "old";
 

@@ -116,6 +116,8 @@ export interface GameStore {
   showHelp: boolean;
   victoryOpen: boolean;
   paused: boolean;
+  /** true while the big world map overlay is open (M) */
+  bigMapOpen: boolean;
   /** true while the browser pointer is hard-bound to the game (pointer lock) */
   mouseLocked: boolean;
   settings: Settings;
@@ -141,6 +143,7 @@ export interface GameStore {
   toggleHelp: () => void;
   setVictoryOpen: (v: boolean) => void;
   setPaused: (p: boolean) => void;
+  setBigMapOpen: (v: boolean) => void;
   setMouseLocked: (v: boolean) => void;
   patchSettings: (p: Partial<Settings>) => void;
   recordRun: (score: number, votes?: number, rescues?: number, caught?: number, won?: boolean, timeMs?: number) => RunRecord;
@@ -177,6 +180,7 @@ export const useGame = create<GameStore>()((set, get) => ({
   showHelp: true,
   victoryOpen: false,
   paused: false,
+  bigMapOpen: false,
   settings: typeof window !== "undefined" ? loadSettings() : { music: 0.7, sfx: 0.8, showFps: false },
   runsPlayed: saved.stats.runs,
   bestScore: saved.stats.best,
@@ -226,6 +230,7 @@ export const useGame = create<GameStore>()((set, get) => ({
   setVictoryOpen: (v) => set({ victoryOpen: v }),
   setPaused: (p) => set({ paused: p }),
   setMouseLocked: (v) => set({ mouseLocked: v }),
+  setBigMapOpen: (v) => set({ bigMapOpen: v }),
   patchSettings: (p) => {
     set((s) => {
       const settings = { ...s.settings, ...p };

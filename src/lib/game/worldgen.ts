@@ -1,4 +1,4 @@
-import { CITY_RADIUS, FARM_RADIUS, GRAVEYARD, WORLD_SEED } from "./constants";
+import { CITY_RADIUS, FARM_RADIUS, GRAVEYARD, PARLIAMENT, WORLD_SEED } from "./constants";
 import { mulberry32, range } from "./rng";
 
 export interface BoxCollider { x: number; z: number; w: number; d: number } // half extents
@@ -20,6 +20,7 @@ export interface Bench { x: number; z: number; rot: number }
 export interface Field { x: number; z: number; w: number; d: number; rot: number; crop: number }
 export interface Silo { x: number; z: number }
 export interface Umbrella { x: number; z: number; c: number }
+export interface Sign { x: number; z: number; rot: number; text: string; c: number }
 
 export interface World {
   buildings: Building[];
@@ -33,19 +34,24 @@ export interface World {
   fields: Field[];
   silos: Silo[];
   umbrellas: Umbrella[];
+  signs: Sign[];
   windmills: { x: number; z: number; rot: number }[];
 }
 
-/* ---------------- town layout (GTA-style grid) ---------------- */
+/* ---------------- town layout (GTA-style grid + Delhi-style central vista) ---------------- */
 export const ROADS = [-135, -67.5, 0, 67.5, 135]; // road centre lines, both axes
 export const ROAD_W = 14;                          // full width
+/** The MAIN ROAD: x=0 south of the grid — wider, protest march lives here (old-game homage). */
+export const MAIN_ROAD = { x: 0, z0: -135, z1: 216, w: 24 };
 export const RING_R = 216;                         // ring highway centre radius
 export const RING_W = 12;
-export const AVENUE = { x: 0, z0: -135, z1: -188, w: 14 }; // grand avenue to parliament
+export const AVENUE = { x: 0, z0: -135, z1: -188, w: 24 }; // central vista up to parliament
 export const PARK = { x: -33.75, z: -33.75, r: 27 };
 export const MALL = { x: 33.75, z: 47 };
-export const SCHOOL = { x: -33.75, z: 114 };
+export const SCHOOL = { x: -33.75, z: 118 };
 export const HOSPITAL = { x: 101.25, z: 106 };
+export const GATE = { x: 0, z: -162 };             // India-Gate-style arch on the vista
+export const PROTEST_CAMP = { x: 0, z: 48 };       // banner arch over the main road
 
 const TOWER_COLS = [0x9fc4d8, 0xb8d0da, 0xc9d2cf, 0xa8b8c4, 0xd8cfc0, 0x8fb0a8, 0xc4b8d0, 0xb0c4b8];
 const TOWER_ROOF = 0x3d434c;
@@ -118,8 +124,11 @@ export function generateWorld(seed = WORLD_SEED): World {
     }
   }
 
-  /* ---- suburb home blocks (4 blocks × 6 homes with yards) ---- */
-  const HOME_BLOCKS = [[-101.25, 101.25], [101.25, -101.25], [-101.25, -101.25], [33.75, -101.25]] as const;
+  /* ---- suburb home blocks (5 blocks × 6 homes with yards) ---- */
+  // NOTE: [±101.25,-101.25] used to appear here AND in the mixed list — 12 overlapping
+  // buildings in one block. Fixed by giving those blocks to mixed only and adding
+  // three brand-new home blocks (city is bigger now).
+  const HOME_BLOCKS = [[-101.25, 101.25], [33.75, -101.25], [101.25, 101.25], [-33.75, 101.25], [33.75, 33.75]] as const;
   for (const [bx, bz] of HOME_BLOCKS) {
     for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) {
       const fz: 1 | -1 = bz < 0 ? 1 : -1;
@@ -128,6 +137,34 @@ export function generateWorld(seed = WORLD_SEED): World {
         HOME_ROOFS[buildings.length % HOME_ROOFS.length], 0, fz);
     }
   }
+
+  /* ---- suburban fringe cottages (between the grid and the ring highway) ---- */
+  let fc = 0;
+  while (fc < 18) {
+    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 168, 205);
+    const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    // clear of every grid road line (+ sidewalks) and of existing buildings
+    if (ROADS.some((o) => Math.abs(x - o) < 12 || Math.abs(z - o) < 12)) continue;
+    if (buildings.some((b) => Math.abs(x - b.x) < b.w + 6 && Math.abs(z - b.z) < b.d + 6)) continue;
+    if (Math.hypot(x - MALL.x, z - MALL.z) < 30 || Math.hypot(x - SCHOOL.x, z - SCHOOL.z) < 26) continue;
+    if (Math.hypot(x - HOSPITAL.x, z - HOSPITAL.z) < 26) continue;
+    push(x, z, 4.4, 3.8, range(rnd, 5, 6.2), 2,
+      HOME_COLS[buildings.length % HOME_COLS.length],
+      HOME_ROOFS[buildings.length % HOME_ROOFS.length], 0, z > 0 ? -1 : 1);
+    fc++;
+  }
+
+  /* ---- Delhi-style central vista: secretariat blocks + gate legs + protest props ---- */
+  const SANDSTONE = 0xd8c8a4;
+  // North Block / South Block style offices flanking the vista
+  push(-28, -170, 11, 16, 13, 0, SANDSTONE, TOWER_ROOF);
+  push(28, -170, 11, 16, 13, 0, SANDSTONE, TOWER_ROOF);
+  // India-Gate-style arch legs (the span is drawn by <VistaGate>)
+  push(GATE.x - 10.5, GATE.z, 2.6, 2.6, 14, 0, SANDSTONE, TOWER_ROOF);
+  push(GATE.x + 10.5, GATE.z, 2.6, 2.6, 14, 0, SANDSTONE, TOWER_ROOF);
+  // protest banner arch poles over the main road (cloth drawn by <ProtestBanner>)
+  push(PROTEST_CAMP.x - 13.5, PROTEST_CAMP.z, 1.5, 1.5, 10.5, 0, 0x8a6b4a, TOWER_ROOF);
+  push(PROTEST_CAMP.x + 13.5, PROTEST_CAMP.z, 1.5, 1.5, 10.5, 0, 0x8a6b4a, TOWER_ROOF);
 
   /* ---- landmarks ---- */
   push(MALL.x, MALL.z, 20, 11, 15, 3, 0xe8e4da, 0x9aa5b1);                 // MEGA MALL
@@ -158,8 +195,12 @@ export function generateWorld(seed = WORLD_SEED): World {
       let side = 1;
       for (let d = -238; d <= 238; d += 48, side = -side) {
         if (ROADS.some((o) => Math.abs(d - o) < 15)) continue;
+        // the wide main road (k=0 vertical) needs deeper parking + no cars past its ends
+        const main = vertical && k === 0;
+        if (main && (d < MAIN_ROAD.z0 + 45 || d > MAIN_ROAD.z1 - 8)) continue;
+        const off = main ? 9.5 : 5.2;
         cars.push(vertical
-          ? { x: k + side * 5.2, z: d + range(rnd, -4, 4), rot: side > 0 ? 0 : Math.PI, c: Math.floor(rnd() * CAR_COLS.length) }
+          ? { x: k + side * off, z: d + range(rnd, -4, 4), rot: side > 0 ? 0 : Math.PI, c: Math.floor(rnd() * CAR_COLS.length) }
           : { x: d + range(rnd, -4, 4), z: k + side * 5.2, rot: side > 0 ? Math.PI / 2 : -Math.PI / 2, c: Math.floor(rnd() * CAR_COLS.length) });
       }
     }
@@ -173,7 +214,8 @@ export function generateWorld(seed = WORLD_SEED): World {
     const a = (i / 8) * Math.PI * 2;
     lamps.push({ x: Math.cos(a) * (RING_R + RING_W / 2 + 2), z: Math.sin(a) * (RING_R + RING_W / 2 + 2) });
   }
-  lamps.push({ x: 9, z: -150 }, { x: -9, z: -164 }, { x: 9, z: -178 });
+  lamps.push({ x: 15, z: -150 }, { x: -15, z: -164 }, { x: 15, z: -178 });
+  lamps.push({ x: 15, z: 24 }, { x: -15, z: 96 }, { x: 15, z: 160 });
 
   /* ---- central park trees + landmark trees ---- */
   const trees: Tree[] = [];
@@ -187,6 +229,34 @@ export function generateWorld(seed = WORLD_SEED): World {
   addTree(SCHOOL.x + 12, SCHOOL.z - 16, 0.85, 1);
   addTree(MALL.x - 24, MALL.z - 29, 0.8, 0);
   addTree(MALL.x + 24, MALL.z - 29, 0.8, 0);
+
+  /* ---- protest placards along the main road + parliament plaza (old-game homage) ---- */
+  const SLOGANS = [
+    "GIVE OUR VOTES BACK!", "VOTE CHOR GO!", "WE WANT VOTES", "CHAI > CORRUPTION",
+    "KIDS FOR DEMOCRACY", "VOTES FOR ALL", "PARLIAMENT LISTEN!", "MANGO PARTY NOW",
+    "NO VOTE, NO CHILL", "HONK FOR VOTES",
+  ];
+  const signs: Sign[] = [];
+  let si = 0;
+  for (let z = -110; z <= 195; z += 24) {
+    for (const side of [-1, 1]) {
+      if (si >= SLOGANS.length * 2) break;
+      signs.push({
+        x: side * (14.5 + range(rnd, 0, 1.6)), z: z + range(rnd, -6, 6),
+        rot: side > 0 ? Math.PI : 0,
+        text: SLOGANS[si % SLOGANS.length], c: si % 3,
+      });
+      si++;
+    }
+  }
+  // a proud cluster right on the parliament plaza, clear of the podium
+  for (let i = 0; i < 6; i++) {
+    signs.push({
+      x: (i % 2 === 0 ? -1 : 1) * (17 + (i >> 1) * 3.4), z: -166 - (i % 3) * 2.4,
+      rot: (i % 2 === 0 ? 1 : -1) * 0.4,
+      text: SLOGANS[(si + i) % SLOGANS.length], c: (si + i) % 3,
+    });
+  }
 
   /* ---- farm: barns, silos, crop fields, windmills ---- */
   const barns = [[292, -84], [258, 196], [-286, 64]] as const;
@@ -253,11 +323,13 @@ export function generateWorld(seed = WORLD_SEED): World {
   const circles: CircleCollider[] = trees.map(({ x, z, r }) => ({ x, z, r }));
   circles.push({ x: PARK.x - 11, z: PARK.z + 11, r: 8.2 });               // park pond
   circles.push({ x: PARK.x, z: PARK.z, r: 3.6 });                          // fountain
+  circles.push({ x: PARLIAMENT.x, z: PARLIAMENT.z, r: 26 });               // parliament podium (matches the visual base)
+  for (const s of signs) circles.push({ x: s.x, z: s.z, r: 0.45 });        // placard posts
   for (const c of cars) circles.push({ x: c.x, z: c.z, r: 1.55 });
   for (const s of silos) circles.push({ x: s.x, z: s.z, r: 3.3 });
   for (const w of windmills) circles.push({ x: w.x, z: w.z, r: 0.8 });
 
-  return { buildings, trees, flowers, boxes, circles, cars, lamps, benches, fields, silos, umbrellas, windmills };
+  return { buildings, trees, flowers, boxes, circles, cars, lamps, benches, fields, silos, umbrellas, signs, windmills };
 }
 
 /** Push a point out of every collider it overlaps. */
@@ -276,7 +348,10 @@ export function resolve(p: { x: number; z: number }, radius: number, world: Worl
     if (Math.abs(dx) > rr || Math.abs(dz) > rr) continue;
     const d2 = dx * dx + dz * dz;
     if (d2 < rr * rr) {
-      const d = Math.sqrt(d2) || 0.01;
+      const d = Math.sqrt(d2);
+      // dead-centre inside the circle has no push direction — pick east so the
+      // point can never get permanently stuck (e.g. teleports into a collider)
+      if (d < 0.01) { p.x = c.x + rr; continue; }
       p.x = c.x + (dx / d) * rr;
       p.z = c.z + (dz / d) * rr;
     }

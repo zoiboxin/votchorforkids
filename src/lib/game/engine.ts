@@ -21,6 +21,8 @@ export interface Npc {
   mode: CopMode | CivilMode;
   tx: number; tz: number; timer: number; phase: number;
   name: string; speed: number; alertT: number;
+  /** main-road marcher: stays on the protest strip instead of roaming the city */
+  protest?: boolean;
 }
 export interface Zombie { id: number; x: number; z: number; vx: number; vz: number; face: number; phase: number; touchCd: number }
 export interface Animal { id: number; kind: AnimalKind; x: number; z: number; vx: number; vz: number; face: number; tx: number; tz: number; timer: number; phase: number; resting: boolean }
@@ -169,6 +171,16 @@ export class GameEngine {
     for (let i = 0; i < CIVILIAN_COUNT; i++) {
       const p = freeSpot(r, this.world, 8, CITY_RADIUS - 8);
       this.civs.push({ id: this.nid(), kind: "civilian", x: p.x, z: p.z, vx: 0, vz: 0, face: 0, mode: "wander", tx: p.x, tz: p.z, timer: range(r, 0, 4), phase: Math.random() * 6, name: CIVIL_NAMES[i % CIVIL_NAMES.length], speed: range(r, 2.2, 3.4), alertT: 0 });
+    }
+    // protest march — old-game homage: a slow column of civilians walks the main road
+    const MARCHERS = 6;
+    for (let i = 0; i < MARCHERS; i++) {
+      const c = this.civs[i * 3 % this.civs.length];
+      c.protest = true;
+      c.x = -8 + (i % 3) * 8; c.z = 10 + i * 26;
+      c.tx = c.x; c.tz = c.z;
+      c.speed = range(r, 1.5, 2.1);
+      c.timer = range(r, 2, 6);
     }
     // zombies (graveyard)
     for (let i = 0; i < ZOMBIE_COUNT; i++) {
@@ -542,8 +554,11 @@ export class GameEngine {
         case "wander": {
           c.timer -= dt;
           if (c.timer <= 0 || dist2(c.x, c.z, c.tx, c.tz) < 2) {
-            const t = freeSpot(this.rnd, this.world, 6, CITY_RADIUS - 4);
-            c.tx = t.x; c.tz = t.z; c.timer = range(this.rnd, 6, 14);
+            // protest marchers stick to the main road strip and keep the line moving
+            const t = c.protest
+              ? { x: range(this.rnd, -9, 9), z: range(this.rnd, -120, 200) }
+              : freeSpot(this.rnd, this.world, 6, CITY_RADIUS - 4);
+            c.tx = t.x; c.tz = t.z; c.timer = range(this.rnd, c.protest ? 9 : 6, c.protest ? 18 : 14);
           }
           stepNpc(c, c.tx, c.tz, c.speed, dt, this.world);
           // random arrest event (only near player so it's participatory)
