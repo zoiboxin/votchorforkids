@@ -57,3 +57,6 @@ tool-results/
 upload/
 db/custom.db
 db/*.db-journal
+
+# git push helper token (never commit)
+.github-token
