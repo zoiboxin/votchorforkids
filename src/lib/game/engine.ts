@@ -3,7 +3,7 @@ import {
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
   ESCAPE_LOST_S, FARM_RADIUS, FLIP_S, GRAVEYARD, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
   ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUNGLE_RADIUS, LAND_SQUASH_S, MAX_CARRY, PICKUP_RADIUS,
-  POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, RESCUE_POINTS,
+  POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, RELEASE_GRACE_S, RESCUE_POINTS,
   RESCUE_RADIUS, SPAWN, STAR_DECAY_S, TOTAL_VOTES, WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
   ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, type AnimalKind, type Appearance, type Zone, zoneOf, ZONE_TOAST,
 } from "./constants";
@@ -216,8 +216,11 @@ export class GameEngine {
     this.hp = Math.max(1, this.hp - 8);
     this.hurtT = HURT_FLASH_S;
     this.detainedT = DETAIN_SECONDS;
-    this.invulnT = 6; // grace window after release so cops can't instantly re-catch
+    this.invulnT = RELEASE_GRACE_S; // long grace after release — time to run the other way
+    // the catcher celebrates, then walks ALL the way back to a far patrol spot
     cop.mode = "celebrate"; cop.timer = 2.5;
+    const spot = this.safeCopSpot();
+    cop.tx = spot.x; cop.tz = spot.z;
     sfx.caught();
     this.toast(carried > 0
       ? `Caught! The police took back ${carried} vote${carried > 1 ? "s" : ""}… ⭐ Wanted level up!`
@@ -438,6 +441,14 @@ export class GameEngine {
           break;
         }
         case "chase": {
+          // player is sitting out the time-out — stop hovering, walk away so the
+          // release never turns into an instant re-catch
+          if (this.detainedT > 0) {
+            const wander = freeSpot(this.rnd, this.world, 10, 120);
+            cop.tx = wander.x; cop.tz = wander.z;
+            cop.mode = "return"; cop.timer = 0; cop.alertT = 0;
+            break;
+          }
           const spd = POLICE_SPRINT + this.stars * 0.22;
           stepNpc(cop, p.x, p.z, spd, dt, this.world);
           cop.alertT = d2p < detect * detect * 3 ? ESCAPE_LOST_S : cop.alertT - dt;

@@ -8,7 +8,7 @@ import {
   ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon, Mouse,
 } from "lucide-react";
 import type { GameEngine } from "@/lib/game/engine";
-import { ITEMS, INV_SLOTS } from "@/lib/game/constants";
+import { DETAIN_SECONDS, ITEMS, INV_SLOTS } from "@/lib/game/constants";
 import { useGame } from "./store";
 import { setMuted as setAudioMuted, sfx, stopMusic, startMusic } from "@/lib/game/audio";
 import { Button } from "@/components/ui/button";
@@ -814,7 +814,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
               <div className="mx-auto mt-3 h-2.5 w-44 overflow-hidden rounded-full bg-white/15">
                 <motion.div
                   className="h-full rounded-full bg-rose-400"
-                  animate={{ width: `${(1 - hud.detainLeft / 8) * 100}%` }}
+                  animate={{ width: `${(1 - hud.detainLeft / DETAIN_SECONDS) * 100}%` }}
                   transition={{ ease: "linear", duration: 0.2 }}
                 />
               </div>

@@ -209,7 +209,8 @@ export const DETECT_BASE = 13;
 export const DETECT_CARRY_BONUS = 9;
 export const DETECT_STAR_BONUS = 2.2;
 export const CATCH_RADIUS = 1.35;
-export const DETAIN_SECONDS = 8;
+export const DETAIN_SECONDS = 20; // long enough that the catcher walks far away before release
+export const RELEASE_GRACE_S = 10; // post-release grace — cops can't spot or catch you while it lasts
 export const STAR_DECAY_S = 45;
 export const ESCAPE_LOST_S = 4.5;
 
