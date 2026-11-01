@@ -243,6 +243,12 @@ export const ANIMAL_SET: { kind: AnimalKind; count: number; zone: "farm" | "jung
   { kind: "monkey", count: 4, zone: "jungle" },
 ];
 
+/* ---------- Ring-road traffic & the cartoon car bonk (old-game hurt() homage) ---------- */
+export const TRAFFIC_COUNT = 12; // cars cruising the ring highway, two lanes, both directions
+export const FAINT_S = 1.7;      // how long the world spins (dizzy stars) after a car bonk
+export const CAR_HIT_CD = 1.5;   // old-game hitCd — minimum seconds between two car knocks
+export const CAR_HIT_DMG = 6;    // hp lost per bonk — never knocks you below 1, cars don't arrest
+
 /* ---------- Scoring ---------- */
 export const POINTS_DELIVER = 120;
 export const POINTS_PICKUP = 10;

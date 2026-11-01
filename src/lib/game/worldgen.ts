@@ -14,7 +14,7 @@ export interface CircleCollider { x: number; z: number; r: number }
 export interface Building extends BoxCollider { h: number; color: number; roof: number; kind: 0 | 1 | 2 | 3 | 4 | 5 | 6; awn: number; fz: 1 | -1 }
 export interface Tree { x: number; z: number; r: number; s: number; kind: 0 | 1 }
 export interface Flower { x: number; z: number; c: number; s: number }
-export interface Car { x: number; z: number; rot: number; c: number }
+export interface Car { x: number; z: number; rot: number; c: number; /** body style: 0 sedan · 1 hatchback · 2 van */ t: number }
 export interface Lamp { x: number; z: number }
 export interface Bench { x: number; z: number; rot: number }
 export interface Field { x: number; z: number; w: number; d: number; rot: number; crop: number }
@@ -204,9 +204,9 @@ export function generateWorld(seed = WORLD_SEED): World {
   push(HOSPITAL.x, HOSPITAL.z, 13, 6.5, 17, 5, 0xf4f6f8, 0xc7ccd4);        // hospital
   // mall + hospital parking cars
   for (let i = 0; i < 4; i++) for (const zr of [-6, 5]) {
-    cars.push({ x: MALL.x - 15 + i * 10, z: MALL.z - 26 + zr, rot: Math.PI / 2, c: (i + (zr > 0 ? 2 : 0)) % CAR_COLS.length });
+    cars.push({ x: MALL.x - 15 + i * 10, z: MALL.z - 26 + zr, rot: Math.PI / 2, c: (i + (zr > 0 ? 2 : 0)) % CAR_COLS.length, t: Math.floor(rnd() * 3) });
   }
-  for (let i = 0; i < 3; i++) cars.push({ x: HOSPITAL.x - 10 + i * 10, z: HOSPITAL.z - 15, rot: Math.PI / 2, c: (i + 4) % CAR_COLS.length });
+  for (let i = 0; i < 3; i++) cars.push({ x: HOSPITAL.x - 10 + i * 10, z: HOSPITAL.z - 15, rot: Math.PI / 2, c: (i + 4) % CAR_COLS.length, t: Math.floor(rnd() * 3) });
   lamps.push(
     { x: MALL.x - 21, z: MALL.z - 27 }, { x: MALL.x + 21, z: MALL.z - 27 },
     { x: MALL.x - 21, z: MALL.z - 5 }, { x: MALL.x + 21, z: MALL.z - 5 },
@@ -232,8 +232,8 @@ export function generateWorld(seed = WORLD_SEED): World {
         if (main && (d < MAIN_ROAD.z0 + 45 || d > MAIN_ROAD.z1 - 8)) continue;
         const off = main ? 9.5 : 5.2;
         cars.push(vertical
-          ? { x: k + side * off, z: d + range(rnd, -4, 4), rot: side > 0 ? 0 : Math.PI, c: Math.floor(rnd() * CAR_COLS.length) }
-          : { x: d + range(rnd, -4, 4), z: k + side * 5.2, rot: side > 0 ? Math.PI / 2 : -Math.PI / 2, c: Math.floor(rnd() * CAR_COLS.length) });
+          ? { x: k + side * off, z: d + range(rnd, -4, 4), rot: side > 0 ? 0 : Math.PI, c: Math.floor(rnd() * CAR_COLS.length), t: Math.floor(rnd() * 3) }
+          : { x: d + range(rnd, -4, 4), z: k + side * 5.2, rot: side > 0 ? Math.PI / 2 : -Math.PI / 2, c: Math.floor(rnd() * CAR_COLS.length), t: Math.floor(rnd() * 3) });
       }
     }
   }
@@ -357,7 +357,13 @@ export function generateWorld(seed = WORLD_SEED): World {
   circles.push({ x: PARK.x, z: PARK.z, r: 3.6 });                          // fountain
   circles.push({ x: PARLIAMENT.x, z: PARLIAMENT.z, r: 26 });               // parliament podium (matches the visual base)
   for (const s of signs) circles.push({ x: s.x, z: s.z, r: 0.45 });        // placard posts
-  for (const c of cars) circles.push({ x: c.x, z: c.z, r: 1.55 });
+  // two circles per car (front + rear axle) — a single centre circle let players
+  // clip through the hood and boot of the 4.4-long bodies
+  for (const c of cars) {
+    const fx = Math.sin(c.rot), fz = Math.cos(c.rot);
+    circles.push({ x: c.x - fx * 1.25, z: c.z - fz * 1.25, r: 1.16 });
+    circles.push({ x: c.x + fx * 1.25, z: c.z + fz * 1.25, r: 1.16 });
+  }
   for (const s of silos) circles.push({ x: s.x, z: s.z, r: 3.3 });
   for (const w of windmills) circles.push({ x: w.x, z: w.z, r: 0.8 });
 

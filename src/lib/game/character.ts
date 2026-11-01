@@ -413,7 +413,7 @@ export const rigOf = (g: THREE.Object3D): CharRig => g.userData.rig as CharRig;
 /* ------------------------------------------------------------------ */
 /* Posing — walk / run / jump / idle / sit + auto-blink & expressions  */
 /* ------------------------------------------------------------------ */
-export interface PoseOpts { phase?: number; airborne?: boolean; detained?: boolean; zombie?: boolean; vy?: number; flip?: number; squash?: number }
+export interface PoseOpts { phase?: number; airborne?: boolean; detained?: boolean; zombie?: boolean; vy?: number; flip?: number; squash?: number; faint?: number }
 
 /** All channels poseCharacter drives — computed as targets, blended, then applied. */
 interface PoseCh {
@@ -492,6 +492,22 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
     arms[0].rotation.z = 0.15; arms[1].rotation.z = -0.15;
     head.rotation.x = 0.32;
     body.scale.y = 1;
+    return;
+  }
+
+  // car bonk: tipsy wobble while the dizzy stars orbit (o.faint runs 1 → 0)
+  if (o.faint != null && o.faint > 0) {
+    const w = o.faint;
+    const wob = Math.sin(t * 9) * 0.18 * w;
+    body.rotation.set(-0.55 * w - 0.08, wob * 0.5, wob);
+    body.position.y = -0.2 * w;
+    body.position.z = -0.12 * w;
+    body.scale.set(1 + 0.06 * w, 1 - 0.07 * w, 1 + 0.06 * w);
+    head.position.y = HEAD_Y;
+    head.rotation.set(0.38 * w, wob * 2.4, wob * 1.6); // lolling head
+    legs[0].rotation.x = -0.55 * w; legs[1].rotation.x = -0.38 * w;
+    arms[0].rotation.x = 0.55 * w; arms[1].rotation.x = 0.45 * w;
+    arms[0].rotation.z = 0.75 * w; arms[1].rotation.z = -0.75 * w; // arms splayed — "whoa!"
     return;
   }
 

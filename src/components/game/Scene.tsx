@@ -213,7 +213,7 @@ export function Scene({ engine }: { engine: GameEngine }) {
       }}
     >
       {low && <AdaptiveDpr />}
-      <WorldView clockRef={clockRef} />
+      <WorldView clockRef={clockRef} engine={engine} />
       <GameLoop engine={engine} clockRef={clockRef} />
       <Npcs engine={engine} />
       <Zombies engine={engine} />

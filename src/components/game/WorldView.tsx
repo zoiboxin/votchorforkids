@@ -13,6 +13,7 @@ import {
 import { buildBallotBox } from "@/lib/game/character";
 import { mulberry32, range } from "@/lib/game/rng";
 import { nightFactor } from "@/lib/game/sim";
+import type { GameEngine } from "@/lib/game/engine";
 
 export const WORLD: World = generateWorld();
 const tmp = new THREE.Object3D();
@@ -458,125 +459,189 @@ function Windows({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
 /* ------------------------- cars: parked + ring traffic ------------------------- */
 const CAR_COL_HEX = ["#e0483a", "#2a9d8f", "#f0c040", "#f2f2f2", "#8a5aa8", "#ff8c42", "#4aa3df", "#67b05f"];
 
-function placeCar(
-  body: THREE.InstancedMesh, cab: THREE.InstancedMesh, trim: THREE.InstancedMesh,
-  wheels: THREE.InstancedMesh | null,
-  i: number, x: number, y: number, z: number, rot: number, c: number,
-) {
-  const fx = Math.sin(rot), fz = Math.cos(rot);
+/** Body styles — sedans, hatchbacks and chunky vans all share the same instanced parts. */
+interface CarType { L: number; W: number; bodyH: number; cabL: number; cabOff: number; cabH: number; wheelR: number; axF: number }
+const CAR_TYPES: CarType[] = [
+  { L: 4.4, W: 1.9, bodyH: 0.92, cabL: 2.0, cabOff: -0.3, cabH: 0.6, wheelR: 0.44, axF: 1.42 },   // sedan
+  { L: 3.5, W: 1.8, bodyH: 0.86, cabL: 1.95, cabOff: 0.2, cabH: 0.72, wheelR: 0.42, axF: 1.1 },   // hatchback
+  { L: 4.7, W: 2.05, bodyH: 1.18, cabL: 2.8, cabOff: 0.55, cabH: 0.85, wheelR: 0.48, axF: 1.55 }, // chunky van
+];
+
+/** Every instanced part of one car group (the parked set or the traffic set). */
+interface CarParts {
+  body: THREE.InstancedMesh; roof: THREE.InstancedMesh; cab: THREE.InstancedMesh; skirt: THREE.InstancedMesh;
+  bumpF: THREE.InstancedMesh; bumpR: THREE.InstancedMesh; lights: THREE.InstancedMesh; tails: THREE.InstancedMesh;
+  wheels: THREE.InstancedMesh; hubs: THREE.InstancedMesh;
+}
+
+/**
+ * Stamp one cartoon car: coloured body + roof, glass cabin, dark skirt & bumpers,
+ * glowing head/tail lights and tires with hubcaps. Offsets are car-local:
+ * s = sideways, f = along the forward axis, then rotated into place.
+ */
+function placeCar(P: CarParts, i: number, x: number, y: number, z: number, rot: number, c: number, t: number) {
+  const T = CAR_TYPES[t % CAR_TYPES.length];
   const cs = Math.cos(rot), sn = Math.sin(rot);
-  tmp.rotation.set(0, rot, 0);
-  tmp.position.set(x, y + 0.52, z);
-  tmp.scale.set(1.9, 1.0, 4.4);
-  tmp.updateMatrix();
-  body.setMatrixAt(i, tmp.matrix);
-  body.setColorAt(i, col.set(CAR_COL_HEX[c % CAR_COL_HEX.length]));
-  tmp.position.set(x - fx * 0.4, y + 1.3, z - fz * 0.4);
-  tmp.scale.set(1.66, 0.62, 2.05);
-  tmp.updateMatrix();
-  cab.setMatrixAt(i, tmp.matrix);
-  cab.setColorAt(i, col.set("#9fd0e4"));
-  tmp.position.set(x, y + 0.16, z);
-  tmp.scale.set(2.02, 0.32, 4.55);
-  tmp.updateMatrix();
-  trim.setMatrixAt(i, tmp.matrix);
-  trim.setColorAt(i, col.set("#14181d"));
-  if (wheels) {
-    for (let k = 0; k < 4; k++) {
-      const lx = k % 2 === 0 ? -0.98 : 0.98;
-      const lz = k < 2 ? -1.42 : 1.42;
+  const put = (m: THREE.InstancedMesh, idx: number, s: number, f: number, yy: number, sx: number, sy: number, sz: number) => {
+    tmp.rotation.set(0, rot, 0);
+    tmp.position.set(x + s * cs + f * sn, y + yy, z - s * sn + f * cs);
+    tmp.scale.set(sx, sy, sz);
+    tmp.updateMatrix();
+    m.setMatrixAt(idx, tmp.matrix);
+  };
+  const bodyC = col.set(CAR_COL_HEX[c % CAR_COL_HEX.length]);
+  const bodyTop = 0.52 + T.bodyH;
+  put(P.skirt, i, 0, 0, 0.38, T.W + 0.1, 0.28, T.L + 0.08);
+  put(P.body, i, 0, 0, 0.52 + T.bodyH / 2, T.W, T.bodyH, T.L);
+  P.body.setColorAt(i, bodyC);
+  put(P.cab, i, 0, T.cabOff, bodyTop + T.cabH / 2, T.W - 0.26, T.cabH, T.cabL);
+  put(P.roof, i, 0, T.cabOff, bodyTop + T.cabH + 0.06, T.W - 0.34, 0.12, T.cabL - 0.16);
+  P.roof.setColorAt(i, bodyC);
+  put(P.bumpF, i, 0, T.L / 2 + 0.06, 0.6, T.W + 0.14, 0.26, 0.18);
+  put(P.bumpR, i, 0, -(T.L / 2 + 0.06), 0.6, T.W + 0.14, 0.26, 0.18);
+  for (const k of [-1, 1]) {
+    put(P.lights, i * 2 + (k > 0 ? 1 : 0), k * (T.W / 2 - 0.3), T.L / 2 + 0.03, bodyTop - 0.22, 0.3, 0.15, 0.1);
+    put(P.tails, i * 2 + (k > 0 ? 1 : 0), k * (T.W / 2 - 0.3), -(T.L / 2 + 0.03), bodyTop - 0.22, 0.3, 0.15, 0.1);
+  }
+  for (let k = 0; k < 4; k++) {
+    const s = (k % 2 === 0 ? -1 : 1) * (T.W / 2 - 0.08);
+    const f = k < 2 ? T.axF : -T.axF;
+    for (const [m, geo] of [[P.wheels, 0], [P.hubs, 1]] as const) {
       tmp.rotation.set(0, rot, Math.PI / 2);
-      tmp.position.set(x + lx * cs + lz * sn, y + 0.42, z - lx * sn + lz * cs);
-      tmp.scale.setScalar(1);
+      tmp.position.set(x + s * cs + f * sn, y + T.wheelR, z - s * sn + f * cs);
+      tmp.scale.setScalar(geo === 1 ? T.wheelR * 2.18 : 1);
       tmp.updateMatrix();
-      wheels.setMatrixAt(i * 4 + k, tmp.matrix);
+      m.setMatrixAt(i * 4 + k, tmp.matrix);
     }
   }
 }
 
 function Cars() {
   const body = useRef<THREE.InstancedMesh>(null!);
+  const roof = useRef<THREE.InstancedMesh>(null!);
   const cab = useRef<THREE.InstancedMesh>(null!);
-  const trim = useRef<THREE.InstancedMesh>(null!);
+  const skirt = useRef<THREE.InstancedMesh>(null!);
+  const bumpF = useRef<THREE.InstancedMesh>(null!);
+  const bumpR = useRef<THREE.InstancedMesh>(null!);
+  const lights = useRef<THREE.InstancedMesh>(null!);
+  const tails = useRef<THREE.InstancedMesh>(null!);
   const wheels = useRef<THREE.InstancedMesh>(null!);
+  const hubs = useRef<THREE.InstancedMesh>(null!);
   useLayoutEffect(() => {
-    WORLD.cars.forEach((c, i) => placeCar(body.current, cab.current, trim.current, wheels.current, i, c.x, 0, c.z, c.rot, c.c));
-    body.current.instanceMatrix.needsUpdate = true;
-    cab.current.instanceMatrix.needsUpdate = true;
-    trim.current.instanceMatrix.needsUpdate = true;
-    wheels.current.instanceMatrix.needsUpdate = true;
+    const P: CarParts = { body: body.current, roof: roof.current, cab: cab.current, skirt: skirt.current, bumpF: bumpF.current, bumpR: bumpR.current, lights: lights.current, tails: tails.current, wheels: wheels.current, hubs: hubs.current };
+    WORLD.cars.forEach((c, i) => placeCar(P, i, c.x, 0, c.z, c.rot, c.c, c.t));
+    for (const m of Object.values(P)) m.instanceMatrix.needsUpdate = true;
     if (body.current.instanceColor) body.current.instanceColor.needsUpdate = true;
-    if (cab.current.instanceColor) cab.current.instanceColor.needsUpdate = true;
-    if (trim.current.instanceColor) trim.current.instanceColor.needsUpdate = true;
+    if (roof.current.instanceColor) roof.current.instanceColor.needsUpdate = true;
   }, []);
-  const n = Math.max(1, WORLD.cars.length);
+  const N = Math.max(1, WORLD.cars.length);
   return (
     <>
-      <instancedMesh ref={body} args={[undefined, undefined, n]}>
+      <instancedMesh ref={skirt} args={[undefined, undefined, N]}>
+        <boxGeometry />
+        <meshLambertMaterial color="#1c2128" />
+      </instancedMesh>
+      <instancedMesh ref={body} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial />
       </instancedMesh>
-      <instancedMesh ref={cab} args={[undefined, undefined, n]}>
+      <instancedMesh ref={cab} args={[undefined, undefined, N]}>
+        <boxGeometry />
+        <meshLambertMaterial color="#a8d8ea" />
+      </instancedMesh>
+      <instancedMesh ref={roof} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial />
       </instancedMesh>
-      <instancedMesh ref={trim} args={[undefined, undefined, n]}>
+      <instancedMesh ref={bumpF} args={[undefined, undefined, N]}>
         <boxGeometry />
-        <meshLambertMaterial />
+        <meshLambertMaterial color="#2a2f38" />
       </instancedMesh>
-      <instancedMesh ref={wheels} args={[undefined, undefined, n * 4]}>
-        <cylinderGeometry args={[0.42, 0.42, 0.34, 6]} />
+      <instancedMesh ref={bumpR} args={[undefined, undefined, N]}>
+        <boxGeometry />
+        <meshLambertMaterial color="#2a2f38" />
+      </instancedMesh>
+      <instancedMesh ref={lights} args={[undefined, undefined, N * 2]}>
+        <boxGeometry />
+        <meshBasicMaterial color="#ffe08a" />
+      </instancedMesh>
+      <instancedMesh ref={tails} args={[undefined, undefined, N * 2]}>
+        <boxGeometry />
+        <meshBasicMaterial color="#ff5f4a" />
+      </instancedMesh>
+      <instancedMesh ref={wheels} args={[undefined, undefined, N * 4]}>
+        <cylinderGeometry args={[0.5, 0.5, 0.32, 10]} />
         <meshLambertMaterial color="#171a1f" />
+      </instancedMesh>
+      <instancedMesh ref={hubs} args={[undefined, undefined, N * 4]}>
+        <cylinderGeometry args={[0.5, 0.5, 0.42, 8]} />
+        <meshLambertMaterial color="#c9ced8" />
       </instancedMesh>
     </>
   );
 }
 
-/** Little cars cruising the ring highway, GTA-style. */
-function RingTraffic() {
-  const N = 10;
-  const data = useMemo(() => Array.from({ length: N }, (_, i) => ({
-    r: i % 2 === 0 ? RING_R - 2.7 : RING_R + 2.7,
-    dir: i % 2 === 0 ? 1 : -1,
-    a: (i / N) * Math.PI * 2,
-    sp: 0.05 + (i % 3) * 0.014,
-    c: (i * 3 + 1) % CAR_COL_HEX.length,
-  })), []);
+/** Cars cruising the ring highway — the engine owns their positions (and collisions). */
+function RingTraffic({ engine }: { engine: GameEngine }) {
   const body = useRef<THREE.InstancedMesh>(null!);
+  const roof = useRef<THREE.InstancedMesh>(null!);
   const cab = useRef<THREE.InstancedMesh>(null!);
-  const trim = useRef<THREE.InstancedMesh>(null!);
+  const skirt = useRef<THREE.InstancedMesh>(null!);
+  const bumpF = useRef<THREE.InstancedMesh>(null!);
+  const bumpR = useRef<THREE.InstancedMesh>(null!);
+  const lights = useRef<THREE.InstancedMesh>(null!);
+  const tails = useRef<THREE.InstancedMesh>(null!);
   const wheels = useRef<THREE.InstancedMesh>(null!);
-  useFrame((s) => {
-    data.forEach((d, i) => {
-      const a = d.a + s.clock.elapsedTime * d.sp * d.dir;
-      const rot = d.dir > 0 ? -a : Math.PI + a;
-      placeCar(body.current, cab.current, trim.current, wheels.current, i, Math.cos(a) * d.r, 0.07, Math.sin(a) * d.r, rot, d.c);
-    });
-    body.current.instanceMatrix.needsUpdate = true;
-    cab.current.instanceMatrix.needsUpdate = true;
-    trim.current.instanceMatrix.needsUpdate = true;
-    wheels.current.instanceMatrix.needsUpdate = true;
+  const hubs = useRef<THREE.InstancedMesh>(null!);
+  useFrame(() => {
+    const P: CarParts = { body: body.current, roof: roof.current, cab: cab.current, skirt: skirt.current, bumpF: bumpF.current, bumpR: bumpR.current, lights: lights.current, tails: tails.current, wheels: wheels.current, hubs: hubs.current };
+    engine.traffic.forEach((t, i) => placeCar(P, i, t.x, 0.07, t.z, t.rot, t.c, t.t));
+    for (const m of Object.values(P)) m.instanceMatrix.needsUpdate = true;
     if (body.current.instanceColor) body.current.instanceColor.needsUpdate = true;
-    if (cab.current.instanceColor) cab.current.instanceColor.needsUpdate = true;
-    if (trim.current.instanceColor) trim.current.instanceColor.needsUpdate = true;
+    if (roof.current.instanceColor) roof.current.instanceColor.needsUpdate = true;
   });
+  const N = Math.max(1, engine.traffic.length);
   return (
     <>
+      <instancedMesh ref={skirt} args={[undefined, undefined, N]} frustumCulled={false}>
+        <boxGeometry />
+        <meshLambertMaterial color="#1c2128" />
+      </instancedMesh>
       <instancedMesh ref={body} args={[undefined, undefined, N]} frustumCulled={false}>
         <boxGeometry />
         <meshLambertMaterial />
       </instancedMesh>
       <instancedMesh ref={cab} args={[undefined, undefined, N]} frustumCulled={false}>
         <boxGeometry />
-        <meshLambertMaterial />
+        <meshLambertMaterial color="#a8d8ea" />
       </instancedMesh>
-      <instancedMesh ref={trim} args={[undefined, undefined, N]} frustumCulled={false}>
+      <instancedMesh ref={roof} args={[undefined, undefined, N]} frustumCulled={false}>
         <boxGeometry />
         <meshLambertMaterial />
       </instancedMesh>
+      <instancedMesh ref={bumpF} args={[undefined, undefined, N]} frustumCulled={false}>
+        <boxGeometry />
+        <meshLambertMaterial color="#2a2f38" />
+      </instancedMesh>
+      <instancedMesh ref={bumpR} args={[undefined, undefined, N]} frustumCulled={false}>
+        <boxGeometry />
+        <meshLambertMaterial color="#2a2f38" />
+      </instancedMesh>
+      <instancedMesh ref={lights} args={[undefined, undefined, N * 2]} frustumCulled={false}>
+        <boxGeometry />
+        <meshBasicMaterial color="#ffe08a" />
+      </instancedMesh>
+      <instancedMesh ref={tails} args={[undefined, undefined, N * 2]} frustumCulled={false}>
+        <boxGeometry />
+        <meshBasicMaterial color="#ff5f4a" />
+      </instancedMesh>
       <instancedMesh ref={wheels} args={[undefined, undefined, N * 4]} frustumCulled={false}>
-        <cylinderGeometry args={[0.42, 0.42, 0.34, 6]} />
+        <cylinderGeometry args={[0.5, 0.5, 0.32, 10]} />
         <meshLambertMaterial color="#171a1f" />
+      </instancedMesh>
+      <instancedMesh ref={hubs} args={[undefined, undefined, N * 4]} frustumCulled={false}>
+        <cylinderGeometry args={[0.5, 0.5, 0.42, 8]} />
+        <meshLambertMaterial color="#c9ced8" />
       </instancedMesh>
     </>
   );
@@ -1527,7 +1592,7 @@ function Env({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
   );
 }
 
-export function WorldView({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
+export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObject<number>; engine: GameEngine }) {
   return (
     <>
       <Env clockRef={clockRef} />
@@ -1540,7 +1605,7 @@ export function WorldView({ clockRef }: { clockRef: React.MutableRefObject<numbe
       <Buildings />
       <Windows clockRef={clockRef} />
       <Cars />
-      <RingTraffic />
+      <RingTraffic engine={engine} />
       <Lamps clockRef={clockRef} />
       <Park />
       <Benches />

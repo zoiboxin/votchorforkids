@@ -66,6 +66,7 @@ export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange:
             <div className="rounded-2xl bg-white/5 p-3">
               <div className="mb-1.5 flex items-center gap-2 font-black text-pink-300"><HeartHandshake size={15} /> Rescue friends</div>
               <p className="text-white/85">Police chase &amp; arrest suspicious civilians too — caught bots wait in pink bubbles. Walk close and press <b>E</b> to free them (+60 support)!</p>
+              <p className="text-white/85">Cars on the ring road are solid — and they <b>bonk</b>! Get hit and you&apos;ll see stars, tumble, then hop back up and play on.</p>
             </div>
             <div className="rounded-2xl bg-white/5 p-3">
               <div className="mb-1.5 flex items-center gap-2 font-black text-orange-300"><Sunrise size={15} /> Day & night</div>

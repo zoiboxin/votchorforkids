@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  ANIMAL_SET, CIVIL_NAMES, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, PANTS_COLORS, SHIRT_COLORS, SKIN_TONES,
+  ANIMAL_SET, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, PANTS_COLORS, SHIRT_COLORS, SKIN_TONES,
   TOTAL_VOTES, type Appearance,
 } from "@/lib/game/constants";
 import type { GameEngine } from "@/lib/game/engine";
@@ -30,6 +30,25 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
   const hudT = useRef(0);
   const { camera } = useThree();
 
+  // three dizzy stars that orbit the player's head after a car bonk
+  const stars = useMemo(() => {
+    const c = document.createElement("canvas");
+    c.width = c.height = 64;
+    const ctx = c.getContext("2d")!;
+    ctx.font = "48px system-ui, sans-serif";
+    ctx.textAlign = "center"; ctx.textBaseline = "middle";
+    ctx.fillText("⭐", 32, 34);
+    const tex = new THREE.CanvasTexture(c);
+    const grp = new THREE.Group();
+    for (let i = 0; i < 3; i++) {
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, transparent: true, depthWrite: false }));
+      sp.scale.setScalar(0.55);
+      grp.add(sp);
+    }
+    grp.visible = false;
+    return grp;
+  }, []);
+
   useFrame((_, dt0) => {
     const dt = Math.min(0.05, dt0);
     engine.update(dt);
@@ -48,11 +67,20 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       vy: p.vy,
       flip: engine.flipT > 0 ? engine.flipT / FLIP_S : 0,
       squash: engine.squashT > 0 ? engine.squashT / LAND_SQUASH_S : 0,
+      faint: engine.faintT > 0 ? engine.faintT / FAINT_S : 0,
     });
 
-    // carried votes orbit the player's head (rendered by <Pickups>)
+    // dizzy stars orbit the head while the bonk faint lasts
+    if (engine.faintT > 0) {
+      const t = performance.now() / 1000;
+      stars.visible = true;
+      stars.children.forEach((s, i) => {
+        const a = t * 6.5 + (i / 3) * Math.PI * 2;
+        s.position.set(Math.cos(a) * 0.55, 2.3 + Math.sin(t * 4 + i * 2.1) * 0.09, Math.sin(a) * 0.55);
+      });
+    } else if (stars.visible) stars.visible = false;
 
-    // camera — intro swoop then smooth follow
+    // camera — intro swoop then smooth follow (plus a dizzy wobble after a car bonk)
     const cd = 8.6;
     const iy = engine.input.yaw, ip = engine.input.pitch;
     const tx = p.x + Math.sin(iy) * cd * Math.cos(ip);
@@ -66,6 +94,10 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
         THREE.MathUtils.lerp(60, ty, e),
         THREE.MathUtils.lerp(p.z + 90, tz, e),
       );
+    } else if (engine.faintT > 0) {
+      const wob = engine.faintT / FAINT_S;
+      const t = performance.now() / 1000;
+      camera.position.set(tx + Math.sin(t * 21) * 0.09 * wob, ty + Math.sin(t * 17) * 0.06 * wob, tz);
     } else {
       camera.position.set(tx, ty, tz);
     }
@@ -82,6 +114,7 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
   return (
     <>
       <primitive object={mesh} />
+      <primitive object={stars} />
       <pointLight ref={lantern} distance={30} decay={1.5} color="#ffca7a" position={[0, 2.6, 0]} intensity={0} />
     </>
   );

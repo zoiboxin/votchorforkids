@@ -78,6 +78,7 @@ export const sfx = {
   jump2: () => { tone(430, 0.16, "sine", 0.3, 900); tone(620, 0.1, "triangle", 0.18, 980, 0.05); }, // double-jump whoosh
   land: () => noise(0.08, 0.14, 900),
   caught: () => { tone(392, 0.3, "sawtooth", 0.3, 180); tone(311, 0.4, "sawtooth", 0.25, 140, 0.15); },
+  bonk: () => { tone(196, 0.16, "square", 0.4, 98); tone(311, 0.1, "triangle", 0.22, undefined, 0.05); noise(0.06, 0.12, 700); }, // car clonk + dizzy wobble
   rescue: () => [659, 784, 988].forEach((f, i) => tone(f, 0.14, "sine", 0.4, undefined, i * 0.08)),
   zombie: () => tone(140 + Math.random() * 40, 0.5, "sawtooth", 0.16, 90),
   alert: () => tone(740, 0.1, "square", 0.22, 988),

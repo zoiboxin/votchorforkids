@@ -1,15 +1,15 @@
 import {
-  AGE_STATS, ANIMAL_SET, BALLOT, CARRY_RADIUS, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT,
+  AGE_STATS, ANIMAL_SET, BALLOT, CARRY_RADIUS, CAR_HIT_CD, CAR_HIT_DMG, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT,
   CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
-  ESCAPE_LOST_S, FARM_RADIUS, FLIP_S, GRAVEYARD, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
+  ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
   ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUNGLE_RADIUS, LAND_SQUASH_S, MAX_CARRY, MAX_CIV_HELD, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, RELEASE_GRACE_S, RESCUE_POINTS,
-  RESCUE_RADIUS, SPAWN, STAR_DECAY_S, TOTAL_VOTES, WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
+  RESCUE_RADIUS, SPAWN, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
   ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, type AnimalKind, type Appearance, type Zone, zoneOf, ZONE_TOAST,
 } from "./constants";
 import { clamp, mulberry32, range } from "./rng";
-import { freeSpot, lineClear, resolve, type World } from "./worldgen";
+import { freeSpot, lineClear, resolve, RING_R, type World } from "./worldgen";
 import { advanceClock, nightFactor, newBody, stepBody, stepNpc, type Body } from "./sim";
 import { sfx } from "./audio";
 
@@ -35,6 +35,13 @@ export interface ItemEnt { id: number; def: number; x: number; z: number; active
 export interface VoteEnt { id: number; x: number; z: number; state: "world" | "carried" | "delivered" }
 
 export interface Fx { type: "confetti"; x: number; y: number; z: number; hue: number }
+
+/** A car cruising the ring highway — the engine owns the position, the renderer just reads it. */
+export interface TrafficCar {
+  a: number; r: number; dir: 1 | -1; sp: number;  // lane angle, radius, direction, angular speed
+  c: number; t: number;                            // colour + body style (see placeCar)
+  x: number; z: number; rot: number;               // derived each step — solid for collision
+}
 
 export interface HudData {
   hp: number; stamina: number; stars: number; carried: number; delivered: number; total: number;
@@ -78,7 +85,11 @@ export class GameEngine {
   zombies: Zombie[] = [];
   animals: Animal[] = [];
   items: ItemEnt[] = [];
+  traffic: TrafficCar[] = [];
   fxQueue: Fx[] = [];
+
+  faintT = 0;   // >0 while the world spins after a car bonk — input is ignored, stars orbit
+  carHitCd = 0; // old-game hitCd — no double-bonks from the same bumper
 
   points = 0; rescues = 0; caughtCount = 0;
   delivered = 0;
@@ -212,6 +223,22 @@ export class GameEngine {
       const p = freeSpot(r, this.world, 10, 340);
       this.items.push({ id: this.nid(), def: Math.floor(r() * ITEMS.length), x: p.x, z: p.z, active: true, respawn: 0 });
     }
+    // ring-road traffic — two lanes, both directions, mixed body styles
+    for (let i = 0; i < TRAFFIC_COUNT; i++) {
+      const dir: 1 | -1 = i % 2 === 0 ? 1 : -1;
+      this.traffic.push({
+        r: RING_R + (dir > 0 ? -2.7 : 2.7),
+        dir,
+        a: (i / TRAFFIC_COUNT) * Math.PI * 2,
+        sp: 0.034 + (i % 3) * 0.011, // ≈7–12 u/s — quicker than a walking kid, dodgeable when sprinting
+        c: (i * 3 + 1) % 8,
+        t: i % 3,
+        x: 0, z: 0, rot: 0,
+      });
+      const t = this.traffic[this.traffic.length - 1];
+      t.x = Math.cos(t.a) * t.r; t.z = Math.sin(t.a) * t.r;
+      t.rot = t.dir > 0 ? -t.a : Math.PI + t.a;
+    }
   }
 
   /* ---------------- lifecycle ---------------- */
@@ -223,7 +250,7 @@ export class GameEngine {
     this.player = newBody(SPAWN.x, SPAWN.z);
     this.hp = 100; this.stamina = 100; this.stars = 0; this.starTimer = 0; this.chased = false;
     this.inv = []; this.hurtT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0;
-    this.flipT = 0; this.squashT = 0;
+    this.flipT = 0; this.squashT = 0; this.faintT = 0; this.carHitCd = 0;
     this.carriedVotes = []; this.delivered = 0; this.points = 0; this.rescues = 0; this.caughtCount = 0;
     this.detainedT = 0; this.invulnT = 8; this.elapsed = 0; this.won = false; this.clock = 0.3;
     for (const v of this.votes) { v.state = "world"; const p = freeSpot(this.rnd, this.world, 16, 330); v.x = p.x; v.z = p.z; }
@@ -399,6 +426,8 @@ export class GameEngine {
     this.hurtT = Math.max(0, this.hurtT - dt);
     this.flipT = Math.max(0, this.flipT - dt);
     this.squashT = Math.max(0, this.squashT - dt);
+    this.faintT = Math.max(0, this.faintT - dt);
+    this.carHitCd = Math.max(0, this.carHitCd - dt);
     if (this.detainedT > 0) {
       this.detainedT -= dt;
       p.vx = p.vz = 0;
@@ -420,7 +449,12 @@ export class GameEngine {
       const prevY = p.y;
       const prevJumps = p.jumps;
       p.stamina = this.stamina; // engine stamina is the single source of truth
-      stepBody(p, { f: this.input.f, r: this.input.r, sprint: this.input.sprint, jump: this.input.jump }, dt, this.look.age, this.world, { yaw: this.input.yaw });
+      // while dizzy from a car bonk the legs don't answer — momentum carries the tumble
+      const faint = this.faintT > 0;
+      stepBody(p, faint
+        ? { f: 0, r: 0, sprint: false, jump: false }
+        : { f: this.input.f, r: this.input.r, sprint: this.input.sprint, jump: this.input.jump },
+        dt, this.look.age, this.world, { yaw: this.input.yaw });
       this.stamina = p.stamina; // sprinting drains / walking regenerates (see stepBody)
       if (p.jumps === 1 && prevJumps === 0) {
         sfx.jump();
@@ -437,6 +471,47 @@ export class GameEngine {
       } else if (this.stamina > 25) this.exhaustedAnnounced = false;
     }
     this.hp = Math.min(100, this.hp + 1.2 * dt * AGE_STATS[this.look.age].regen);
+
+    /* --- ring-road traffic: solid cars that bonk careless runners --- */
+    for (const t of this.traffic) {
+      t.a += t.sp * t.dir * dt;
+      t.x = Math.cos(t.a) * t.r;
+      t.z = Math.sin(t.a) * t.r;
+      t.rot = t.dir > 0 ? -t.a : Math.PI + t.a;
+      if (this.detainedT > 0) continue; // sitting out detention — traffic can't touch you
+      const fx = Math.sin(t.rot), fz = Math.cos(t.rot);
+      for (const off of [1.25, -1.25]) { // front & rear axle circles, matching parked-car colliders
+        const cx = t.x + fx * off, cz = t.z + fz * off;
+        const dx = p.x - cx, dz = p.z - cz, rr = 1.16 + 0.55;
+        const d2 = dx * dx + dz * dz;
+        if (d2 >= rr * rr) continue;
+        const d = Math.sqrt(d2) || 0.01;
+        // solid — shove the player out of the footprint so nobody clips through
+        p.x = cx + (dx / d) * rr;
+        p.z = cz + (dz / d) * rr;
+        // cartoon bonk — old-game hurt(): damage + cooldown + a silly message
+        if (this.carHitCd <= 0 && this.faintT <= 0) {
+          this.carHitCd = CAR_HIT_CD;
+          this.faintT = FAINT_S;
+          const push = Math.min(9, t.sp * t.r * 0.72);
+          p.vx = fx * push + (dx / d) * 2.6;
+          p.vz = fz * push + (dz / d) * 2.6;
+          p.vy = 4.6; // little cartoon hop
+          this.hp = Math.max(1, this.hp - CAR_HIT_DMG); // cars never detain — floored at 1
+          this.stamina = Math.max(0, this.stamina - 8);
+          this.hurtT = HURT_FLASH_S;
+          sfx.bonk();
+          const BONKS = [
+            "🚕 BONK! A car sent you flying — everything is spinning…",
+            "🚌 Ow! Traffic: 1, you: 0. Shake it off, champ!",
+            "🚗 Wham! The car won that round — up you get, runner!",
+            "🛺 Oof! Watch the ring road — cars don't brake for vote thieves.",
+          ];
+          this.toast(BONKS[Math.floor(this.rnd() * BONKS.length)], "bad");
+        }
+        break; // one axle circle is enough — the other overlaps too
+      }
+    }
 
     // wanted star decay
     if (this.stars > 0) {
