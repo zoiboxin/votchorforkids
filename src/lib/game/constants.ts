@@ -219,6 +219,13 @@ export const CIVILIAN_COUNT = 18;
 export const RESCUE_RADIUS = 3.4;
 export const RESCUE_POINTS = 60;
 
+/* ---------- Police arrest civilians too (old-game bots homage) ---------- */
+export const CIV_DETECT = 11;     // cops only notice loitering civilians this close — players are far more suspicious
+export const CIV_DETAIN_S = 25;   // an arrested civilian waits in the pink bubble this long, then walks free
+export const CIV_COP_CD = 18;     // after an arrest the cop patrols normally before hunting another civilian
+export const CIV_FLEE_MULT = 1.9; // panic speed multiplier while a cop is chasing
+export const MAX_CIV_HELD = 4;    // never arrest more than this many civilians at once — keep the city lively
+
 /* ---------- Zombies ---------- */
 export const ZOMBIE_COUNT = 9;
 export const ZOMBIE_SPEED = 3.4;

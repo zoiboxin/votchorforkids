@@ -1,8 +1,9 @@
 import {
-  AGE_STATS, ANIMAL_SET, BALLOT, CARRY_RADIUS, CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, DAY_SECONDS,
+  AGE_STATS, ANIMAL_SET, BALLOT, CARRY_RADIUS, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT,
+  CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
   ESCAPE_LOST_S, FARM_RADIUS, FLIP_S, GRAVEYARD, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
-  ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUNGLE_RADIUS, LAND_SQUASH_S, MAX_CARRY, PICKUP_RADIUS,
+  ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUNGLE_RADIUS, LAND_SQUASH_S, MAX_CARRY, MAX_CIV_HELD, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, RELEASE_GRACE_S, RESCUE_POINTS,
   RESCUE_RADIUS, SPAWN, STAR_DECAY_S, TOTAL_VOTES, WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
   ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, type AnimalKind, type Appearance, type Zone, zoneOf, ZONE_TOAST,
@@ -21,6 +22,10 @@ export interface Npc {
   mode: CopMode | CivilMode;
   tx: number; tz: number; timer: number; phase: number;
   name: string; speed: number; alertT: number;
+  /** cop only: id of the civilian being chased (unset = hunting the player) */
+  targetCiv?: number;
+  /** cop only: cooldown before this cop may arrest another civilian */
+  copCd?: number;
   /** main-road marcher: stays on the protest strip instead of roaming the city */
   protest?: boolean;
 }
@@ -153,6 +158,13 @@ export class GameEngine {
     return freeSpot(this.rnd, this.world, 10, CITY_RADIUS - 10); // fallback: any city spot
   }
 
+  /** Civilians currently in detention — capped so police arrests never empty the city. */
+  private heldCivs(): number {
+    let n = 0;
+    for (const c of this.civs) if (c.mode === "detained") n++;
+    return n;
+  }
+
   private spawnAll() {
     const r = this.rnd;
     // votes
@@ -165,7 +177,7 @@ export class GameEngine {
     // police — keep clear of the player's spawn so nobody gets spotted on frame one
     for (let i = 0; i < POLICE_COUNT; i++) {
       const p = this.safeCopSpot();
-      this.cops.push({ id: this.nid(), kind: "police", x: p.x, z: p.z, vx: 0, vz: 0, face: 0, mode: "patrol", tx: p.x, tz: p.z, timer: 0, phase: Math.random() * 6, name: "Police", speed: POLICE_SPEED * 0.6, alertT: 0 });
+      this.cops.push({ id: this.nid(), kind: "police", x: p.x, z: p.z, vx: 0, vz: 0, face: 0, mode: "patrol", tx: p.x, tz: p.z, timer: 0, phase: Math.random() * 6, name: "Police", speed: POLICE_SPEED * 0.6, alertT: 0, copCd: 0 });
     }
     // civilians
     for (let i = 0; i < CIVILIAN_COUNT; i++) {
@@ -222,6 +234,7 @@ export class GameEngine {
       const sp = this.safeCopSpot();
       cop.x = sp.x; cop.z = sp.z; cop.vx = cop.vz = 0;
       cop.tx = sp.x; cop.tz = sp.z; cop.mode = "patrol"; cop.alertT = 0; cop.timer = 0;
+      cop.targetCiv = undefined; cop.copCd = 0;
     }
     this.running = true;
   }
@@ -483,6 +496,7 @@ export class GameEngine {
     const detect = DETECT_BASE + carrying * DETECT_CARRY_BONUS + this.stars * DETECT_STAR_BONUS;
     for (const cop of this.cops) {
       cop.phase += dt;
+      cop.copCd = Math.max(0, (cop.copCd ?? 0) - dt);
       const d2p = dist2(cop.x, cop.z, p.x, p.z);
       switch (cop.mode) {
         case "patrol": {
@@ -498,10 +512,53 @@ export class GameEngine {
             this.chased = true;
             sfx.alert();
             this.toast("🚨 Police spotted you! RUN!", "bad");
+            break;
+          }
+          // old-game bots homage: cops also arrest suspicious civilians they walk past
+          if ((cop.copCd ?? 0) <= 0 && this.heldCivs() < MAX_CIV_HELD) {
+            let best: Npc | null = null, bd = CIV_DETECT * CIV_DETECT;
+            for (const c of this.civs) {
+              if (c.mode !== "wander" || c.protest) continue;
+              const d2c = dist2(cop.x, cop.z, c.x, c.z);
+              if (d2c < bd && lineClear(cop.x, cop.z, c.x, c.z, this.world)) { bd = d2c; best = c; }
+            }
+            if (best) {
+              cop.mode = "chase"; cop.targetCiv = best.id; cop.alertT = ESCAPE_LOST_S; cop.timer = 0;
+              best.mode = "flee"; best.timer = 0;
+              if (dist2(best.x, best.z, p.x, p.z) < 60 * 60) this.toast(`🚨 Police are chasing ${best.name}!`, "info");
+            }
           }
           break;
         }
         case "chase": {
+          // chasing a civilian bot — old-game cops caught anyone suspicious
+          if (cop.targetCiv != null) {
+            const c = this.civs.find((cc) => cc.id === cop.targetCiv);
+            if (!c || c.mode !== "flee") {
+              cop.mode = "return"; cop.timer = 0; cop.targetCiv = undefined; cop.copCd = CIV_COP_CD;
+              break;
+            }
+            stepNpc(cop, c.x, c.z, POLICE_SPRINT, dt, this.world);
+            const d2c = dist2(cop.x, cop.z, c.x, c.z);
+            if (d2c < 1.9 * 1.9) {
+              c.mode = "detained"; c.timer = CIV_DETAIN_S;
+              cop.mode = "celebrate"; cop.timer = 2.5;
+              const roam = freeSpot(this.rnd, this.world, 10, 120);
+              cop.tx = roam.x; cop.tz = roam.z;
+              cop.targetCiv = undefined; cop.copCd = CIV_COP_CD;
+              if (dist2(c.x, c.z, p.x, p.z) < 60 * 60) {
+                sfx.alert();
+                this.toast(`${c.name} got caught by the police! Press E near them to rescue.`, "bad");
+              }
+            } else {
+              cop.alertT = d2c < 42 * 42 ? ESCAPE_LOST_S : cop.alertT - dt;
+              if (cop.alertT <= 0) {
+                cop.mode = "return"; cop.timer = 0; cop.targetCiv = undefined; cop.copCd = CIV_COP_CD;
+                c.mode = "wander"; c.timer = 0;
+              }
+            }
+            break;
+          }
           // player is sitting out the time-out — stop hovering, walk AWAY so the
           // release never turns into an instant re-catch
           if (this.detainedT > 0) {
@@ -535,7 +592,7 @@ export class GameEngine {
     /* --- escape sweep: player got far / out of reach → police give up & go back --- */
     if (this.chased && this.detainedT <= 0) {
       let anyChase = false;
-      for (const cop of this.cops) if (cop.mode === "chase") { anyChase = true; break; }
+      for (const cop of this.cops) if (cop.mode === "chase" && cop.targetCiv == null) { anyChase = true; break; }
       if (!anyChase) {
         this.clearWanted("🎉 You escaped! The police went back — wanted badge cleared. Play on!");
         // send every heading-home cop to a spot far away from the player
@@ -561,16 +618,22 @@ export class GameEngine {
             c.tx = t.x; c.tz = t.z; c.timer = range(this.rnd, c.protest ? 9 : 6, c.protest ? 18 : 14);
           }
           stepNpc(c, c.tx, c.tz, c.speed, dt, this.world);
-          // random arrest event (only near player so it's participatory)
-          if (Math.random() < dt * 0.02 && dist2(c.x, c.z, p.x, p.z) < 70 * 70) {
-            c.mode = "detained"; c.timer = 35;
-            this.toast(`${c.name} got caught by the police! Press E near them to rescue.`, "bad");
-          }
+          break;
+        }
+        case "flee": {
+          // a cop is after this civilian — panic-run the other way
+          const hunter = this.cops.find((cc) => cc.targetCiv === c.id);
+          if (!hunter || hunter.mode !== "chase") { c.mode = "wander"; c.timer = 0; break; }
+          const dx = c.x - hunter.x, dz = c.z - hunter.z, d = Math.hypot(dx, dz) || 1;
+          stepNpc(c, c.x + (dx / d) * 10, c.z + (dz / d) * 10, c.speed * CIV_FLEE_MULT, dt, this.world);
           break;
         }
         case "detained":
           c.timer -= dt;
-          if (c.timer <= 0) { c.mode = "wander"; c.timer = 0; }
+          if (c.timer <= 0) {
+            c.mode = "wander"; c.timer = 0;
+            if (dist2(c.x, c.z, p.x, p.z) < 45 * 45) this.toast(`${c.name} is free to go — time served!`, "info");
+          }
           break;
         case "rescued":
           c.timer -= dt;

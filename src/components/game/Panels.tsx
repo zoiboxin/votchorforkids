@@ -65,7 +65,7 @@ export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange:
             </div>
             <div className="rounded-2xl bg-white/5 p-3">
               <div className="mb-1.5 flex items-center gap-2 font-black text-pink-300"><HeartHandshake size={15} /> Rescue friends</div>
-              <p className="text-white/85">Detained civilians wait in pink bubbles — walk close and press <b>E</b> to free them.</p>
+              <p className="text-white/85">Police chase &amp; arrest suspicious civilians too — caught bots wait in pink bubbles. Walk close and press <b>E</b> to free them (+60 support)!</p>
             </div>
             <div className="rounded-2xl bg-white/5 p-3">
               <div className="mb-1.5 flex items-center gap-2 font-black text-orange-300"><Sunrise size={15} /> Day & night</div>
