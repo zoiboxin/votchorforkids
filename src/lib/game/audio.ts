@@ -87,6 +87,12 @@ export const sfx = {
   lose: () => [400, 340, 280, 220].forEach((f, i) => tone(f, 0.28, "sawtooth", 0.25, undefined, i * 0.16)),
   click: () => tone(700, 0.05, "triangle", 0.25),
   star: () => tone(1200, 0.2, "sine", 0.3, 400),
+  // rare super-power fanfare — sparkly ascending arpeggio
+  power: () => [523, 784, 1047, 1319, 1568].forEach((f, i) => tone(f, 0.14, "triangle", 0.38, undefined, i * 0.06)),
+  // teleport poof — quick rising-then-vanishing whoosh
+  blink: () => { tone(980, 0.14, "sine", 0.3, 240); noise(0.1, 0.16, 1400); },
+  // animal morph — silly downward wobble (you now go "moo")
+  morph: () => { tone(520, 0.22, "square", 0.22, 180); tone(300, 0.28, "sawtooth", 0.18, 140, 0.16); },
 };
 
 /* ------- generative ambient music (super light) ------- */

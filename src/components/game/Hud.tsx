@@ -8,7 +8,7 @@ import {
   ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon, Mouse,
 } from "lucide-react";
 import type { GameEngine } from "@/lib/game/engine";
-import { DETAIN_SECONDS, ITEMS, INV_SLOTS, POLICE_STATIONS } from "@/lib/game/constants";
+import { DETAIN_SECONDS, ITEMS, INV_SLOTS, POLICE_STATIONS, POWERS } from "@/lib/game/constants";
 import { useGame } from "./store";
 import { setMuted as setAudioMuted, sfx, stopMusic, startMusic } from "@/lib/game/audio";
 import { Button } from "@/components/ui/button";
@@ -67,6 +67,8 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
   // police vans on an arrest run
   for (const van of engine.vans) if (van.state !== "idle") dot(van.x, van.z, 2.6 * U, "#ff4d5e", 0.95);
   for (const it of engine.items) if (it.active) dot(it.x, it.z, 1.1 * U, "#ffd166", 0.8);
+  // rare super-power gems — glowing coloured dots (hunt them in the jungle!)
+  for (const pw of engine.powers) if (pw.active) dot(pw.x, pw.z, 2.8 * U, POWERS[pw.def].color, 0.95);
   for (const v of engine.votes) if (v.state === "world") dot(v.x, v.z, 2.2 * U, "#f7c948");
   for (const cop of engine.cops) {
     const chasing = cop.mode === "chase";
@@ -102,8 +104,8 @@ function Minimap({ engine, onOpen }: { engine: GameEngine; onOpen: () => void })
 /* ----------------------------- big map overlay ----------------------------- */
 const BIG_MAP_S = 440;
 const MAP_LEGEND: [string, string][] = [
-  ["#ffffff", "You"], ["#f7c948", "Votes"], ["#ffd166", "Food"], ["#6aa0ff", "Police"],
-  ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ["#c084fc", "Zombies · night"], ["#1d2a4a", "Police stn"],
+  ["#ffffff", "You"], ["#f7c948", "Votes"], ["#ffd166", "Food"], ["#c084fc", "Power gems (rare!)"],
+  ["#6aa0ff", "Police"], ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ["#c084fc", "Zombies · night"], ["#1d2a4a", "Police stn"],
 ];
 function BigMap({ engine, onClose }: { engine: GameEngine; onClose: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -321,6 +323,43 @@ function ItemBar({ engine, vertical = false }: { engine: GameEngine; vertical?: 
   );
 }
 
+/* ------------- active super-power badge (lives inside the vitals card) ------------- */
+function PowerBadge() {
+  const power = useGame((s) => s.hud.power);
+  const blinkReady = useGame((s) => s.hud.blinkReady);
+  const touch = useGame((s) => s.touch);
+  if (!power) return null;
+  const pct = Math.max(0, Math.min(100, (power.left / power.max) * 100));
+  return (
+    <motion.div
+      initial={{ opacity: 0, scale: 0.7, y: -6 }} animate={{ opacity: 1, scale: 1, y: 0 }} exit={{ opacity: 0, scale: 0.8 }}
+      className="rounded-xl border-2 px-2.5 py-1 backdrop-blur-md"
+      style={{ borderColor: power.color, background: "rgba(0,0,0,0.4)", boxShadow: `0 0 12px ${power.color}55` }}
+      role="status"
+      aria-label={`${power.name} active, ${Math.ceil(power.left)} seconds left`}
+    >
+      <div className="flex items-center gap-1.5">
+        <motion.span
+          animate={{ scale: [1, 1.22, 1], rotate: [0, -8, 8, 0] }}
+          transition={{ repeat: Infinity, duration: 1.4 }}
+          className="text-lg leading-none"
+          aria-hidden
+        >{power.emoji}</motion.span>
+        <div>
+          <div className="text-[11px] font-black leading-tight" style={{ color: power.color }}>{power.name}</div>
+          <div className="text-[8.5px] font-bold uppercase tracking-wider text-white/70">
+            {power.kind === "blink" ? (blinkReady ? (touch ? "tap 🌀 to teleport" : "press Q to teleport") : "recharging…") : power.tip}
+          </div>
+        </div>
+        <span className="ml-0.5 rounded-md bg-black/50 px-1 text-[11px] font-black tabular-nums text-white">{Math.ceil(power.left)}s</span>
+      </div>
+      <div className="mt-1 h-1.5 overflow-hidden rounded-full bg-white/15">
+        <div className="h-full rounded-full transition-[width] duration-200" style={{ width: `${pct}%`, background: power.color }} />
+      </div>
+    </motion.div>
+  );
+}
+
 /* ------------- danger compass: arrow toward nearest chasing cop ------------- */
 function DangerCompass({ engine }: { engine: GameEngine }) {
   const hud = useGame((s) => s.hud);
@@ -431,6 +470,8 @@ function Joystick({ engine }: { engine: GameEngine }) {
 
 function MobileButtons({ engine }: { engine: GameEngine }) {
   const [sprint, setSprint] = useState(false);
+  const blinkActive = useGame((s) => s.hud.power?.kind === "blink");
+  const blinkReady = useGame((s) => s.hud.blinkReady);
   return (
     <div data-ui className="flex flex-col items-end gap-3">
       <button
@@ -447,6 +488,13 @@ function MobileButtons({ engine }: { engine: GameEngine }) {
         className="h-16 w-16 rounded-full border-2 border-white/50 bg-emerald-400/80 text-lg font-black text-emerald-950 shadow-lg active:scale-95"
         onTouchStart={(e) => { e.preventDefault(); engine.interact(); }}
       >E</button>
+      {blinkActive && (
+        <button
+          aria-label="Blink teleport forward"
+          className={`h-16 w-16 rounded-full border-2 border-white/50 text-2xl shadow-lg active:scale-95 ${blinkReady ? "bg-purple-400/90 text-purple-950" : "bg-white/20 text-white/50"}`}
+          onTouchStart={(e) => { e.preventDefault(); engine.tryBlink(); }}
+        >🌀</button>
+      )}
       <button
         aria-label="Toggle sprint"
         className={`h-14 w-14 rounded-full border-2 border-white/50 text-sm font-black shadow-lg active:scale-95 ${sprint ? "bg-rose-500/90 text-white" : "bg-white/25 text-white"}`}
@@ -667,6 +715,10 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
             </motion.span>
           ))}
         </motion.div>
+        {/* ✨ rare super power countdown — appears while a gem power is active */}
+        <AnimatePresence>
+          {hud.power && <PowerBadge key={hud.power.kind} />}
+        </AnimatePresence>
       </div>
       {/* floating +❤/+⚡ chip right after a snack is eaten */}
       <GainFlash />
@@ -750,7 +802,8 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
           <div className="max-w-[220px] rounded-xl bg-black/40 px-3 py-2 text-xs leading-relaxed text-white/90 backdrop-blur-md">
             <b className="text-yellow-300">Goal:</b> snatch 🗳 votes, deliver them at the Parliament ballot box. Rescue pink-bubbled friends with <b>E</b>. Dodge the police — sprint with <b>Shift</b>!
             <div className="mt-1 text-amber-200/90">⚡ Sprinting drains energy · run over 🥭☕🩹 food to pocket it, then tap the bag (or press <b>1-8</b>) to eat: heals ❤ and refills ⚡.</div>
-            {!touch && <div className="mt-1 text-white/70">WASD move · mouse steers the camera (click = lock cursor) · Shift sprint · Space jump ×2 (flip!) · E rescue · 1-8 eat · right-click drop · M map · Esc / P pause</div>}
+            <div className="mt-1 text-fuchsia-200/95">✨ <b>Rare super powers!</b> Find glowing gems in the jungle ( coloured dots on the map ): ⚡ Sonic speed · 🦘 mega jump · 🌀 Blink — press <b>Q</b> to teleport · 🐒 Animal disguise — police can&apos;t catch you · 🧲 Magnet pulls food to you!</div>
+            {!touch && <div className="mt-1 text-white/70">WASD move · mouse steers the camera (click = lock cursor) · Shift sprint · Space jump ×2 (flip!) · E rescue · Q blink · 1-8 eat · right-click drop · M map · Esc / P pause</div>}
           </div>
         )}
       </div>
@@ -926,7 +979,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       {!touch && (
         <div className="absolute bottom-3 left-1/2 z-10 hidden -translate-x-1/2 flex-col items-center gap-1.5 md:flex">
           <div className="hidden whitespace-nowrap rounded-full bg-black/45 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/75 backdrop-blur-md lg:block">
-            WASD move · Shift sprint · Space jump ×2 · E rescue · 1-8 eat
+            WASD move · Shift sprint · Space jump ×2 · E rescue · Q blink · 1-8 eat
           </div>
           <CoordsChip px={hud.px} pz={hud.pz} />
         </div>

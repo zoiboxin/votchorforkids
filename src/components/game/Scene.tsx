@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { GameLoop, Npcs, Zombies, Animals, Pickups, Shadows, Confetti, type ClockRef } from "./Entities";
+import { GameLoop, Npcs, Zombies, Animals, Pickups, Powers, Shadows, Confetti, type ClockRef } from "./Entities";
 import { WorldView, WORLD } from "./WorldView";
 import { GameEngine } from "@/lib/game/engine";
 import type { Appearance } from "@/lib/game/constants";
@@ -75,6 +75,7 @@ export function useGameInput(engine: GameEngine | null) {
         setTimeout(() => { engine.input.jump = false; }, 120);
       }
       if (e.code === "KeyE" && !e.repeat) engine.interact();
+      if (e.code === "KeyQ" && !e.repeat) engine.tryBlink(); // 🌀 Blink Teleport
       applyKey();
     };
     const up = (e: KeyboardEvent) => { keys.delete(e.code); applyKey(); };
@@ -219,6 +220,7 @@ export function Scene({ engine }: { engine: GameEngine }) {
       <Zombies engine={engine} />
       <Animals engine={engine} />
       <Pickups engine={engine} />
+      <Powers engine={engine} />
       <Shadows engine={engine} />
       <Confetti engine={engine} />
     </Canvas>

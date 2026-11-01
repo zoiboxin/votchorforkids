@@ -271,6 +271,41 @@ export const FAINT_S = 1.7;      // how long the world spins (dizzy stars) after
 export const CAR_HIT_CD = 1.5;   // old-game hitCd — minimum seconds between two car knocks
 export const CAR_HIT_DMG = 6;    // hp lost per bonk — never knocks you below 1, cars don't arrest
 
+/* ---------- Rare super powers (glowing jungle finds & mystery spots) ---------- */
+export type PowerKind = "sonic" | "jump" | "blink" | "morph" | "magnet";
+export interface PowerDef {
+  kind: PowerKind; name: string; emoji: string;
+  color: string;        // gem + glow colour
+  duration: number;     // seconds the power stays active
+  msg: string;          // pickup toast
+  tip: string;          // HUD badge hint
+}
+export const POWERS: readonly PowerDef[] = [
+  { kind: "sonic",  name: "Sonic Dash",    emoji: "⚡", color: "#22d3ee", duration: 10,
+    msg: "⚡ SONIC DASH! Your legs are a blur — outrun EVERYONE!",       tip: "Run speed ×1.9" },
+  { kind: "jump",   name: "Kangaroo Leap", emoji: "🦘", color: "#84cc16", duration: 12,
+    msg: "🦘 KANGAROO LEAP! Jump like a superhero — bounce over anything!", tip: "Jump height ×1.65" },
+  { kind: "blink",  name: "Blink Teleport", emoji: "🌀", color: "#c084fc", duration: 9,
+    msg: "🌀 BLINK! Press Q (or tap 🌀) to teleport forward — poof!",    tip: "Press Q to teleport" },
+  { kind: "morph",  name: "Animal Morph",  emoji: "🐒", color: "#fbbf24", duration: 9,
+    msg: "🐒 ANIMAL MORPH! You look like an animal — police can't catch you!", tip: "Police can't spot you" },
+  { kind: "magnet", name: "Food Magnet",   emoji: "🧲", color: "#fb7185", duration: 12,
+    msg: "🧲 FOOD MAGNET! Nearby snacks fly straight into your pockets!", tip: "Pulls nearby food" },
+];
+export const POWER_COUNT = 6;        // very rare — only 6 gems in the whole world
+export const POWER_RESPAWN_S = 80;   // a long absence keeps them feeling special
+export const POWER_PICKUP_R = 2.2;
+/** Power spawns: mostly deep-jungle treasures, the rest hidden at random mystery spots. */
+export const POWER_JUNGLE_SHARE = 0.7;
+
+export const SONIC_MULT = 1.9;       // run/sprint speed multiplier while Sonic Dash lasts
+export const JUMP_MULT = 1.65;       // jump velocity multiplier while Kangaroo Leap lasts
+export const BLINK_DIST = 15;        // teleport distance
+export const BLINK_CD = 0.9;         // seconds between blinks
+export const MAGNET_RADIUS = 12;     // food pull radius
+export const MAGNET_PULL = 10;       // units/second snacks fly toward you
+export const MORPH_ANIMALS: readonly AnimalKind[] = ["cow", "chicken", "deer", "monkey"];
+
 /* ---------- Scoring ---------- */
 export const POINTS_DELIVER = 120;
 export const POINTS_PICKUP = 10;

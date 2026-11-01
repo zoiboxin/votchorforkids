@@ -4,8 +4,8 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  ANIMAL_SET, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, PANTS_COLORS, SHIRT_COLORS, SKIN_TONES,
-  TOTAL_VOTES, type Appearance,
+  ANIMAL_SET, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, SHIRT_COLORS, SKIN_TONES,
+  TOTAL_VOTES, type AnimalKind, type Appearance,
 } from "@/lib/game/constants";
 import type { GameEngine } from "@/lib/game/engine";
 import { nightFactor } from "@/lib/game/sim";
@@ -25,6 +25,12 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
   const look = useGame((s) => s.look);
   const setHud = useGame((s) => s.setHud);
   const mesh = useMemo(() => buildCharacter(look), [look]);
+  // 🐒 Animal Morph — one animal body per kind, swapped in while the power lasts
+  const morphMeshes = useMemo(() => {
+    const map = new Map<AnimalKind, THREE.Object3D>();
+    for (const k of MORPH_ANIMALS) map.set(k, buildAnimal(k));
+    return map;
+  }, []);
   const lantern = useRef<THREE.PointLight>(null!);
   const introT = useRef(0);
   const hudT = useRef(0);
@@ -49,15 +55,46 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     return grp;
   }, []);
 
+  // ⚡ Sonic trail — soft cyan afterimages that fade behind a super-speed runner
+  const trail = useMemo(() => {
+    const grp = new THREE.Group();
+    const tex = glowTexture();
+    const sprites: THREE.Sprite[] = [];
+    const pts: { x: number; y: number; z: number }[] = [];
+    for (let i = 0; i < 9; i++) {
+      const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, color: "#22d3ee", transparent: true, opacity: 0, depthWrite: false, blending: THREE.AdditiveBlending }));
+      sp.scale.setScalar(0.55);
+      sp.visible = false;
+      grp.add(sp);
+      sprites.push(sp);
+      pts.push({ x: 0, y: 0, z: 0 });
+    }
+    grp.visible = false;
+    return { grp, sprites, pts };
+  }, []);
+
+  // 🧲 Food Magnet — pulsing ground aura showing the pull radius
+  const magnetRing = useMemo(() => {
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(MAGNET_RADIUS, 0.09, 6, 44),
+      new THREE.MeshBasicMaterial({ color: "#fb7185", transparent: true, opacity: 0.38, depthWrite: false }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.14;
+    ring.visible = false;
+    return ring;
+  }, []);
+
   useFrame((_, dt0) => {
     const dt = Math.min(0.05, dt0);
     engine.update(dt);
     clockRef.current = engine.clock;
     if (lantern.current) lantern.current.intensity = nightFactor(engine.clock) * 26;
 
-    // player mesh (hidden while riding in the police van — the van is the star then)
+    // player mesh (hidden while riding in the police van or wearing an animal disguise)
     const p = engine.player;
-    mesh.visible = !engine.playerInVan;
+    const morphing = engine.morphKind != null;
+    mesh.visible = !engine.playerInVan && !morphing;
     mesh.position.set(p.x, p.y, p.z);
     let d = p.face - mesh.rotation.y;
     d = Math.atan2(Math.sin(d), Math.cos(d));
@@ -70,6 +107,46 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       squash: engine.squashT > 0 ? engine.squashT / LAND_SQUASH_S : 0,
       faint: engine.faintT > 0 ? engine.faintT / FAINT_S : 0,
     });
+
+    // 🐒 animal disguise body mirrors the player's motion (walk, jump and all)
+    const mk = engine.morphKind;
+    if (mk) {
+      for (const [kind, am] of morphMeshes) {
+        const show = kind === mk && !engine.playerInVan;
+        am.visible = show;
+        if (!show) continue;
+        am.position.set(p.x, p.y, p.z);
+        am.rotation.y = mesh.rotation.y;
+        poseAnimal(am, Math.hypot(p.vx, p.vz), performance.now() / 1000, 0);
+      }
+    } else for (const am of morphMeshes.values()) if (am.visible) am.visible = false;
+
+    // ⚡ sonic afterimages — sample the runner's recent path
+    const speed = Math.hypot(p.vx, p.vz);
+    if (engine.activePower === "sonic" && speed > 4) {
+      trail.grp.visible = true;
+      trail.pts.pop();
+      trail.pts.unshift({ x: p.x, y: p.y + 0.9, z: p.z });
+      trail.sprites.forEach((sp, i) => {
+        const pt = trail.pts[i];
+        sp.visible = i > 0;
+        sp.position.set(pt.x, pt.y, pt.z);
+        sp.material.opacity = 0.4 * (1 - i / trail.sprites.length);
+        sp.scale.setScalar(0.55 + i * 0.05);
+      });
+    } else if (trail.grp.visible) {
+      trail.grp.visible = false;
+      for (const sp of trail.sprites) sp.visible = false;
+    }
+
+    // 🧲 magnet aura ring follows the player
+    if (engine.activePower === "magnet" && !engine.playerInVan) {
+      magnetRing.visible = true;
+      magnetRing.position.set(p.x, 0.14, p.z);
+      const pulse = 1 + Math.sin(performance.now() / 240) * 0.02;
+      magnetRing.scale.setScalar(pulse);
+      (magnetRing.material as THREE.MeshBasicMaterial).opacity = 0.3 + Math.sin(performance.now() / 240) * 0.1;
+    } else if (magnetRing.visible) magnetRing.visible = false;
 
     // dizzy stars orbit the head while the bonk faint lasts
     if (engine.faintT > 0) {
@@ -115,6 +192,9 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
   return (
     <>
       <primitive object={mesh} />
+      {[...morphMeshes.entries()].map(([kind, am]) => <primitive object={am} key={`morph-${kind}`} visible={false} />)}
+      <primitive object={trail.grp} />
+      <primitive object={magnetRing} />
       <primitive object={stars} />
       <pointLight ref={lantern} distance={30} decay={1.5} color="#ffca7a" position={[0, 2.6, 0]} intensity={0} />
     </>
@@ -271,6 +351,83 @@ export function Animals({ engine }: { engine: GameEngine }) {
 }
 
 /* ------------------------------------------------------------------ */
+/* Rare super-power gems — glowing gem + emoji + pulsing ground ring   */
+/* ------------------------------------------------------------------ */
+let _glowTex: THREE.CanvasTexture | null = null;
+function glowTexture(): THREE.CanvasTexture {
+  if (_glowTex) return _glowTex;
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const ctx = c.getContext("2d")!;
+  const grad = ctx.createRadialGradient(64, 64, 4, 64, 64, 64);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.35, "rgba(255,255,255,0.45)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  ctx.fillStyle = grad;
+  ctx.fillRect(0, 0, 128, 128);
+  _glowTex = new THREE.CanvasTexture(c);
+  return _glowTex;
+}
+
+function emojiSprite(emoji: string, scale = 0.55): THREE.Sprite {
+  const c = document.createElement("canvas");
+  c.width = c.height = 96;
+  const ctx = c.getContext("2d")!;
+  ctx.font = "64px system-ui, sans-serif";
+  ctx.textAlign = "center"; ctx.textBaseline = "middle";
+  ctx.fillText(emoji, 48, 52);
+  const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(c), transparent: true, depthWrite: false }));
+  sp.scale.setScalar(scale);
+  return sp;
+}
+
+/** One little group per gem — only POWER_COUNT exist, so per-entity groups are cheap. */
+export function Powers({ engine }: { engine: GameEngine }) {
+  const views = useMemo(() => engine.powers.map((pw, i) => {
+    const d = POWERS[pw.def];
+    const g = new THREE.Group();
+    const gem = new THREE.Mesh(new THREE.OctahedronGeometry(0.34, 0), new THREE.MeshBasicMaterial({ color: d.color }));
+    gem.position.y = 0.95;
+    g.add(gem);
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: d.color, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending }));
+    glow.scale.setScalar(1.7);
+    glow.position.y = 0.95;
+    g.add(glow);
+    const em = emojiSprite(d.emoji, 0.5);
+    em.position.y = 1.55;
+    g.add(em);
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.62, 0.045, 6, 26),
+      new THREE.MeshBasicMaterial({ color: d.color, transparent: true, opacity: 0.85 }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.07;
+    g.add(ring);
+    g.visible = pw.active;
+    return { group: g, gem, glow, em, ring, i };
+  }), [engine]);
+
+  useFrame((s) => {
+    const t = s.clock.elapsedTime;
+    for (let idx = 0; idx < engine.powers.length; idx++) {
+      const pw = engine.powers[idx];
+      const v = views[idx];
+      v.group.visible = pw.active;
+      if (!pw.active) continue;
+      v.group.position.set(pw.x, 0, pw.z);
+      v.gem.rotation.y = t * 1.7 + idx;
+      v.gem.position.y = 0.95 + Math.sin(t * 2.2 + idx * 1.7) * 0.12;
+      v.glow.position.y = v.gem.position.y;
+      v.glow.material.opacity = 0.4 + Math.sin(t * 3 + idx) * 0.15;
+      v.em.position.y = 1.55 + Math.sin(t * 2.6 + idx) * 0.08;
+      v.ring.scale.setScalar(1 + Math.sin(t * 2 + idx) * 0.1);
+    }
+  });
+
+  return <>{views.map((v) => <primitive object={v.group} key={v.i} />)}</>;
+}
+
+/* ------------------------------------------------------------------ */
 /* Items + votes + shadows — all instanced (a handful of draw calls)   */
 /* ------------------------------------------------------------------ */
 const dummy = new THREE.Object3D();
@@ -278,20 +435,20 @@ const dummy = new THREE.Object3D();
 const ANIMAL_SCALES: Record<string, number> = { cow: 1.7, chicken: 0.95, deer: 1.45, monkey: 1.1 };
 
 export function Pickups({ engine }: { engine: GameEngine }) {
-  const { voteMesh, foodMeshes, kinds } = useMemo(() => {
+  const { voteMesh, foodMeshes, defs } = useMemo(() => {
     const mat = basicVertexMaterial();
     const voteMesh = new THREE.InstancedMesh(voteTokenGeometry(), mat, TOTAL_VOTES);
     voteMesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     voteMesh.frustumCulled = false;
-    const foodMeshes = new Map<string, THREE.InstancedMesh>();
-    for (const d of ITEMS) {
-      if (foodMeshes.has(d.kind)) continue;
-      const m = new THREE.InstancedMesh(foodGeometry(d.kind, d.color), mat, ITEM_COUNT);
+    // one instanced mesh per food def — every snack gets its own little 3D model
+    const foodMeshes = new Map<number, THREE.InstancedMesh>();
+    ITEMS.forEach((_, def) => {
+      const m = new THREE.InstancedMesh(foodGeometry(def), mat, ITEM_COUNT);
       m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
       m.frustumCulled = false;
-      foodMeshes.set(d.kind, m);
-    }
-    return { voteMesh, foodMeshes, kinds: [...foodMeshes.keys()] };
+      foodMeshes.set(def, m);
+    });
+    return { voteMesh, foodMeshes, defs: [...foodMeshes.keys()] };
   }, []);
 
   useFrame((s) => {
@@ -318,12 +475,12 @@ export function Pickups({ engine }: { engine: GameEngine }) {
     }
     voteMesh.count = vi;
     voteMesh.instanceMatrix.needsUpdate = true;
-    /* items per kind */
-    for (const [kind, mesh] of foodMeshes) {
+    /* items per def — each food model is its own instanced mesh */
+    for (const [def, mesh] of foodMeshes) {
       let fi = 0;
       for (const it of engine.items) {
-        if (!it.active || ITEMS[it.def].kind !== kind || fi >= ITEM_COUNT) continue;
-        dummy.position.set(it.x, 0.55 + Math.sin(t * 2.2 + it.id) * 0.12, it.z);
+        if (!it.active || it.def !== def || fi >= ITEM_COUNT) continue;
+        dummy.position.set(it.x, 0.5 + Math.sin(t * 2.2 + it.id) * 0.12, it.z);
         dummy.rotation.set(0, t * 1.4 + it.id, 0);
         dummy.scale.setScalar(1);
         dummy.updateMatrix();
@@ -337,7 +494,7 @@ export function Pickups({ engine }: { engine: GameEngine }) {
   return (
     <>
       <primitive object={voteMesh} />
-      {kinds.map((k) => <primitive object={foodMeshes.get(k)!} key={k} />)}
+      {defs.map((def) => <primitive object={foodMeshes.get(def)!} key={def} />)}
     </>
   );
 }

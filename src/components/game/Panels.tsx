@@ -9,7 +9,7 @@ import { Slider } from "@/components/ui/slider";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Music, Volume2, Gauge, Gamepad2, Flag, ShieldAlert, Sunrise, HeartHandshake, Vote,
-  User, Pencil, BarChart3, History as HistoryIcon, Trash2, Trophy, Timer, Star, Shirt, Zap,
+  User, Pencil, BarChart3, History as HistoryIcon, Trash2, Trophy, Timer, Star, Shirt, Zap, Sparkles,
 } from "lucide-react";
 import { AGE_STATS, HAIR_STYLES } from "@/lib/game/constants";
 import { rankFor } from "@/lib/game/ranks";
@@ -24,6 +24,7 @@ const CONTROLS: [string, string][] = [
   ["Shift", "Sprint — drains ⚡ energy fast"],
   ["Space", "Jump — press again mid-air for a double-jump flip! 🤸"],
   ["E", "Rescue a detained friend"],
+  ["Q", "🌀 Blink Teleport — only while the blink power lasts"],
   ["1 – 8", "Eat pocketed food ❤⚡ — or tap the bag bottom-left"],
   ["Right-click slot", "Drop food back on the ground"],
   ["M", "Open the big world map"],
@@ -84,6 +85,16 @@ export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange:
               Run over food to <b>pocket</b> it — up to 8 kinds (🥭 Mango · 🥟 Samosa · 🍩 Jalebi · 🍡 Laddu · 🩹 First-aid · ☕ Chai · 🥥 Coconut water).
               Tap the bag or press <b className="text-yellow-200">1-8</b> to eat: fruits heal ❤ + refill ⚡, first-aid kits mend <b>45 ❤</b>, chai pumps <b>45 ⚡</b>. Right-click a slot to drop food back on the ground.
               Police hits and zombie touches drain ❤ — snacking is surviving!
+            </p>
+          </section>
+
+          <section className="rounded-2xl border border-fuchsia-400/25 bg-fuchsia-500/10 p-3">
+            <div className="mb-1.5 flex items-center gap-2 font-black text-fuchsia-300"><Sparkles size={15} /> Rare super powers</div>
+            <p className="leading-relaxed text-white/85">
+              Only <b className="text-fuchsia-200">6 glowing gems</b> exist in the whole world — most hide deep in the <b>jungle</b>, the rest at mystery spots (coloured dots on the map!).
+              Grab one for a short burst of magic: <b>⚡ Sonic Dash</b> run speed ×1.9 · <b>🦘 Kangaroo Leap</b> jump ×1.65 · <b>🌀 Blink</b> press Q to teleport 15m ·
+              <b> 🐒 Animal Morph</b> become a random animal — police can&apos;t spot or catch you, and real animals accept you as family · <b>🧲 Food Magnet</b> nearby snacks fly into your pockets.
+              Gems reappear after a long rest — one power at a time!
             </p>
           </section>
 

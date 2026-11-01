@@ -1,13 +1,13 @@
 import {
-  AGE_STATS, ANIMAL_SET, BALLOT, CARRY_RADIUS, CAR_HIT_CD, CAR_HIT_DMG, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
+  AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, CARRY_RADIUS, CAR_HIT_CD, CAR_HIT_DMG, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
   CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, CONFISCATE_FINE, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
   ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
-  ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUNGLE_RADIUS, LAND_SQUASH_S, MAX_CARRY, MAX_CIV_HELD, PICKUP_RADIUS,
-  POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, RELEASE_GRACE_S, RESCUE_POINTS,
-  RESCUE_RADIUS, SPAWN, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, VAN_AXLE, VAN_LOAD_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
+  ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
+  POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
+  RESCUE_RADIUS, SPAWN, SONIC_MULT, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, VAN_AXLE, VAN_LOAD_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
   WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
-  ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, stationCage, stationGate, type AnimalKind, type Appearance, type Zone, zoneOf, ZONE_TOAST,
+  ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, stationCage, stationGate, type AnimalKind, type Appearance, type PowerKind, type Zone, zoneOf, ZONE_TOAST,
 } from "./constants";
 import { clamp, mulberry32, range } from "./rng";
 import { freeSpot, lineClear, resolve, RING_R, ROADS, type World } from "./worldgen";
@@ -36,6 +36,8 @@ export interface Zombie { id: number; x: number; z: number; vx: number; vz: numb
 export interface Animal { id: number; kind: AnimalKind; x: number; z: number; vx: number; vz: number; face: number; tx: number; tz: number; timer: number; phase: number; resting: boolean }
 export interface ItemEnt { id: number; def: number; x: number; z: number; active: boolean; respawn: number }
 export interface VoteEnt { id: number; x: number; z: number; state: "world" | "carried" | "delivered" }
+/** A rare super-power gem glowing somewhere in the jungle (or a mystery spot). */
+export interface PowerEnt { id: number; def: number; x: number; z: number; active: boolean; respawn: number }
 
 export interface Fx { type: "confetti"; x: number; y: number; z: number; hue: number }
 
@@ -71,6 +73,12 @@ export interface HudData {
   gain: { hp: number; stamina: number; at: number };
   /** arrest pipeline stage — HUD swaps the banner text accordingly */
   arrest: ArrestState; station: string;
+  /** active rare super power — HUD shows a countdown badge (null = none) */
+  power: { kind: PowerKind; name: string; emoji: string; color: string; left: number; max: number; tip: string } | null;
+  /** animal the player currently looks like (morph power) */
+  morphKind: AnimalKind | null;
+  /** true when Blink is charged and Q will teleport right now */
+  blinkReady: boolean;
 }
 
 export type ToastFn = (msg: string, kind?: "info" | "good" | "bad") => void;
@@ -141,7 +149,14 @@ export class GameEngine {
   items: ItemEnt[] = [];
   traffic: TrafficCar[] = [];
   vans: PoliceVan[] = [];
+  powers: PowerEnt[] = [];
   fxQueue: Fx[] = [];
+
+  /* --- rare super powers --- */
+  activePower: PowerKind | null = null;
+  powerT = 0; powerMax = 1;      // seconds left / total of the active power
+  morphKind: AnimalKind | null = null; // current animal look while morph lasts
+  blinkCd = 0;                   // blink teleport cooldown
 
   faintT = 0;   // >0 while the world spins after a car bonk — input is ignored, stars orbit
   carHitCd = 0; // old-game hitCd — no double-bonks from the same bumper
@@ -306,6 +321,12 @@ export class GameEngine {
       const p = freeSpot(r, this.world, 10, 430);
       this.items.push({ id: this.nid(), def: Math.floor(r() * ITEMS.length), x: p.x, z: p.z, active: true, respawn: 0 });
     }
+    // rare super powers — mostly deep-jungle treasures, a couple of mystery spots anywhere
+    for (let i = 0; i < POWER_COUNT; i++) {
+      const jungle = r() < POWER_JUNGLE_SHARE;
+      const p = freeSpot(r, this.world, jungle ? FARM_RADIUS + 12 : 10, jungle ? JUNGLE_RADIUS - 14 : 430);
+      this.powers.push({ id: this.nid(), def: i % POWERS.length, x: p.x, z: p.z, active: true, respawn: 0 });
+    }
     // police van fleet — one van per station, parked at its gate
     for (let i = 0; i < POLICE_STATIONS.length; i++) {
       const st = POLICE_STATIONS[i];
@@ -341,6 +362,8 @@ export class GameEngine {
     this.hp = 100; this.stamina = 100; this.stars = 0; this.starTimer = 0; this.chased = false;
     this.inv = []; this.hurtT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0;
     this.flipT = 0; this.squashT = 0; this.faintT = 0; this.carHitCd = 0;
+    this.activePower = null; this.powerT = 0; this.morphKind = null; this.blinkCd = 0;
+    for (const pw of this.powers) { pw.active = true; pw.respawn = 0; }
     this.carriedVotes = []; this.delivered = 0; this.points = 0; this.rescues = 0; this.caughtCount = 0;
     this.detainedT = 0; this.invulnT = 8; this.elapsed = 0; this.won = false; this.clock = 0.3;
     this.arrest = "free"; this.arrestStation = -1; this.playerInVan = false; this.vanNeeded = false;
@@ -699,7 +722,58 @@ export class GameEngine {
     this.toast(`${d.emoji} ${d.msg}`, "good");
   }
 
-  /** Pick a nearby free patch of grass for an animal to wander to (local hops, not cross-map treks). */
+  /* ---------------- rare super powers ---------------- */
+
+  /** Blink Teleport: poof ~15u forward. Only while the blink gem's power lasts. */
+  tryBlink() {
+    if (!this.running || this.activePower !== "blink") return;
+    if (this.blinkCd > 0 || this.detainedT > 0 || this.faintT > 0) return;
+    this.blinkCd = BLINK_CD;
+    const p = this.player;
+    const dx = Math.sin(p.face), dz = Math.cos(p.face);
+    // probe ahead in small hops from the FROZEN start point — buildings stop the
+    // blink at the last clear hop instead of tunnelling through (or overshooting)
+    const sx = p.x, sz = p.z;
+    let landX = sx, landZ = sz;
+    for (let d = 1.25; d <= BLINK_DIST; d += 1.25) {
+      const rawX = sx + dx * d, rawZ = sz + dz * d;
+      const probe = { x: rawX, z: rawZ };
+      resolve(probe, 0.5, this.world);
+      if (Math.hypot(probe.x - rawX, probe.z - rawZ) > 0.45) break; // a wall ate the rest
+      landX = probe.x; landZ = probe.z;
+    }
+    p.x = landX; p.z = landZ;
+    const rr = Math.hypot(p.x, p.z);
+    if (rr > WALL_RADIUS) { p.x *= WALL_RADIUS / rr; p.z *= WALL_RADIUS / rr; }
+    p.vy = 2.4; // tiny magic hop on arrival
+    sfx.blink();
+    this.fxQueue.push({ type: "confetti", x: p.x, y: 1.1, z: p.z, hue: 0.72 });
+    this.toast("🌀 Poof! Teleported!", "good");
+  }
+
+  /** Collect a rare gem — the new power replaces whatever was active (one at a time). */
+  private activatePower(def: number, x: number, z: number) {
+    const d = POWERS[def];
+    this.activePower = d.kind;
+    this.powerT = d.duration;
+    this.powerMax = d.duration;
+    this.blinkCd = 0; // fresh power — first blink is instant
+    this.morphKind = d.kind === "morph"
+      ? MORPH_ANIMALS[Math.floor(this.rnd() * MORPH_ANIMALS.length)]
+      : null;
+    sfx.power();
+    if (d.kind === "morph") sfx.morph();
+    this.fxQueue.push({ type: "confetti", x, y: 1.3, z, hue: Math.random() });
+    this.toast(d.msg, "good");
+    // fresh animal scent confuses the police — any hunt on us instantly breaks off
+    if (d.kind === "morph" && this.chased) {
+      for (const cop of this.cops) {
+        if (cop.mode === "chase" && cop.targetCiv == null) { cop.mode = "return"; cop.timer = 0; }
+      }
+      this.clearWanted("🐾 The police sniffed around and lost you — you smell animal now!");
+    }
+  }
+
   private grazeSpot(an: Animal, farm: boolean): { x: number; z: number } | null {
     const minR = farm ? CITY_RADIUS + 6 : FARM_RADIUS + 6;
     const maxR = farm ? FARM_RADIUS - 10 : JUNGLE_RADIUS - 30;
@@ -781,7 +855,12 @@ export class GameEngine {
       stepBody(p, faint
         ? { f: 0, r: 0, sprint: false, jump: false }
         : { f: this.input.f, r: this.input.r, sprint: this.input.sprint, jump: this.input.jump },
-        dt, this.look.age, this.world, { yaw: this.input.yaw });
+        dt, this.look.age, this.world, {
+          yaw: this.input.yaw,
+          // ⚡ Sonic Dash — legs become a blur · 🦘 Kangaroo Leap — superhero jumps
+          speedScale: this.activePower === "sonic" ? SONIC_MULT : 1,
+          jumpScale: this.activePower === "jump" ? JUMP_MULT : 1,
+        });
       this.stamina = p.stamina; // sprinting drains / walking regenerates (see stepBody)
       if (p.jumps === 1 && prevJumps === 0) {
         sfx.jump();
@@ -890,6 +969,15 @@ export class GameEngine {
         continue;
       }
       if (this.detainedT > 0) continue; // locked up — no foraging from the cell
+      // 🧲 Food Magnet — snacks within the aura fly straight into your pockets
+      if (this.activePower === "magnet") {
+        const mdx = p.x - it.x, mdz = p.z - it.z;
+        const md = Math.hypot(mdx, mdz);
+        if (md < MAGNET_RADIUS && md > 0.3) {
+          it.x += (mdx / md) * MAGNET_PULL * dt;
+          it.z += (mdz / md) * MAGNET_PULL * dt;
+        }
+      }
       if (dist2(p.x, p.z, it.x, it.z) < PICKUP_RADIUS * PICKUP_RADIUS) {
         const d = ITEMS[it.def];
         let slot = this.inv.find((s) => s.def === it.def);
@@ -914,6 +1002,32 @@ export class GameEngine {
       }
     }
 
+    /* --- rare super powers: pickup + active-power ticks --- */
+    this.blinkCd = Math.max(0, this.blinkCd - dt);
+    if (this.activePower) {
+      this.powerT -= dt;
+      if (this.powerT <= 0) {
+        const was = this.activePower;
+        this.activePower = null;
+        this.morphKind = null;
+        this.toast(was === "morph" ? "🐒 Morph faded — you're a kid again!" : "✨ Your super power faded away.", "info");
+      }
+    }
+    if (this.detainedT <= 0) {
+      for (const pw of this.powers) {
+        if (!pw.active) {
+          pw.respawn -= dt;
+          if (pw.respawn <= 0) pw.active = true; // rare gems return after a long absence
+          continue;
+        }
+        if (dist2(p.x, p.z, pw.x, pw.z) < POWER_PICKUP_R * POWER_PICKUP_R) {
+          pw.active = false;
+          pw.respawn = POWER_RESPAWN_S;
+          this.activatePower(pw.def, pw.x, pw.z);
+        }
+      }
+    }
+
     /* --- police --- */
     const carrying = this.carriedVotes.length;
     const detect = DETECT_BASE + carrying * DETECT_CARRY_BONUS + this.stars * DETECT_STAR_BONUS;
@@ -930,7 +1044,8 @@ export class GameEngine {
             cop.tx = target.x; cop.tz = target.z; cop.timer = range(this.rnd, 8, 16);
           }
           stepNpc(cop, cop.tx, cop.tz, POLICE_SPEED * 0.6, dt, this.world);
-          if (this.invulnT <= 0 && this.detainedT <= 0 && d2p < detect * detect && lineClear(cop.x, cop.z, p.x, p.z, this.world)) {
+          // 🐒 Animal Morph — a cow loitering with stolen votes is somehow not suspicious
+          if (this.morphKind == null && this.invulnT <= 0 && this.detainedT <= 0 && d2p < detect * detect && lineClear(cop.x, cop.z, p.x, p.z, this.world)) {
             cop.mode = "chase"; cop.alertT = ESCAPE_LOST_S; cop.timer = 0;
             this.chased = true;
             sfx.alert();
@@ -990,10 +1105,15 @@ export class GameEngine {
             cop.mode = "return"; cop.timer = 0; cop.alertT = 0;
             break;
           }
+          // 🐒 mid-chase morph — the kid they were chasing just turned into a cow. Give up.
+          if (this.morphKind != null) {
+            cop.mode = "return"; cop.timer = 0; cop.alertT = 0;
+            break;
+          }
           const spd = POLICE_SPRINT + this.stars * 0.22;
           stepNpc(cop, p.x, p.z, spd, dt, this.world);
           cop.alertT = d2p < detect * detect * 3 ? ESCAPE_LOST_S : cop.alertT - dt;
-          if (d2p < 1.9 * 1.9 && this.detainedT <= 0 && this.invulnT <= 0) { this.catchPlayer(cop); }
+          if (d2p < 1.9 * 1.9 && this.detainedT <= 0 && this.invulnT <= 0 && this.morphKind == null) { this.catchPlayer(cop); }
           else if (cop.alertT <= 0) { cop.mode = "return"; cop.timer = 0; }
           break;
         }
@@ -1004,7 +1124,7 @@ export class GameEngine {
         case "return": {
           if (dist2(cop.x, cop.z, cop.tx, cop.tz) < 4) cop.mode = "patrol";
           else stepNpc(cop, cop.tx, cop.tz, POLICE_SPEED * 0.7, dt, this.world);
-          if (this.invulnT <= 0 && this.detainedT <= 0 && d2p < detect * 0.8 * (detect * 0.8) && lineClear(cop.x, cop.z, p.x, p.z, this.world)) {
+          if (this.morphKind == null && this.invulnT <= 0 && this.detainedT <= 0 && d2p < detect * 0.8 * (detect * 0.8) && lineClear(cop.x, cop.z, p.x, p.z, this.world)) {
             cop.mode = "chase"; cop.alertT = ESCAPE_LOST_S; this.chased = true; sfx.alert();
           }
           break;
@@ -1089,12 +1209,12 @@ export class GameEngine {
       }
     }
 
-    /* --- animals --- */
+    /* --- animals (a morphed player smells like family — nobody runs away) --- */
     for (const an of this.animals) {
       an.timer -= dt;
       const d2p = dist2(an.x, an.z, p.x, p.z);
       const fleeR = an.kind === "cow" ? 4.5 : 6;
-      if (d2p < fleeR * fleeR) {
+      if (this.morphKind == null && d2p < fleeR * fleeR) {
         an.resting = false; // panic overrides grazing
         const dx = an.x - p.x, dz = an.z - p.z, d = Math.hypot(dx, dz) || 1;
         const fs = an.kind === "cow" ? 2.4 : an.kind === "chicken" ? 4.6 : an.kind === "deer" ? 6.2 : 5;
@@ -1153,6 +1273,14 @@ export class GameEngine {
       hurt: this.hurtT > 0, sprinting: p.sprinting, exhausted: this.stamina <= 0.5,
       px: Math.round(this.player.x), pz: Math.round(this.player.z),
       gain: this.lastGain,
+      power: this.activePower
+        ? (() => {
+            const d = POWERS.find((pd) => pd.kind === this.activePower)!;
+            return { kind: d.kind, name: d.name, emoji: d.emoji, color: d.color, left: Math.max(0, this.powerT), max: this.powerMax, tip: d.tip };
+          })()
+        : null,
+      morphKind: this.morphKind,
+      blinkReady: this.blinkCd <= 0,
     };
   }
 

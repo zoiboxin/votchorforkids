@@ -23,7 +23,7 @@ export interface MoveInput { f: number; r: number; sprint: boolean; jump: boolea
  */
 export function stepBody(
   b: Body, inp: MoveInput, dt: number, age: AgeGroup, world: World,
-  opts: { yaw: number; speedScale?: number; maxStamina?: number },
+  opts: { yaw: number; speedScale?: number; jumpScale?: number; maxStamina?: number },
 ): void {
   const A = AGE_STATS[age];
   const f = clamp(inp.f, -1, 1), r = clamp(inp.r, -1, 1);
@@ -43,13 +43,14 @@ export function stepBody(
 
   // ---- jump / double jump (edge-detected via latch) ----
   if (inp.jump && !b.jumpLatch) {
+    const js = opts.jumpScale ?? 1;
     b.jumpLatch = true;
     if (b.y <= 0.02 || b.airT < COYOTE_S) {
-      b.vy = A.jump;                       // ground (or coyote) jump
+      b.vy = A.jump * js;                  // ground (or coyote) jump
       if (b.y <= 0) b.y = 0.01;
       b.jumps = 1;
     } else if (b.jumps < 2) {
-      b.vy = A.jump * DOUBLE_JUMP_VY;      // mid-air double jump — a touch weaker
+      b.vy = A.jump * DOUBLE_JUMP_VY * js; // mid-air double jump — a touch weaker
       b.jumps = 2;
     }
   }
