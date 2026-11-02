@@ -8,7 +8,7 @@ import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-  Music, Volume2, Gauge, Gamepad2, Flag, ShieldAlert, Sunrise, HeartHandshake, Vote,
+  Music, Volume2, Gauge, Gamepad2, Flag, ShieldAlert, Siren, Sunrise, HeartHandshake, Vote,
   User, Pencil, BarChart3, History as HistoryIcon, Trash2, Trophy, Timer, Star, Shirt, Zap, Sparkles,
 } from "lucide-react";
 import { AGE_STATS, HAIR_STYLES } from "@/lib/game/constants";
@@ -43,6 +43,15 @@ export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange:
         </DialogHeader>
 
         <div className="space-y-4 text-sm">
+          <section className="rounded-2xl border border-sky-300/30 bg-sky-400/10 p-3">
+            <div className="mb-1.5 flex items-center gap-2 font-black text-sky-300"><Siren size={15} /> Choose your side</div>
+            <p className="leading-relaxed text-white/85">
+              In the creator you pick a side! <b className="text-yellow-200">🏃 Protester</b> steals votes for Parliament —
+              or <b className="text-sky-200">🚓 Police</b>: chase the <b>vote runners</b> and <b>walk into them</b> to bust them.
+              Bust <b>12 runners</b> before they smuggle <b>10 votes</b> through — vans haul the busted to the station cage. Same city, same chaos, opposite job!
+            </p>
+          </section>
+
           <section className="rounded-2xl bg-white/5 p-3">
             <div className="mb-1.5 flex items-center gap-2 font-black text-emerald-300"><Flag size={15} /> Mission</div>
             <p className="leading-relaxed text-white/85">

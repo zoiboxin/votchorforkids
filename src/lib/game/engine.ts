@@ -1,13 +1,13 @@
 import {
-  AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, CARRY_RADIUS, CAR_HIT_CD, CAR_HIT_DMG, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
+  AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, BUST_CARRY_BONUS, BUST_POINTS, BUST_TARGET, CARRY_RADIUS, CAR_HIT_CD, CAR_HIT_DMG, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
   CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, CONFISCATE_FINE, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
   ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
   ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
-  RESCUE_RADIUS, SPAWN, SONIC_MULT, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, VAN_AXLE, VAN_LOAD_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
+  RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SPAWN, SONIC_MULT, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, VAN_AXLE, VAN_LOAD_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
   WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
-  ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, stationCage, stationGate, type AnimalKind, type Appearance, type PowerKind, type Zone, zoneOf, ZONE_TOAST,
+  ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, stationCage, stationGate, type AnimalKind, type Appearance, type PowerKind, type Side, type Zone, zoneOf, ZONE_TOAST,
 } from "./constants";
 import { clamp, mulberry32, range } from "./rng";
 import { freeSpot, lineClear, resolve, RING_R, ROADS, type World } from "./worldgen";
@@ -33,11 +33,15 @@ export interface Npc {
   protest?: boolean;
   /** civilian only: id of the police van driving them to the station (unset = no van yet) */
   vanId?: number;
+  /** police side only: this civilian smuggles votes to Parliament for a living */
+  runner?: boolean;
+  /** runner only: id of the vote currently smuggled (set while carried) */
+  voteId?: number;
 }
 export interface Zombie { id: number; x: number; z: number; vx: number; vz: number; face: number; phase: number; touchCd: number }
 export interface Animal { id: number; kind: AnimalKind; x: number; z: number; vx: number; vz: number; face: number; tx: number; tz: number; timer: number; phase: number; resting: boolean }
 export interface ItemEnt { id: number; def: number; x: number; z: number; active: boolean; respawn: number }
-export interface VoteEnt { id: number; x: number; z: number; state: "world" | "carried" | "delivered" }
+export interface VoteEnt { id: number; x: number; z: number; state: "world" | "carried" | "delivered"; /** runner only: which runner holds this vote */ carrierId?: number; /** police side: a runner-delivered vote sneaks back into the city after this timer */ respawnT?: number }
 /** A rare super-power gem glowing somewhere in the jungle (or a mystery spot). */
 export interface PowerEnt { id: number; def: number; x: number; z: number; active: boolean; respawn: number }
 
@@ -83,6 +87,14 @@ export interface HudData {
   morphKind: AnimalKind | null;
   /** true when Blink is charged and Q will teleport right now */
   blinkReady: boolean;
+  /** which side the player picked in the creator — HUD & objectives swap around */
+  side: Side;
+  /** police side: runners busted so far (target BUST_TARGET) */
+  busted: number;
+  /** police side: votes the AI runners have smuggled through (lose at RUNNER_LOSE_DELIVERIES) */
+  runnerDelivered: number;
+  /** police side: true when the runners reached their delivery quota — shift failed */
+  lost: boolean;
 }
 
 export type ToastFn = (msg: string, kind?: "info" | "good" | "bad") => void;
@@ -178,6 +190,14 @@ export class GameEngine {
   delivered = 0;
   detainedT = 0; invulnT = 8; elapsed = 0; // 8s spawn grace — cops can't spot or catch you
   won = false; wonAt = 0;
+  /** which side the player picked — police flips the whole objective around */
+  side: Side = "protester";
+  /** police side: votes the AI runners smuggled through (lose at RUNNER_LOSE_DELIVERIES) */
+  runnerDelivered = 0;
+  /** police side: set when the runners hit their quota — the shift failed */
+  lost = false;
+  /** police side: min seconds between two busts so one crowd can't be mass-arrested */
+  catchCd = 0;
   running = false;
   private nextId = 1;
   private toast: ToastFn;
@@ -190,6 +210,7 @@ export class GameEngine {
     this.world = world;
     this.look = look;
     this.toast = toast;
+    this.side = look.fac;
     this.hud = this.buildHud();
     this.spawnAll();
   }
@@ -357,14 +378,35 @@ export class GameEngine {
       t.x = Math.cos(t.a) * t.r; t.z = Math.sin(t.a) * t.r;
       t.rot = t.dir > 0 ? -t.a : Math.PI + t.a;
     }
+    // police side: a slice of the civilians become vote-runners (the player hunts THEM)
+    this.assignRunners();
   }
 
   /* ---------------- lifecycle ---------------- */
-  start() { this.running = true; }
+  /** Police side: promote a spread of civilians into vote-runners (protest marchers keep marching). */
+  private assignRunners() {
+    if (this.side !== "police") return;
+    let made = 0;
+    for (const c of this.civs) {
+      if (made >= RUNNER_COUNT) break;
+      if (c.protest || c.runner) continue;
+      c.runner = true;
+      c.timer = range(this.rnd, 2, 14); // staggered shift starts — deliveries trickle in, never a stampede
+      made++;
+    }
+  }
+
+  start() {
+    this.running = true;
+    if (this.side === "police") {
+      this.toast(`🚓 Shift start, Officer ${this.playerName}! Bust ${BUST_TARGET} vote runners before they smuggle ${RUNNER_LOSE_DELIVERIES} votes through — walk into them to arrest!`, "info");
+    }
+  }
   setToast(fn: ToastFn) { this.toast = fn; }
 
   reset(look: Appearance) {
     this.look = look;
+    this.side = look.fac;
     this.player = newBody(SPAWN.x, SPAWN.z);
     this.hp = 100; this.stamina = 100; this.stars = 0; this.starTimer = 0; this.chased = false;
     this.inv = []; this.hurtT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0; this.powerFullT = 0;
@@ -372,11 +414,13 @@ export class GameEngine {
     this.activePower = null; this.powerT = 0; this.powerPocket = null; this.morphKind = null; this.blinkCd = 0;
     for (const pw of this.powers) { pw.active = true; pw.respawn = 0; }
     this.carriedVotes = []; this.delivered = 0; this.points = 0; this.rescues = 0; this.caughtCount = 0;
+    this.runnerDelivered = 0; this.lost = false; this.catchCd = 0;
     this.detainedT = 0; this.invulnT = 8; this.elapsed = 0; this.won = false; this.clock = 0.3;
     this.arrest = "free"; this.arrestStation = -1; this.playerInVan = false; this.vanNeeded = false;
-    for (const v of this.votes) { v.state = "world"; const p = freeSpot(this.rnd, this.world, 16, 420); v.x = p.x; v.z = p.z; }
+    for (const v of this.votes) { v.state = "world"; v.carrierId = undefined; v.respawnT = undefined; const p = freeSpot(this.rnd, this.world, 16, 420); v.x = p.x; v.z = p.z; }
     for (const it of this.items) { it.active = true; it.respawn = 0; }
-    for (const c of this.civs) { c.mode = "wander"; c.vanId = undefined; }
+    for (const c of this.civs) { c.mode = "wander"; c.vanId = undefined; c.runner = false; c.voteId = undefined; }
+    this.assignRunners();
     // send every van home and park it at its gate
     for (const van of this.vans) {
       const st = POLICE_STATIONS[van.station];
@@ -399,6 +443,11 @@ export class GameEngine {
 
   /* ---------------- interactions ---------------- */
   interact() {
+    // police don't rescue their own prisoners — a friendly reminder instead
+    if (this.side === "police") {
+      this.toast("👮 You're the police today, Officer — no freeing the suspects! Chase runners instead.", "info");
+      return;
+    }
     // rescue a detained civilian nearby
     let best: Npc | null = null, bd = RESCUE_RADIUS * RESCUE_RADIUS;
     for (const c of this.civs) {
@@ -412,6 +461,143 @@ export class GameEngine {
       sfx.rescue();
       this.fxQueue.push({ type: "confetti", x: best.x, y: 1.4, z: best.z, hue: Math.random() });
       this.toast(`${best.name} is free! +${POINTS_RESCUE} support points ❤`, "good");
+    }
+  }
+
+  /* ---------------- police side: stop the vote runners ---------------- */
+
+  /** One AI vote-runner tick — seek a vote → smuggle it to Parliament → lay low → repeat. */
+  private stepRunner(c: Npc, dt: number) {
+    const p = this.player;
+    // 1) an AI cop is chasing them (backup helping the officer) — panic the old way
+    const hunter = this.cops.find((cc) => cc.targetCiv === c.id && cc.mode === "chase");
+    if (hunter) {
+      const dx = c.x - hunter.x, dz = c.z - hunter.z, d = Math.hypot(dx, dz) || 1;
+      stepNpc(c, c.x + (dx / d) * 10, c.z + (dz / d) * 10, c.speed * CIV_FLEE_MULT, dt, this.world);
+      c.mode = "flee";
+      return;
+    }
+    // 2) the officer (player) got close — run FROM the player, keeping their loot
+    const dpx = c.x - p.x, dpz = c.z - p.z, dp = Math.hypot(dpx, dpz);
+    if (dp < RUNNER_FLEE_R) {
+      c.mode = "flee";
+      stepNpc(c, c.x + (dpx / (dp || 1)) * 12, c.z + (dpz / (dp || 1)) * 12, c.speed * 1.55, dt, this.world);
+      return;
+    }
+    c.mode = "wander";
+    // 3) laying low after a delivery / release — amble around, then get back to work
+    if (c.timer > 0 && !c.voteId) {
+      c.timer -= dt;
+      if (dist2(c.x, c.z, c.tx, c.tz) < 2 || Math.random() < dt * 0.5) {
+        const t = freeSpot(this.rnd, this.world, 8, CITY_RADIUS - 6);
+        c.tx = t.x; c.tz = t.z;
+      }
+      stepNpc(c, c.tx, c.tz, c.speed * 0.6, dt, this.world);
+      return;
+    }
+    if (!c.voteId) {
+      // 4) seek the nearest vote lying in the world
+      let best: VoteEnt | null = null, bd = Infinity;
+      for (const v of this.votes) {
+        if (v.state !== "world") continue;
+        const d = dist2(c.x, c.z, v.x, v.z);
+        if (d < bd) { bd = d; best = v; }
+      }
+      if (!best) { // city is out of loose votes — lurk until one "sneaks back"
+        if (dist2(c.x, c.z, c.tx, c.tz) < 2) { const t = freeSpot(this.rnd, this.world, 8, CITY_RADIUS - 6); c.tx = t.x; c.tz = t.z; }
+        stepNpc(c, c.tx, c.tz, c.speed * 0.6, dt, this.world);
+        return;
+      }
+      stepNpc(c, best.x, best.z, c.speed, dt, this.world);
+      if (bd < 1.5 * 1.5) { // grabbed it — full sprint for Parliament
+        best.state = "carried"; best.carrierId = c.id;
+        c.voteId = best.id;
+      }
+      return;
+    }
+    // 5) smuggle the vote to the ballot box
+    const v = this.votes.find((vv) => vv.id === c.voteId);
+    if (!v || v.state !== "carried") { c.voteId = undefined; return; } // vote lost (bust scramble) — go seek again
+    stepNpc(c, BALLOT.x, BALLOT.z, c.speed * 1.12, dt, this.world);
+    if (dist2(c.x, c.z, BALLOT.x, BALLOT.z) < (DELIVER_RADIUS + 0.8) * (DELIVER_RADIUS + 0.8)) {
+      v.state = "delivered";
+      v.carrierId = undefined;
+      v.respawnT = RUNNER_VOTE_RESPAWN_S; // the stolen vote "returns" to the city a little later
+      c.voteId = undefined;
+      c.timer = range(this.rnd, 9, 20);   // lay low before the next run
+      this.runnerDelivered++;
+      sfx.alert();
+      this.fxQueue.push({ type: "confetti", x: BALLOT.x, y: 1.5, z: BALLOT.z, hue: 0.02 });
+      if (this.runnerDelivered >= RUNNER_LOSE_DELIVERIES) {
+        this.lost = true;
+        sfx.caught();
+        this.toast(`🗳️ The runners smuggled ${RUNNER_LOSE_DELIVERIES} votes into Parliament… the shift is lost, Officer!`, "bad");
+      } else {
+        this.toast(`😠 A runner delivered a vote! (${this.runnerDelivered}/${RUNNER_LOSE_DELIVERIES}) — stop them!`, "bad");
+      }
+    }
+  }
+
+  /** A runner loses their smuggled vote — it scatters back into the world as a loose pickup. */
+  private dropRunnerVote(c: Npc) {
+    const v = c.voteId ? this.votes.find((vv) => vv.id === c.voteId) : null;
+    if (v && v.state === "carried") {
+      const a = Math.random() * Math.PI * 2, d = range(this.rnd, 0.8, DROP_SCATTER);
+      const p = { x: c.x + Math.cos(a) * d, z: c.z + Math.sin(a) * d };
+      resolve(p, 0.8, this.world);
+      v.x = p.x; v.z = p.z; v.state = "world"; v.carrierId = undefined;
+    }
+    c.voteId = undefined;
+  }
+
+  /** Walked-into-a-runner arrest: detain, scatter their loot, count the bust. */
+  private bustRunner(c: Npc) {
+    this.catchCd = RUNNER_CATCH_CD;
+    c.mode = "detained"; c.timer = CIV_DETAIN_S; // the van fleet automatically drives them to the station cage
+    const v = c.voteId ? this.votes.find((vv) => vv.id === c.voteId) : null;
+    const carrying = !!(v && v.state === "carried");
+    this.dropRunnerVote(c);
+    this.caughtCount++; // police side: counts runners busted
+    this.points += BUST_POINTS + (carrying ? BUST_CARRY_BONUS : 0);
+    sfx.caught();
+    this.fxQueue.push({ type: "confetti", x: c.x, y: 1.3, z: c.z, hue: 0.58 });
+    this.toast(carrying
+      ? `🚓 Busted ${c.name} red-handed! Vote secured — +${BUST_POINTS + BUST_CARRY_BONUS}! A van is taking them in.`
+      : `🚓 Busted ${c.name}! +${BUST_POINTS} — a van is taking them in. (${this.caughtCount}/${BUST_TARGET})`, "good");
+    // nearby runners scatter in panic — they lay low for a bit before re-attempting
+    for (const o of this.civs) {
+      if (!o.runner || o === c || o.mode !== "wander") continue;
+      if (dist2(o.x, o.z, c.x, c.z) < 16 * 16) o.timer = Math.max(o.timer, range(this.rnd, 3, 8));
+    }
+    if (this.caughtCount >= BUST_TARGET) {
+      this.won = true; this.wonAt = Date.now();
+      this.points += 500;
+      sfx.win();
+      this.toast(`🏆 ALL ${BUST_TARGET} RUNNERS BUSTED! The city is safe — great work, Officer!`, "good");
+    }
+  }
+
+  /** Police-side per-frame tick: bust checks, vote respawn, witness panic. */
+  private updatePoliceMode(dt: number) {
+    const p = this.player;
+    this.catchCd = Math.max(0, this.catchCd - dt);
+    if (this.detainedT <= 0 && this.faintT <= 0 && !this.won && !this.lost && this.catchCd <= 0) {
+      for (const c of this.civs) {
+        if (!c.runner || c.mode !== "wander" || c.protest) continue;
+        if (dist2(p.x, p.z, c.x, c.z) < RUNNER_CATCH_R * RUNNER_CATCH_R) {
+          this.bustRunner(c);
+          break; // one bust per cooldown — no crowd sweeps
+        }
+      }
+    }
+    // delivered votes "sneak back" into the city so the shift can always be played
+    for (const v of this.votes) {
+      if (v.state !== "delivered" || !v.respawnT) continue;
+      v.respawnT -= dt;
+      if (v.respawnT <= 0) {
+        const spot = freeSpot(this.rnd, this.world, 14, 300);
+        v.x = spot.x; v.z = spot.z; v.state = "world"; v.respawnT = undefined;
+      }
     }
   }
 
@@ -991,8 +1177,8 @@ export class GameEngine {
       if (this.starTimer <= 0) { this.stars--; this.starTimer = STAR_DECAY_S; if (this.stars === 0) this.toast("Wanted level cleared. Nice and sneaky!", "info"); }
     }
 
-    /* --- votes --- */
-    if (this.detainedT <= 0 && !this.won) {
+    /* --- votes (protester side only — the officer doesn't steal votes) --- */
+    if (this.side === "protester" && this.detainedT <= 0 && !this.won) {
       if (this.carriedVotes.length < MAX_CARRY) {
         for (const v of this.votes) {
           if (v.state !== "world") continue;
@@ -1083,6 +1269,9 @@ export class GameEngine {
       }
     }
 
+    /* --- police side: runner busts + vote respawn --- */
+    if (this.side === "police") this.updatePoliceMode(dt);
+
     /* --- police --- */
     const carrying = this.carriedVotes.length;
     const detect = DETECT_BASE + carrying * DETECT_CARRY_BONUS + this.stars * DETECT_STAR_BONUS;
@@ -1100,7 +1289,7 @@ export class GameEngine {
           }
           stepNpc(cop, cop.tx, cop.tz, POLICE_SPEED * 0.6, dt, this.world);
           // 🐒 Animal Morph — a cow loitering with stolen votes is somehow not suspicious
-          if (this.morphKind == null && this.invulnT <= 0 && this.detainedT <= 0 && d2p < detect * detect && lineClear(cop.x, cop.z, p.x, p.z, this.world)) {
+          if (this.side === "protester" && this.morphKind == null && this.invulnT <= 0 && this.detainedT <= 0 && d2p < detect * detect && lineClear(cop.x, cop.z, p.x, p.z, this.world)) {
             cop.mode = "chase"; cop.alertT = ESCAPE_LOST_S; cop.timer = 0;
             this.chased = true;
             sfx.alert();
@@ -1135,6 +1324,7 @@ export class GameEngine {
             const d2c = dist2(cop.x, cop.z, c.x, c.z);
             if (d2c < 1.9 * 1.9) {
               c.mode = "detained"; c.timer = CIV_DETAIN_S;
+              this.dropRunnerVote(c); // a busted runner drops their smuggled vote on the spot
               cop.mode = "celebrate"; cop.timer = 2.5;
               const roam = freeSpot(this.rnd, this.world, 10, 120);
               cop.tx = roam.x; cop.tz = roam.z;
@@ -1179,7 +1369,7 @@ export class GameEngine {
         case "return": {
           if (dist2(cop.x, cop.z, cop.tx, cop.tz) < 4) cop.mode = "patrol";
           else stepNpc(cop, cop.tx, cop.tz, POLICE_SPEED * 0.7, dt, this.world);
-          if (this.morphKind == null && this.invulnT <= 0 && this.detainedT <= 0 && d2p < detect * 0.8 * (detect * 0.8) && lineClear(cop.x, cop.z, p.x, p.z, this.world)) {
+          if (this.side === "protester" && this.morphKind == null && this.invulnT <= 0 && this.detainedT <= 0 && d2p < detect * 0.8 * (detect * 0.8) && lineClear(cop.x, cop.z, p.x, p.z, this.world)) {
             cop.mode = "chase"; cop.alertT = ESCAPE_LOST_S; this.chased = true; sfx.alert();
           }
           break;
@@ -1205,6 +1395,8 @@ export class GameEngine {
     /* --- civilians: wander + get detained + rescue --- */
     for (const c of this.civs) {
       c.phase += dt;
+      // police side: vote-runners live in their own state machine (seek → smuggle → lay low)
+      if (c.runner && this.side === "police" && (c.mode === "wander" || c.mode === "flee")) { this.stepRunner(c, dt); continue; }
       switch (c.mode) {
         case "wander": {
           c.timer -= dt;
@@ -1308,11 +1500,23 @@ export class GameEngine {
   private buildHud(): HudData {
     const p = this.player;
     let prompt = "";
-    for (const c of this.civs)
-      if (c.mode === "detained" && dist2(p.x, p.z, c.x, c.z) < RESCUE_RADIUS * RESCUE_RADIUS) { prompt = `Press E to rescue ${c.name}!`; break; }
-    if (!prompt && this.carriedVotes.length > 0 && dist2(p.x, p.z, BALLOT.x, BALLOT.z) < DELIVER_RADIUS * DELIVER_RADIUS * 1.8) prompt = "Walk closer to the ballot box to deliver!";
+    if (this.side === "police") {
+      // officer guidance — nudge the player toward the next arrest
+      if (!this.won && !this.lost) {
+        for (const c of this.civs) {
+          if (!c.runner || c.mode !== "wander") continue;
+          if (dist2(p.x, p.z, c.x, c.z) < 6 * 6) { prompt = c.voteId ? "Bust the carrier — walk into them!" : "Walk into the runner to bust them!"; break; }
+        }
+      }
+    } else {
+      for (const c of this.civs)
+        if (c.mode === "detained" && dist2(p.x, p.z, c.x, c.z) < RESCUE_RADIUS * RESCUE_RADIUS) { prompt = `Press E to rescue ${c.name}!`; break; }
+      if (!prompt && this.carriedVotes.length > 0 && dist2(p.x, p.z, BALLOT.x, BALLOT.z) < DELIVER_RADIUS * DELIVER_RADIUS * 1.8) prompt = "Walk closer to the ballot box to deliver!";
+    }
     let policeNear = false;
-    for (const cop of this.cops) if (cop.mode === "chase" && dist2(cop.x, cop.z, p.x, p.z) < 30 * 30) { policeNear = true; break; }
+    if (this.side === "protester") {
+      for (const cop of this.cops) if (cop.mode === "chase" && dist2(cop.x, cop.z, p.x, p.z) < 30 * 30) { policeNear = true; break; }
+    }
     return {
       hp: Math.round(this.hp), stamina: Math.round(this.stamina), stars: this.stars,
       carried: this.carriedVotes.length, delivered: this.delivered, total: TOTAL_VOTES,
@@ -1324,6 +1528,7 @@ export class GameEngine {
       prompt, policeNear,
       civilians: this.civs.length, police: this.cops.length,
       won: this.won, elapsed: this.elapsed,
+      side: this.side, busted: this.caughtCount, runnerDelivered: this.runnerDelivered, lost: this.lost,
       inv: this.inv.map((s) => ({ def: s.def, count: s.count })),
       hurt: this.hurtT > 0, sprinting: p.sprinting, exhausted: this.stamina <= 0.5,
       px: Math.round(this.player.x), pz: Math.round(this.player.z),

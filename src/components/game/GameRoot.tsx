@@ -50,6 +50,7 @@ export function GameRoot() {
         eng.reset(look);
         eng.setToast((msg, kind) => pushToast(msg, kind));
       }
+      eng.playerName = useGame.getState().playerName || "You"; // officer/hero name for the start toast
       useGame.getState().setScreen("play");
       eng.start();
       // weld the mouse to the camera as the world appears — the helper retries
@@ -90,15 +91,18 @@ export function GameRoot() {
 
   useGameInput(engineRef.current);
 
-  // watch for the win → open the victory modal once + save the record
+  // watch for the win OR the police-shift loss → open the end screen once + save the record
   useEffect(() => {
     const eng = engineRef.current;
     if (!eng) return;
     const id = setInterval(() => {
-      if (eng.won && !useGame.getState().victoryOpen) {
+      // screen guard: a "Play again" click closes the modal while the OLD engine still
+      // has won/lost=true for the 650 ms connecting window — never re-open in that gap
+      if (useGame.getState().screen !== "play") return;
+      if ((eng.won || eng.lost) && !useGame.getState().victoryOpen) {
         useGame.getState().setVictoryOpen(true);
         const h = useGame.getState().hud;
-        useGame.getState().recordRun(h.points, h.delivered, h.rescues, eng.caughtCount, true, Math.round(h.elapsed * 1000));
+        useGame.getState().recordRun(h.points, eng.side === "police" ? eng.caughtCount : h.delivered, h.rescues, eng.caughtCount, eng.won, Math.round(h.elapsed * 1000));
       }
     }, 400);
     return () => clearInterval(id);

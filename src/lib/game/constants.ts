@@ -48,7 +48,11 @@ export const SPRINT_MULT = 1.65;
 
 export type HairStyle = "spiky" | "bowl" | "ponytail" | "twintails" | "mohawk" | "curly" | "afro" | "bun" | "bald";
 
+/** Which side of the law the hero plays — chosen in the creator (old-game "Side" row). */
+export type Side = "protester" | "police";
+
 export interface Appearance {
+  fac: Side;
   skin: string;
   shirt: string;
   pants: string;
@@ -64,6 +68,11 @@ export interface Appearance {
 
 export const SKIN_TONES = ["#ffd9b3", "#f1c27d", "#e0ac69", "#c68642", "#8d5524", "#6b4423"];
 export const SHIRT_COLORS = ["#f5a524", "#e0483a", "#2a9d8f", "#f1e9d2", "#e91e8c", "#7bc043", "#ff6b35", "#00b4d8"];
+/** Police uniform shirts (old-game POLICE_COLORS palette) — offered in the creator when Side = Police. */
+export const POLICE_COLORS = ["#2e4f9e", "#3a5a3a", "#5a4a3a"];
+export const POLICE_UNIFORM = {
+  shirt: "#2e4f9e", pants: "#1c2a4e", cap: true, capColor: "#1c2a4e",
+} as const;
 export const PANTS_COLORS = ["#2b3556", "#4a3b2a", "#7a3b3b", "#2a6f4f", "#444a55", "#8a5aa8"];
 export const SHOE_COLORS = ["#3b2314", "#111111", "#f5f5f5", "#e0483a", "#2a6fdb"];
 export const HAIR_COLORS = ["#1a1210", "#5a3a1a", "#c88a4a", "#e8c15a", "#d8d8d8", "#b03030", "#4a4a58"];
@@ -86,6 +95,7 @@ export const CIVIL_NAMES = [
 ];
 
 export const defaultAppearance = (): Appearance => ({
+  fac: "protester",
   skin: SKIN_TONES[1],
   shirt: SHIRT_COLORS[0],
   pants: PANTS_COLORS[0],
@@ -151,6 +161,7 @@ export function randomAppearance(rnd: () => number = Math.random): Appearance {
   const styles = HAIR_STYLES.map((h) => h.id);
   const ages = Object.keys(AGE_STATS) as AgeGroup[];
   return {
+    fac: "protester", // the side stays a deliberate choice — never randomized
     skin: pick(SKIN_TONES),
     shirt: pick(SHIRT_COLORS),
     pants: pick(PANTS_COLORS),
@@ -270,6 +281,17 @@ export const TRAFFIC_COUNT = 12; // cars cruising the ring highway, two lanes, b
 export const FAINT_S = 1.7;      // how long the world spins (dizzy stars) after a car bonk
 export const CAR_HIT_CD = 1.5;   // old-game hitCd — minimum seconds between two car knocks
 export const CAR_HIT_DMG = 6;    // hp lost per bonk — never knocks you below 1, cars don't arrest
+
+/* ---------- Playable Police side — "Stop the Vote Runners" ---------- */
+export const RUNNER_COUNT = 14;           // AI vote-runners operating among the civilians
+export const BUST_TARGET = 12;            // runners the officer must bust to win the shift
+export const RUNNER_LOSE_DELIVERIES = 10; // if runners get this many votes through, the shift is lost
+export const RUNNER_VOTE_RESPAWN_S = 9;   // a delivered vote "sneaks back" into the city after this long
+export const RUNNER_FLEE_R = 9;           // runners panic when the officer gets this close
+export const RUNNER_CATCH_R = 2.1;        // walk into a runner to bust them
+export const RUNNER_CATCH_CD = 0.9;       // min seconds between two busts
+export const BUST_POINTS = 150;           // score per busted runner
+export const BUST_CARRY_BONUS = 100;      // extra score when the runner was carrying a vote
 
 /* ---------- Rare super powers (glowing jungle finds & mystery spots) ---------- */
 export type PowerKind = "sonic" | "jump" | "blink" | "morph" | "magnet";

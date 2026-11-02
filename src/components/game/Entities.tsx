@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  ANIMAL_SET, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, SHIRT_COLORS, SKIN_TONES,
+  ANIMAL_SET, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, SHIRT_COLORS, SKIN_TONES,
   TOTAL_VOTES, type AnimalKind, type Appearance,
 } from "@/lib/game/constants";
 import type { GameEngine } from "@/lib/game/engine";
@@ -24,7 +24,8 @@ export type ClockRef = { current: number };
 export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: ClockRef }) {
   const look = useGame((s) => s.look);
   const setHud = useGame((s) => s.setHud);
-  const mesh = useMemo(() => buildCharacter(look), [look]);
+  // police side renders the hero in full uniform (cap, badge, dark pants)
+  const mesh = useMemo(() => buildCharacter(look, { police: look.fac === "police" }), [look]);
   // 🐒 Animal Morph — one animal body per kind, swapped in while the power lasts
   const morphMeshes = useMemo(() => {
     const map = new Map<AnimalKind, THREE.Object3D>();
@@ -218,6 +219,7 @@ export function Npcs({ engine }: { engine: GameEngine }) {
     const r = mulberry32(4242);
     const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(r() * arr.length)];
     const civLooks: Appearance[] = engine.civs.map(() => ({
+      fac: "protester",
       skin: pick(SKIN_TONES),
       shirt: pick(SHIRT_COLORS),
       pants: pick(PANTS_COLORS),
@@ -225,6 +227,7 @@ export function Npcs({ engine }: { engine: GameEngine }) {
       hair: pick(HAIR_COLORS),
       hairStyle: pick(HAIR_STYLES).id,
       cap: r() < 0.25,
+      capColor: pick(CAP_COLORS),
       glasses: r() < 0.2,
       age: pick(["kid", "teen", "young", "old"] as const),
       girl: r() < 0.5,
@@ -232,7 +235,7 @@ export function Npcs({ engine }: { engine: GameEngine }) {
     const map = new Map<number, NpcView>();
     engine.cops.forEach((c, i) => {
       const mesh = buildCharacter(
-        { skin: pick(SKIN_TONES), shirt: "#2b4a8f", pants: "#1d2a4a", shoe: "#111111", hair: pick(["#1a1210", "#5a3a1a", "#4a4a58"] as const), hairStyle: pick(["bowl", "spiky", "bald"] as const), cap: true, glasses: false, age: pick(["young", "young", "old"] as const), girl: false },
+        { fac: "police", skin: pick(SKIN_TONES), shirt: "#2b4a8f", pants: "#1d2a4a", shoe: "#111111", hair: pick(["#1a1210", "#5a3a1a", "#4a4a58"] as const), hairStyle: pick(["bowl", "spiky", "bald"] as const), cap: true, capColor: "#1c2a4e", glasses: false, age: pick(["young", "young", "old"] as const), girl: false },
         { police: true, mustache: i % 3 === 0 },
       );
       const tag = nameTag("POLICE", "rgba(30,50,120,0.85)");
@@ -294,7 +297,7 @@ export function Npcs({ engine }: { engine: GameEngine }) {
 export function Zombies({ engine }: { engine: GameEngine }) {
   const views = useMemo(
     () => new Map(engine.zombies.map((z) => [z.id, buildCharacter(
-      { skin: "#8fbf6f", shirt: "#7a8a5a", pants: "#4a5240", shoe: "#3a3a2a", hair: "#3a4a2a", hairStyle: "bowl", cap: false, glasses: false, age: "young", girl: false },
+      { fac: "protester", skin: "#8fbf6f", shirt: "#7a8a5a", pants: "#4a5240", shoe: "#3a3a2a", hair: "#3a4a2a", hairStyle: "bowl", cap: false, capColor: "#3a4a2a", glasses: false, age: "young", girl: false },
       { zombie: true },
     )])),
     [engine],
@@ -454,6 +457,8 @@ export function Pickups({ engine }: { engine: GameEngine }) {
   useFrame((s) => {
     const t = s.clock.elapsedTime;
     const p = engine.player;
+    // police side: id → runner lookup for the hovering smuggled votes
+    const civById = engine.side === "police" ? new Map(engine.civs.map((c) => [c.id, c])) : null;
     /* votes */
     let vi = 0;
     let slot = 0;
@@ -463,6 +468,16 @@ export function Pickups({ engine }: { engine: GameEngine }) {
         dummy.position.set(v.x, 0.75 + Math.sin(t * 2.6 + v.id) * 0.16, v.z);
         dummy.rotation.set(0, t * 2 + v.id, 0);
         dummy.scale.setScalar(1);
+      } else if (v.carrierId != null) {
+        // police side: a runner's smuggled vote hovers over THE RUNNER (a visible target!)
+        const carrier = civById?.get(v.carrierId);
+        dummy.position.set(
+          (carrier?.x ?? p.x),
+          2.65 + Math.sin(t * 3) * 0.07,
+          (carrier?.z ?? p.z),
+        );
+        dummy.rotation.set(0, t * 3, 0);
+        dummy.scale.setScalar(0.85);
       } else {
         const a = (slot / Math.max(1, engine.carriedVotes.length)) * Math.PI * 2;
         slot++;

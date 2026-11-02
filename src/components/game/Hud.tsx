@@ -8,7 +8,7 @@ import {
   ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon, Mouse,
 } from "lucide-react";
 import type { GameEngine } from "@/lib/game/engine";
-import { DETAIN_SECONDS, ITEMS, INV_SLOTS, POLICE_STATIONS, POWERS } from "@/lib/game/constants";
+import { BUST_TARGET, DETAIN_SECONDS, ITEMS, INV_SLOTS, POLICE_STATIONS, POWERS, RUNNER_LOSE_DELIVERIES } from "@/lib/game/constants";
 import { useGame } from "./store";
 import { requestGameLock } from "./Scene";
 import { setMuted as setAudioMuted, sfx, stopMusic, startMusic } from "@/lib/game/audio";
@@ -76,6 +76,13 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     dot(cop.x, cop.z, (chasing ? 3 : 2) * U, chasing ? "#ff4d4d" : "#6aa0ff");
   }
   for (const cv of engine.civs) if (cv.mode === "detained") dot(cv.x, cv.z, 3 * U, "#ff8fa3");
+  // police side: vote-runners stand out — amber specks, carriers glow bright with loot
+  if (engine.side === "police") {
+    for (const cv of engine.civs) {
+      if (!cv.runner || cv.mode === "detained") continue;
+      dot(cv.x, cv.z, (cv.voteId ? 2.7 : 1.9) * U, cv.voteId ? "#ffb020" : "#f0b455", cv.voteId ? 1 : 0.85);
+    }
+  }
   // farm & jungle animals — little brown specks so the world feels alive on the map
   for (const an of engine.animals) dot(an.x, an.z, 1.3 * U, "#a97b4f", 0.8);
   if (night) for (const zb of engine.zombies) dot(zb.x, zb.z, 2.4 * U, "#c084fc");
@@ -123,6 +130,7 @@ const BIG_MAP_S = 440;
 const MAP_LEGEND: [string, string][] = [
   ["#ffffff", "You (arrow = facing)"], ["#f7c948", "Votes"], ["#ffd166", "Food"], ["#c084fc", "Power gems (rare!)"],
   ["#6aa0ff", "Police"], ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ["#a97b4f", "Animals"], ["#c084fc", "Zombies · night"], ["#1d2a4a", "Police stn"],
+  ["#ffb020", "Vote runner (bright = carrying)"],
 ];
 function BigMap({ engine, onClose }: { engine: GameEngine; onClose: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -772,10 +780,18 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
           </div>
         )}
         <div className="mt-1 flex items-center gap-2 text-sm text-white">
-          <VotePips carried={hud.carried} />
-          <span className="ml-1 rounded-full bg-yellow-400/90 px-2 py-0.5 text-xs font-black text-yellow-950">
-            {hud.delivered}/{hud.total} delivered
-          </span>
+          {hud.side === "police" ? (
+            <span className="ml-1 rounded-full bg-sky-400/90 px-2 py-0.5 text-xs font-black text-sky-950">
+              🚓 {hud.busted}/{BUST_TARGET} busted
+            </span>
+          ) : (
+            <>
+              <VotePips carried={hud.carried} />
+              <span className="ml-1 rounded-full bg-yellow-400/90 px-2 py-0.5 text-xs font-black text-yellow-950">
+                {hud.delivered}/{hud.total} delivered
+              </span>
+            </>
+          )}
         </div>
         <motion.div layout className="flex items-center gap-0.5" aria-label={`Wanted level ${hud.stars} of 5`}>
           {Array.from({ length: 5 }, (_, i) => (
@@ -803,23 +819,43 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
             <Timer size={14} className="mr-1 inline text-sky-200" />{runTime}
           </div>
         </div>
-        {/* objective progress */}
-        <div className="flex w-52 flex-col rounded-xl bg-black/35 px-3 py-1.5 backdrop-blur-md sm:w-64">
-          <div className="flex items-center justify-between text-[11px] font-black text-white/90">
-            <span className="flex items-center gap-1"><Flag size={11} className="text-emerald-300" /> {hud.won ? "Democracy saved!" : "Deliver votes to Parliament"}</span>
-            <span className="text-yellow-300">{hud.delivered}/{hud.total}</span>
+        {/* objective progress — protester: deliver votes · police: bust runners */}
+        {hud.side === "police" ? (
+          <div className="flex w-52 flex-col gap-1 rounded-xl bg-black/35 px-3 py-1.5 backdrop-blur-md sm:w-64">
+            <div className="flex items-center justify-between text-[11px] font-black text-white/90">
+              <span className="flex items-center gap-1"><Flag size={11} className="text-sky-300" /> {hud.won ? "All runners busted!" : hud.lost ? "Runners won…" : "Bust the vote runners"}</span>
+              <span className="text-sky-300">{hud.busted}/{BUST_TARGET}</span>
+            </div>
+            <div className="h-2 overflow-hidden rounded-full bg-white/15">
+              <motion.div
+                className="h-full rounded-full bg-gradient-to-r from-sky-300 to-cyan-200"
+                animate={{ width: `${Math.min(100, (hud.busted / BUST_TARGET) * 100)}%` }}
+                transition={{ type: "spring", stiffness: 120, damping: 20 }}
+              />
+            </div>
+            <div className="flex items-center justify-between text-[10px] font-bold text-rose-200">
+              <span>Votes smuggled</span>
+              <span className={hud.runnerDelivered >= RUNNER_LOSE_DELIVERIES - 2 ? "animate-pulse font-black" : ""}>{hud.runnerDelivered}/{RUNNER_LOSE_DELIVERIES}</span>
+            </div>
           </div>
-          <div className="mt-1 h-2 overflow-hidden rounded-full bg-white/15">
-            <motion.div
-              className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-yellow-300"
-              animate={{ width: `${(hud.delivered / hud.total) * 100}%` }}
-              transition={{ type: "spring", stiffness: 120, damping: 20 }}
-            />
+        ) : (
+          <div className="flex w-52 flex-col rounded-xl bg-black/35 px-3 py-1.5 backdrop-blur-md sm:w-64">
+            <div className="flex items-center justify-between text-[11px] font-black text-white/90">
+              <span className="flex items-center gap-1"><Flag size={11} className="text-emerald-300" /> {hud.won ? "Democracy saved!" : "Deliver votes to Parliament"}</span>
+              <span className="text-yellow-300">{hud.delivered}/{hud.total}</span>
+            </div>
+            <div className="mt-1 h-2 overflow-hidden rounded-full bg-white/15">
+              <motion.div
+                className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-yellow-300"
+                animate={{ width: `${(hud.delivered / hud.total) * 100}%` }}
+                transition={{ type: "spring", stiffness: 120, damping: 20 }}
+              />
+            </div>
           </div>
-        </div>
-        {/* spawn grace shield */}
+        )}
+        {/* spawn grace shield (protester only — the officer needs no sneak shield) */}
         <AnimatePresence>
-          {graceT && (
+          {graceT && hud.side !== "police" && (
             <motion.div
               initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
               className="flex items-center gap-1.5 rounded-full border border-emerald-300/40 bg-emerald-500/25 px-3 py-1 text-xs font-black text-emerald-100 backdrop-blur"
@@ -869,7 +905,9 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         </div>
         {showHelp && (
           <div className="max-w-[220px] rounded-xl bg-black/40 px-3 py-2 text-xs leading-relaxed text-white/90 backdrop-blur-md">
-            <b className="text-yellow-300">Goal:</b> snatch 🗳 votes, deliver them at the Parliament ballot box. Rescue pink-bubbled friends with <b>E</b>. Dodge the police — sprint with <b>Shift</b>!
+            <b className="text-yellow-300">Goal:</b> {hud.side === "police"
+              ? <>Bust <b>12 vote runners</b> before they smuggle <b>10 votes</b> into Parliament — chase and <b>walk into</b> a runner to arrest them. Vans haul them to the station cage!</>
+              : <>snatch 🗳 votes, deliver them at the Parliament ballot box. Rescue pink-bubbled friends with <b>E</b>. Dodge the police — sprint with <b>Shift</b>!</>}
             <div className="mt-1 text-amber-200/90">⚡ Sprinting drains energy · run over 🥭☕🩹 food to pocket it, then tap the bag (or press <b>1-8</b>) to eat: heals ❤ and refills ⚡.</div>
             <div className="mt-1 text-fuchsia-200/95">✨ <b>Rare super powers!</b> Find glowing gems in the jungle ( coloured dots on the map ): collecting <b>stores</b> the power — press <b>G</b> (or tap the ✨ slot) to unleash it when YOU choose! ⚡ Sonic speed · 🦘 mega jump · 🌀 Blink — press <b>Q</b> to teleport where you look · 🐒 Animal disguise — police can&apos;t catch you · 🧲 Magnet pulls food to you!</div>
             {!touch && <div className="mt-1 text-white/70">WASD move · mouse steers the camera (click = lock cursor, hold Z/X to turn) · Shift sprint · Space jump ×2 (flip!) · E rescue · G use power · Q blink · 1-8 eat · right-click drop · M map · Esc / P pause</div>}

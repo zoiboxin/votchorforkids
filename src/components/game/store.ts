@@ -155,11 +155,13 @@ export const emptyHud: HudData = {
   hp: 100, stamina: 100, stars: 0, carried: 0, delivered: 0, total: 16,
   points: 0, rescues: 0, support: 0, zone: "City", clock: 0.3, night: 0,
   detained: false, detainLeft: 0, prompt: "", policeNear: false,
+  arrest: "free", station: "",
   civilians: 0, police: 0, won: false, elapsed: 0,
   inv: [], hurt: false, sprinting: false, exhausted: false,
   px: 0, pz: 0,
   gain: { hp: 0, stamina: 0, at: 0 },
   power: null, pocketPower: null, morphKind: null, blinkReady: true,
+  side: "protester", busted: 0, runnerDelivered: 0, lost: false,
 };
 
 let toastId = 1;
@@ -182,6 +184,7 @@ export const useGame = create<GameStore>()((set, get) => ({
   victoryOpen: false,
   paused: false,
   bigMapOpen: false,
+  mouseLocked: false,
   settings: typeof window !== "undefined" ? loadSettings() : { music: 0.7, sfx: 0.8, showFps: false },
   runsPlayed: saved.stats.runs,
   bestScore: saved.stats.best,

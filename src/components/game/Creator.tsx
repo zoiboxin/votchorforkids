@@ -15,7 +15,7 @@ import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
-  AGE_STATS, CAP_COLORS, HAIR_COLORS, HAIR_STYLES, NAME_SUGGESTIONS, OUTFIT_PRESETS, PANTS_COLORS, SHIRT_COLORS, SHOE_COLORS, SKIN_TONES,
+  AGE_STATS, CAP_COLORS, HAIR_COLORS, HAIR_STYLES, NAME_SUGGESTIONS, OUTFIT_PRESETS, PANTS_COLORS, POLICE_COLORS, POLICE_UNIFORM, SHIRT_COLORS, SHOE_COLORS, SKIN_TONES,
   randomAppearance,
   type AgeGroup, type Appearance, type HairStyle, type OutfitPreset,
 } from "@/lib/game/constants";
@@ -311,6 +311,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
   const ready = playerName.trim().length > 0;
 
   const lookChips = [
+    look.fac === "police" ? "🚓 Police" : "🏃 Protester",
     look.girl ? "👧 Girl" : "👦 Boy",
     `${look.age.charAt(0).toUpperCase()}${look.age.slice(1)}`,
     HAIR_STYLES.find((h) => h.id === look.hairStyle)?.label ?? "",
@@ -339,10 +340,10 @@ export function Creator({ onStart }: { onStart: () => void }) {
           </Button>
           <div className="min-w-0">
             <h1 className="truncate text-2xl font-black tracking-tight text-white drop-shadow-[0_3px_0_rgba(0,0,0,0.45)] sm:text-3xl">
-              Build your runner <span aria-hidden>🏃‍♀️💨</span>
+              Build your hero <span aria-hidden>{look.fac === "police" ? "🚓" : "🏃‍♀️💨"}</span>
             </h1>
             <p className="hidden text-xs font-bold text-emerald-300 sm:block">
-              New look, same chaos — drag the stage to spin your hero!
+              Pick a side, style it up — drag the stage to spin your hero!
             </p>
           </div>
         </header>
@@ -373,9 +374,20 @@ export function Creator({ onStart }: { onStart: () => void }) {
             </div>
 
             <div className="w-full max-w-[430px] rounded-2xl border border-white/15 bg-black/40 p-4 text-xs leading-relaxed text-white/75 backdrop-blur-md lg:w-full">
-              <b className="text-white">Mission:</b> walk into 🗳 votes to carry them (max 3), then deliver them at the big
-              glowing ballot box by Parliament. Police chase you when you carry votes — sprint away! Rescued friends give
-              points, chai restores energy, and zombies only come out at night…
+              {look.fac === "police" ? (
+                <>
+                  <b className="text-white">Mission (Police):</b> vote-runners are smuggling 🗳 votes to Parliament!
+                  Chase them down and <b>walk into a runner to bust them</b> — police vans haul them to the station
+                  cage. Bust <b>12 runners</b> before they deliver <b>10 votes</b>. Eat food, grab super-power gems,
+                  and call it a good shift. 🚓
+                </>
+              ) : (
+                <>
+                  <b className="text-white">Mission:</b> walk into 🗳 votes to carry them (max 3), then deliver them at the big
+                  glowing ballot box by Parliament. Police chase you when you carry votes — sprint away! Rescued friends give
+                  points, chai restores energy, and zombies only come out at night…
+                </>
+              )}
             </div>
           </div>
 
@@ -401,6 +413,39 @@ export function Creator({ onStart }: { onStart: () => void }) {
                   >
                     <HelpCircle size={14} />
                   </Button>
+                </div>
+              </div>
+
+              {/* side — protester or police (the old-game "Side" row) */}
+              <div className="mb-4">
+                <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-white/70">Choose your side</div>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    aria-pressed={look.fac === "protester"}
+                    onClick={() => { sfx.click(); update({ fac: "protester", ...(look.shirt && POLICE_COLORS.includes(look.shirt) ? { shirt: SHIRT_COLORS[0], pants: PANTS_COLORS[0] } : {}) }); }}
+                    className={`rounded-xl border-2 p-2.5 text-left transition-all ${
+                      look.fac === "protester"
+                        ? "border-yellow-300 bg-yellow-300/15 shadow-[0_0_0_1px_rgba(253,224,71,0.4)]"
+                        : "border-white/15 bg-white/5 hover:border-white/35"
+                    }`}
+                  >
+                    <div className="text-sm font-black text-white">🏃 Protester</div>
+                    <div className="mt-0.5 text-[10px] leading-tight text-white/65">Steal votes, dodge police, save democracy!</div>
+                  </button>
+                  <button
+                    type="button"
+                    aria-pressed={look.fac === "police"}
+                    onClick={() => { sfx.click(); update({ fac: "police", ...POLICE_UNIFORM }); }}
+                    className={`rounded-xl border-2 p-2.5 text-left transition-all ${
+                      look.fac === "police"
+                        ? "border-sky-300 bg-sky-300/15 shadow-[0_0_0_1px_rgba(125,211,252,0.4)]"
+                        : "border-white/15 bg-white/5 hover:border-white/35"
+                    }`}
+                  >
+                    <div className="text-sm font-black text-white">🚓 Police</div>
+                    <div className="mt-0.5 text-[10px] leading-tight text-white/65">Chase runners, bust them, guard the vote!</div>
+                  </button>
                 </div>
               </div>
 
@@ -478,7 +523,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
                   >
                     <PresetRow look={look} onPick={update} />
                     <Swatches label="Skin" colors={SKIN_TONES} value={look.skin} onChange={(skin) => update({ skin })} />
-                    <Swatches label="Shirt" colors={SHIRT_COLORS} value={look.shirt} onChange={(shirt) => update({ shirt })} />
+                    <Swatches label={look.fac === "police" ? "Uniform" : "Shirt"} colors={look.fac === "police" ? POLICE_COLORS : SHIRT_COLORS} value={look.shirt} onChange={(shirt) => update({ shirt })} />
                     <Swatches label="Pants" colors={PANTS_COLORS} value={look.pants} onChange={(pants) => update({ pants })} />
                     <Swatches label="Shoes" colors={SHOE_COLORS} value={look.shoe} onChange={(shoe) => update({ shoe })} />
                     <div className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-2">
@@ -534,7 +579,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
               className="hidden h-14 w-full rounded-2xl bg-gradient-to-r from-amber-400 to-yellow-300 text-lg font-black text-amber-950 shadow-[0_6px_0_rgba(180,120,0,0.6)] transition-transform hover:scale-[1.02] active:scale-95 disabled:opacity-50 lg:flex"
             >
               <Play size={20} className="mr-2" fill="currentColor" />
-              {starting ? "Warming up…" : ready ? `Enter the City, ${playerName}!` : "Pick a name to play"}
+              {starting ? "Warming up…" : !ready ? "Pick a name to play" : look.fac === "police" ? `Start the shift, Officer ${playerName}!` : `Enter the City, ${playerName}!`}
             </Button>
           </div>
         </div>
@@ -553,7 +598,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
           className="h-13 w-full rounded-2xl bg-gradient-to-r from-amber-400 to-yellow-300 text-base font-black text-amber-950 shadow-[0_5px_0_rgba(180,120,0,0.6)] active:scale-95 disabled:opacity-50"
         >
           <Play size={18} className="mr-2" fill="currentColor" />
-          {starting ? "Warming up…" : ready ? `Enter the City, ${playerName}!` : "Pick a name to play"}
+          {starting ? "Warming up…" : !ready ? "Pick a name to play" : look.fac === "police" ? `Start the shift, Officer ${playerName}!` : `Enter the City, ${playerName}!`}
         </Button>
       </div>
 
