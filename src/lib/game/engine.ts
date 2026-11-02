@@ -14,6 +14,8 @@ import { freeSpot, lineClear, resolve, RING_R, ROADS, type World } from "./world
 import { advanceClock, nightFactor, newBody, stepBody, stepNpc, type Body } from "./sim";
 import { sfx } from "./audio";
 
+const TAU = Math.PI * 2; // full circle — used to keep the camera yaw wrapped
+
 export type CopMode = "patrol" | "chase" | "return" | "celebrate";
 export type CivilMode = "wander" | "flee" | "detained" | "rescued";
 
@@ -129,7 +131,7 @@ export class GameEngine {
   playerName = "You";
 
   player: Body = newBody(SPAWN.x, SPAWN.z);
-  input = { f: 0, r: 0, sprint: false, jump: false, yaw: Math.PI, pitch: 0.32 };
+  input = { f: 0, r: 0, sprint: false, jump: false, turn: 0, yaw: Math.PI, pitch: 0.32 };
   touchMove = { active: false, sprint: false };
   hp = 100; stamina = 100;
   inv: { def: number; count: number }[] = []; // pocketed food, used from the HUD item bar
@@ -832,6 +834,13 @@ export class GameEngine {
     this.clock = advanceClock(this.clock, dt);
     const night = nightFactor(this.clock);
     const p = this.player;
+
+    // 🎮 keyboard camera turn (hold Z / X) — the fallback when the mouse cursor
+    // can't be hard-locked (sandboxed preview iframes block pointer lock) and the
+    // free-look cursor dies at the screen edge. Also keeps yaw wrapped to (−π, π]
+    // so turning forever never inflates the float or skews atan2-based HUD maths.
+    if (this.input.turn) this.input.yaw += this.input.turn * 2.4 * dt;
+    this.input.yaw = ((this.input.yaw + Math.PI) % TAU + TAU) % TAU - Math.PI;
 
     // day/night zone toast
     const z = zoneOf(p.x, p.z);

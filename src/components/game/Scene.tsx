@@ -64,6 +64,9 @@ export function useGameInput(engine: GameEngine | null) {
         engine.input.r = r;
       }
       engine.input.sprint = k.has("ShiftLeft") || k.has("ShiftRight") || engine.touchMove.sprint;
+      // 🎮 hold Z / X to swing the camera left / right — the keyboard fallback for
+      // when the mouse cursor can't be hard-locked and dies at the screen edge
+      engine.input.turn = (k.has("KeyZ") ? 1 : 0) - (k.has("KeyX") ? 1 : 0);
     };
 
     const down = (e: KeyboardEvent) => {
@@ -90,7 +93,7 @@ export function useGameInput(engine: GameEngine | null) {
     const mu = () => { dragging = false; };
     const mm = (e: MouseEvent) => {
       const s = useGame.getState();
-      if (s.screen !== "play" || s.paused || s.victoryOpen) return;
+      if (s.screen !== "play" || s.paused || s.victoryOpen || s.bigMapOpen) return;
       // mouse is bound to the game: steer when the cursor is hard-locked (FPS
       // style), whenever it glides over the open world, or while drag-looking
       if (!document.pointerLockElement && !(e.target instanceof HTMLCanvasElement) && !dragging) return;
@@ -98,17 +101,15 @@ export function useGameInput(engine: GameEngine | null) {
       engine.input.pitch = Math.min(0.95, Math.max(-0.25, engine.input.pitch + e.movementY * 0.002));
     };
 
-    // click the world to hard-bind the cursor (pointer lock) — Esc frees it again.
-    // Free mouse-look above already works without it; this just hides the cursor
-    // for the full game feel. Silent no-op where pointer lock is unavailable.
+    // click anywhere that isn't a UI control to hard-bind the cursor (pointer
+    // lock) — Esc frees it again. Silent no-op where pointer lock is blocked
+    // (sandboxed iframes); free-look + Z/X keyboard turn keep working there.
     const grab = (e: MouseEvent) => {
       const s = useGame.getState();
-      if (s.screen !== "play" || s.paused || s.victoryOpen || s.touch) return;
-      if (document.pointerLockElement || !(e.target instanceof HTMLCanvasElement)) return;
-      try {
-        const r = e.target.requestPointerLock() as unknown as Promise<void> | undefined;
-        if (r && typeof r.catch === "function") r.catch(() => { /* free look keeps working */ });
-      } catch { /* pointer lock unsupported — free mouse-look still works */ }
+      if (s.screen !== "play" || s.paused || s.victoryOpen || s.bigMapOpen || s.touch) return;
+      const t = e.target;
+      if (document.pointerLockElement || !(t instanceof Element) || t.closest("[data-ui]")) return;
+      requestGameLock();
     };
     const plc = () => {
       const locked = !!document.pointerLockElement;
@@ -128,10 +129,10 @@ export function useGameInput(engine: GameEngine | null) {
     // pointerlockerror during its post-Escape cooldown even when a later
     // request succeeded — only clear the flag when truly unlocked)
     const ple = () => { if (!document.pointerLockElement) useGame.getState().setMouseLocked(false); };
-    // free the cursor whenever a menu, modal or the victory screen takes over
+    // free the cursor whenever a menu, modal, the big map or the victory screen takes over
     const lockWatch = setInterval(() => {
       const s = useGame.getState();
-      if (document.pointerLockElement && (s.screen !== "play" || s.paused || s.victoryOpen)) {
+      if (document.pointerLockElement && (s.screen !== "play" || s.paused || s.victoryOpen || s.bigMapOpen)) {
         document.exitPointerLock();
       }
     }, 250);
@@ -197,6 +198,12 @@ export function useGameInput(engine: GameEngine | null) {
 export function Scene({ engine }: { engine: GameEngine }) {
   const clockRef = useRef<number>(0.3) as ClockRef;
   const low = useMemo(() => isLowPower(), []);
+  // hide the OS mouse icon over the world while actively playing — pointer lock
+  // hides it natively; this covers browsers/iframes where the lock is blocked.
+  // cursor is inherited, so it reaches the inner <canvas>; paused/menus/map
+  // restore the cursor so buttons stay clickable.
+  const playing = useGame((s) => s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen);
+  const touch = useGame((s) => s.touch);
   const dpr: [number, number] = useMemo(() => {
     if (typeof window === "undefined") return [1, 1.5];
     if (low) return [0.55, 0.66]; // software GPU — start low, AdaptiveDpr tunes it
@@ -204,7 +211,7 @@ export function Scene({ engine }: { engine: GameEngine }) {
   }, [low]);
   return (
     <Canvas
-      className="absolute inset-0"
+      className={`absolute inset-0 ${playing && !touch ? "cursor-none" : ""}`}
       camera={{ fov: 62, near: 0.5, far: 900, position: [0, 40, 90] }}
       dpr={dpr}
       gl={{ antialias: !low, powerPreference: "high-performance" }}
@@ -229,3 +236,45 @@ export function Scene({ engine }: { engine: GameEngine }) {
 }
 
 export { WORLD };
+
+/* ------------------------------------------------------------------ */
+/* Pointer-lock helper — the mouse must feel welded to the camera.     */
+/* Retries for a moment via rAF so it can fire before the <canvas>      */
+/* mounts (e.g. from the PLAY button click, 650 ms before the scene     */
+/* appears). Always guarded: touch devices, menus and already-locked    */
+/* states never touch it; failures fall back to free-look + Z/X keys.   */
+/* ------------------------------------------------------------------ */
+export function requestGameLock(): void {
+  if (typeof document === "undefined") return;
+  const ok = () => {
+    const s = useGame.getState();
+    return s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen && !s.touch && !document.pointerLockElement;
+  };
+  if (!ok()) return;
+  let tries = 0;
+  const attempt = () => {
+    if (!ok() || document.pointerLockElement) return; // user opened a menu / locked already
+    const cv = document.querySelector("canvas");
+    if (!cv) {
+      // scene still mounting — retry until it appears (gives up after ~2 s)
+      if (++tries < 120) requestAnimationFrame(attempt);
+      return;
+    }
+    try {
+      // unadjustedMovement = raw OS input (no mouse acceleration) when supported
+      const p = (cv as HTMLCanvasElement & { requestPointerLock(o?: { unadjustedMovement?: boolean }): Promise<void> | void })
+        .requestPointerLock({ unadjustedMovement: true });
+      if (p && typeof (p as Promise<void>).catch === "function") {
+        (p as Promise<void>).catch(() => {
+          try {
+            const q = cv.requestPointerLock(); // retry without options (older browsers)
+            if (q && typeof q.catch === "function") q.catch(() => { /* free-look keeps working */ });
+          } catch { /* pointer lock unavailable — free-look + Z/X turn keep working */ }
+        });
+      }
+    } catch {
+      try { cv.requestPointerLock(); } catch { /* unsupported — fallbacks keep working */ }
+    }
+  };
+  attempt();
+}

@@ -10,6 +10,7 @@ import {
 import type { GameEngine } from "@/lib/game/engine";
 import { DETAIN_SECONDS, ITEMS, INV_SLOTS, POLICE_STATIONS, POWERS } from "@/lib/game/constants";
 import { useGame } from "./store";
+import { requestGameLock } from "./Scene";
 import { setMuted as setAudioMuted, sfx, stopMusic, startMusic } from "@/lib/game/audio";
 import { Button } from "@/components/ui/button";
 import { HowToPlay, SettingsDialog } from "./Panels";
@@ -578,6 +579,7 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
     engine.running = true;
     startMusic();
     setPaused(false);
+    requestGameLock(); // re-weld the mouse to the camera — a fresh click gesture, so this is allowed
   };
 
   const secs = Math.floor(hud.elapsed);
@@ -683,7 +685,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       if (useGame.getState().victoryOpen) return;
       if (bigMap) {
         // the map swallows M / Esc so it always closes first
-        if (e.code === "KeyM" || e.code === "Escape") { e.preventDefault(); setBigMap(false); }
+        if (e.code === "KeyM" || e.code === "Escape") { e.preventDefault(); setBigMap(false); requestGameLock(); }
         return;
       }
       if (e.code === "KeyM") { e.preventDefault(); setBigMap(true); return; }
@@ -719,6 +721,11 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
 
   return (
     <div className="pointer-events-none absolute inset-0 select-none font-sans">
+      {/* hide the OS mouse icon over the world while playing — pointer lock hides
+          it natively; this covers browsers/iframes where the lock is blocked so
+          the cursor never floats over the game (HUD controls keep their cursor).
+          Scoped to the 3D canvas in Scene.tsx (cursor inherits to the canvas). */}
+
       {/* police proximity vignette */}
       <div
         className={`absolute inset-0 transition-opacity duration-300 ${hud.policeNear ? "opacity-100" : "opacity-0"}`}
@@ -865,7 +872,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
             <b className="text-yellow-300">Goal:</b> snatch 🗳 votes, deliver them at the Parliament ballot box. Rescue pink-bubbled friends with <b>E</b>. Dodge the police — sprint with <b>Shift</b>!
             <div className="mt-1 text-amber-200/90">⚡ Sprinting drains energy · run over 🥭☕🩹 food to pocket it, then tap the bag (or press <b>1-8</b>) to eat: heals ❤ and refills ⚡.</div>
             <div className="mt-1 text-fuchsia-200/95">✨ <b>Rare super powers!</b> Find glowing gems in the jungle ( coloured dots on the map ): collecting <b>stores</b> the power — press <b>G</b> (or tap the ✨ slot) to unleash it when YOU choose! ⚡ Sonic speed · 🦘 mega jump · 🌀 Blink — press <b>Q</b> to teleport where you look · 🐒 Animal disguise — police can&apos;t catch you · 🧲 Magnet pulls food to you!</div>
-            {!touch && <div className="mt-1 text-white/70">WASD move · mouse steers the camera (click = lock cursor) · Shift sprint · Space jump ×2 (flip!) · E rescue · G use power · Q blink · 1-8 eat · right-click drop · M map · Esc / P pause</div>}
+            {!touch && <div className="mt-1 text-white/70">WASD move · mouse steers the camera (click = lock cursor, hold Z/X to turn) · Shift sprint · Space jump ×2 (flip!) · E rescue · G use power · Q blink · 1-8 eat · right-click drop · M map · Esc / P pause</div>}
           </div>
         )}
       </div>
@@ -891,7 +898,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
                 className="flex items-center gap-1.5 rounded-full bg-black/45 px-4 py-1.5 text-xs font-bold text-white/90 backdrop-blur-md"
               >
                 <Mouse size={13} aria-hidden />
-                <span>Move the mouse to steer — click to lock the cursor</span>
+                <span>Click to lock the mouse · hold Z / X to turn the camera</span>
               </motion.div>
             )}
           </AnimatePresence>

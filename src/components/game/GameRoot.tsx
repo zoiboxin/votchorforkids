@@ -6,7 +6,7 @@ import { WORLD } from "./WorldView";
 import { GameEngine } from "@/lib/game/engine";
 import { useGame } from "./store";
 import { sfx, startMusic, stopMusic } from "@/lib/game/audio";
-import { useGameInput } from "./Scene";
+import { useGameInput, requestGameLock } from "./Scene";
 import { Hud } from "./Hud";
 import { Creator } from "./Creator";
 import { Landing } from "./Landing";
@@ -52,6 +52,10 @@ export function GameRoot() {
       }
       useGame.getState().setScreen("play");
       eng.start();
+      // weld the mouse to the camera as the world appears — the helper retries
+      // via rAF until the 3D canvas mounts; blocked locks fall back to
+      // free-look + hold Z / X to turn (HUD shows the hint)
+      requestGameLock();
     }, 650);
   }, [look, pushToast]);
 
