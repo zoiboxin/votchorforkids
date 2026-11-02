@@ -781,9 +781,16 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         )}
         <div className="mt-1 flex items-center gap-2 text-sm text-white">
           {hud.side === "police" ? (
-            <span className="ml-1 rounded-full bg-sky-400/90 px-2 py-0.5 text-xs font-black text-sky-950">
-              🚓 {hud.busted}/{BUST_TARGET} busted
-            </span>
+            <>
+              {hud.outfitLabel && (
+                <span className="rounded-full bg-sky-400/25 px-2 py-0.5 text-[10px] font-black text-sky-100 ring-1 ring-sky-300/40">
+                  {hud.outfitLabel}
+                </span>
+              )}
+              <span className="ml-1 rounded-full bg-sky-400/90 px-2 py-0.5 text-xs font-black text-sky-950">
+                🚓 {hud.busted}/{BUST_TARGET} busted
+              </span>
+            </>
           ) : (
             <>
               <VotePips carried={hud.carried} />

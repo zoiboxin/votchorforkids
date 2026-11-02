@@ -1,6 +1,6 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
-import { AGE_STATS, ITEMS, type Appearance } from "./constants";
+import { AGE_STATS, ITEMS, POLICE_UNIFORM, policeOutfitOf, type Appearance } from "./constants";
 
 /* ------------------------------------------------------------------ */
 /* Shared caches + merged-geometry "buckets"                           */
@@ -216,8 +216,14 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
   root.add(body);
 
   const police = !!opts.police, zombie = !!opts.zombie;
-  const shirt = police ? "#2e4f9e" : zombie ? "#77874f" : a.shirt;
-  const pants = police ? "#1c2a4e" : zombie ? "#49513c" : a.pants;
+  /* ---------- police squad outfit (hero page) ----------
+     city = classic peaked cap · traffic = white + hi-viz band · commando = helmet + plate
+     army = beret + bandolier · riot = helmet + visor + big pads · detective = hair + glasses */
+  const outfit = police ? policeOutfitOf(a.outfit).id : "";
+  const isTraffic = outfit === "traffic", isCommando = outfit === "commando";
+  const isArmy = outfit === "army", isRiot = outfit === "riot", isDetective = outfit === "detective";
+  const shirt = police ? (a.shirt || POLICE_UNIFORM.shirt) : zombie ? "#77874f" : a.shirt;
+  const pants = police ? (a.pants || POLICE_UNIFORM.pants) : zombie ? "#49513c" : a.pants;
   const skin = zombie ? "#93c06f" : a.skin;
   const hairCol = zombie ? "#3d4d2a" : a.age === "old" ? "#dcdcdc" : a.hair;
   const style = a.hairStyle;
@@ -232,10 +238,31 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
   bodyToon.add(capsule(0.28, 0.42), shirt, false, 0, 1.2, 0);
   bodyToon.add(cyl(0.3, 0.31, 0.2, 12), pants, false, 0, 0.84, 0);
   if (police) {
-    bodyUnlit.add(cyl(0.055, 0.055, 0.02), GOLD, true, 0.16, 1.34, 0.26, Math.PI / 2);
-    bodyToon.add(cyl(0.315, 0.315, 0.09, 12), "#161e38", false, 0, 1.02, 0);
-    bodyUnlit.add(box(0.11, 0.07, 0.04), GOLD, true, 0, 1.02, 0.31);
-    for (const sd of [-1, 1]) bodyToon.add(box(0.16, 0.05, 0.24), "#1c2a4e", false, sd * 0.26, 1.5, 0);
+    // duty belt — every squad wears one
+    bodyToon.add(cyl(0.315, 0.315, 0.09, 12), shade(pants, 0.72), false, 0, 1.02, 0);
+    if (isCommando || isRiot) {
+      // tactical vest / plate carrier with chunky shoulder pads
+      bodyToon.add(box(0.52, 0.42, 0.5), isRiot ? "#2a313a" : "#14161c", false, 0, 1.22, 0);
+      bodyUnlit.add(box(0.16, 0.12, 0.03), isRiot ? "#8fb6c9" : "#3a4150", true, 0, 1.32, 0.27);
+      for (const sd of [-1, 1]) bodyToon.add(box(0.24, 0.1, 0.3), isRiot ? "#22272e" : "#101216", false, sd * 0.3, 1.5, 0);
+    } else {
+      // shiny gold badge + shoulder straps
+      bodyUnlit.add(cyl(0.055, 0.055, 0.02), GOLD, true, 0.16, 1.34, 0.26, Math.PI / 2);
+      for (const sd of [-1, 1]) bodyToon.add(box(0.16, 0.05, 0.24), shade(pants, 0.9), false, sd * 0.26, 1.5, 0);
+      if (isTraffic) {
+        // glowing hi-viz band over the white uniform shirt
+        bodyToon.add(cyl(0.325, 0.325, 0.08, 12), "#ffd23f", false, 0, 1.14, 0);
+        bodyToon.add(cyl(0.329, 0.329, 0.032, 12), "#e8e8e8", false, 0, 1.22, 0);
+      } else if (isArmy) {
+        // diagonal bandolier across the chest
+        bodyToon.add(box(0.09, 0.6, 0.05), "#3a4429", false, 0.05, 1.28, 0.25, 0, 0, -0.45);
+      } else if (isDetective) {
+        // plainclothes trench coat — lapel collar, coat skirt, buttons
+        bodyToon.add(cyl(0.292, 0.3, 0.09, 12), shade(shirt, 0.85), false, 0, 1.44, 0);
+        bodyToon.add(cyl(0.305, 0.315, 0.24, 12), shade(shirt, 0.92), false, 0, 0.72, 0);
+        for (const yy of [1.32, 1.18, 1.04]) bodyUnlit.add(cyl(0.026, 0.026, 0.02), "#3a3128", true, 0, yy, 0.29, Math.PI / 2);
+      }
+    }
   } else if (civvie) {
     bodyToon.add(cyl(0.292, 0.3, 0.07, 12), "#ffffff", false, 0, 1.28, 0);
     // raised crew-neck collar
@@ -268,8 +295,8 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
     headToon.add(capsule(0.024, 0.1), a.age === "old" ? "#dcdcdc" : "#241a12", false, 0, -0.1, 0.38, 0, 0, Math.PI / 2);
   }
 
-  /* hair */
-  if (style !== "bald" && !police) {
+  /* hair — hidden under the uniform cap, but the detective's hair shows off-duty */
+  if (style !== "bald" && (!police || isDetective)) {
     if (style === "mohawk") {
       for (let i = 0; i < 5; i++) {
         const z = 0.26 - i * 0.13;
@@ -330,22 +357,41 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
     }
   }
 
-  /* cap */
-  if (police || (a.cap && !zombie)) {
-    const capCol = police ? "#1c2a4e" : a.capColor || a.shirt;
-    headToon.add(sphere(0.415, 14, 9, 0, Math.PI * 2, 0, Math.PI / 2.35), capCol, false, 0, 0.13, 0);
-    headToon.add(cyl(0.2, 0.28, 0.045, 12), police ? "#10182e" : capCol, false, 0, 0.24, 0.32, -0.32);
-    if (police) {
-      headUnlit.add(cyl(0.05, 0.05, 0.025), GOLD, true, 0, 0.4, 0.26, Math.PI / 2);
-      headToon.add(cyl(0.418, 0.424, 0.08, 14), "#10182e", false, 0, 0.15, 0);
+  /* headgear — the squad identity lives here */
+  if (police && isDetective) {
+    // detective works plainclothes: no hat, hair + glasses speak instead
+  } else if (police && (isCommando || isRiot)) {
+    // combat helmet — deep dome with a rim band, no brim
+    headToon.add(sphere(0.44, 14, 10, 0, Math.PI * 2, 0, Math.PI / 1.75), a.capColor || "#101216", false, 0, 0.1, 0);
+    headToon.add(cyl(0.446, 0.453, 0.07, 14), "#0b0d11", false, 0, 0.08, 0);
+    if (isCommando) {
+      // night-vision mount stub on the front
+      headToon.add(box(0.12, 0.09, 0.06), "#0b0d11", false, 0, 0.32, 0.4);
     } else {
-      // little white front-panel highlight so custom cap colors pop
-      headUnlit.add(sphere(0.05, 7, 5), "#ffffff", true, 0, 0.42, 0.3);
+      // riot visor — a curved shield over the eyes
+      headUnlit.add(box(0.52, 0.16, 0.05), "#9fc3d8", true, 0, 0.06, 0.4);
     }
+  } else if (police && isArmy) {
+    // beret — squashed dome tilted over one eye, little stalk on top
+    headToon.add(sphere(0.43, 12, 8, 0, Math.PI * 2, 0, Math.PI / 2.1), a.capColor || "#3e4f30", false, 0.05, 0.17, -0.02, 0, 0, 0.32, 1.06, 0.6, 1.06);
+    headUnlit.add(cyl(0.035, 0.035, 0.05), "#2c3a22", true, 0.1, 0.42, -0.02);
+  } else if (police) {
+    // classic peaked cap (City Police + Traffic Police) — colour follows the outfit
+    const capCol = a.capColor || "#1c2a4e";
+    headToon.add(sphere(0.415, 14, 9, 0, Math.PI * 2, 0, Math.PI / 2.35), capCol, false, 0, 0.13, 0);
+    headToon.add(cyl(0.2, 0.28, 0.045, 12), isTraffic ? "#333a46" : "#10182e", false, 0, 0.24, 0.32, -0.32);
+    headUnlit.add(cyl(0.05, 0.05, 0.025), GOLD, true, 0, 0.4, 0.26, Math.PI / 2);
+    headToon.add(cyl(0.418, 0.424, 0.08, 14), shade(capCol, 0.45), false, 0, 0.15, 0);
+  } else if (a.cap && !zombie) {
+    const capCol = a.capColor || a.shirt;
+    headToon.add(sphere(0.415, 14, 9, 0, Math.PI * 2, 0, Math.PI / 2.35), capCol, false, 0, 0.13, 0);
+    headToon.add(cyl(0.2, 0.28, 0.045, 12), capCol, false, 0, 0.24, 0.32, -0.32);
+    // little white front-panel highlight so custom cap colors pop
+    headUnlit.add(sphere(0.05, 7, 5), "#ffffff", true, 0, 0.42, 0.3);
   }
 
-  /* glasses — explicit cosmetic (elders get them automatically, unless bald) */
-  const wantGlasses = !police && !zombie && (a.glasses || (a.age === "old" && style !== "bald"));
+  /* glasses — the detective always wears them; elders get them automatically (unless bald) */
+  const wantGlasses = police ? isDetective : !zombie && (a.glasses || (a.age === "old" && style !== "bald"));
   if (wantGlasses) {
     for (const sd of [-1, 1]) {
       headUnlit.add(torus(0.082, 0.014, Math.PI * 2), "#333333", true, sd * 0.155, 0.03, 0.385);

@@ -235,7 +235,7 @@ export function Npcs({ engine }: { engine: GameEngine }) {
     const map = new Map<number, NpcView>();
     engine.cops.forEach((c, i) => {
       const mesh = buildCharacter(
-        { fac: "police", skin: pick(SKIN_TONES), shirt: "#2b4a8f", pants: "#1d2a4a", shoe: "#111111", hair: pick(["#1a1210", "#5a3a1a", "#4a4a58"] as const), hairStyle: pick(["bowl", "spiky", "bald"] as const), cap: true, capColor: "#1c2a4e", glasses: false, age: pick(["young", "young", "old"] as const), girl: false },
+        { fac: "police", outfit: "city", skin: pick(SKIN_TONES), shirt: "#2e4f9e", pants: "#1c2a4e", shoe: "#111111", hair: pick(["#1a1210", "#5a3a1a", "#4a4a58"] as const), hairStyle: pick(["bowl", "spiky", "bald"] as const), cap: true, capColor: "#1c2a4e", glasses: false, age: pick(["young", "young", "old"] as const), girl: false },
         { police: true, mustache: i % 3 === 0 },
       );
       const tag = nameTag("POLICE", "rgba(30,50,120,0.85)");

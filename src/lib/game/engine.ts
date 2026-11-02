@@ -7,7 +7,7 @@ import {
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
   RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SPAWN, SONIC_MULT, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, VAN_AXLE, VAN_LOAD_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
   WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
-  ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, stationCage, stationGate, type AnimalKind, type Appearance, type PowerKind, type Side, type Zone, zoneOf, ZONE_TOAST,
+  ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, policeOutfitOf, stationCage, stationGate, type AnimalKind, type Appearance, type PolicePerk, type PowerKind, type Side, type Zone, zoneOf, ZONE_TOAST,
 } from "./constants";
 import { clamp, mulberry32, range } from "./rng";
 import { freeSpot, lineClear, resolve, RING_R, ROADS, type World } from "./worldgen";
@@ -95,6 +95,8 @@ export interface HudData {
   runnerDelivered: number;
   /** police side: true when the runners reached their delivery quota — shift failed */
   lost: boolean;
+  /** police side: the squad outfit the officer picked on the hero page (e.g. "Traffic Police") */
+  outfitLabel: string;
 }
 
 export type ToastFn = (msg: string, kind?: "info" | "good" | "bad") => void;
@@ -192,6 +194,8 @@ export class GameEngine {
   won = false; wonAt = 0;
   /** which side the player picked — police flips the whole objective around */
   side: Side = "protester";
+  /** police side: squad perks from the hero-page outfit (bust reach, cuffs, sprint…) */
+  policePerk: PolicePerk = policeOutfitOf("").stats;
   /** police side: votes the AI runners smuggled through (lose at RUNNER_LOSE_DELIVERIES) */
   runnerDelivered = 0;
   /** police side: set when the runners hit their quota — the shift failed */
@@ -211,6 +215,7 @@ export class GameEngine {
     this.look = look;
     this.toast = toast;
     this.side = look.fac;
+    this.policePerk = policeOutfitOf(look.fac === "police" ? look.outfit : "").stats;
     this.hud = this.buildHud();
     this.spawnAll();
   }
@@ -399,7 +404,8 @@ export class GameEngine {
   start() {
     this.running = true;
     if (this.side === "police") {
-      this.toast(`🚓 Shift start, Officer ${this.playerName}! Bust ${BUST_TARGET} vote runners before they smuggle ${RUNNER_LOSE_DELIVERIES} votes through — walk into them to arrest!`, "info");
+      const squad = policeOutfitOf(this.look.outfit);
+      this.toast(`🚓 Shift start, Officer ${this.playerName} (${squad.emoji} ${squad.label})! Bust ${BUST_TARGET} vote runners before they smuggle ${RUNNER_LOSE_DELIVERIES} votes through — walk into them to arrest!`, "info");
     }
   }
   setToast(fn: ToastFn) { this.toast = fn; }
@@ -407,6 +413,7 @@ export class GameEngine {
   reset(look: Appearance) {
     this.look = look;
     this.side = look.fac;
+    this.policePerk = policeOutfitOf(look.fac === "police" ? look.outfit : "").stats;
     this.player = newBody(SPAWN.x, SPAWN.z);
     this.hp = 100; this.stamina = 100; this.stars = 0; this.starTimer = 0; this.chased = false;
     this.inv = []; this.hurtT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0; this.powerFullT = 0;
@@ -552,18 +559,20 @@ export class GameEngine {
 
   /** Walked-into-a-runner arrest: detain, scatter their loot, count the bust. */
   private bustRunner(c: Npc) {
-    this.catchCd = RUNNER_CATCH_CD;
+    const perk = this.policePerk;
+    this.catchCd = RUNNER_CATCH_CD * perk.bustCdMult;
     c.mode = "detained"; c.timer = CIV_DETAIN_S; // the van fleet automatically drives them to the station cage
     const v = c.voteId ? this.votes.find((vv) => vv.id === c.voteId) : null;
     const carrying = !!(v && v.state === "carried");
     this.dropRunnerVote(c);
     this.caughtCount++; // police side: counts runners busted
-    this.points += BUST_POINTS + (carrying ? BUST_CARRY_BONUS : 0);
+    const pts = Math.round((BUST_POINTS + (carrying ? BUST_CARRY_BONUS : 0)) * perk.scoreMult);
+    this.points += pts;
     sfx.caught();
     this.fxQueue.push({ type: "confetti", x: c.x, y: 1.3, z: c.z, hue: 0.58 });
     this.toast(carrying
-      ? `🚓 Busted ${c.name} red-handed! Vote secured — +${BUST_POINTS + BUST_CARRY_BONUS}! A van is taking them in.`
-      : `🚓 Busted ${c.name}! +${BUST_POINTS} — a van is taking them in. (${this.caughtCount}/${BUST_TARGET})`, "good");
+      ? `🚓 Busted ${c.name} red-handed! Vote secured — +${pts}! A van is taking them in.`
+      : `🚓 Busted ${c.name}! +${pts} — a van is taking them in. (${this.caughtCount}/${BUST_TARGET})`, "good");
     // nearby runners scatter in panic — they lay low for a bit before re-attempting
     for (const o of this.civs) {
       if (!o.runner || o === c || o.mode !== "wander") continue;
@@ -581,10 +590,12 @@ export class GameEngine {
   private updatePoliceMode(dt: number) {
     const p = this.player;
     this.catchCd = Math.max(0, this.catchCd - dt);
+    // 🛡️ Riot Squad: the shield gives you a wider walk-into bust reach
+    const bustR = RUNNER_CATCH_R * this.policePerk.bustRMult;
     if (this.detainedT <= 0 && this.faintT <= 0 && !this.won && !this.lost && this.catchCd <= 0) {
       for (const c of this.civs) {
         if (!c.runner || c.mode !== "wander" || c.protest) continue;
-        if (dist2(p.x, p.z, c.x, c.z) < RUNNER_CATCH_R * RUNNER_CATCH_R) {
+        if (dist2(p.x, p.z, c.x, c.z) < bustR * bustR) {
           this.bustRunner(c);
           break; // one bust per cooldown — no crowd sweeps
         }
@@ -1091,6 +1102,10 @@ export class GameEngine {
           // ⚡ Sonic Dash — legs become a blur · 🦘 Kangaroo Leap — superhero jumps
           speedScale: this.activePower === "sonic" ? SONIC_MULT : 1,
           jumpScale: this.activePower === "jump" ? JUMP_MULT : 1,
+          // 🎖️ hero-page squad perks (police side only): SWAT sprint, city fitness, army endurance
+          sprintMult: this.side === "police" ? this.policePerk.sprintMult : 1,
+          regenMult: this.side === "police" ? this.policePerk.regenMult : 1,
+          drainMult: this.side === "police" ? this.policePerk.drainMult : 1,
         });
       this.stamina = p.stamina; // sprinting drains / walking regenerates (see stepBody)
       // ⚡ Sonic legs don't tire — sprint costs nothing while Sonic Dash lasts
@@ -1499,6 +1514,7 @@ export class GameEngine {
 
   private buildHud(): HudData {
     const p = this.player;
+    const squad = policeOutfitOf(this.look.outfit); // the officer's hero-page outfit
     let prompt = "";
     if (this.side === "police") {
       // officer guidance — nudge the player toward the next arrest
@@ -1529,6 +1545,7 @@ export class GameEngine {
       civilians: this.civs.length, police: this.cops.length,
       won: this.won, elapsed: this.elapsed,
       side: this.side, busted: this.caughtCount, runnerDelivered: this.runnerDelivered, lost: this.lost,
+      outfitLabel: this.side === "police" ? `${squad.emoji} ${squad.label}` : "",
       inv: this.inv.map((s) => ({ def: s.def, count: s.count })),
       hurt: this.hurtT > 0, sprinting: p.sprinting, exhausted: this.stamina <= 0.5,
       px: Math.round(this.player.x), pz: Math.round(this.player.z),

@@ -23,7 +23,8 @@ export interface MoveInput { f: number; r: number; sprint: boolean; jump: boolea
  */
 export function stepBody(
   b: Body, inp: MoveInput, dt: number, age: AgeGroup, world: World,
-  opts: { yaw: number; speedScale?: number; jumpScale?: number; maxStamina?: number },
+  opts: { yaw: number; speedScale?: number; jumpScale?: number; maxStamina?: number;
+          sprintMult?: number; regenMult?: number; drainMult?: number },
 ): void {
   const A = AGE_STATS[age];
   const f = clamp(inp.f, -1, 1), r = clamp(inp.r, -1, 1);
@@ -34,8 +35,13 @@ export function stepBody(
   const moving = len > 0.01;
   const maxSt = opts.maxStamina ?? 100;
   b.sprinting = inp.sprint && moving && b.stamina > 2;
-  const speed = A.speed * (opts.speedScale ?? 1) * (b.sprinting ? SPRINT_MULT : 1);
-  b.stamina = clamp(b.stamina + (b.sprinting ? -20 : 12 * A.regen) * dt, 0, maxSt);
+  // 🎖️ police squad perks ride along here: SWAT sprint boost, city-beat fitness,
+  // army march endurance — all default to 1 for protesters & unpicked squads
+  const speed = A.speed * (opts.speedScale ?? 1) * (b.sprinting ? SPRINT_MULT * (opts.sprintMult ?? 1) : 1);
+  b.stamina = clamp(
+    b.stamina + (b.sprinting ? -20 * (opts.drainMult ?? 1) : 12 * A.regen * (opts.regenMult ?? 1)) * dt,
+    0, maxSt,
+  );
   // slightly floatier steering while airborne — momentum keeps you committed
   const k = Math.min(1, dt * (b.y > 0.05 ? 6.5 : 10));
   b.vx += (dx * speed - b.vx) * k;

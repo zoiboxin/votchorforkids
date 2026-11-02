@@ -53,6 +53,8 @@ export type Side = "protester" | "police";
 
 export interface Appearance {
   fac: Side;
+  /** police squad outfit id (POLICE_OUTFITS) — "" for protesters / legacy saves */
+  outfit: string;
   skin: string;
   shirt: string;
   pants: string;
@@ -68,11 +70,83 @@ export interface Appearance {
 
 export const SKIN_TONES = ["#ffd9b3", "#f1c27d", "#e0ac69", "#c68642", "#8d5524", "#6b4423"];
 export const SHIRT_COLORS = ["#f5a524", "#e0483a", "#2a9d8f", "#f1e9d2", "#e91e8c", "#7bc043", "#ff6b35", "#00b4d8"];
-/** Police uniform shirts (old-game POLICE_COLORS palette) — offered in the creator when Side = Police. */
-export const POLICE_COLORS = ["#2e4f9e", "#3a5a3a", "#5a4a3a"];
+/** Police uniform shirts (old-game POLICE_COLORS palette + squad extras) — creator swatches when Side = Police. */
+export const POLICE_COLORS = ["#2e4f9e", "#3a5a3a", "#5a4a3a", "#eef2f7", "#23272f", "#2f3640"];
 export const POLICE_UNIFORM = {
   shirt: "#2e4f9e", pants: "#1c2a4e", cap: true, capColor: "#1c2a4e",
 } as const;
+
+/* ---------- Police squad outfits — the hero page shown when Side = Police ----------
+   Old game only offered 3 uniform colours; 2.0 turns each colour theme into a full
+   squad with its own 3D gear (cap / helmet / beret / hi-viz / plate / trench) and a
+   small gameplay perk so every pick feels different but stays kid-friendly.        */
+export interface PolicePerk {
+  bustRMult: number;    // riot: bigger walk-into bust radius
+  bustCdMult: number;   // traffic: faster recovery between busts
+  sprintMult: number;   // commando: extra sprint speed multiplier
+  regenMult: number;    // city: stamina regenerates faster while walking
+  drainMult: number;    // army: sprint drains stamina slower
+  scoreMult: number;    // detective: bonus points per bust
+}
+export interface PoliceOutfitDef {
+  id: string; label: string; emoji: string;
+  tagline: string;  // one-line flavour shown on the hero card
+  perkLabel: string; // kid-readable perk text
+  stats: PolicePerk;
+  look: Partial<Appearance>; // applied to the hero when the squad is picked
+}
+
+const NEUTRAL_PERK: PolicePerk = { bustRMult: 1, bustCdMult: 1, sprintMult: 1, regenMult: 1, drainMult: 1, scoreMult: 1 };
+
+export const POLICE_OUTFITS: readonly PoliceOutfitDef[] = [
+  {
+    id: "city", label: "City Police", emoji: "🚓",
+    tagline: "The classic beat officer — navy uniform, shiny badge, peaked cap.",
+    perkLabel: "Beat fitness — stamina recovers 25% faster",
+    stats: { ...NEUTRAL_PERK, regenMult: 1.25 },
+    look: { outfit: "city", shirt: "#2e4f9e", pants: "#1c2a4e", shoe: "#111111", cap: true, capColor: "#1c2a4e", glasses: false },
+  },
+  {
+    id: "traffic", label: "Traffic Police", emoji: "🚦",
+    tagline: "White uniform, glowing hi-viz band — master of the busy crossing.",
+    perkLabel: "Quick cuffs — bust recovery 45% faster",
+    stats: { ...NEUTRAL_PERK, bustCdMult: 0.55 },
+    look: { outfit: "traffic", shirt: "#eef2f7", pants: "#1c2a4e", shoe: "#111111", cap: true, capColor: "#eef2f7", glasses: false },
+  },
+  {
+    id: "commando", label: "Commando / SWAT", emoji: "🎖️",
+    tagline: "All-black tactical gear, helmet and chest plate — first one in.",
+    perkLabel: "Tactical sprint — 12% faster while sprinting",
+    stats: { ...NEUTRAL_PERK, sprintMult: 1.12 },
+    look: { outfit: "commando", shirt: "#23272f", pants: "#16181d", shoe: "#111111", cap: true, capColor: "#101216", glasses: false },
+  },
+  {
+    id: "army", label: "Army Soldier", emoji: "🪖",
+    tagline: "Olive camo and a tilted beret — marches all day without tiring.",
+    perkLabel: "March training — sprinting drains 30% slower",
+    stats: { ...NEUTRAL_PERK, drainMult: 0.7 },
+    look: { outfit: "army", shirt: "#4a5d3a", pants: "#33422a", shoe: "#3b2314", cap: true, capColor: "#3e4f30", glasses: false },
+  },
+  {
+    id: "riot", label: "Riot Squad", emoji: "🛡️",
+    tagline: "Heavy helmet with a visor and big shoulder pads — nothing gets past.",
+    perkLabel: "Shield reach — bust radius 35% bigger",
+    stats: { ...NEUTRAL_PERK, bustRMult: 1.35 },
+    look: { outfit: "riot", shirt: "#2f3640", pants: "#22272e", shoe: "#111111", cap: true, capColor: "#191e24", glasses: false },
+  },
+  {
+    id: "detective", label: "Detective / CID", emoji: "🕵️",
+    tagline: "Plain trench coat, glasses, sharp eyes — solves every case.",
+    perkLabel: "Case bonus — +25% score per bust",
+    stats: { ...NEUTRAL_PERK, scoreMult: 1.25 },
+    look: { outfit: "detective", shirt: "#b0a184", pants: "#3a3128", shoe: "#3b2314", cap: false, glasses: true, hairStyle: "bowl" },
+  },
+];
+
+/** Look up a squad by id — unknown/empty ids fall back to the classic City Police. */
+export function policeOutfitOf(id: string | undefined | null): PoliceOutfitDef {
+  return POLICE_OUTFITS.find((o) => o.id === id) ?? POLICE_OUTFITS[0];
+}
 export const PANTS_COLORS = ["#2b3556", "#4a3b2a", "#7a3b3b", "#2a6f4f", "#444a55", "#8a5aa8"];
 export const SHOE_COLORS = ["#3b2314", "#111111", "#f5f5f5", "#e0483a", "#2a6fdb"];
 export const HAIR_COLORS = ["#1a1210", "#5a3a1a", "#c88a4a", "#e8c15a", "#d8d8d8", "#b03030", "#4a4a58"];
@@ -96,6 +170,7 @@ export const CIVIL_NAMES = [
 
 export const defaultAppearance = (): Appearance => ({
   fac: "protester",
+  outfit: "",
   skin: SKIN_TONES[1],
   shirt: SHIRT_COLORS[0],
   pants: PANTS_COLORS[0],
@@ -162,6 +237,7 @@ export function randomAppearance(rnd: () => number = Math.random): Appearance {
   const ages = Object.keys(AGE_STATS) as AgeGroup[];
   return {
     fac: "protester", // the side stays a deliberate choice — never randomized
+    outfit: "",
     skin: pick(SKIN_TONES),
     shirt: pick(SHIRT_COLORS),
     pants: pick(PANTS_COLORS),

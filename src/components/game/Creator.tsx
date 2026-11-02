@@ -15,9 +15,9 @@ import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
-  AGE_STATS, CAP_COLORS, HAIR_COLORS, HAIR_STYLES, NAME_SUGGESTIONS, OUTFIT_PRESETS, PANTS_COLORS, POLICE_COLORS, POLICE_UNIFORM, SHIRT_COLORS, SHOE_COLORS, SKIN_TONES,
-  randomAppearance,
-  type AgeGroup, type Appearance, type HairStyle, type OutfitPreset,
+  AGE_STATS, CAP_COLORS, HAIR_COLORS, HAIR_STYLES, NAME_SUGGESTIONS, OUTFIT_PRESETS, PANTS_COLORS, POLICE_COLORS, POLICE_OUTFITS, SHIRT_COLORS, SHOE_COLORS, SKIN_TONES,
+  policeOutfitOf, randomAppearance,
+  type AgeGroup, type Appearance, type HairStyle, type OutfitPreset, type PoliceOutfitDef,
 } from "@/lib/game/constants";
 import { buildCharacter, poseCharacter } from "@/lib/game/character";
 import { sfx } from "@/lib/game/audio";
@@ -28,7 +28,11 @@ import { HowToPlay } from "./Panels";
 /* Drag to spin the hero; auto turntable resumes after you let go.     */
 
 function Preview({ look }: { look: Appearance }) {
-  const mesh = useMemo(() => buildCharacter(look, { shadow: true }), [look]);
+  // the preview wears the REAL in-game gear — police squads show cap/helmet/beret/visor here too
+  const mesh = useMemo(
+    () => buildCharacter(look, { shadow: true, police: look.fac === "police" }),
+    [look],
+  );
   const g = useRef<THREE.Group>(null!);
   const spin = useRef(0);
   const drag = useRef({ on: false, lastX: 0, idle: 99 });
@@ -218,6 +222,60 @@ function matchesPreset(look: Appearance, p: OutfitPreset) {
   return (Object.entries(p.look) as [keyof Appearance, unknown][]).every(([k, v]) => look[k] === v);
 }
 
+/* ---------------- police squads — the hero outfits shown when Side = Police ---------------- */
+
+function SquadPicker({ value, onPick }: { value: string; onPick: (o: PoliceOutfitDef) => void }) {
+  const sel = policeOutfitOf(value);
+  return (
+    <div>
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-xs font-bold uppercase tracking-wide text-white/70">Police outfits</span>
+        <span className="text-[10px] font-black uppercase tracking-wide text-sky-300">each squad has a perk</span>
+      </div>
+      <div className="grid grid-cols-3 gap-2">
+        {POLICE_OUTFITS.map((o) => {
+          const on = value === o.id;
+          return (
+            <button
+              key={o.id}
+              onClick={() => { sfx.click(); onPick(o); }}
+              aria-pressed={on}
+              className={`relative rounded-xl border-2 p-1.5 text-center transition-all hover:scale-105 ${
+                on
+                  ? "border-sky-300 bg-sky-300/15 shadow-[0_0_12px_rgba(125,211,252,0.4)]"
+                  : "border-white/15 bg-white/5 hover:border-sky-300/50"
+              }`}
+            >
+              {on && (
+                <span className="absolute -right-1.5 -top-1.5 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-sky-300 text-sky-950 shadow">
+                  <Check size={11} strokeWidth={3.5} />
+                </span>
+              )}
+              <div className="text-lg">{o.emoji}</div>
+              <div className="text-[10px] font-bold leading-tight text-white/85">{o.label}</div>
+            </button>
+          );
+        })}
+      </div>
+      {/* selected squad — flavour + perk strip */}
+      <motion.div
+        key={sel.id}
+        initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}
+        className="mt-2 space-y-1.5 rounded-xl bg-sky-400/10 p-2.5 ring-1 ring-sky-300/25"
+      >
+        <div className="text-[11px] font-bold leading-snug text-white/85">
+          {sel.emoji} <b className="text-white">{sel.label}</b> — {sel.tagline}
+        </div>
+        <div className="flex items-center gap-1.5">
+          <span className="rounded-full bg-emerald-400/20 px-2 py-0.5 text-[10px] font-black text-emerald-300">
+            ⭐ {sel.perkLabel}
+          </span>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 function PresetRow({ look, onPick }: { look: Appearance; onPick: (p: Partial<Appearance>) => void }) {
   return (
     <div>
@@ -311,7 +369,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
   const ready = playerName.trim().length > 0;
 
   const lookChips = [
-    look.fac === "police" ? "🚓 Police" : "🏃 Protester",
+    look.fac === "police" ? `${policeOutfitOf(look.outfit).emoji} ${policeOutfitOf(look.outfit).label}` : "🏃 Protester",
     look.girl ? "👧 Girl" : "👦 Boy",
     `${look.age.charAt(0).toUpperCase()}${look.age.slice(1)}`,
     HAIR_STYLES.find((h) => h.id === look.hairStyle)?.label ?? "",
@@ -378,8 +436,8 @@ export function Creator({ onStart }: { onStart: () => void }) {
                 <>
                   <b className="text-white">Mission (Police):</b> vote-runners are smuggling 🗳 votes to Parliament!
                   Chase them down and <b>walk into a runner to bust them</b> — police vans haul them to the station
-                  cage. Bust <b>12 runners</b> before they deliver <b>10 votes</b>. Eat food, grab super-power gems,
-                  and call it a good shift. 🚓
+                  cage. Bust <b>12 runners</b> before they deliver <b>10 votes</b>. Pick a squad outfit above — each
+                  one grants a small perk! Eat food, grab super-power gems, and call it a good shift. 🚓
                 </>
               ) : (
                 <>
@@ -423,7 +481,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
                   <button
                     type="button"
                     aria-pressed={look.fac === "protester"}
-                    onClick={() => { sfx.click(); update({ fac: "protester", ...(look.shirt && POLICE_COLORS.includes(look.shirt) ? { shirt: SHIRT_COLORS[0], pants: PANTS_COLORS[0] } : {}) }); }}
+                    onClick={() => { sfx.click(); update({ fac: "protester", outfit: "", ...(look.shirt && POLICE_COLORS.includes(look.shirt) ? { shirt: SHIRT_COLORS[0], pants: PANTS_COLORS[0] } : {}) }); }}
                     className={`rounded-xl border-2 p-2.5 text-left transition-all ${
                       look.fac === "protester"
                         ? "border-yellow-300 bg-yellow-300/15 shadow-[0_0_0_1px_rgba(253,224,71,0.4)]"
@@ -436,7 +494,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
                   <button
                     type="button"
                     aria-pressed={look.fac === "police"}
-                    onClick={() => { sfx.click(); update({ fac: "police", ...POLICE_UNIFORM }); }}
+                    onClick={() => { sfx.click(); update({ fac: "police", ...POLICE_OUTFITS[0].look }); }}
                     className={`rounded-xl border-2 p-2.5 text-left transition-all ${
                       look.fac === "police"
                         ? "border-sky-300 bg-sky-300/15 shadow-[0_0_0_1px_rgba(125,211,252,0.4)]"
@@ -444,10 +502,17 @@ export function Creator({ onStart }: { onStart: () => void }) {
                     }`}
                   >
                     <div className="text-sm font-black text-white">🚓 Police</div>
-                    <div className="mt-0.5 text-[10px] leading-tight text-white/65">Chase runners, bust them, guard the vote!</div>
+                    <div className="mt-0.5 text-[10px] leading-tight text-white/65">Pick a squad outfit & bust the runners!</div>
                   </button>
                 </div>
               </div>
+
+              {/* hero squads — the outfit suggestions appear the moment Police is picked */}
+              {look.fac === "police" && (
+                <div className="mb-4">
+                  <SquadPicker value={look.outfit || "city"} onPick={(o) => update(o.look)} />
+                </div>
+              )}
 
               {/* name — always visible */}
               <div className="mb-4">
@@ -521,7 +586,8 @@ export function Creator({ onStart }: { onStart: () => void }) {
                     initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}
                     className="space-y-4"
                   >
-                    <PresetRow look={look} onPick={update} />
+                    {/* police officers pick a squad above — civilian quick outfits would clash with the uniform */}
+                    {look.fac !== "police" && <PresetRow look={look} onPick={update} />}
                     <Swatches label="Skin" colors={SKIN_TONES} value={look.skin} onChange={(skin) => update({ skin })} />
                     <Swatches label={look.fac === "police" ? "Uniform" : "Shirt"} colors={look.fac === "police" ? POLICE_COLORS : SHIRT_COLORS} value={look.shirt} onChange={(shirt) => update({ shirt })} />
                     <Swatches label="Pants" colors={PANTS_COLORS} value={look.pants} onChange={(pants) => update({ pants })} />
