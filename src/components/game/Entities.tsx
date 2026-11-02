@@ -221,6 +221,7 @@ export function Npcs({ engine }: { engine: GameEngine }) {
     const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(r() * arr.length)];
     const civLooks: Appearance[] = engine.civs.map(() => ({
       fac: "protester",
+      outfit: "",
       skin: pick(SKIN_TONES),
       shirt: pick(SHIRT_COLORS),
       pants: pick(PANTS_COLORS),
@@ -303,7 +304,7 @@ export function Npcs({ engine }: { engine: GameEngine }) {
 export function Zombies({ engine }: { engine: GameEngine }) {
   const views = useMemo(
     () => new Map(engine.zombies.map((z) => [z.id, buildCharacter(
-      { fac: "protester", skin: "#8fbf6f", shirt: "#7a8a5a", pants: "#4a5240", shoe: "#3a3a2a", hair: "#3a4a2a", hairStyle: "bowl", cap: false, capColor: "#3a4a2a", glasses: false, age: "young", girl: false },
+      { fac: "protester", outfit: "", skin: "#8fbf6f", shirt: "#7a8a5a", pants: "#4a5240", shoe: "#3a3a2a", hair: "#3a4a2a", hairStyle: "bowl", cap: false, capColor: "#3a4a2a", glasses: false, age: "young", girl: false },
       { zombie: true },
     )])),
     [engine],

@@ -10,6 +10,8 @@ import { useGameInput, requestGameLock } from "./Scene";
 import { Hud } from "./Hud";
 import { Creator } from "./Creator";
 import { Landing } from "./Landing";
+import { SelectSide } from "./SelectSide";
+import { HeroOutfits } from "./HeroOutfits";
 import { VictoryModal } from "./VictoryModal";
 
 const Scene = dynamic(() => import("./Scene").then((m) => m.Scene), {
@@ -39,15 +41,19 @@ export function GameRoot() {
     sfx.click();
     startMusic();
     setTimeout(() => {
+      // read the look FRESH from the store — the hero-flow screens (SelectSide /
+      // HeroOutfits) apply the side & squad uniform right before calling this, so
+      // a closure-captured look would be one step behind the player's pick
+      const freshLook = useGame.getState().look;
       let eng = engineRef.current;
       if (!eng) {
-        eng = new GameEngine(WORLD, look, (msg, kind) => pushToast(msg, kind));
+        eng = new GameEngine(WORLD, freshLook, (msg, kind) => pushToast(msg, kind));
         engineRef.current = eng;
         setEngine(eng);
         (window as unknown as { __vc?: unknown }).__vc = { engine: eng, world: WORLD };
         (window as unknown as { __vcStore?: unknown }).__vcStore = useGame; // debug/test hook
       } else {
-        eng.reset(look);
+        eng.reset(freshLook);
         eng.setToast((msg, kind) => pushToast(msg, kind));
       }
       eng.playerName = useGame.getState().playerName || "You"; // officer/hero name for the start toast
@@ -58,7 +64,7 @@ export function GameRoot() {
       // free-look + hold Z / X to turn (HUD shows the hint)
       requestGameLock();
     }, 650);
-  }, [look, pushToast]);
+  }, [pushToast]);
 
   const backToMenu = useCallback(() => {
     stopMusic();
@@ -110,7 +116,11 @@ export function GameRoot() {
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-sky-300">
-      {screen === "landing" && <Landing onPlay={startGame} />}
+      {screen === "landing" && <Landing />}
+
+      {screen === "select" && <SelectSide onPlay={startGame} />}
+
+      {screen === "outfit" && <HeroOutfits onPlay={startGame} />}
 
       {screen === "creator" && <Creator onStart={startGame} />}
 

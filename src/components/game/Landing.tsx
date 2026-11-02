@@ -19,7 +19,7 @@ const FEATURES: { emoji: string; icon: React.ReactNode; title: string; text: str
 
 const FLOATERS = ["🗳️", "💨", "🥁", "✊", "🌼", "🕊️"];
 
-export function Landing({ onPlay }: { onPlay: () => void }) {
+export function Landing() {
   const setScreen = useGame((s) => s.setScreen);
   const playerName = useGame((s) => s.playerName);
   const look = useGame((s) => s.look);
@@ -42,11 +42,11 @@ export function Landing({ onPlay }: { onPlay: () => void }) {
     return () => window.removeEventListener("pointerdown", unlock);
   }, []);
 
-  // PLAY: straight into the city when we know you, creator otherwise
+  // PLAY: the hero-selection flow — everyone picks a side first (protester
+  // runner or police), police continue to the squad-uniform page
   const goPlay = () => {
     sfx.click();
-    if (hasProfile) onPlay();
-    else setScreen("creator");
+    setScreen("select");
   };
   const goCreate = () => { sfx.click(); setScreen("creator"); };
 

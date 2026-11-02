@@ -27,7 +27,7 @@ import { HowToPlay } from "./Panels";
 /* ============================ 3D preview ============================ */
 /* Drag to spin the hero; auto turntable resumes after you let go.     */
 
-function Preview({ look }: { look: Appearance }) {
+export function Preview({ look }: { look: Appearance }) {
   // the preview wears the REAL in-game gear — police squads show cap/helmet/beret/visor here too
   const mesh = useMemo(
     () => buildCharacter(look, { shadow: true, police: look.fac === "police" }),

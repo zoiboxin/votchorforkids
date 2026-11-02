@@ -4,7 +4,7 @@ import { create } from "zustand";
 import { defaultAppearance, normalizeAppearance, type Appearance } from "@/lib/game/constants";
 import type { HudData } from "@/lib/game/engine";
 
-export type Screen = "landing" | "creator" | "connecting" | "play";
+export type Screen = "landing" | "select" | "outfit" | "creator" | "connecting" | "play";
 export interface Toast { msg: string; kind: "info" | "good" | "bad"; id: number }
 
 export interface ScoreRow { id: string; name: string; points: number; votes: number; rescues: number; won: boolean; timeMs: number; createdAt: string }

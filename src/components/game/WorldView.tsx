@@ -1540,9 +1540,8 @@ function PoliceStations() {
               <meshLambertMaterial color="#3f3f47" />
             </mesh>
             {/* rooftop beacon */}
-            <mesh position={[st.x, 10.6, st.z]}>
+            <mesh position={[st.x, 10.6, st.z]} material={beaconMat}>
               <sphereGeometry args={[0.42, 10, 8]} />
-              <meshBasicMaterial material={beaconMat} />
             </mesh>
             {/* jail cage floor */}
             <mesh rotation-x={-Math.PI / 2} position={[cg.x, 0.04, cg.z]}>
