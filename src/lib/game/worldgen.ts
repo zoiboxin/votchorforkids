@@ -443,14 +443,19 @@ export function lineClear(ax: number, az: number, bx: number, bz: number, world:
   return true;
 }
 
-/** Find a random free spot in a ring/disk, nudged out of colliders. */
+/**
+ * Find a random free spot in a ring/disk, nudged out of colliders.
+ * The radius is AREA-uniform (d = √lerp) so spawns spread evenly across the whole
+ * disk — a plain `range(inner, outer)` radius piles 3× more bots into the downtown
+ * core than the outskirts, which read as "every bot spawns in the same place".
+ */
 export function freeSpot(
   r: () => number, world: World,
   inner: number, outer: number,
   avoid: { x: number; z: number; r: number }[] = [],
 ): { x: number; z: number } {
   for (let i = 0; i < 40; i++) {
-    const a = range(r, 0, Math.PI * 2), d = range(r, inner, outer);
+    const a = range(r, 0, Math.PI * 2), d = Math.sqrt(range(r, inner * inner, outer * outer));
     let x = Math.cos(a) * d, z = Math.sin(a) * d;
     const before = { x, z };
     resolve(before, 0.9, world);
@@ -478,4 +483,57 @@ export function freeSpot(
     if (d < av.r + 2) { fb.x = av.x + (dx / d) * (av.r + 2); fb.z = av.z + (dz / d) * (av.r + 2); }
   }
   return { x: fb.x, z: fb.z };
+}
+
+/**
+ * A free spot in a ring AROUND a moving anchor (bot's current position) — used for
+ * wander targets & patrol beats so bots stroll their own neighbourhood instead of
+ * beelining across the whole city (and all bunching up downtown).
+ */
+export function spotNear(
+  r: () => number, world: World,
+  x: number, z: number, rMin: number, rMax: number,
+): { x: number; z: number } {
+  for (let i = 0; i < 24; i++) {
+    const a = range(r, 0, Math.PI * 2);
+    const d = Math.sqrt(range(r, rMin * rMin, rMax * rMax));
+    const p = { x: x + Math.cos(a) * d, z: z + Math.sin(a) * d };
+    const rr = Math.hypot(p.x, p.z);
+    if (rr > CITY_RADIUS - 6) continue; // keep strolls inside the city walls
+    const before = { x: p.x, z: p.z };
+    resolve(before, 0.9, world);
+    if (Math.abs(before.x - p.x) > 0.05 || Math.abs(before.z - p.z) > 0.05) continue;
+    return { x: before.x, z: before.z };
+  }
+  return { x, z }; // nowhere clear nearby — just loiter where you are
+}
+
+/**
+ * `count` free spawn points with a minimum gap between them (soft Poisson-disc).
+ * Each pick takes the first candidate that clears `minGap` from every accepted
+ * point; after 22 tries it takes the widest-gap candidate seen so far — spawns
+ * never come out clumped in one corner of the map.
+ */
+export function scatterSpots(
+  r: () => number, world: World,
+  count: number, inner: number, outer: number, minGap: number,
+): { x: number; z: number }[] {
+  const out: { x: number; z: number }[] = [];
+  for (let i = 0; i < count; i++) {
+    let best: { x: number; z: number } | null = null;
+    let bestGap = -1;
+    for (let t = 0; t < 22; t++) {
+      const a = range(r, 0, Math.PI * 2);
+      const d = Math.sqrt(range(r, inner * inner, outer * outer));
+      const before = { x: Math.cos(a) * d, z: Math.sin(a) * d };
+      resolve(before, 0.9, world);
+      if (Math.abs(before.x - Math.cos(a) * d) > 0.05 || Math.abs(before.z - Math.sin(a) * d) > 0.05) continue;
+      let gap = Infinity;
+      for (const q of out) gap = Math.min(gap, Math.hypot(before.x - q.x, before.z - q.z));
+      if (gap >= minGap) { best = { x: before.x, z: before.z }; break; }
+      if (gap > bestGap) { bestGap = gap; best = { x: before.x, z: before.z }; }
+    }
+    out.push(best ?? { x: 0, z: 12 });
+  }
+  return out;
 }

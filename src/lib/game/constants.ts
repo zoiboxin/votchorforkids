@@ -329,6 +329,12 @@ export const CIV_FLEE_MULT = 1.9; // panic speed multiplier while a cop is chasi
 export const MAX_CIV_HELD = 4;    // never arrest more than this many civilians at once — keep the city lively
 export const CIV_JAIL_S = 40;     // once the van delivers a civ to the station cage, they wait this long
 
+/* ---------- Living-city bots: human-like scavengers, de-clumped spawns ---------- */
+export const SCAVENGER_COUNT = 16;      // civilians who hunt loose votes & haul them to the protest camp
+export const SCAVENGER_SENSE_R = 110;   // how far a scavenger "notices" a loose vote
+export const BOT_SPAWN_GAP = 15;        // min spacing (u) between bot spawn points — no clumped spawns
+export const HAUL_CAMP_R = 6;           // a scavenger releases their vote once this close to the protest camp
+
 /* ---------- Zombies ---------- */
 export const ZOMBIE_COUNT = 9;
 export const ZOMBIE_SPEED = 3.4;

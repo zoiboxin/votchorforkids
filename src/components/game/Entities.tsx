@@ -247,8 +247,13 @@ export function Npcs({ engine }: { engine: GameEngine }) {
     const PROTEST_TAGS = ["✊ GIVE VOTES BACK", "✊ VOTE CHOR GO!", "✊ WE WANT VOTES", "✊ KIDS FOR DEMOCRACY", "✊ CHAI > CORRUPTION", "✊ HONK FOR VOTES"];
     engine.civs.forEach((c, i) => {
       const mesh = buildCharacter(civLooks[i]);
-      // protest marchers carry a slogan placard tag instead of their name
-      const tag = nameTag(c.protest ? PROTEST_TAGS[i % PROTEST_TAGS.length] : c.name, c.protest ? "rgba(181,67,42,0.85)" : undefined);
+      // protest marchers carry a slogan placard tag instead of their name;
+      // vote-scavengers get a teal tag, the join-bot a golden one — living-city cast
+      const tag = c.protest
+        ? nameTag(PROTEST_TAGS[i % PROTEST_TAGS.length], "rgba(181,67,42,0.85)")
+        : c.companion
+          ? nameTag(`🤖 ${c.name}`, "rgba(176,124,16,0.92)")
+          : nameTag(c.name, c.scav ? "rgba(18,118,90,0.88)" : undefined);
       tag.position.y = 2.95;
       mesh.add(tag);
       const bubble = helpBubble();
@@ -512,8 +517,8 @@ export function Pickups({ engine }: { engine: GameEngine }) {
   useFrame((s) => {
     const t = s.clock.elapsedTime;
     const p = engine.player;
-    // police side: id → runner lookup for the hovering smuggled votes
-    const civById = engine.side === "police" ? new Map(engine.civs.map((c) => [c.id, c])) : null;
+    // id → civ lookup so a bot-carried vote (runner OR scavenger) hovers over ITS carrier
+    const civById = new Map(engine.civs.map((c) => [c.id, c]));
     /* votes */
     let vi = 0;
     let slot = 0;
@@ -524,8 +529,8 @@ export function Pickups({ engine }: { engine: GameEngine }) {
         dummy.rotation.set(0, t * 2 + v.id, 0);
         dummy.scale.setScalar(1);
       } else if (v.carrierId != null) {
-        // police side: a runner's smuggled vote hovers over THE RUNNER (a visible target!)
-        const carrier = civById?.get(v.carrierId);
+        // a bot's smuggled/hauled vote hovers over THE BOT (a visible target!)
+        const carrier = civById.get(v.carrierId);
         dummy.position.set(
           (carrier?.x ?? p.x),
           2.65 + Math.sin(t * 3) * 0.07,

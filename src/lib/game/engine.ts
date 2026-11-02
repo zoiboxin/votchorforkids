@@ -2,15 +2,15 @@ import {
   AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, BUST_CARRY_BONUS, BUST_POINTS, BUST_TARGET, CARRY_RADIUS, CAR_ACCEL, CAR_BRAKE, CAR_COAST, CAR_ENTER_R, CAR_HIT_CD, CAR_HIT_DMG, CAR_MAX_SPEED, CAR_RADIUS, CAR_REV_SPEED, CAR_STEER, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
   CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, CONFISCATE_FINE, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
-  ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
+  ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HAUL_CAMP_R, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
   ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
-  RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SPAWN, SONIC_MULT, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, VAN_AXLE, VAN_LOAD_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
+  RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SCAVENGER_COUNT, SCAVENGER_SENSE_R, SPAWN, SONIC_MULT, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, VAN_AXLE, VAN_LOAD_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
   WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
-  ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, policeOutfitOf, stationCage, stationGate, type AnimalKind, type Appearance, type PolicePerk, type PowerKind, type Side, type Zone, zoneOf, ZONE_TOAST,
+  ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, BOT_SPAWN_GAP, policeOutfitOf, stationCage, stationGate, type AnimalKind, type Appearance, type PolicePerk, type PowerKind, type Side, type Zone, zoneOf, ZONE_TOAST,
 } from "./constants";
 import { clamp, mulberry32, range } from "./rng";
-import { freeSpot, lineClear, resolve, RING_R, ROADS, type CircleCollider, type World } from "./worldgen";
+import { freeSpot, lineClear, resolve, RING_R, ROADS, scatterSpots, spotNear, PROTEST_CAMP, type CircleCollider, type World } from "./worldgen";
 import { advanceClock, nightFactor, newBody, stepBody, stepNpc, type Body } from "./sim";
 import { sfx } from "./audio";
 
@@ -37,11 +37,17 @@ export interface Npc {
   runner?: boolean;
   /** runner only: id of the vote currently smuggled (set while carried) */
   voteId?: number;
+  /** living-city: this bot hunts loose votes & hauls them to the protest camp (protester side) */
+  scav?: boolean;
+  /** living-city: seconds left of a human-like loiter pause (chatting, tying a shoe…) */
+  pauseT?: number;
+  /** the dedicated "just joined" bot — spawns right beside the player's site on every game start */
+  companion?: boolean;
 }
 export interface Zombie { id: number; x: number; z: number; vx: number; vz: number; face: number; phase: number; touchCd: number }
 export interface Animal { id: number; kind: AnimalKind; x: number; z: number; vx: number; vz: number; face: number; tx: number; tz: number; timer: number; phase: number; resting: boolean }
 export interface ItemEnt { id: number; def: number; x: number; z: number; active: boolean; respawn: number }
-export interface VoteEnt { id: number; x: number; z: number; state: "world" | "carried" | "delivered"; /** runner only: which runner holds this vote */ carrierId?: number; /** police side: a runner-delivered vote sneaks back into the city after this timer */ respawnT?: number }
+export interface VoteEnt { id: number; x: number; z: number; state: "world" | "carried" | "delivered"; /** runner only: which runner holds this vote */ carrierId?: number; /** police side: a runner-delivered vote sneaks back into the city after this timer */ respawnT?: number; /** AI vote-claim ticket: the bot currently walking to grab it (spread bots across the map) */ claimBy?: number }
 /** A rare super-power gem glowing somewhere in the jungle (or a mystery spot). */
 export interface PowerEnt { id: number; def: number; x: number; z: number; active: boolean; respawn: number }
 
@@ -266,11 +272,13 @@ export class GameEngine {
    * Pick a police spawn far away from the player's spawn point. Used by both the
    * first spawn AND reset() so a replay can never seed a cop next to the player
    * (which used to cause an "instant detain" right after the grace window).
+   * Cops spawn ACROSS THE WHOLE CITY (area-uniform) instead of one downtown ring —
+   * beats used to cluster every officer within 140u of the map centre.
    */
   private safeCopSpot(): { x: number; z: number } {
     const avoid = [{ x: SPAWN.x, z: SPAWN.z, r: 90 }];
     for (let i = 0; i < 14; i++) {
-      const p = freeSpot(this.rnd, this.world, 60, 140, avoid);
+      const p = freeSpot(this.rnd, this.world, 24, CITY_RADIUS - 14, avoid);
       if (Math.hypot(p.x - SPAWN.x, p.z - SPAWN.z) >= 90) return p;
     }
     // Last resort: walk a wide ring around spawn until a point survives colliders.
@@ -288,7 +296,7 @@ export class GameEngine {
     const p = this.player;
     let pick = { x: p.x + minD, z: p.z + minD };
     for (let i = 0; i < 10; i++) {
-      const t = freeSpot(this.rnd, this.world, 10, 120);
+      const t = freeSpot(this.rnd, this.world, 10, CITY_RADIUS - 10);
       pick = t;
       if (dist2(t.x, t.z, p.x, p.z) > minD * minD) break;
     }
@@ -360,21 +368,29 @@ export class GameEngine {
       const p = this.safeCopSpot();
       this.cops.push({ id: this.nid(), kind: "police", x: p.x, z: p.z, vx: 0, vz: 0, face: 0, mode: "patrol", tx: p.x, tz: p.z, timer: 0, phase: Math.random() * 6, name: "Police", speed: POLICE_SPEED * 0.6, alertT: 0, copCd: 0 });
     }
-    // civilians
+    // civilians — soft Poisson-disc scatter: every bot keeps a minimum gap from its
+    // neighbours, so no more “all 94 spawned in one neighbourhood” clumping
+    const civSpots = scatterSpots(r, this.world, CIVILIAN_COUNT, 8, CITY_RADIUS - 8, BOT_SPAWN_GAP);
     for (let i = 0; i < CIVILIAN_COUNT; i++) {
-      const p = freeSpot(r, this.world, 8, CITY_RADIUS - 8);
+      const p = civSpots[i];
       this.civs.push({ id: this.nid(), kind: "civilian", x: p.x, z: p.z, vx: 0, vz: 0, face: 0, mode: "wander", tx: p.x, tz: p.z, timer: range(r, 0, 4), phase: Math.random() * 6, name: CIVIL_NAMES[i % CIVIL_NAMES.length], speed: range(r, 2.2, 3.4), alertT: 0 });
     }
-    // protest march — old-game homage: a slow column of civilians walks the main road
+    // protest march — old-game homage: a slow column of civilians walks the main road,
+    // spread down its FULL length instead of bunched right at the player's spawn
     const MARCHERS = 6;
     for (let i = 0; i < MARCHERS; i++) {
       const c = this.civs[i * 3 % this.civs.length];
       c.protest = true;
-      c.x = -8 + (i % 3) * 8; c.z = 10 + i * 26;
+      c.x = -8 + (i % 3) * 8; c.z = 24 + i * 48;
       c.tx = c.x; c.tz = c.z;
       c.speed = range(r, 1.5, 2.1);
       c.timer = range(r, 2, 6);
     }
+    // 🤖 the JOIN BOT — when a real player joins, one dedicated bot drops right at
+    // their site: a fellow vote-scavenger beside protesters, a wanted vote-runner
+    // beside the officer (set up in assignScavengers/assignRunners below)
+    const jx = spotNear(r, this.world, SPAWN.x, SPAWN.z, 14, 26);
+    this.civs.push({ id: this.nid(), kind: "civilian", x: jx.x, z: jx.z, vx: 0, vz: 0, face: 0, mode: "wander", tx: jx.x, tz: jx.z, timer: range(r, 1, 3), phase: Math.random() * 6, name: "Bijli", speed: 3.15, alertT: 0, companion: true });
     // zombies (graveyard)
     for (let i = 0; i < ZOMBIE_COUNT; i++) {
       const a = range(r, 0, Math.PI * 2), d = range(r, 4, 36);
@@ -430,15 +446,26 @@ export class GameEngine {
     }
     // police side: a slice of the civilians become vote-runners (the player hunts THEM)
     this.assignRunners();
+    // protester side: a slice of the civilians scavenge loose votes & haul them to the camp
+    this.assignScavengers();
   }
 
   /* ---------------- lifecycle ---------------- */
-  /** Police side: promote a spread of civilians into vote-runners (protest marchers keep marching). */
+  /**
+   * Police side: promote a spread of civilians into vote-runners (protest marchers
+   * keep marching). The join-bot is ALWAYS the first runner — the officer gets a
+   * live target right at their site — and the rest are picked on a wide stride so
+   * runners start scattered instead of stacked in one corner of the city.
+   */
   private assignRunners() {
     if (this.side !== "police") return;
     let made = 0;
-    for (const c of this.civs) {
-      if (made >= RUNNER_COUNT) break;
+    const comp = this.civs.find((c) => c.companion);
+    if (comp) { comp.runner = true; comp.timer = range(this.rnd, 2, 6); made++; }
+    const stride = Math.max(1, Math.floor(this.civs.length / (RUNNER_COUNT + 1)));
+    const off = Math.floor(this.rnd() * this.civs.length);
+    for (let k = 0; k < this.civs.length && made < RUNNER_COUNT; k++) {
+      const c = this.civs[(off + k * stride) % this.civs.length];
       if (c.protest || c.runner) continue;
       c.runner = true;
       c.timer = range(this.rnd, 2, 14); // staggered shift starts — deliveries trickle in, never a stampede
@@ -446,8 +473,38 @@ export class GameEngine {
     }
   }
 
+  /**
+   * Protester side: promote a spread of civilians into vote SCAVENGERS — bots that
+   * notice loose votes, grab them and RUN them over to the protest camp on the main
+   * road (the player delivers to Parliament; the bots gather votes into a lively
+   * camp market). Stride-picked so they start spread across the whole city.
+   */
+  private assignScavengers() {
+    for (const c of this.civs) { c.scav = false; c.pauseT = 0; }
+    if (this.side !== "protester") return;
+    let made = 0;
+    const comp = this.civs.find((c) => c.companion);
+    if (comp) { comp.scav = true; made++; }
+    const stride = Math.max(1, Math.floor(this.civs.length / (SCAVENGER_COUNT + 1)));
+    const off = Math.floor(this.rnd() * this.civs.length);
+    for (let k = 0; k < this.civs.length && made < SCAVENGER_COUNT; k++) {
+      const c = this.civs[(off + k * stride) % this.civs.length];
+      if (c.protest || c.runner || c.scav) continue;
+      c.scav = true;
+      c.pauseT = range(this.rnd, 0, 6); // staggered "leaving home" times
+      made++;
+    }
+  }
+
   start() {
     this.running = true;
+    // 🤖 the join-bot intro — a dedicated bot drops at the player's site on every join
+    const comp = this.civs.find((c) => c.companion);
+    if (comp && this.side === "police") {
+      this.toast(`🤖 ${comp.name} the vote-runner just joined right beside YOUR site — bust them to warm up!`, "info");
+    } else if (comp) {
+      this.toast(`🤖 ${comp.name} joined the protest right beside you — they're hauling votes to the camp too!`, "info");
+    }
     if (this.side === "police") {
       const squad = policeOutfitOf(this.look.outfit);
       this.toast(`🚓 Shift start, Officer ${this.playerName} (${squad.emoji} ${squad.label})! Bust ${BUST_TARGET} vote runners before they smuggle ${RUNNER_LOSE_DELIVERIES} votes through — walk into them to arrest!`, "info");
@@ -485,10 +542,11 @@ export class GameEngine {
     });
     this.detainedT = 0; this.invulnT = 8; this.elapsed = 0; this.won = false; this.clock = 0.3;
     this.arrest = "free"; this.arrestStation = -1; this.playerInVan = false; this.vanNeeded = false;
-    for (const v of this.votes) { v.state = "world"; v.carrierId = undefined; v.respawnT = undefined; const p = freeSpot(this.rnd, this.world, 16, 420); v.x = p.x; v.z = p.z; }
+    for (const v of this.votes) { v.state = "world"; v.carrierId = undefined; v.respawnT = undefined; v.claimBy = undefined; const p = freeSpot(this.rnd, this.world, 16, 420); v.x = p.x; v.z = p.z; }
     for (const it of this.items) { it.active = true; it.respawn = 0; }
-    for (const c of this.civs) { c.mode = "wander"; c.vanId = undefined; c.runner = false; c.voteId = undefined; }
+    for (const c of this.civs) { c.mode = "wander"; c.vanId = undefined; c.runner = false; c.voteId = undefined; c.pauseT = 0; }
     this.assignRunners();
+    this.assignScavengers();
     // send every van home and park it at its gate
     for (const van of this.vans) {
       const st = POLICE_STATIONS[van.station];
@@ -698,21 +756,24 @@ export class GameEngine {
       return;
     }
     if (!c.voteId) {
-      // 4) seek the nearest vote lying in the world
+      // 4) seek the nearest vote lying in the world — CLAIM it first so 14 runners
+      // never stampede after the same ballot (claims spread them across the city)
       let best: VoteEnt | null = null, bd = Infinity;
       for (const v of this.votes) {
         if (v.state !== "world") continue;
+        if (v.claimBy !== undefined && v.claimBy !== c.id) continue;
         const d = dist2(c.x, c.z, v.x, v.z);
         if (d < bd) { bd = d; best = v; }
       }
       if (!best) { // city is out of loose votes — lurk until one "sneaks back"
-        if (dist2(c.x, c.z, c.tx, c.tz) < 2) { const t = freeSpot(this.rnd, this.world, 8, CITY_RADIUS - 6); c.tx = t.x; c.tz = t.z; }
+        if (dist2(c.x, c.z, c.tx, c.tz) < 2) { const t = spotNear(this.rnd, this.world, c.x, c.z, 12, 80); c.tx = t.x; c.tz = t.z; }
         stepNpc(c, c.tx, c.tz, c.speed * 0.6, dt, this.world);
         return;
       }
+      best.claimBy = c.id;
       stepNpc(c, best.x, best.z, c.speed, dt, this.world);
       if (bd < 1.5 * 1.5) { // grabbed it — full sprint for Parliament
-        best.state = "carried"; best.carrierId = c.id;
+        best.state = "carried"; best.carrierId = c.id; best.claimBy = undefined;
         c.voteId = best.id;
       }
       return;
@@ -747,9 +808,69 @@ export class GameEngine {
       const a = Math.random() * Math.PI * 2, d = range(this.rnd, 0.8, DROP_SCATTER);
       const p = { x: c.x + Math.cos(a) * d, z: c.z + Math.sin(a) * d };
       resolve(p, 0.8, this.world);
-      v.x = p.x; v.z = p.z; v.state = "world"; v.carrierId = undefined;
+      v.x = p.x; v.z = p.z; v.state = "world"; v.carrierId = undefined; v.claimBy = undefined;
     }
     c.voteId = undefined;
+  }
+
+  /**
+   * One AI vote-scavenger tick — the living-city loop that makes bots act like real
+   * humans: loiter → notice a loose vote → RUN to grab it → haul it to the protest
+   * camp on the main road → catch their breath → head out again. Cops can still
+   * arrest a scaving bot, scattering their vote (rescue play!). The camp pile is a
+   * market: anyone — the player included — can grab votes from it.
+   */
+  private stepScavenger(c: Npc, dt: number) {
+    // human-like loiter: real people stand around, chat, tie a shoe, THEN move on
+    if ((c.pauseT ?? 0) > 0) { c.pauseT = (c.pauseT ?? 0) - dt; return; }
+    if (c.voteId != null) {
+      // hauling: walk the vote over to the protest camp on the main road
+      const v = this.votes.find((vv) => vv.id === c.voteId);
+      if (!v || v.state !== "carried") { c.voteId = undefined; return; } // vote lost mid-haul
+      if (dist2(c.x, c.z, PROTEST_CAMP.x, PROTEST_CAMP.z) < HAUL_CAMP_R * HAUL_CAMP_R) {
+        // release it onto the camp pile — it stays a world pickup anyone can grab
+        const a = Math.random() * Math.PI * 2, d = range(this.rnd, 1.6, 4.6);
+        const p = { x: PROTEST_CAMP.x + Math.cos(a) * d, z: PROTEST_CAMP.z + Math.sin(a) * d };
+        resolve(p, 0.8, this.world);
+        v.x = p.x; v.z = p.z; v.state = "world"; v.carrierId = undefined; v.claimBy = undefined;
+        c.voteId = undefined;
+        c.pauseT = range(this.rnd, 4, 10); // proud of the haul — take a breather
+        if (dist2(c.x, c.z, this.player.x, this.player.z) < 55 * 55) {
+          this.toast(`${c.name} hauled a vote to the protest camp! 🏕️`, "info");
+        }
+        return;
+      }
+      stepNpc(c, PROTEST_CAMP.x, PROTEST_CAMP.z, c.speed * 0.85, dt, this.world); // haul = a bit slower
+      return;
+    }
+    // hunt: the nearest loose vote nobody else claimed (votes already piled at camp stay put)
+    let best: VoteEnt | null = null, bd = SCAVENGER_SENSE_R * SCAVENGER_SENSE_R;
+    for (const v of this.votes) {
+      if (v.state !== "world") continue;
+      if (v.claimBy !== undefined && v.claimBy !== c.id) continue;
+      if (dist2(v.x, v.z, PROTEST_CAMP.x, PROTEST_CAMP.z) < 25 * 25) continue;
+      const d = dist2(c.x, c.z, v.x, v.z);
+      if (d < bd) { bd = d; best = v; }
+    }
+    if (best) {
+      best.claimBy = c.id;
+      stepNpc(c, best.x, best.z, c.speed, dt, this.world);
+      if (bd < 1.5 * 1.5) { // grabbed it — jog it to the camp
+        best.state = "carried"; best.carrierId = c.id; best.claimBy = undefined;
+        c.voteId = best.id;
+      }
+      return;
+    }
+    // nothing worth grabbing nearby — stroll the neighbourhood like a real human,
+    // with the occasional long cross-town trip
+    if (dist2(c.x, c.z, c.tx, c.tz) < 2) {
+      const t = this.rnd() < 0.78
+        ? spotNear(this.rnd, this.world, c.x, c.z, 10, 75)
+        : freeSpot(this.rnd, this.world, 8, CITY_RADIUS - 8);
+      c.tx = t.x; c.tz = t.z;
+      if (this.rnd() < 0.5) c.pauseT = range(this.rnd, 0.8, 3);
+    }
+    stepNpc(c, c.tx, c.tz, c.speed * 0.8, dt, this.world);
   }
 
   /** Walked-into-a-runner arrest: detain, scatter their loot, count the bust. */
@@ -806,7 +927,7 @@ export class GameEngine {
       v.respawnT -= dt;
       if (v.respawnT <= 0) {
         const spot = freeSpot(this.rnd, this.world, 14, 300);
-        v.x = spot.x; v.z = spot.z; v.state = "world"; v.respawnT = undefined;
+        v.x = spot.x; v.z = spot.z; v.state = "world"; v.respawnT = undefined; v.claimBy = undefined;
       }
     }
   }
@@ -816,7 +937,7 @@ export class GameEngine {
       const a = Math.random() * Math.PI * 2, d = range(this.rnd, 0.8, DROP_SCATTER);
       const p = { x: x + Math.cos(a) * d, z: z + Math.sin(a) * d };
       resolve(p, 0.8, this.world);
-      v.x = p.x; v.z = p.z; v.state = "world";
+      v.x = p.x; v.z = p.z; v.state = "world"; v.claimBy = undefined;
     }
     this.carriedVotes = [];
   }
@@ -1529,7 +1650,9 @@ export class GameEngine {
           cop.timer -= dt;
           const arrived = dist2(cop.x, cop.z, cop.tx, cop.tz) < 4;
           if (arrived || cop.timer <= 0) {
-            const target = freeSpot(this.rnd, this.world, 10, 120);
+            // patrol beats relative to the CURRENT position — officers spread out
+            // city-wide instead of every beat pointing back at downtown
+            const target = spotNear(this.rnd, this.world, cop.x, cop.z, 30, 130);
             cop.tx = target.x; cop.tz = target.z; cop.timer = range(this.rnd, 8, 16);
           }
           stepNpc(cop, cop.tx, cop.tz, POLICE_SPEED * 0.6, dt, this.world);
@@ -1569,9 +1692,9 @@ export class GameEngine {
             const d2c = dist2(cop.x, cop.z, c.x, c.z);
             if (d2c < 1.9 * 1.9) {
               c.mode = "detained"; c.timer = CIV_DETAIN_S;
-              this.dropRunnerVote(c); // a busted runner drops their smuggled vote on the spot
+              this.dropRunnerVote(c); // a busted bot drops their smuggled vote on the spot
               cop.mode = "celebrate"; cop.timer = 2.5;
-              const roam = freeSpot(this.rnd, this.world, 10, 120);
+              const roam = spotNear(this.rnd, this.world, cop.x, cop.z, 40, 120);
               cop.tx = roam.x; cop.tz = roam.z;
               cop.targetCiv = undefined; cop.copCd = CIV_COP_CD;
               if (dist2(c.x, c.z, p.x, p.z) < 60 * 60) {
@@ -1643,15 +1766,27 @@ export class GameEngine {
       c.phase += dt;
       // police side: vote-runners live in their own state machine (seek → smuggle → lay low)
       if (c.runner && this.side === "police" && (c.mode === "wander" || c.mode === "flee")) { this.stepRunner(c, dt); continue; }
+      // protester side: scavengers gather loose votes & haul them to the protest camp
+      if (c.scav && this.side === "protester" && (c.mode === "wander" || c.mode === "flee") && !c.runner) {
+        if (c.mode === "wander") { this.stepScavenger(c, dt); continue; }
+        // fleeing with a cop on their heels — same panic-run as everyone else (below)
+      }
       switch (c.mode) {
         case "wander": {
+          // human-like loiter — real people pause at corners, chat, then walk on
+          if ((c.pauseT ?? 0) > 0) { c.pauseT = (c.pauseT ?? 0) - dt; break; }
           c.timer -= dt;
           if (c.timer <= 0 || dist2(c.x, c.z, c.tx, c.tz) < 2) {
-            // protest marchers stick to the main road strip and keep the line moving
+            // protest marchers stick to the main road strip and keep the line moving;
+            // everyone else mostly strolls their own neighbourhood (spotNear), with
+            // the occasional long cross-town trip — no more downtown beeline crowds
             const t = c.protest
-              ? { x: range(this.rnd, -9, 9), z: range(this.rnd, -120, 200) }
-              : freeSpot(this.rnd, this.world, 6, CITY_RADIUS - 4);
+              ? { x: range(this.rnd, -9, 9), z: range(this.rnd, -120, 260) }
+              : (this.rnd() < 0.7
+                ? spotNear(this.rnd, this.world, c.x, c.z, 10, 78)
+                : freeSpot(this.rnd, this.world, 8, CITY_RADIUS - 8));
             c.tx = t.x; c.tz = t.z; c.timer = range(this.rnd, c.protest ? 9 : 6, c.protest ? 18 : 14);
+            if (!c.protest && this.rnd() < 0.4) c.pauseT = range(this.rnd, 0.8, 2.8);
           }
           stepNpc(c, c.tx, c.tz, c.speed, dt, this.world);
           break;
