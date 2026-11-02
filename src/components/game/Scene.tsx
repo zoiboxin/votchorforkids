@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { GameLoop, Npcs, Zombies, Animals, Pickups, Powers, Shadows, Confetti, type ClockRef } from "./Entities";
+import { GameLoop, Npcs, Zombies, Animals, Pickups, Powers, Licenses, Shadows, Confetti, type ClockRef } from "./Entities";
 import { WorldView, WORLD } from "./WorldView";
 import { GameEngine } from "@/lib/game/engine";
 import type { Appearance } from "@/lib/game/constants";
@@ -80,6 +80,7 @@ export function useGameInput(engine: GameEngine | null) {
       if (e.code === "KeyE" && !e.repeat) engine.interact();
       if (e.code === "KeyG" && !e.repeat) engine.usePower(); // ✨ unleash the pocketed super power
       if (e.code === "KeyQ" && !e.repeat) engine.tryBlink(); // 🌀 Blink Teleport
+      if (e.code === "KeyH" && !e.repeat) engine.horn();     // 🚗 car horn while driving
       applyKey();
     };
     const up = (e: KeyboardEvent) => { keys.delete(e.code); applyKey(); };
@@ -229,6 +230,7 @@ export function Scene({ engine }: { engine: GameEngine }) {
       <Animals engine={engine} />
       <Pickups engine={engine} />
       <Powers engine={engine} />
+      <Licenses engine={engine} />
       <Shadows engine={engine} />
       <Confetti engine={engine} />
     </Canvas>

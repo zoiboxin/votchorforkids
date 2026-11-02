@@ -162,6 +162,7 @@ export const emptyHud: HudData = {
   gain: { hp: 0, stamina: 0, at: 0 },
   power: null, pocketPower: null, morphKind: null, blinkReady: true,
   side: "protester", busted: 0, runnerDelivered: 0, lost: false, outfitLabel: "",
+  hasLicense: false, driving: false, speed: 0,
 };
 
 let toastId = 1;

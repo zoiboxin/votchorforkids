@@ -271,6 +271,8 @@ export const TICKER_LINES: readonly string[] = [
   "🏃 Local kid outruns entire police squad — 'it was cardio', says kid.",
   "⚖️ Court rules: hiding behind a cow is technically legal.",
   "📻 Poll prediction: 100% chance of running.",
+  "🪪 RTO announces: driving licenses now rain from the sky — collect one and ANY parked car is yours.",
+  "🚗 Traffic update: a kid was seen doing 90 near the mall… without a license. Scandal!",
 ];
 
 /* ---------- Pickups (collected into pockets, used from the HUD item bar) ---------- */
@@ -403,6 +405,18 @@ export const BLINK_CD = 0.9;         // seconds between blinks
 export const MAGNET_RADIUS = 14;     // food pull radius
 export const MAGNET_PULL = 12;       // units/second snacks fly toward you
 export const MORPH_ANIMALS: readonly AnimalKind[] = ["cow", "chicken", "deer", "monkey"];
+
+/* ---------- GTA-style driving — license cards unlock every parked car ---------- */
+export const LICENSE_COUNT = 8;        // glowing 🪪 cards hidden around town & farmland
+export const LICENSE_PICKUP_R = 2.4;   // walk-over radius
+export const CAR_ENTER_R = 3.6;        // how close you must walk to a parked car to hop in
+export const CAR_MAX_SPEED = 26;       // u/s — way faster than any sprinting kid
+export const CAR_REV_SPEED = 9;        // u/s reverse
+export const CAR_ACCEL = 14;           // u/s² on W
+export const CAR_BRAKE = 30;           // u/s² on S while rolling forward
+export const CAR_COAST = 9;            // u/s² natural drag when no pedal
+export const CAR_STEER = 1.75;         // rad/s at full lock
+export const CAR_RADIUS = 1.5;         // collision radius while the body slides around town
 
 /* ---------- Scoring ---------- */
 export const POINTS_DELIVER = 120;

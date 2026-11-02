@@ -68,6 +68,8 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
   // police vans on an arrest run
   for (const van of engine.vans) if (van.state !== "idle") dot(van.x, van.z, 2.6 * U, "#ff4d5e", 0.95);
   for (const it of engine.items) if (it.active) dot(it.x, it.z, 1.1 * U, "#ffd166", 0.8);
+  // driving-license cards — sky-blue with a white core so they pop next to food
+  for (const lc of engine.licenses) if (lc.active) { dot(lc.x, lc.z, 2.7 * U, "#38bdf8", 0.95); dot(lc.x, lc.z, 1.15 * U, "#ffffff", 0.9); }
   // rare super-power gems — glowing coloured dots (hunt them in the jungle!)
   for (const pw of engine.powers) if (pw.active) dot(pw.x, pw.z, 2.8 * U, POWERS[pw.def].color, 0.95);
   for (const v of engine.votes) if (v.state === "world") dot(v.x, v.z, 2.2 * U, "#f7c948");
@@ -129,7 +131,7 @@ function Minimap({ engine, onOpen }: { engine: GameEngine; onOpen: () => void })
 const BIG_MAP_S = 440;
 const MAP_LEGEND: [string, string][] = [
   ["#ffffff", "You (arrow = facing)"], ["#f7c948", "Votes"], ["#ffd166", "Food"], ["#c084fc", "Power gems (rare!)"],
-  ["#6aa0ff", "Police"], ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ["#a97b4f", "Animals"], ["#c084fc", "Zombies · night"], ["#1d2a4a", "Police stn"],
+  ["#38bdf8", "Driving license 🪪"], ["#6aa0ff", "Police"], ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ["#a97b4f", "Animals"], ["#c084fc", "Zombies · night"], ["#1d2a4a", "Police stn"],
   ["#ffb020", "Vote runner (bright = carrying)"],
 ];
 function BigMap({ engine, onClose }: { engine: GameEngine; onClose: () => void }) {
@@ -811,6 +813,18 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         <AnimatePresence>
           {hud.power && <PowerBadge key={hud.power.kind} />}
         </AnimatePresence>
+        {/* 🪪 driving license badge — cars are unlocked once this shows */}
+        <AnimatePresence>
+          {hud.hasLicense && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }}
+              className="w-fit rounded-full bg-sky-400/25 px-2 py-0.5 text-[10px] font-black text-sky-100 ring-1 ring-sky-300/50"
+              role="status"
+            >
+              🪪 License — cars unlocked!
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
       {/* floating +❤/+⚡ chip right after a snack is eaten */}
       <GainFlash />
@@ -913,10 +927,11 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         {showHelp && (
           <div className="max-w-[220px] rounded-xl bg-black/40 px-3 py-2 text-xs leading-relaxed text-white/90 backdrop-blur-md">
             <b className="text-yellow-300">Goal:</b> {hud.side === "police"
-              ? <>Bust <b>12 vote runners</b> before they smuggle <b>10 votes</b> into Parliament — chase and <b>walk into</b> a runner to arrest them. Vans haul them to the station cage!</>
+              ? <>Bust <b>12 vote runners</b> before they smuggle <b>10 votes</b> into Parliament — chase and <b>walk into</b> (or drive into!) a runner to arrest them. Vans haul them to the station cage. Officers eat snacks &amp; grab power gems too!</>
               : <>snatch 🗳 votes, deliver them at the Parliament ballot box. Rescue pink-bubbled friends with <b>E</b>. Dodge the police — sprint with <b>Shift</b>!</>}
             <div className="mt-1 text-amber-200/90">⚡ Sprinting drains energy · run over 🥭☕🩹 food to pocket it, then tap the bag (or press <b>1-8</b>) to eat: heals ❤ and refills ⚡.</div>
             <div className="mt-1 text-fuchsia-200/95">✨ <b>Rare super powers!</b> Find glowing gems in the jungle ( coloured dots on the map ): collecting <b>stores</b> the power — press <b>G</b> (or tap the ✨ slot) to unleash it when YOU choose! ⚡ Sonic speed · 🦘 mega jump · 🌀 Blink — press <b>Q</b> to teleport where you look · 🐒 Animal disguise — police can&apos;t catch you · 🧲 Magnet pulls food to you!</div>
+            <div className="mt-1 text-sky-200/95">🪪 <b>Driving licenses!</b> Collect a glowing blue card, walk to <b>any parked car</b> and press <b>E</b> to drive it — W/S gas &amp; brake, A/D steer, <b>H</b> horn, E hop out. Traffic bounces, zombies can&apos;t touch a car, and protesters escape chase cars!</div>
             {!touch && <div className="mt-1 text-white/70">WASD move · mouse steers the camera (click = lock cursor, hold Z/X to turn) · Shift sprint · Space jump ×2 (flip!) · E rescue · G use power · Q blink · 1-8 eat · right-click drop · M map · Esc / P pause</div>}
           </div>
         )}
@@ -954,6 +969,15 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       {hud.prompt && (
         <div role="status" className="absolute bottom-36 left-1/2 -translate-x-1/2 animate-pulse rounded-full bg-emerald-500/90 px-5 py-2 font-black text-white shadow-xl sm:bottom-28">
           {hud.prompt}
+        </div>
+      )}
+
+      {/* 🚗 driving speedo chip — replaces the prompt while behind the wheel */}
+      {hud.driving && (
+        <div role="status" className="absolute bottom-36 left-1/2 flex -translate-x-1/2 items-center gap-2.5 rounded-full bg-slate-900/85 px-4 py-2 text-white shadow-xl backdrop-blur-md sm:bottom-28">
+          <motion.span animate={{ scale: [1, 1.15, 1] }} transition={{ repeat: Infinity, duration: 1.2 }} className="text-lg leading-none" aria-hidden>🚗</motion.span>
+          <span className="text-base font-black tabular-nums text-yellow-300">{Math.round(hud.speed * 4)} km/h</span>
+          <span className="hidden whitespace-nowrap text-[10px] font-bold uppercase tracking-widest text-white/70 sm:inline">W/S gas · A/D steer · E hop out · H horn</span>
         </div>
       )}
 
@@ -1094,7 +1118,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       {!touch && (
         <div className="absolute bottom-3 left-1/2 z-10 hidden -translate-x-1/2 flex-col items-center gap-1.5 md:flex">
           <div className="hidden whitespace-nowrap rounded-full bg-black/45 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/75 backdrop-blur-md lg:block">
-            WASD move · Shift sprint · Space jump ×2 · E rescue · G power · Q blink · 1-8 eat
+            WASD move · Shift sprint · Space jump ×2 · E rescue / drive · G power · Q blink · 1-8 eat
           </div>
           <CoordsChip px={hud.px} pz={hud.pz} />
         </div>

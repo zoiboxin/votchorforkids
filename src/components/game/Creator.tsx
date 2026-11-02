@@ -435,15 +435,15 @@ export function Creator({ onStart }: { onStart: () => void }) {
               {look.fac === "police" ? (
                 <>
                   <b className="text-white">Mission (Police):</b> vote-runners are smuggling 🗳 votes to Parliament!
-                  Chase them down and <b>walk into a runner to bust them</b> — police vans haul them to the station
-                  cage. Bust <b>12 runners</b> before they deliver <b>10 votes</b>. Pick a squad outfit above — each
-                  one grants a small perk! Eat food, grab super-power gems, and call it a good shift. 🚓
+                  Chase them down and <b>walk into (or drive into!) a runner to bust them</b> — police vans haul them to the
+                  station cage. Bust <b>12 runners</b> before they deliver <b>10 votes</b>. Pick a squad outfit above — each
+                  one grants a small perk! Eat food, grab super-power gems, collect a 🪪 license and patrol by car. 🚓
                 </>
               ) : (
                 <>
                   <b className="text-white">Mission:</b> walk into 🗳 votes to carry them (max 3), then deliver them at the big
                   glowing ballot box by Parliament. Police chase you when you carry votes — sprint away! Rescued friends give
-                  points, chai restores energy, and zombies only come out at night…
+                  points, chai restores energy, zombies only come out at night… and a 🪪 license card + parked car = getaway ride!
                 </>
               )}
             </div>
@@ -489,7 +489,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
                     }`}
                   >
                     <div className="text-sm font-black text-white">🏃 Protester</div>
-                    <div className="mt-0.5 text-[10px] leading-tight text-white/65">Steal votes, dodge police, save democracy!</div>
+                    <div className="mt-0.5 text-[10px] leading-tight text-white/65">Steal votes, dodge police, escape by car!</div>
                   </button>
                   <button
                     type="button"
@@ -502,7 +502,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
                     }`}
                   >
                     <div className="text-sm font-black text-white">🚓 Police</div>
-                    <div className="mt-0.5 text-[10px] leading-tight text-white/65">Pick a squad outfit & bust the runners!</div>
+                    <div className="mt-0.5 text-[10px] leading-tight text-white/65">Pick a squad outfit &amp; catch the vote runners!</div>
                   </button>
                 </div>
               </div>

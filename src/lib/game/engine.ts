@@ -1,16 +1,16 @@
 import {
-  AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, BUST_CARRY_BONUS, BUST_POINTS, BUST_TARGET, CARRY_RADIUS, CAR_HIT_CD, CAR_HIT_DMG, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
+  AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, BUST_CARRY_BONUS, BUST_POINTS, BUST_TARGET, CARRY_RADIUS, CAR_ACCEL, CAR_BRAKE, CAR_COAST, CAR_ENTER_R, CAR_HIT_CD, CAR_HIT_DMG, CAR_MAX_SPEED, CAR_RADIUS, CAR_REV_SPEED, CAR_STEER, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
   CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, CONFISCATE_FINE, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
   ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
-  ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
+  ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
   RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SPAWN, SONIC_MULT, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, VAN_AXLE, VAN_LOAD_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
   WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
   ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, policeOutfitOf, stationCage, stationGate, type AnimalKind, type Appearance, type PolicePerk, type PowerKind, type Side, type Zone, zoneOf, ZONE_TOAST,
 } from "./constants";
 import { clamp, mulberry32, range } from "./rng";
-import { freeSpot, lineClear, resolve, RING_R, ROADS, type World } from "./worldgen";
+import { freeSpot, lineClear, resolve, RING_R, ROADS, type CircleCollider, type World } from "./worldgen";
 import { advanceClock, nightFactor, newBody, stepBody, stepNpc, type Body } from "./sim";
 import { sfx } from "./audio";
 
@@ -44,6 +44,18 @@ export interface ItemEnt { id: number; def: number; x: number; z: number; active
 export interface VoteEnt { id: number; x: number; z: number; state: "world" | "carried" | "delivered"; /** runner only: which runner holds this vote */ carrierId?: number; /** police side: a runner-delivered vote sneaks back into the city after this timer */ respawnT?: number }
 /** A rare super-power gem glowing somewhere in the jungle (or a mystery spot). */
 export interface PowerEnt { id: number; def: number; x: number; z: number; active: boolean; respawn: number }
+
+/** A glowing 🪪 driving-license card — collect one and EVERY parked car is yours. */
+export interface LicenseEnt { id: number; x: number; z: number; active: boolean }
+
+/** The car the player is driving (GTA style) — the renderer re-stamps it live. */
+export interface DriveState {
+  ci: number;               // index into world.cars (the parked fleet)
+  x: number; z: number;     // live body position
+  rot: number;              // heading — forward is (sin rot, cos rot), matching parked cars
+  v: number;                // signed speed along the heading (u/s; negative = reversing)
+  c: number; t: number;     // colour + body style copied for the renderer
+}
 
 export interface Fx { type: "confetti"; x: number; y: number; z: number; hue: number }
 
@@ -97,6 +109,12 @@ export interface HudData {
   lost: boolean;
   /** police side: the squad outfit the officer picked on the hero page (e.g. "Traffic Police") */
   outfitLabel: string;
+  /** true once a 🪪 driving-license card was collected — parked cars become drivable */
+  hasLicense: boolean;
+  /** true while the player is behind the wheel of a car (GTA style) */
+  driving: boolean;
+  /** current car speed in u/s while driving (0 on foot) — HUD speedometer */
+  speed: number;
 }
 
 export type ToastFn = (msg: string, kind?: "info" | "good" | "bad") => void;
@@ -169,7 +187,19 @@ export class GameEngine {
   traffic: TrafficCar[] = [];
   vans: PoliceVan[] = [];
   powers: PowerEnt[] = [];
+  licenses: LicenseEnt[] = [];
   fxQueue: Fx[] = [];
+
+  /* --- GTA-style driving (license-gated) --- */
+  /** collected 🪪 card — without it the driver's seat stays locked */
+  hasLicense = false;
+  /** the car currently being driven (null = on foot) */
+  drive: DriveState | null = null;
+  /** hop-out cooldown — stops an E press from instantly re-entering the car */
+  exitCd = 0;
+  private carHome: { x: number; z: number; rot: number }[] = [];            // parked spots — reset() restores them
+  private carAxles = new Map<number, [CircleCollider, CircleCollider]>();  // car idx → its two live colliders
+  private driveMsgT = 0;   // throttles "you need a license" / "park first" toasts
 
   /* --- rare super powers --- */
   activePower: PowerKind | null = null;
@@ -218,6 +248,15 @@ export class GameEngine {
     this.policePerk = policeOutfitOf(look.fac === "police" ? look.outfit : "").stats;
     this.hud = this.buildHud();
     this.spawnAll();
+    // remember where every car is parked (driving scatters them — reset brings them home)
+    // and index each car's two axle colliders so a driven car can move them along
+    this.carHome = this.world.cars.map((c) => ({ x: c.x, z: c.z, rot: c.rot }));
+    for (const cc of this.world.circles) {
+      if (cc.car === undefined) continue;
+      const pair = this.carAxles.get(cc.car);
+      if (pair) pair[1] = cc;
+      else this.carAxles.set(cc.car, [cc, cc]);
+    }
   }
 
   /* ---------------- spawning ---------------- */
@@ -360,6 +399,12 @@ export class GameEngine {
       const p = freeSpot(r, this.world, jungle ? FARM_RADIUS + 12 : 10, jungle ? JUNGLE_RADIUS - 14 : 430);
       this.powers.push({ id: this.nid(), def: i % POWERS.length, x: p.x, z: p.z, active: true, respawn: 0 });
     }
+    // driving-license cards — most around town streets, two out in the farmland
+    for (let i = 0; i < LICENSE_COUNT; i++) {
+      const far = i >= LICENSE_COUNT - 2;
+      const p = freeSpot(r, this.world, far ? CITY_RADIUS + 8 : 14, far ? FARM_RADIUS - 14 : 240);
+      this.licenses.push({ id: this.nid(), x: p.x, z: p.z, active: true });
+    }
     // police van fleet — one van per station, parked at its gate
     for (let i = 0; i < POLICE_STATIONS.length; i++) {
       const st = POLICE_STATIONS[i];
@@ -406,6 +451,9 @@ export class GameEngine {
     if (this.side === "police") {
       const squad = policeOutfitOf(this.look.outfit);
       this.toast(`🚓 Shift start, Officer ${this.playerName} (${squad.emoji} ${squad.label})! Bust ${BUST_TARGET} vote runners before they smuggle ${RUNNER_LOSE_DELIVERIES} votes through — walk into them to arrest!`, "info");
+      this.toast("🪪 Officer perks: snacks & power gems work for you too — and find a driving license to patrol by car!", "info");
+    } else {
+      this.toast("🏃 Snatch those votes! Tip: glowing 🪪 license cards unlock parked cars — press E beside one!", "info");
     }
   }
   setToast(fn: ToastFn) { this.toast = fn; }
@@ -422,6 +470,19 @@ export class GameEngine {
     for (const pw of this.powers) { pw.active = true; pw.respawn = 0; }
     this.carriedVotes = []; this.delivered = 0; this.points = 0; this.rescues = 0; this.caughtCount = 0;
     this.runnerDelivered = 0; this.lost = false; this.catchCd = 0;
+    // driving: hop out, re-hide the licenses, bring every car back to its parking spot
+    this.hasLicense = false; this.drive = null; this.exitCd = 0; this.driveMsgT = 0;
+    for (const lc of this.licenses) lc.active = true;
+    this.world.cars.forEach((c, i) => {
+      const h = this.carHome[i];
+      c.x = h.x; c.z = h.z; c.rot = h.rot;
+      const pair = this.carAxles.get(i);
+      if (pair) {
+        const fx = Math.sin(h.rot), fz = Math.cos(h.rot);
+        pair[0].x = h.x - fx * 1.25; pair[0].z = h.z - fz * 1.25;
+        pair[1].x = h.x + fx * 1.25; pair[1].z = h.z + fz * 1.25;
+      }
+    });
     this.detainedT = 0; this.invulnT = 8; this.elapsed = 0; this.won = false; this.clock = 0.3;
     this.arrest = "free"; this.arrestStation = -1; this.playerInVan = false; this.vanNeeded = false;
     for (const v of this.votes) { v.state = "world"; v.carrierId = undefined; v.respawnT = undefined; const p = freeSpot(this.rnd, this.world, 16, 420); v.x = p.x; v.z = p.z; }
@@ -450,25 +511,159 @@ export class GameEngine {
 
   /* ---------------- interactions ---------------- */
   interact() {
+    if (!this.running) return;
+    // in a car? E hops out first — everything else waits
+    if (this.drive) { this.exitCar(); return; }
+    // protester priority: rescue a detained civilian standing nearby
+    if (this.side === "protester") {
+      let best: Npc | null = null, bd = RESCUE_RADIUS * RESCUE_RADIUS;
+      for (const c of this.civs) {
+        if (c.mode !== "detained") continue;
+        const d = dist2(this.player.x, this.player.z, c.x, c.z);
+        if (d < bd) { bd = d; best = c; }
+      }
+      if (best) {
+        best.mode = "rescued"; best.timer = 0;
+        this.rescues++; this.points += POINTS_RESCUE;
+        sfx.rescue();
+        this.fxQueue.push({ type: "confetti", x: best.x, y: 1.4, z: best.z, hue: Math.random() });
+        this.toast(`${best.name} is free! +${POINTS_RESCUE} support points ❤`, "good");
+        return;
+      }
+    }
+    // then: hop into the nearest parked car — GTA style, license required!
+    const car = this.nearestCar(CAR_ENTER_R);
+    if (car >= 0) { this.enterCar(car); return; }
     // police don't rescue their own prisoners — a friendly reminder instead
     if (this.side === "police") {
       this.toast("👮 You're the police today, Officer — no freeing the suspects! Chase runners instead.", "info");
+    }
+  }
+
+  /* ---------------- GTA-style driving (license-gated) ---------------- */
+
+  /** Index of the closest parked car within `maxD` of the player (−1 = none). */
+  private nearestCar(maxD: number): number {
+    let best = -1, bd = maxD * maxD;
+    const cars = this.world.cars;
+    for (let i = 0; i < cars.length; i++) {
+      const c = cars[i];
+      const d = dist2(this.player.x, this.player.z, c.x, c.z);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  /** Hop into a parked car — GTA style. A 🪪 driving license is required! */
+  private enterCar(ci: number) {
+    if (this.exitCd > 0) return; // just hopped out — don't tumble straight back in
+    if (!this.hasLicense) {
+      if (this.driveMsgT <= 0) {
+        this.driveMsgT = 3;
+        sfx.alert();
+        this.toast("🪪 You need a DRIVING LICENSE! Hunt the glowing blue cards — they sparkle on the map.", "info");
+      }
       return;
     }
-    // rescue a detained civilian nearby
-    let best: Npc | null = null, bd = RESCUE_RADIUS * RESCUE_RADIUS;
-    for (const c of this.civs) {
-      if (c.mode !== "detained") continue;
-      const d = dist2(this.player.x, this.player.z, c.x, c.z);
-      if (d < bd) { bd = d; best = c; }
+    const car = this.world.cars[ci];
+    this.drive = { ci, x: car.x, z: car.z, rot: car.rot, v: 0, c: car.c, t: car.t };
+    const p = this.player;
+    p.vx = p.vz = p.vy = 0;
+    sfx.engine();
+    sfx.door();
+    this.toast("🚗 Vroom! W/S gas & brake · A/D steer · E hop out · H horn!", "good");
+  }
+
+  /** Hop out — the car stays parked where you left it (its colliders move along). */
+  exitCar() {
+    const d = this.drive;
+    if (!d) return;
+    this.drive = null;
+    this.exitCd = 0.6;
+    const p = this.player;
+    // climb out on the door side; resolve nudges us clear of walls & the car itself
+    p.x = d.x + Math.cos(d.rot) * 2.3;
+    p.z = d.z - Math.sin(d.rot) * 2.3;
+    p.y = 0; p.vx = p.vz = p.vy = 0;
+    p.face = d.rot;
+    resolve(p, 0.45, this.world);
+    const rr = Math.hypot(p.x, p.z);
+    if (rr > WALL_RADIUS) { p.x *= WALL_RADIUS / rr; p.z *= WALL_RADIUS / rr; }
+    sfx.door();
+  }
+
+  /** H key while driving — beep beep! */
+  horn() { if (this.drive) sfx.horn(); }
+
+  /** Keep the driven car's world entry + its two axle colliders glued to the body. */
+  private syncCarColliders(d: DriveState) {
+    const car = this.world.cars[d.ci];
+    car.x = d.x; car.z = d.z; car.rot = d.rot;
+    const pair = this.carAxles.get(d.ci);
+    if (!pair) return;
+    const fx = Math.sin(d.rot), fz = Math.cos(d.rot);
+    pair[0].x = d.x - fx * 1.25; pair[0].z = d.z - fz * 1.25;
+    pair[1].x = d.x + fx * 1.25; pair[1].z = d.z + fz * 1.25;
+  }
+
+  /** One arcade physics step of the player-driven car — bouncy, fast, kid-friendly. */
+  private stepDrive(dt: number) {
+    const d = this.drive!;
+    const p = this.player;
+    // throttle & steering come straight from the shared input (touch joystick works too)
+    const f = this.input.f;
+    const steer = this.input.r;
+    const maxF = CAR_MAX_SPEED * (this.activePower === "sonic" ? 1.3 : 1);
+    if (f > 0.01) d.v += CAR_ACCEL * dt * f;
+    else if (f < -0.01) d.v -= (d.v > 0.5 ? CAR_BRAKE : CAR_ACCEL * 0.55) * dt * -f;
+    else d.v -= Math.sign(d.v) * Math.min(Math.abs(d.v), CAR_COAST * dt);
+    d.v = clamp(d.v, -CAR_REV_SPEED, maxF);
+    // steering only bites while rolling (like a real car) and flips while reversing
+    const grip = Math.min(1, Math.abs(d.v) / 9);
+    d.rot -= steer * CAR_STEER * grip * dt * Math.sign(d.v || 1);
+    d.x += Math.sin(d.rot) * d.v * dt;
+    d.z += Math.cos(d.rot) * d.v * dt;
+    // slide around buildings, trees and other parked cars (our own axles are skipped)
+    const probe = { x: d.x, z: d.z };
+    resolve(probe, CAR_RADIUS, this.world, d.ci);
+    if (Math.hypot(probe.x - d.x, probe.z - d.z) > 0.01) d.v *= 0.82; // cartoon scrape — walls eat speed
+    d.x = probe.x; d.z = probe.z;
+    const rr = Math.hypot(d.x, d.z);
+    if (rr > WALL_RADIUS) { d.x *= WALL_RADIUS / rr; d.z *= WALL_RADIUS / rr; d.v = Math.min(d.v, 4); }
+    // ring-road traffic & police vans are solid — the car bonks off, nobody gets hurt
+    for (const t of this.traffic) {
+      const tdx = d.x - t.x, tdz = d.z - t.z, td2 = tdx * tdx + tdz * tdz;
+      if (td2 < 2.5 * 2.5 && td2 > 0.0001) {
+        const td = Math.sqrt(td2);
+        d.x = t.x + (tdx / td) * 2.5; d.z = t.z + (tdz / td) * 2.5;
+        d.v *= 0.75;
+      }
     }
-    if (best) {
-      best.mode = "rescued"; best.timer = 0;
-      this.rescues++; this.points += POINTS_RESCUE;
-      sfx.rescue();
-      this.fxQueue.push({ type: "confetti", x: best.x, y: 1.4, z: best.z, hue: Math.random() });
-      this.toast(`${best.name} is free! +${POINTS_RESCUE} support points ❤`, "good");
+    for (const van of this.vans) {
+      const vdx = d.x - van.x, vdz = d.z - van.z, vd2 = vdx * vdx + vdz * vdz;
+      if (vd2 < 3.2 * 3.2 && vd2 > 0.0001) {
+        const vd = Math.sqrt(vd2);
+        d.x = van.x + (vdx / vd) * 3.2; d.z = van.z + (vdz / vd) * 3.2;
+        d.v *= 0.75;
+      }
     }
+    this.syncCarColliders(d);
+    // the driver rides inside — glue the body to the car so the camera, HUD and
+    // every pickup (votes, snacks, gems, licenses) keep working off the player pos
+    p.x = d.x; p.z = d.z; p.y = 0.32;
+    p.vx = Math.sin(d.rot) * d.v; p.vz = Math.cos(d.rot) * d.v; p.vy = 0;
+    p.face = d.rot;
+    // camera trails behind the car while it rolls (mouse look still nudges it)
+    if (Math.abs(d.v) > 2.5) {
+      const want = d.v < 0 ? d.rot : d.rot + Math.PI; // reversing: look the way the car backs
+      let dd = want - this.input.yaw;
+      dd = Math.atan2(Math.sin(dd), Math.cos(dd));
+      this.input.yaw += dd * Math.min(1, dt * 2.6);
+      this.input.yaw = ((this.input.yaw + Math.PI) % TAU + TAU) % TAU - Math.PI;
+    }
+    this.input.pitch += (0.34 - this.input.pitch) * Math.min(1, dt * 1.6);
+    // driving is restful — stamina recovers at walking rate
+    this.stamina = Math.min(100, this.stamina + 12 * AGE_STATS[this.look.age].regen * dt);
   }
 
   /* ---------------- police side: stop the vote runners ---------------- */
@@ -594,7 +789,11 @@ export class GameEngine {
     const bustR = RUNNER_CATCH_R * this.policePerk.bustRMult;
     if (this.detainedT <= 0 && this.faintT <= 0 && !this.won && !this.lost && this.catchCd <= 0) {
       for (const c of this.civs) {
-        if (!c.runner || c.mode !== "wander" || c.protest) continue;
+        // bust ANY runner on contact — wandering or fleeing. Runners panic at 9u and
+        // sprint away, so requiring "wander" here made them literally uncatchable:
+        // chasing them down (on foot or by car!) and touching them is the whole game.
+        if (!c.runner || c.protest) continue;
+        if (c.mode !== "wander" && c.mode !== "flee") continue;
         if (dist2(p.x, p.z, c.x, c.z) < bustR * bustR) {
           this.bustRunner(c);
           break; // one bust per cooldown — no crowd sweeps
@@ -676,6 +875,7 @@ export class GameEngine {
       if (van.prisoner?.kind === "player") this.abortVan(van);
     }
     this.playerInVan = false;
+    this.drive = null; // bail out of the spinning car too
     this.arrest = "free"; this.arrestStation = -1; this.vanNeeded = false;
     this.player.x = SPAWN.x; this.player.z = SPAWN.z; this.player.y = 0;
     this.player.vx = this.player.vz = 0;
@@ -931,6 +1131,14 @@ export class GameEngine {
   /** Blink Teleport: poof ~15u in the direction the CAMERA looks. Only while the blink power lasts. */
   tryBlink() {
     if (!this.running) return;
+    if (this.drive) {
+      // teleporting out of a moving car would leave it driverless — park first!
+      if (this.driveMsgT <= 0) {
+        this.driveMsgT = 2.5;
+        this.toast("Park the car & hop out before teleporting!", "info");
+      }
+      return;
+    }
     if (this.activePower !== "blink") {
       // helpful nudge when the gem is still sitting in the pocket
       if (this.powerPocket !== null && POWERS[this.powerPocket].kind === "blink" && this.powerFullT <= 0) {
@@ -1051,6 +1259,8 @@ export class GameEngine {
     this.squashT = Math.max(0, this.squashT - dt);
     this.faintT = Math.max(0, this.faintT - dt);
     this.carHitCd = Math.max(0, this.carHitCd - dt);
+    this.exitCd = Math.max(0, this.exitCd - dt);
+    this.driveMsgT = Math.max(0, this.driveMsgT - dt);
     if (this.detainedT > 0) {
       // the clock only runs once the player is locked up at the station (or dizzy-stunned) —
       // while the van is being called or riding, time itself is frozen
@@ -1086,6 +1296,10 @@ export class GameEngine {
         }
       }
       p.vx = p.vz = 0;
+    } else if (this.drive) {
+      // 🚗 behind the wheel — car physics runs, the driver enjoys the ride
+      this.invulnT = Math.max(0, this.invulnT - dt);
+      this.stepDrive(dt);
     } else {
       this.invulnT = Math.max(0, this.invulnT - dt);
       const prevY = p.y;
@@ -1133,7 +1347,7 @@ export class GameEngine {
       t.x = Math.cos(t.a) * t.r;
       t.z = Math.sin(t.a) * t.r;
       t.rot = t.dir > 0 ? -t.a : Math.PI + t.a;
-      if (this.detainedT > 0) continue; // sitting out detention — traffic can't touch you
+      if (this.detainedT > 0 || this.drive) continue; // sitting out detention / safe inside a car — traffic can't touch you
       const fx = Math.sin(t.rot), fz = Math.cos(t.rot);
       for (const off of [1.25, -1.25]) { // front & rear axle circles, matching parked-car colliders
         const cx = t.x + fx * off, cz = t.z + fz * off;
@@ -1171,7 +1385,8 @@ export class GameEngine {
     /* --- police van fleet: transport prisoners to the nearest station --- */
     this.updateVans(dt);
     // vans are solid — shove the player out of their footprint (no bonk, police don't ram kids)
-    if (this.detainedT <= 0) {
+    // (while driving, stepDrive already bounces the CAR off vans instead)
+    if (this.detainedT <= 0 && !this.drive) {
       for (const van of this.vans) {
         const fx = Math.sin(van.rot), fz = Math.cos(van.rot);
         for (const off of [VAN_AXLE, -VAN_AXLE]) {
@@ -1284,6 +1499,21 @@ export class GameEngine {
       }
     }
 
+    /* --- driving licenses: walk over a glowing 🪪 card to unlock every car --- */
+    if (!this.hasLicense && this.detainedT <= 0) {
+      for (const lc of this.licenses) {
+        if (!lc.active) continue;
+        if (dist2(p.x, p.z, lc.x, lc.z) < LICENSE_PICKUP_R * LICENSE_PICKUP_R) {
+          lc.active = false;
+          this.hasLicense = true;
+          sfx.power();
+          this.fxQueue.push({ type: "confetti", x: lc.x, y: 1.2, z: lc.z, hue: 0.55 });
+          this.toast("🪪 DRIVING LICENSE collected! Walk up to any parked car and press E to drive it!", "good");
+          break;
+        }
+      }
+    }
+
     /* --- police side: runner busts + vote respawn --- */
     if (this.side === "police") this.updatePoliceMode(dt);
 
@@ -1373,7 +1603,8 @@ export class GameEngine {
           const spd = POLICE_SPRINT + this.stars * 0.22;
           stepNpc(cop, p.x, p.z, spd, dt, this.world);
           cop.alertT = d2p < detect * detect * 3 ? ESCAPE_LOST_S : cop.alertT - dt;
-          if (d2p < 1.9 * 1.9 && this.detainedT <= 0 && this.invulnT <= 0 && this.morphKind == null) { this.catchPlayer(cop); }
+          // a speeding car can't be caught on foot — cops tumble after it instead
+          if (d2p < 1.9 * 1.9 && this.detainedT <= 0 && this.invulnT <= 0 && this.morphKind == null && !this.drive) { this.catchPlayer(cop); }
           else if (cop.alertT <= 0) { cop.mode = "return"; cop.timer = 0; }
           break;
         }
@@ -1460,7 +1691,7 @@ export class GameEngine {
           zb.vx *= 0.95; zb.vz *= 0.95;
           if (Math.random() < dt * 0.2) { const t = freeSpot(this.rnd, this.world, 4, 34); stepNpc(zb, GRAVEYARD.x + t.x * 0.2, GRAVEYARD.z + t.z * 0.2, ZOMBIE_SPEED * 0.4, dt, this.world); }
         }
-        if (d2p < 1.6 * 1.6 && zb.touchCd <= 0 && this.detainedT <= 0) {
+        if (d2p < 1.6 * 1.6 && zb.touchCd <= 0 && this.detainedT <= 0 && !this.drive) { // the car shell keeps zombies out
           zb.touchCd = ZOMBIE_TOUCH_CD;
           this.hp = Math.max(0, this.hp - ZOMBIE_DMG);
           this.hurtT = HURT_FLASH_S;
@@ -1520,14 +1751,25 @@ export class GameEngine {
       // officer guidance — nudge the player toward the next arrest
       if (!this.won && !this.lost) {
         for (const c of this.civs) {
-          if (!c.runner || c.mode !== "wander") continue;
-          if (dist2(p.x, p.z, c.x, c.z) < 6 * 6) { prompt = c.voteId ? "Bust the carrier — walk into them!" : "Walk into the runner to bust them!"; break; }
+          if (!c.runner || c.protest) continue;
+          if (c.mode !== "wander" && c.mode !== "flee") continue;
+          if (dist2(p.x, p.z, c.x, c.z) < 6 * 6) { prompt = c.voteId ? "Bust the carrier — walk into them!" : "Chase them down — walk into the runner to bust!"; break; }
         }
       }
     } else {
       for (const c of this.civs)
         if (c.mode === "detained" && dist2(p.x, p.z, c.x, c.z) < RESCUE_RADIUS * RESCUE_RADIUS) { prompt = `Press E to rescue ${c.name}!`; break; }
       if (!prompt && this.carriedVotes.length > 0 && dist2(p.x, p.z, BALLOT.x, BALLOT.z) < DELIVER_RADIUS * DELIVER_RADIUS * 1.8) prompt = "Walk closer to the ballot box to deliver!";
+    }
+    // 🚗 car prompts — driving clears everything (the speedo chip shows controls);
+    // on foot, a parked car nearby hints how driving works (lowest priority)
+    if (this.drive) {
+      prompt = "";
+    } else {
+      const nc = this.nearestCar(CAR_ENTER_R);
+      if (nc >= 0 && !prompt) {
+        prompt = this.hasLicense ? "Press E to hop in and drive!" : "Find a glowing 🪪 license card to unlock cars!";
+      }
     }
     let policeNear = false;
     if (this.side === "protester") {
@@ -1546,6 +1788,7 @@ export class GameEngine {
       won: this.won, elapsed: this.elapsed,
       side: this.side, busted: this.caughtCount, runnerDelivered: this.runnerDelivered, lost: this.lost,
       outfitLabel: this.side === "police" ? `${squad.emoji} ${squad.label}` : "",
+      hasLicense: this.hasLicense, driving: !!this.drive, speed: this.drive ? Math.abs(this.drive.v) : 0,
       inv: this.inv.map((s) => ({ def: s.def, count: s.count })),
       hurt: this.hurtT > 0, sprinting: p.sprinting, exhausted: this.stamina <= 0.5,
       px: Math.round(this.player.x), pz: Math.round(this.player.z),

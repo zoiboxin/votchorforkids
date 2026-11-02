@@ -516,7 +516,7 @@ function placeCar(P: CarParts, i: number, x: number, y: number, z: number, rot: 
   }
 }
 
-function Cars() {
+function Cars({ engine }: { engine: GameEngine }) {
   const body = useRef<THREE.InstancedMesh>(null!);
   const roof = useRef<THREE.InstancedMesh>(null!);
   const cab = useRef<THREE.InstancedMesh>(null!);
@@ -534,46 +534,55 @@ function Cars() {
     if (body.current.instanceColor) body.current.instanceColor.needsUpdate = true;
     if (roof.current.instanceColor) roof.current.instanceColor.needsUpdate = true;
   }, []);
+  // 🚗 the player-driven car moves — re-stamp just that one instance every frame
+  useFrame(() => {
+    const d = engine.drive;
+    if (!d) return;
+    const c = WORLD.cars[d.ci];
+    const P: CarParts = { body: body.current, roof: roof.current, cab: cab.current, skirt: skirt.current, bumpF: bumpF.current, bumpR: bumpR.current, lights: lights.current, tails: tails.current, wheels: wheels.current, hubs: hubs.current };
+    placeCar(P, d.ci, c.x, 0, c.z, c.rot, c.c, c.t);
+    for (const m of Object.values(P)) m.instanceMatrix.needsUpdate = true;
+  });
   const N = Math.max(1, WORLD.cars.length);
   return (
     <>
-      <instancedMesh ref={skirt} args={[undefined, undefined, N]}>
+      <instancedMesh frustumCulled={false} ref={skirt} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial color="#1c2128" />
       </instancedMesh>
-      <instancedMesh ref={body} args={[undefined, undefined, N]}>
+      <instancedMesh frustumCulled={false} ref={body} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial />
       </instancedMesh>
-      <instancedMesh ref={cab} args={[undefined, undefined, N]}>
+      <instancedMesh frustumCulled={false} ref={cab} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial color="#a8d8ea" />
       </instancedMesh>
-      <instancedMesh ref={roof} args={[undefined, undefined, N]}>
+      <instancedMesh frustumCulled={false} ref={roof} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial />
       </instancedMesh>
-      <instancedMesh ref={bumpF} args={[undefined, undefined, N]}>
+      <instancedMesh frustumCulled={false} ref={bumpF} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial color="#2a2f38" />
       </instancedMesh>
-      <instancedMesh ref={bumpR} args={[undefined, undefined, N]}>
+      <instancedMesh frustumCulled={false} ref={bumpR} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial color="#2a2f38" />
       </instancedMesh>
-      <instancedMesh ref={lights} args={[undefined, undefined, N * 2]}>
+      <instancedMesh frustumCulled={false} ref={lights} args={[undefined, undefined, N * 2]}>
         <boxGeometry />
         <meshBasicMaterial color="#ffe08a" />
       </instancedMesh>
-      <instancedMesh ref={tails} args={[undefined, undefined, N * 2]}>
+      <instancedMesh frustumCulled={false} ref={tails} args={[undefined, undefined, N * 2]}>
         <boxGeometry />
         <meshBasicMaterial color="#ff5f4a" />
       </instancedMesh>
-      <instancedMesh ref={wheels} args={[undefined, undefined, N * 4]}>
+      <instancedMesh frustumCulled={false} ref={wheels} args={[undefined, undefined, N * 4]}>
         <cylinderGeometry args={[0.5, 0.5, 0.32, 10]} />
         <meshLambertMaterial color="#171a1f" />
       </instancedMesh>
-      <instancedMesh ref={hubs} args={[undefined, undefined, N * 4]}>
+      <instancedMesh frustumCulled={false} ref={hubs} args={[undefined, undefined, N * 4]}>
         <cylinderGeometry args={[0.5, 0.5, 0.42, 8]} />
         <meshLambertMaterial color="#c9ced8" />
       </instancedMesh>
@@ -1776,7 +1785,7 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
       <Buildings />
       <PoliceStations />
       <Windows clockRef={clockRef} />
-      <Cars />
+      <Cars engine={engine} />
       <RingTraffic engine={engine} />
       <PoliceVans engine={engine} />
       <Lamps clockRef={clockRef} />

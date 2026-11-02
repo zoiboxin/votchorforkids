@@ -92,10 +92,10 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     clockRef.current = engine.clock;
     if (lantern.current) lantern.current.intensity = nightFactor(engine.clock) * 26;
 
-    // player mesh (hidden while riding in the police van or wearing an animal disguise)
+    // player mesh (hidden while riding in the police van, wearing an animal disguise, or driving a car)
     const p = engine.player;
     const morphing = engine.morphKind != null;
-    mesh.visible = !engine.playerInVan && !morphing;
+    mesh.visible = !engine.playerInVan && !morphing && !engine.drive;
     mesh.position.set(p.x, p.y, p.z);
     let d = p.face - mesh.rotation.y;
     d = Math.atan2(Math.sin(d), Math.cos(d));
@@ -159,8 +159,9 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       });
     } else if (stars.visible) stars.visible = false;
 
-    // camera — intro swoop then smooth follow (plus a dizzy wobble after a car bonk)
-    const cd = 8.6;
+    // camera — intro swoop then smooth follow (plus a dizzy wobble after a car bonk);
+    // while driving, pull back a little for that GTA chase-camera feel
+    const cd = engine.drive ? 11 : 8.6;
     const iy = engine.input.yaw, ip = engine.input.pitch;
     const tx = p.x + Math.sin(iy) * cd * Math.cos(ip);
     const ty = Math.max(1.2, p.y + 2.1 + Math.sin(ip) * cd);
@@ -424,6 +425,60 @@ export function Powers({ engine }: { engine: GameEngine }) {
       v.glow.material.opacity = 0.4 + Math.sin(t * 3 + idx) * 0.15;
       v.em.position.y = 1.55 + Math.sin(t * 2.6 + idx) * 0.08;
       v.ring.scale.setScalar(1 + Math.sin(t * 2 + idx) * 0.1);
+    }
+  });
+
+  return <>{views.map((v) => <primitive object={v.group} key={v.i} />)}</>;
+}
+
+/* ------------------------------------------------------------------ */
+/* Driving-license cards — glowing 🪪 pickups that unlock every car     */
+/* ------------------------------------------------------------------ */
+export function Licenses({ engine }: { engine: GameEngine }) {
+  const views = useMemo(() => engine.licenses.map((lc, i) => {
+    const g = new THREE.Group();
+    // the card itself: a little white ID card with a photo stripe
+    const card = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.5, 0.06), new THREE.MeshLambertMaterial({ color: "#f4f8ff" }));
+    card.position.y = 0.95;
+    g.add(card);
+    const stripe = new THREE.Mesh(new THREE.BoxGeometry(0.72, 0.14, 0.065), new THREE.MeshBasicMaterial({ color: "#38bdf8" }));
+    stripe.position.set(0, 1.12, 0.005);
+    g.add(stripe);
+    const photo = new THREE.Mesh(new THREE.BoxGeometry(0.2, 0.24, 0.07), new THREE.MeshBasicMaterial({ color: "#fbbf24" }));
+    photo.position.set(-0.2, 0.92, 0.005);
+    g.add(photo);
+    const em = emojiSprite("🪪", 0.52);
+    em.position.y = 1.62;
+    g.add(em);
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: "#38bdf8", transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending }));
+    glow.scale.setScalar(1.8);
+    glow.position.y = 1;
+    g.add(glow);
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.66, 0.05, 6, 26),
+      new THREE.MeshBasicMaterial({ color: "#38bdf8", transparent: true, opacity: 0.85 }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.07;
+    g.add(ring);
+    g.visible = lc.active;
+    return { group: g, card, em, glow, ring, i };
+  }), [engine]);
+
+  useFrame((s) => {
+    const t = s.clock.elapsedTime;
+    for (let idx = 0; idx < engine.licenses.length; idx++) {
+      const lc = engine.licenses[idx];
+      const v = views[idx];
+      v.group.visible = lc.active;
+      if (!lc.active) continue;
+      v.group.position.set(lc.x, 0, lc.z);
+      v.group.rotation.y = t * 1.4 + idx;
+      v.card.position.y = 0.95 + Math.sin(t * 2.4 + idx * 1.3) * 0.12;
+      v.em.position.y = 1.62 + Math.sin(t * 2.6 + idx) * 0.08;
+      v.glow.position.y = v.card.position.y;
+      (v.glow.material as THREE.SpriteMaterial).opacity = 0.4 + Math.sin(t * 3 + idx) * 0.15;
+      v.ring.scale.setScalar(1 + Math.sin(t * 2.2 + idx) * 0.12);
     }
   });
 

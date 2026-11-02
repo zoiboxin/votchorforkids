@@ -93,6 +93,12 @@ export const sfx = {
   blink: () => { tone(980, 0.14, "sine", 0.3, 240); noise(0.1, 0.16, 1400); },
   // animal morph — silly downward wobble (you now go "moo")
   morph: () => { tone(520, 0.22, "square", 0.22, 180); tone(300, 0.28, "sawtooth", 0.18, 140, 0.16); },
+  // car engine start — a happy cartoon vroom-vroom
+  engine: () => { tone(70, 0.55, "sawtooth", 0.34, 210); tone(105, 0.4, "square", 0.14, 260, 0.12); noise(0.3, 0.1, 320); },
+  // friendly double-beep horn (press H while driving)
+  horn: () => { tone(466, 0.16, "square", 0.26); tone(466, 0.2, "square", 0.22, undefined, 0.2); },
+  // little car-door clunk when hopping in/out
+  door: () => { tone(180, 0.08, "square", 0.3, 120); noise(0.05, 0.12, 500); },
 };
 
 /* ------- generative ambient music (super light) ------- */

@@ -2,7 +2,7 @@ import { CITY_RADIUS, FARM_RADIUS, GRAVEYARD, PARLIAMENT, POLICE_STATIONS, WORLD
 import { mulberry32, range } from "./rng";
 
 export interface BoxCollider { x: number; z: number; w: number; d: number } // half extents
-export interface CircleCollider { x: number; z: number; r: number }
+export interface CircleCollider { x: number; z: number; r: number; /** set for the two axle circles of a parked car — lets a DRIVEN car skip its own colliders */ car?: number }
 
 /**
  * Building kinds:
@@ -391,20 +391,22 @@ export function generateWorld(seed = WORLD_SEED): World {
   circles.push({ x: PARLIAMENT.x, z: PARLIAMENT.z, r: 26 });               // parliament podium (matches the visual base)
   for (const s of signs) circles.push({ x: s.x, z: s.z, r: 0.45 });        // placard posts
   // two circles per car (front + rear axle) — a single centre circle let players
-  // clip through the hood and boot of the 4.4-long bodies
-  for (const c of cars) {
+  // clip through the hood and boot of the 4.4-long bodies. Tagged with the car
+  // index so a driven car can move its own colliders along (and skip them).
+  cars.forEach((c, ci) => {
     const fx = Math.sin(c.rot), fz = Math.cos(c.rot);
-    circles.push({ x: c.x - fx * 1.25, z: c.z - fz * 1.25, r: 1.16 });
-    circles.push({ x: c.x + fx * 1.25, z: c.z + fz * 1.25, r: 1.16 });
-  }
+    circles.push({ x: c.x - fx * 1.25, z: c.z - fz * 1.25, r: 1.16, car: ci });
+    circles.push({ x: c.x + fx * 1.25, z: c.z + fz * 1.25, r: 1.16, car: ci });
+  });
   for (const s of silos) circles.push({ x: s.x, z: s.z, r: 3.3 });
   for (const w of windmills) circles.push({ x: w.x, z: w.z, r: 0.8 });
 
   return { buildings, trees, flowers, boxes, circles, cars, lamps, benches, fields, silos, umbrellas, signs, windmills };
 }
 
-/** Push a point out of every collider it overlaps. */
-export function resolve(p: { x: number; z: number }, radius: number, world: World): void {
+/** Push a point out of every collider it overlaps. skipCar: while driving car #n,
+ *  that car's own axle circles are skipped so the body doesn't shove itself. */
+export function resolve(p: { x: number; z: number }, radius: number, world: World, skipCar = -1): void {
   for (const b of world.boxes) {
     const dx = p.x - b.x, dz = p.z - b.z;
     const ox = b.w + radius - Math.abs(dx), oz = b.d + radius - Math.abs(dz);
@@ -414,6 +416,7 @@ export function resolve(p: { x: number; z: number }, radius: number, world: Worl
     }
   }
   for (const c of world.circles) {
+    if (skipCar >= 0 && c.car === skipCar) continue;
     const dx = p.x - c.x, dz = p.z - c.z;
     const rr = c.r + radius;
     if (Math.abs(dx) > rr || Math.abs(dz) > rr) continue;
