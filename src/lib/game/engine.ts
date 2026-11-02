@@ -6,6 +6,7 @@ import {
   ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
   RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SCAVENGER_COUNT, SCAVENGER_SENSE_R, SPAWN, SONIC_MULT, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, VAN_AXLE, VAN_LOAD_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
+  AIRPORT, PLANE_COUNT,
   WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
   ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, BOT_SPAWN_GAP, policeOutfitOf, stationCage, stationGate, type AnimalKind, type Appearance, type PolicePerk, type PowerKind, type Side, type Zone, zoneOf, ZONE_TOAST,
 } from "./constants";
@@ -18,6 +19,31 @@ const TAU = Math.PI * 2; // full circle — used to keep the camera yaw wrapped
 
 export type CopMode = "patrol" | "chase" | "return" | "celebrate";
 export type CivilMode = "wander" | "flee" | "detained" | "rescued";
+
+/* ---------------- bot planes — VoteChor International's random flights ----------------
+ * Purely kinematic state machines: bots taxi out, take off eastwards, circle the
+ * whole map at cruise altitude, then come back and land. No collisions — they're
+ * sky traffic for kids to spot (and chase across the runway if they like). */
+export type PlaneMode = "parked" | "taxi" | "roll" | "climb" | "joinArc" | "cruise" | "joinFinal" | "final" | "rollout" | "taxiBack";
+export interface PlaneState {
+  id: number;
+  c: number;                    // livery colour index
+  x: number; z: number; alt: number;
+  hdg: number;                  // facing (rad) — 0 = +x (down the runway)
+  pitch: number;                // visual nose tilt
+  spd: number;                  // ground speed (u/s)
+  mode: PlaneMode;
+  t: number;                    // state timer (parked delay / rollout)
+  slot: number;                 // apron parking slot
+  wx: number; wz: number; walt: number;  // chase waypoint (taxi/final legs)
+  arcR: number; arcDir: 1 | -1; arcA: number; arcLeft: number; // cruise arc
+  propT: number;                // propeller spin phase (visual)
+}
+
+const PLANE_COLORS = [0xe0483a, 0x2a9d8f, 0xf0c040, 0x4aa3df, 0x8a5aa8];
+const PLANE_TAXI_SPD = 6, PLANE_VR = 40 /* rotation speed */, PLANE_CLIMB = 15, PLANE_CRUISE_SPD = 34;
+const PLANE_APPR_SPD = 26, PLANE_TURN_TAXI = 2.2, PLANE_TURN_AIR = 0.55;
+const PLANE_CALT = 58; // cruise altitude
 
 export interface Npc {
   id: number; kind: "police" | "civilian";
@@ -189,6 +215,7 @@ export class GameEngine {
   civs: Npc[] = [];
   zombies: Zombie[] = [];
   animals: Animal[] = [];
+  planes: PlaneState[] = [];
   items: ItemEnt[] = [];
   traffic: TrafficCar[] = [];
   vans: PoliceVan[] = [];
@@ -448,6 +475,175 @@ export class GameEngine {
     this.assignRunners();
     // protester side: a slice of the civilians scavenge loose votes & haul them to the camp
     this.assignScavengers();
+    // bot planes — staggered so a flight is always somewhere in its cycle
+    for (let i = 0; i < PLANE_COUNT; i++) {
+      const slot = i % 3;
+      const ax = AIRPORT.terminal.x - 26 + slot * 22, az = AIRPORT.apronZ;
+      this.planes.push({
+        id: this.nid(), c: (i * 2 + 1) % PLANE_COLORS.length,
+        x: ax, z: az, alt: 0,
+        hdg: 0, pitch: 0, spd: 0,
+        mode: "parked", t: 2.5 + i * 7 + r() * 6,
+        slot, wx: ax, wz: az, walt: 0,
+        arcR: 340, arcDir: 1, arcA: 0, arcLeft: 0,
+        propT: 0,
+      });
+    }
+  }
+
+  /* ---------------- bot planes ---------------- */
+  /** Turn `hdg` toward `want` at a capped rate, returning the new heading. */
+  private steerHdg(hdg: number, want: number, maxTurn: number): number {
+    let dh = ((want - hdg + Math.PI) % TAU + TAU) % TAU - Math.PI;
+    if (dh > maxTurn) dh = maxTurn;
+    if (dh < -maxTurn) dh = maxTurn;
+    return hdg + dh;
+  }
+
+  private updatePlanes(dt: number) {
+    for (const pl of this.planes) {
+      pl.propT += dt * (pl.mode === "parked" ? 0.6 : 9 + pl.spd * 0.35);
+      switch (pl.mode) {
+        case "parked": {
+          pl.t -= dt;
+          if (pl.t <= 0) {
+            // push back: taxi to a staging point just south of the runway threshold —
+            // the dogleg (staging → threshold → line-up) makes the plane face east for the roll
+            pl.mode = "taxi";
+            pl.wx = AIRPORT.rx0; pl.wz = AIRPORT.rz + 10; pl.walt = 0;
+          }
+          break;
+        }
+        case "taxi": {
+          pl.spd = PLANE_TAXI_SPD;
+          const d = Math.hypot(pl.wx - pl.x, pl.wz - pl.z);
+          if (d < 6) {
+            if (pl.wz !== AIRPORT.rz) {
+              // staging reached — line up on the runway heading east
+              pl.wx = AIRPORT.rx0 + 44; pl.wz = AIRPORT.rz;
+            } else {
+              pl.mode = "roll"; pl.spd = 2;
+            }
+          } else {
+            pl.hdg = this.steerHdg(pl.hdg, Math.atan2(pl.wz - pl.z, pl.wx - pl.x), PLANE_TURN_TAXI * dt);
+            pl.x += Math.cos(pl.hdg) * pl.spd * dt;
+            pl.z += Math.sin(pl.hdg) * pl.spd * dt;
+          }
+          break;
+        }
+        case "roll": {
+          // take-off roll: accelerate down the runway (firmly realigning east), lift off past the far end
+          pl.hdg = this.steerHdg(pl.hdg, 0, 0.9 * dt);
+          pl.spd = Math.min(PLANE_VR + 6, pl.spd + 9.5 * dt);
+          pl.x += Math.cos(pl.hdg) * pl.spd * dt;
+          pl.z += Math.sin(pl.hdg) * pl.spd * dt;
+          if (pl.x > AIRPORT.rx1 - 4) { pl.mode = "climb"; }
+          break;
+        }
+        case "climb": {
+          pl.spd = Math.min(PLANE_CRUISE_SPD + 2, pl.spd + 4 * dt);
+          pl.alt = Math.min(PLANE_CALT + pl.slot * 9, pl.alt + PLANE_CLIMB * dt);
+          // bank back toward the city while climbing so flights stay inside the
+          // mountain wall instead of shooting straight out past the peaks
+          pl.hdg = this.steerHdg(pl.hdg, Math.atan2(-pl.z, -pl.x), PLANE_TURN_AIR * 1.15 * dt);
+          pl.x += Math.cos(pl.hdg) * pl.spd * dt;
+          pl.z += Math.sin(pl.hdg) * pl.spd * dt;
+          if (pl.alt >= PLANE_CALT + pl.slot * 9 - 0.5) {
+            pl.mode = "joinArc"; // steer onto a clean circle around the city
+            pl.arcR = 320 + this.rnd() * 110;
+          }
+          break;
+        }
+        case "joinArc": {
+          // chase the radially-nearest point of the cruise circle centred on the map
+          pl.spd = PLANE_CRUISE_SPD;
+          const ap = Math.atan2(pl.z, pl.x);
+          const tx = Math.cos(ap) * pl.arcR, tz = Math.sin(ap) * pl.arcR;
+          const d = Math.hypot(tx - pl.x, tz - pl.z);
+          pl.hdg = this.steerHdg(pl.hdg, Math.atan2(tz - pl.z, tx - pl.x), PLANE_TURN_AIR * dt);
+          pl.x += Math.cos(pl.hdg) * pl.spd * dt;
+          pl.z += Math.sin(pl.hdg) * pl.spd * dt;
+          if (d < 10) {
+            pl.mode = "cruise";
+            pl.arcA = ap;
+            // pick the arc direction whose tangent needs the smaller turn
+            const dhPos = Math.abs(((ap + Math.PI / 2 - pl.hdg + Math.PI) % TAU + TAU) % TAU - Math.PI);
+            const dhNeg = Math.abs(((ap - Math.PI / 2 - pl.hdg + Math.PI) % TAU + TAU) % TAU - Math.PI);
+            pl.arcDir = dhPos <= dhNeg ? 1 : -1;
+            pl.arcLeft = Math.PI * (2.4 + this.rnd() * 2.2); // ~1.2–2.3 laps
+          }
+          break;
+        }
+        case "cruise": {
+          const w = (pl.spd / pl.arcR) * dt;
+          pl.arcA += pl.arcDir * w;
+          pl.arcLeft -= w;
+          pl.x = Math.cos(pl.arcA) * pl.arcR;
+          pl.z = Math.sin(pl.arcA) * pl.arcR;
+          pl.hdg = pl.arcA + pl.arcDir * (Math.PI / 2);
+          if (pl.arcLeft <= 0) {
+            pl.mode = "joinFinal";
+            pl.wx = AIRPORT.rx0 - 120; pl.wz = AIRPORT.rz; pl.walt = 30;
+          }
+          break;
+        }
+        case "joinFinal": {
+          pl.spd = PLANE_APPR_SPD;
+          const d = Math.hypot(pl.wx - pl.x, pl.wz - pl.z);
+          pl.alt += clamp(pl.walt - pl.alt, -12 * dt, 8 * dt);
+          if (d < 16) {
+            pl.mode = "final";
+            pl.wx = AIRPORT.rx0 + 34; pl.wz = AIRPORT.rz; pl.walt = 0;
+          } else {
+            pl.hdg = this.steerHdg(pl.hdg, Math.atan2(pl.wz - pl.z, pl.wx - pl.x), PLANE_TURN_AIR * dt);
+            pl.x += Math.cos(pl.hdg) * pl.spd * dt;
+            pl.z += Math.sin(pl.hdg) * pl.spd * dt;
+          }
+          break;
+        }
+        case "final": {
+          const d = Math.hypot(pl.wx - pl.x, pl.wz - pl.z);
+          pl.hdg = this.steerHdg(pl.hdg, Math.atan2(pl.wz - pl.z, pl.wx - pl.x), PLANE_TURN_AIR * 0.8 * dt);
+          pl.x += Math.cos(pl.hdg) * pl.spd * dt;
+          pl.z += Math.sin(pl.hdg) * pl.spd * dt;
+          // hold altitude until over the runway fence, then flare down onto the tarmac
+          if (pl.x > AIRPORT.rx0 - 40) pl.alt = Math.max(0, pl.alt - 11 * dt);
+          if (pl.alt <= 0.05) {
+            pl.mode = "rollout"; pl.t = 0; pl.alt = 0;
+          }
+          break;
+        }
+        case "rollout": {
+          pl.spd = Math.max(PLANE_TAXI_SPD, pl.spd - 8 * dt);
+          pl.x += Math.cos(pl.hdg) * pl.spd * dt;
+          pl.z += Math.sin(pl.hdg) * pl.spd * dt;
+          if (pl.spd <= PLANE_TAXI_SPD + 0.1 || pl.x > AIRPORT.rx1 + 20) {
+            pl.mode = "taxiBack";
+            const ax = AIRPORT.terminal.x - 26 + pl.slot * 22;
+            pl.wx = ax; pl.wz = AIRPORT.apronZ; pl.walt = 0;
+          }
+          break;
+        }
+        case "taxiBack": {
+          pl.spd = PLANE_TAXI_SPD;
+          const d = Math.hypot(pl.wx - pl.x, pl.wz - pl.z);
+          if (d < 6) {
+            pl.mode = "parked";
+            pl.t = 5 + this.rnd() * 10;   // random turn-around before the next flight
+            pl.hdg = 0; pl.pitch = 0; pl.spd = 0;
+            pl.x = pl.wx; pl.z = pl.wz;
+          } else {
+            pl.hdg = this.steerHdg(pl.hdg, Math.atan2(pl.wz - pl.z, pl.wx - pl.x), PLANE_TURN_TAXI * dt);
+            pl.x += Math.cos(pl.hdg) * pl.spd * dt;
+            pl.z += Math.sin(pl.hdg) * pl.spd * dt;
+          }
+          break;
+        }
+      }
+      // visual pitch: nose up while climbing, down on approach, level elsewhere
+      const wantPitch = pl.mode === "climb" ? 0.16 : pl.mode === "final" && pl.alt > 2 ? -0.1 : pl.mode === "roll" ? 0.05 : 0;
+      pl.pitch += clamp(wantPitch - pl.pitch, -0.4 * dt, 0.4 * dt);
+    }
   }
 
   /* ---------------- lifecycle ---------------- */
@@ -1505,6 +1701,9 @@ export class GameEngine {
 
     /* --- police van fleet: transport prisoners to the nearest station --- */
     this.updateVans(dt);
+
+    /* --- bot planes: taxi → take off → cruise the city → land (pure spectacle) --- */
+    this.updatePlanes(dt);
     // vans are solid — shove the player out of their footprint (no bonk, police don't ram kids)
     // (while driving, stepDrive already bounces the CAR off vans instead)
     if (this.detainedT <= 0 && !this.drive) {

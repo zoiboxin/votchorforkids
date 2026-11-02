@@ -1,4 +1,4 @@
-import { CITY_RADIUS, FARM_RADIUS, GRAVEYARD, PARLIAMENT, POLICE_STATIONS, WORLD_SEED, stationCage, stationGate } from "./constants";
+import { AIRPORT, CITY_RADIUS, FARM_RADIUS, GRAVEYARD, PARLIAMENT, POLICE_STATIONS, WORLD_SEED, stationCage, stationGate } from "./constants";
 import { mulberry32, range } from "./rng";
 
 export interface BoxCollider { x: number; z: number; w: number; d: number } // half extents
@@ -39,11 +39,11 @@ export interface World {
 }
 
 /* ---------------- town layout (GTA-style grid + Delhi-style central vista) ---------------- */
-export const ROADS = [-202.5, -135, -67.5, 0, 67.5, 135, 202.5]; // road centre lines, both axes — 7×7 grid city
+export const ROADS = [-270, -202.5, -135, -67.5, 0, 67.5, 135, 202.5, 270]; // road centre lines, both axes — 9×9 grid city
 export const ROAD_W = 14;                          // full width
 /** The MAIN ROAD: x=0 south of the grid — wider, protest march lives here (old-game homage). */
-export const MAIN_ROAD = { x: 0, z0: -135, z1: 295, w: 24 };
-export const RING_R = 288;                         // ring highway centre radius
+export const MAIN_ROAD = { x: 0, z0: -135, z1: 368, w: 24 };
+export const RING_R = 355;                         // ring highway centre radius
 export const RING_W = 12;
 export const AVENUE = { x: 0, z0: -135, z1: -188, w: 24 }; // central vista up to parliament
 export const PARK = { x: -33.75, z: -33.75, r: 27 };
@@ -52,6 +52,12 @@ export const SCHOOL = { x: -33.75, z: 118 };
 export const HOSPITAL = { x: 101.25, z: 106 };
 export const GATE = { x: 0, z: -162 };             // India-Gate-style arch on the vista
 export const PROTEST_CAMP = { x: 0, z: 48 };       // banner arch over the main road
+
+/** True while (x,z) sits on the airport plot — runway + apron + buildings + a margin.
+ *  Trees, cottages and flowers all keep out of the flight ops area. */
+export function inAirportPlot(x: number, z: number): boolean {
+  return x > AIRPORT.rx0 - 46 && x < AIRPORT.rx1 + 26 && z > AIRPORT.rz - 34 && z < AIRPORT.terminal.z + AIRPORT.terminal.d + 12;
+}
 
 const TOWER_COLS = [0x9fc4d8, 0xb8d0da, 0xc9d2cf, 0xa8b8c4, 0xd8cfc0, 0x8fb0a8, 0xc4b8d0, 0xb0c4b8];
 const TOWER_ROOF = 0x3d434c;
@@ -185,10 +191,45 @@ export function generateWorld(seed = WORLD_SEED): World {
   /* ---- outer suburb home blocks (between the new outer road and the ring highway) ----
    * Pushed BEFORE the fringe cottages so cottages never overlap these plots. */
   const OUTER_BLOCKS = [
-    [-168.75, -245.25], [168.75, -245.25], [-168.75, 245.25], [168.75, 245.25],
-    [-245.25, -168.75], [245.25, -168.75], [-245.25, 168.75], [245.25, 168.75],
+    [-168.75, -236.25], [168.75, -236.25], [-168.75, 236.25], [168.75, 236.25],
+    [-236.25, -168.75], [236.25, -168.75], [-236.25, 168.75], [236.25, 168.75],
   ] as const;
   for (const [bx, bz] of OUTER_BLOCKS) {
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) {
+      const fz: 1 | -1 = bz < 0 ? 1 : -1;
+      push(bx + (i - 1) * 17.5, bz + (j - 0.5) * 17.5, 4.2, 3.6, range(rnd, 5.2, 6.6), 2,
+        HOME_COLS[buildings.length % HOME_COLS.length],
+        HOME_ROOFS[buildings.length % HOME_ROOFS.length], 0, fz);
+    }
+  }
+
+  /* ---- new-belt blocks (between the outer road at ±202.5 and the new ±270 roads) ----
+   * The 9×9 grid grew two roads per axis — fill the fresh belt with offices, shops
+   * and homes so the bigger city feels lived-in, not empty. */
+  const BELT_MIXED = [
+    [-236.25, -33.75], [236.25, -33.75], [-236.25, 101.25], [236.25, 101.25],
+  ] as const;
+  for (const [bx, bz] of BELT_MIXED) {
+    for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) {
+      const lx = bx + (i - 1) * 17, lz = bz + (j - 0.5) * 17.5;
+      const roll = rnd();
+      if (roll < 0.45) {
+        push(lx, lz, 6.5, 5.5, range(rnd, 13, 23), 0, OFFICE_COLS[buildings.length % OFFICE_COLS.length], TOWER_ROOF);
+      } else if (roll < 0.78) {
+        const fz: 1 | -1 = j === 0 ? -1 : 1;
+        push(lx, lz, 5.5, 4, range(rnd, 7.2, 9), 1, SHOP_COLS[buildings.length % SHOP_COLS.length],
+          TOWER_ROOF, AWN_COLS[buildings.length % AWN_COLS.length], fz);
+      } else {
+        push(lx, lz, 4.4, 3.8, range(rnd, 5.2, 6.4), 2, HOME_COLS[buildings.length % HOME_COLS.length],
+          HOME_ROOFS[buildings.length % HOME_ROOFS.length], 0, lz > bz ? 1 : -1);
+      }
+    }
+  }
+  const BELT_HOMES = [
+    [-33.75, -236.25], [33.75, 236.25], [-101.25, -236.25], [101.25, 236.25],
+    [-236.25, -236.25], [236.25, 236.25],
+  ] as const;
+  for (const [bx, bz] of BELT_HOMES) {
     for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) {
       const fz: 1 | -1 = bz < 0 ? 1 : -1;
       push(bx + (i - 1) * 17.5, bz + (j - 0.5) * 17.5, 4.2, 3.6, range(rnd, 5.2, 6.6), 2,
@@ -228,6 +269,20 @@ export function generateWorld(seed = WORLD_SEED): World {
       HOME_ROOFS[buildings.length % HOME_ROOFS.length], 0, z > 0 ? -1 : 1);
     fc++;
   }
+  /* ---- outer belt cottages (between the ±270 roads and the ring highway) ---- */
+  fc = 0;
+  while (fc < 30) {
+    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 288, 336);
+    const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (ROADS.some((o) => Math.abs(x - o) < 12 || Math.abs(z - o) < 12)) continue;
+    if (inAirportPlot(x, z)) continue;                       // keep the flight path clear
+    if (buildings.some((b) => Math.abs(x - b.x) < b.w + 6 && Math.abs(z - b.z) < b.d + 6)) continue;
+    if (POLICE_STATIONS.some((st) => Math.hypot(x - st.x, z - st.z) < 32)) continue;
+    push(x, z, 4.4, 3.8, range(rnd, 5, 6.2), 2,
+      HOME_COLS[buildings.length % HOME_COLS.length],
+      HOME_ROOFS[buildings.length % HOME_ROOFS.length], 0, z > 0 ? -1 : 1);
+    fc++;
+  }
 
   /* ---- landmarks ---- */
   push(MALL.x, MALL.z, 20, 11, 15, 3, 0xe8e4da, 0x9aa5b1);                 // MEGA MALL
@@ -256,7 +311,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   for (const k of ROADS) {
     for (const vertical of [true, false]) {
       let side = 1;
-      for (let d = -306; d <= 306; d += 48, side = -side) {
+      for (let d = -368; d <= 368; d += 48, side = -side) {
         if (ROADS.some((o) => Math.abs(d - o) < 15)) continue;
         // the wide main road (k=0 vertical) needs deeper parking + no cars past its ends
         const main = vertical && k === 0;
@@ -303,7 +358,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   ];
   const signs: Sign[] = [];
   let si = 0;
-  for (let z = -110; z <= 280; z += 24) {
+  for (let z = -110; z <= 330; z += 24) {
     for (const side of [-1, 1]) {
       if (si >= SLOGANS.length * 2) break;
       signs.push({
@@ -323,39 +378,42 @@ export function generateWorld(seed = WORLD_SEED): World {
     });
   }
 
-  /* ---- farm: barns, silos, crop fields, windmills (moved out to the wider farm ring) ---- */
-  const barns = [[348, -100], [306, 222], [-342, 76]] as const;
+  /* ---- farm: barns, silos, crop fields, windmills (moved out to the wider farm ring) ----
+   * The whole farm band slid outward when the city grew to r=405 — every farm prop
+   * scaled by ~1.22 so fields sit between the city edge and the jungle again. */
+  const barns = [[425, -122], [374, 271], [-418, 93]] as const;
   for (const [x, z] of barns) push(x, z, 8, 5.5, 7, 6, 0xc0442e, 0x7a3322);
   const silos: Silo[] = barns.map(([x, z]) => ({ x: x + 11.5, z: z + 2 }));
   const fields: Field[] = [
-    { x: 336, z: -70, rot: 0.3, crop: 0 }, { x: 356, z: -130, rot: -0.2, crop: 1 },
-    { x: 300, z: 182, rot: 0.5, crop: 0 }, { x: 334, z: 162, rot: -0.4, crop: 2 },
-    { x: -330, z: 112, rot: 0.2, crop: 1 }, { x: -302, z: -172, rot: -0.3, crop: 2 },
+    { x: 410, z: -85, rot: 0.3, crop: 0 }, { x: 434, z: -159, rot: -0.2, crop: 1 },
+    { x: 366, z: 222, rot: 0.5, crop: 0 }, { x: 407, z: 198, rot: -0.4, crop: 2 },
+    { x: -403, z: 137, rot: 0.2, crop: 1 }, { x: -368, z: -210, rot: -0.3, crop: 2 },
   ].map((f) => ({ ...f, w: 12, d: 8 }) as Field);
   const windmills = [
-    { x: 348, z: -56, rot: 0 }, { x: 330, z: 160, rot: 1.2 }, { x: -338, z: 158, rot: 2.1 },
+    { x: 425, z: -68, rot: 0 }, { x: 403, z: 195, rot: 1.2 }, { x: -412, z: 193, rot: 2.1 },
   ];
 
   /* ---- jungle forest (dense ring) + decorative outer band ---- */
   let n = 0;
   while (n < 560) {
-    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 392, 438);
+    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 472, 528);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
     addTree(x, z, range(rnd, 0.85, 1.55), rnd() < 0.75 ? 0 : 1);
     n++;
   }
   for (let i = 0; i < 46; i++) {
-    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 438, 456);
+    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 528, 542);
     addTree(Math.cos(a) * r, Math.sin(a) * r, range(rnd, 0.9, 1.5), rnd() < 0.7 ? 0 : 1);
   }
 
-  /* ---- sparse farmland trees (avoid fields & buildings) ---- */
+  /* ---- sparse farmland trees (avoid fields, buildings & the airport plot) ---- */
   n = 0;
   while (n < 80) {
-    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 336, 378);
+    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 412, 458);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
+    if (inAirportPlot(x, z)) continue;
     if (fields.some((f) => Math.abs(x - f.x) < f.w + 3 && Math.abs(z - f.z) < f.d + 3)) continue;
     if (buildings.some((b) => Math.abs(x - b.x) < b.w + 3 && Math.abs(z - b.z) < b.d + 3)) continue;
     addTree(x, z, range(rnd, 0.8, 1.3), rnd() < 0.5 ? 0 : 1);
@@ -369,6 +427,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   for (let i = 0; i < 200; i++) {
     const a = range(rnd, 0, Math.PI * 2), d = range(rnd, CITY_RADIUS + 6, FARM_RADIUS - 8);
     const x = Math.cos(a) * d, z = Math.sin(a) * d;
+    if (inAirportPlot(x, z)) continue;                         // keep the apron pretty
     if (fields.some((f) => Math.abs(x - f.x) < f.w + 1 && Math.abs(z - f.z) < f.d + 1)) continue;
     addFlower(x, z);
   }
@@ -382,6 +441,23 @@ export function generateWorld(seed = WORLD_SEED): World {
     if (b.kind !== 2) continue;
     for (let i = 0; i < 4; i++) addFlower(b.x + range(rnd, -3.4, 3.4), b.z + b.fz * (b.d + range(rnd, 1.6, 4.6)));
   }
+
+  /* ---- VoteChor International Airport (south-east, outside the ring highway) ----
+   * Terminal + control tower + hangar are solid boxes; the runway & apron stay
+   * flat and walkable so kids can race the planes. Planes live in the engine. */
+  const AP_WALL = 0xe8e6e0;      // terminal shell
+  const AP_GLASS = 0x9fc4d8;     // glass band colour (visuals drawn in WorldView)
+  const AP_ROOF = 0x5a6472;
+  push(AIRPORT.terminal.x, AIRPORT.terminal.z, AIRPORT.terminal.w, AIRPORT.terminal.d, AIRPORT.terminal.h, 0, AP_WALL, AP_ROOF);
+  // tower shaft (the glazed cab + rotating radar are drawn by <Airport> in WorldView)
+  push(AIRPORT.tower.x, AIRPORT.tower.z, AIRPORT.tower.r, AIRPORT.tower.r, AIRPORT.tower.h, 0, 0xd8d5cc, AP_ROOF);
+  // hangar
+  push(AIRPORT.hangar.x, AIRPORT.hangar.z, AIRPORT.hangar.w, AIRPORT.hangar.d, AIRPORT.hangar.h, 0, 0xb8bec8, 0x7a828e);
+  // apron floodlights + a few staff cars by the terminal
+  lamps.push({ x: AIRPORT.terminal.x - 18, z: AIRPORT.terminal.z - 14 }, { x: AIRPORT.terminal.x + 18, z: AIRPORT.terminal.z - 14 }, { x: AIRPORT.hangar.x + 16, z: AIRPORT.hangar.z - 12 });
+  for (let i = 0; i < 3; i++) cars.push({ x: AIRPORT.terminal.x - 10 + i * 9, z: AIRPORT.terminal.z + 8, rot: 0, c: (i + 5) % CAR_COLS.length, t: i % 3 });
+  // windsock pole near the runway threshold (cloth drawn by <Airport>)
+  push(AIRPORT.rx0 - 14, AIRPORT.rz - 12, 0.5, 0.5, 6.5, 0, 0xd8d5cc, AP_ROOF);
 
   /* ---- colliders ---- */
   const boxes: BoxCollider[] = buildings.map(({ x, z, w, d }) => ({ x, z, w, d }));

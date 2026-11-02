@@ -1,12 +1,25 @@
 /** VoteChor 2.0 — shared constants. Tuned for a fast, kid-friendly cartoon chase game. */
 
 export const WORLD_SEED = 1337;
-export const WALL_RADIUS = 452;
-export const CITY_RADIUS = 330;
-export const FARM_RADIUS = 385;
-export const JUNGLE_RADIUS = 455;
+export const WALL_RADIUS = 545;
+export const CITY_RADIUS = 405;
+export const FARM_RADIUS = 465;
+export const JUNGLE_RADIUS = 535;
 export const GRAVEYARD = { x: -255, z: 215, r: 45 } as const;
 export const SPAWN = { x: 0, z: 6 } as const;
+
+/* ---------- VoteChor International Airport (south-east, outside the ring highway) ----------
+   A working airport: the runway is flat & walkable, the terminal / tower / hangar are solid.
+   Bot planes taxi out, take off, circle the city and land back — all on their own.       */
+export const AIRPORT = {
+  /** runway along +x at z = rz, thresholds at rx0/rx1 (take-off & landing heading east→west) */
+  rx0: 225, rx1: 385, rz: 300, rw: 16,
+  apronZ: 324,
+  terminal: { x: 258, z: 342, w: 26, d: 10, h: 12 },
+  tower: { x: 292, z: 344, r: 3.2, h: 30 },
+  hangar: { x: 336, z: 342, w: 24, d: 14, h: 13 },
+} as const;
+export const PLANE_COUNT = 3;
 export const DAY_SECONDS = 360;
 export const GRAVITY = 22;
 
@@ -304,7 +317,7 @@ export const DELIVER_RADIUS = 4;
 export const DROP_SCATTER = 3.2;
 
 /* ---------- Police ---------- */
-export const POLICE_COUNT = 18; // more police for the bigger city
+export const POLICE_COUNT = 22; // more police for the bigger 9×9 city
 export const POLICE_SPEED = 5.9;
 export const POLICE_SPRINT = 7.6;
 export const DETECT_BASE = 13;
@@ -317,7 +330,7 @@ export const STAR_DECAY_S = 45;
 export const ESCAPE_LOST_S = 4.5;
 
 /* ---------- Civilians & rescue ---------- */
-export const CIVILIAN_COUNT = 94; // 18 police + 94 civilians = 112 bots in the bigger city
+export const CIVILIAN_COUNT = 110; // 22 police + 110 civilians = 132 bots across the bigger city
 export const RESCUE_RADIUS = 3.4;
 export const RESCUE_POINTS = 60;
 

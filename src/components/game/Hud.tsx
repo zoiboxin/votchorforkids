@@ -17,7 +17,7 @@ import { HowToPlay, SettingsDialog } from "./Panels";
 
 /* ------- shared world-map canvas painting (156px minimap + 440px big map) ------- */
 function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine, night: boolean) {
-  const K = S / 940;          // world units → px (fits the bigger 452-radius wall)
+  const K = S / 1150;         // world units → px (fits the bigger 545-radius wall)
   const U = S / 156;          // scale for the hand-tuned 156px marker sizes
   const dot = (x: number, z: number, r: number, col: string, alpha = 1) => {
     c.globalAlpha = alpha;
@@ -28,23 +28,29 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     c.globalAlpha = 1;
   };
   c.clearRect(0, 0, S, S);
-  dot(0, 0, 455 * K, "#2d5a2e");
-  dot(0, 0, 385 * K, "#7a8f3f");
-  dot(0, 0, 330 * K, "#8d8a80");
+  dot(0, 0, 535 * K, "#2d5a2e");
+  dot(0, 0, 465 * K, "#7a8f3f");
+  dot(0, 0, 405 * K, "#8d8a80");
   dot(-255, 215, 45 * K, "#3a3a46");
+  // VoteChor International — runway strip + apron block (south-east)
+  c.fillStyle = "#54565e";
+  c.fillRect(S / 2 + 215 * K, S / 2 + (300 - 8) * K, 170 * K, 16 * K);
+  c.fillStyle = "#8d8d94";
+  c.fillRect(S / 2 + 228 * K, S / 2 + 312 * K, 92 * K, 24 * K);
   if (S > 300) {
     // big map only: zone rings, graveyard fence and district labels
     c.strokeStyle = "rgba(255,255,255,0.22)";
     c.lineWidth = 1;
-    for (const r of [330, 385, 455]) { c.beginPath(); c.arc(S / 2, S / 2, r * K, 0, 6.3); c.stroke(); }
+    for (const r of [405, 465, 535]) { c.beginPath(); c.arc(S / 2, S / 2, r * K, 0, 6.3); c.stroke(); }
     c.beginPath(); c.arc(S / 2 - 255 * K, S / 2 + 215 * K, 45 * K, 0, 6.3); c.stroke();
     c.fillStyle = "rgba(255,255,255,0.55)";
     c.font = `700 ${Math.round(7 * U)}px ui-sans-serif, system-ui, sans-serif`;
     c.textAlign = "center";
-    c.fillText("CITY", S / 2, S / 2 + 120 * K);
-    c.fillText("FARMLAND", S / 2, S / 2 + 357 * K);
-    c.fillText("JUNGLE", S / 2 - 300 * K, S / 2 - 285 * K);
+    c.fillText("CITY", S / 2, S / 2 + 150 * K);
+    c.fillText("FARMLAND", S / 2, S / 2 + 435 * K);
+    c.fillText("JUNGLE", S / 2 - 370 * K, S / 2 - 350 * K);
     c.fillText("GRAVEYARD", S / 2 - 255 * K, S / 2 + 265 * K);
+    c.fillText("✈ AIRPORT", S / 2 + 295 * K, S / 2 + 345 * K);
   }
   // parliament
   c.fillStyle = "#e0483a";
@@ -88,6 +94,19 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
   // farm & jungle animals — little brown specks so the world feels alive on the map
   for (const an of engine.animals) dot(an.x, an.z, 1.3 * U, "#a97b4f", 0.8);
   if (night) for (const zb of engine.zombies) dot(zb.x, zb.z, 2.4 * U, "#c084fc");
+  // bot planes — sky-blue arrow heads so the random flights read on the map
+  for (const pl of engine.planes) {
+    const px = S / 2 + pl.x * K, pz = S / 2 + pl.z * K;
+    c.save();
+    c.translate(px, pz);
+    c.rotate(-pl.hdg + Math.PI / 2); // heading 0 = +x (map-east)
+    c.beginPath();
+    c.moveTo(0, -3.4 * U); c.lineTo(2.2 * U, 2.4 * U); c.lineTo(-2.2 * U, 2.4 * U);
+    c.closePath();
+    c.fillStyle = pl.alt > 2 ? "#7dd3fc" : "#94a3b8";
+    c.fill();
+    c.restore();
+  }
   /* player: white direction arrow (amber outline) — rotation −yaw maps camera
      forward (−sin yaw, −cos yaw) onto the fixed-north map (up = −z) */
   c.save();

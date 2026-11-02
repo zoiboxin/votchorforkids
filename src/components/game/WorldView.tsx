@@ -4,7 +4,7 @@ import { useLayoutEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  BALLOT, CITY_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, PARLIAMENT, POLICE_STATIONS, stationCage, stationGate,
+  AIRPORT, BALLOT, CITY_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, PARLIAMENT, POLICE_STATIONS, stationCage, stationGate,
 } from "@/lib/game/constants";
 import {
   AVENUE, GATE, generateWorld, HOSPITAL, MALL, MAIN_ROAD, PARK, ROAD_W, ROADS, RING_R, RING_W, SCHOOL, PROTEST_CAMP,
@@ -1080,8 +1080,8 @@ function ridgeMul(p: Peak, a: number): number {
 const profile = (t: number, k: number) =>
   Math.pow(1 - t, k) * (1 + 0.14 * Math.pow(Math.sin(Math.min(1, t) * Math.PI), 2));
 
-/** Peaks must keep their lowest ring outside this radius — the player wall is at 452. */
-const MOUNTAIN_CLEAR_R = 462;
+/** Peaks must keep their lowest ring outside this radius — the player wall is at 545. */
+const MOUNTAIN_CLEAR_R = 556;
 
 /** Smallest horizontal distance to origin reached by a peak's base ring. */
 function baseMinRadius(p: Peak): number {
@@ -1771,6 +1771,187 @@ function Env({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
   );
 }
 
+/* ---------------- VoteChor International Airport ----------------
+ * Runway + taxiway + apron slabs with painted markings, a glass-fronted
+ * terminal, a control tower with a spinning radar and a windsock. The solid
+ * terminal/tower/hangar shells are worldgen buildings — this paints the rest. */
+function Airport() {
+  const radar = useRef<THREE.Mesh>(null!);
+  const sock = useRef<THREE.Group>(null!);
+  useFrame((s, dt) => {
+    if (radar.current) radar.current.rotation.y += dt * 1.4;   // the tower radar sweep
+    if (sock.current) sock.current.rotation.y = Math.sin(s.clock.elapsedTime * 0.8) * 0.22; // breeze
+  });
+  const rwLen = AIRPORT.rx1 - AIRPORT.rx0 + 36;
+  const rwCx = (AIRPORT.rx0 + AIRPORT.rx1) / 2;
+  const dashes = useMemo(() => {
+    const arr: number[] = [];
+    for (let i = 0; i < 12; i++) arr.push(AIRPORT.rx0 + 12 + i * ((AIRPORT.rx1 - AIRPORT.rx0 - 24) / 11));
+    return arr;
+  }, []);
+  const sign = useMemo(() => makeSignTexture("VOTECHOR INTL ✈", "#1d2a4a", "#ffd166"), []);
+  return (
+    <group>
+      {/* runway slab + markings */}
+      <mesh rotation-x={-Math.PI / 2} position={[rwCx, 0.045, AIRPORT.rz]} receiveShadow>
+        <planeGeometry args={[rwLen, AIRPORT.rw]} />
+        <meshLambertMaterial color="#3f4046" />
+      </mesh>
+      {dashes.map((x, i) => (
+        <mesh key={i} rotation-x={-Math.PI / 2} position={[x, 0.05, AIRPORT.rz]}>
+          <planeGeometry args={[7, 0.7]} />
+          <meshBasicMaterial color="#f5f5f0" />
+        </mesh>
+      ))}
+      {/* threshold stripes both ends */}
+      {[-1, 1].map((e) =>
+        [-5.4, -3.24, -1.08, 1.08, 3.24, 5.4].map((z) => (
+          <mesh key={`${e}-${z}`} rotation-x={-Math.PI / 2} position={[AIRPORT.rx0 + (e < 0 ? 6 : AIRPORT.rx1 - AIRPORT.rx0 - 6) + (e < 0 ? 0 : 0), 0.052, AIRPORT.rz + z]}>
+            <planeGeometry args={[5, 1.15]} />
+            <meshBasicMaterial color="#f5f5f0" />
+          </mesh>
+        )),
+      )}
+      {/* edge lines */}
+      {[-1, 1].map((e) => (
+        <mesh key={e} rotation-x={-Math.PI / 2} position={[rwCx, 0.048, AIRPORT.rz + e * (AIRPORT.rw / 2 - 0.7)]}>
+          <planeGeometry args={[rwLen - 10, 0.55]} />
+          <meshBasicMaterial color="#e8e8e0" />
+        </mesh>
+      ))}
+      {/* apron + taxiway */}
+      <mesh rotation-x={-Math.PI / 2} position={[AIRPORT.terminal.x + 2, 0.04, (AIRPORT.rz + AIRPORT.terminal.z) / 2 + 1]} receiveShadow>
+        <planeGeometry args={[92, AIRPORT.terminal.z - AIRPORT.rz - 8]} />
+        <meshLambertMaterial color="#8d8d94" />
+      </mesh>
+      <mesh rotation-x={-Math.PI / 2} position={[AIRPORT.rx0 - 10, 0.042, AIRPORT.rz + 8]}>
+        <planeGeometry args={[22, 8]} />
+        <meshLambertMaterial color="#7c7c84" />
+      </mesh>
+      {/* terminal glass front + doors + sign */}
+      <mesh position={[AIRPORT.terminal.x, 5.2, AIRPORT.terminal.z - AIRPORT.terminal.d - 0.06]}>
+        <boxGeometry args={[AIRPORT.terminal.w * 2 - 3, 6.4, 0.24]} />
+        <meshLambertMaterial color="#9fc4d8" transparent opacity={0.85} />
+      </mesh>
+      <mesh position={[AIRPORT.terminal.x, 1.6, AIRPORT.terminal.z - AIRPORT.terminal.d - 0.1]}>
+        <boxGeometry args={[4.4, 3.2, 0.3]} />
+        <meshLambertMaterial color="#31445c" />
+      </mesh>
+      <mesh position={[AIRPORT.terminal.x, AIRPORT.terminal.h + 1.1, AIRPORT.terminal.z - AIRPORT.terminal.d - 0.3]}
+        rotation={[0, Math.PI, 0]}>
+        <planeGeometry args={[16, 2.4]} />
+        <meshBasicMaterial map={sign} toneMapped={false} />
+      </mesh>
+      {/* control tower cab + spinning radar (shaft is a worldgen building) */}
+      <mesh position={[AIRPORT.tower.x, AIRPORT.tower.h + 1.6, AIRPORT.tower.z]}>
+        <boxGeometry args={[7.4, 3.4, 7.4]} />
+        <meshLambertMaterial color="#9fc4d8" transparent opacity={0.88} />
+      </mesh>
+      <mesh position={[AIRPORT.tower.x, AIRPORT.tower.h + 3.6, AIRPORT.tower.z]}>
+        <cylinderGeometry args={[4.4, 4.9, 0.7, 4]} />
+        <meshLambertMaterial color="#5a6472" />
+      </mesh>
+      <mesh ref={radar} position={[AIRPORT.tower.x, AIRPORT.tower.h + 4.6, AIRPORT.tower.z]}>
+        <boxGeometry args={[7.4, 0.24, 0.6]} />
+        <meshLambertMaterial color="#f2f4f0" />
+      </mesh>
+      {/* hangar door */}
+      <mesh position={[AIRPORT.hangar.x, 4.6, AIRPORT.hangar.z - AIRPORT.hangar.d - 0.08]}>
+        <boxGeometry args={[AIRPORT.hangar.w * 2 - 4, 9.2, 0.3]} />
+        <meshLambertMaterial color="#7a828e" />
+      </mesh>
+      {/* windsock: orange cone that sways with the breeze */}
+      <group ref={sock} position={[AIRPORT.rx0 - 14, 6.4, AIRPORT.rz - 12]}>
+        <mesh rotation-z={Math.PI / 2} position={[1.6, 0, 0]}>
+          <coneGeometry args={[0.65, 3.2, 8, 1, true]} />
+          <meshLambertMaterial color="#ff7f2a" side={THREE.DoubleSide} />
+        </mesh>
+      </group>
+    </group>
+  );}
+
+/* ---------------- bot planes ----------------
+ * Cartoon prop airliners driven by the engine's PlaneState machines — they taxi
+ * out, take off, circle the whole city, land and park again. */
+function PlaneRig({ color }: { color: number }) {
+  return (
+    <group>
+      {/* fuselage along +x */}
+      <mesh rotation-z={Math.PI / 2} castShadow>
+        <capsuleGeometry args={[1.05, 5.6, 4, 10]} />
+        <meshLambertMaterial color={color} />
+      </mesh>
+      <mesh position={[-4.6, 0, 0]} rotation-z={-Math.PI / 2}>
+        <coneGeometry args={[1.02, 2.4, 10]} />
+        <meshLambertMaterial color={color} />
+      </mesh>
+      {/* cockpit glass */}
+      <mesh position={[3.1, 0.55, 0]} rotation-z={-Math.PI / 2.6}>
+        <boxGeometry args={[1.3, 0.62, 1.5]} />
+        <meshLambertMaterial color="#22303f" />
+      </mesh>
+      {/* belly stripe */}
+      <mesh position={[0, -0.86, 0]}>
+        <boxGeometry args={[7.4, 0.34, 1.7]} />
+        <meshLambertMaterial color="#f5f2e8" />
+      </mesh>
+      {/* wings + tailplane */}
+      <mesh position={[0.4, -0.15, 0]} castShadow>
+        <boxGeometry args={[2.6, 0.24, 12.5]} />
+        <meshLambertMaterial color="#f5f2e8" />
+      </mesh>
+      <mesh position={[-4.9, 0.4, 0]}>
+        <boxGeometry args={[1.5, 0.18, 5]} />
+        <meshLambertMaterial color="#f5f2e8" />
+      </mesh>
+      {/* tail fin */}
+      <mesh position={[-4.9, 1.7, 0]} castShadow>
+        <boxGeometry args={[1.7, 2.9, 0.26]} />
+        <meshLambertMaterial color={color} />
+      </mesh>
+      {/* gear */}
+      {[[-1.7, -1.35, 0], [1.4, -1.35, -1.5], [1.4, -1.35, 1.5]].map((g, i) => (
+        <mesh key={i} position={[g[0], g[1], g[2] as number]}>
+          <cylinderGeometry args={[0.38, 0.38, 0.5, 8]} />
+          <meshLambertMaterial color="#26262c" />
+        </mesh>
+      ))}
+    </group>
+  );}
+
+function Planes({ engine }: { engine: GameEngine }) {
+  const rigs = useMemo(
+    () => engine.planes.map(() => ({ group: { current: null as THREE.Group | null }, prop: { current: null as THREE.Mesh | null } })),
+    [engine],
+  );
+  useFrame(() => {
+    engine.planes.forEach((pl, i) => {
+      const g = rigs[i]?.group.current;
+      if (!g) return;
+      g.position.set(pl.x, pl.alt + 1.85 + Math.sin(pl.propT * 0.5) * 0.06, pl.z);
+      g.rotation.y = -pl.hdg;
+      g.rotation.z = pl.pitch;
+      const p = rigs[i]?.prop.current;
+      if (p) p.rotation.x = pl.propT;
+    });
+  });
+  return (
+    <>
+      {engine.planes.map((pl, i) => (
+        <group key={pl.id} ref={(o) => { rigs[i].group.current = o; }}>
+          <PlaneRig color={PLANE_LIVERY[pl.c % PLANE_LIVERY.length]} />
+          {/* spinning propeller */}
+          <mesh ref={(o) => { rigs[i].prop.current = o; }} position={[5.75, 0, 0]}>
+            <boxGeometry args={[0.18, 5.4, 0.5]} />
+            <meshLambertMaterial color="#2c2c33" />
+          </mesh>
+        </group>
+      ))}
+    </>
+  );
+}
+const PLANE_LIVERY = [0xe0483a, 0x2a9d8f, 0xf0c040, 0x4aa3df, 0x8a5aa8];
+
 export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObject<number>; engine: GameEngine }) {
   return (
     <>
@@ -1781,12 +1962,14 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
       <Ring a={FARM_RADIUS} b={JUNGLE_RADIUS} color="#2d7a3a" y={0.03} />
       <Disc r={GRAVEYARD.r} color="#3a3a46" y={0.06} x={GRAVEYARD.x} z={GRAVEYARD.z} />
       <Roads />
+      <Airport />
       <Buildings />
       <PoliceStations />
       <Windows clockRef={clockRef} />
       <Cars engine={engine} />
       <RingTraffic engine={engine} />
       <PoliceVans engine={engine} />
+      <Planes engine={engine} />
       <Lamps clockRef={clockRef} />
       <Park />
       <Benches />
