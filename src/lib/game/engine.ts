@@ -75,6 +75,8 @@ export interface HudData {
   arrest: ArrestState; station: string;
   /** active rare super power — HUD shows a countdown badge (null = none) */
   power: { kind: PowerKind; name: string; emoji: string; color: string; left: number; max: number; tip: string } | null;
+  /** collected-but-not-yet-used power gem waiting in the ✨ pocket (null = empty) */
+  pocketPower: { def: number; name: string; emoji: string; color: string; tip: string } | null;
   /** animal the player currently looks like (morph power) */
   morphKind: AnimalKind | null;
   /** true when Blink is charged and Q will teleport right now */
@@ -137,6 +139,7 @@ export class GameEngine {
   lastGain: { hp: number; stamina: number; at: number } = { hp: 0, stamina: 0, at: 0 }; // bumped on every eat
   private exhaustedAnnounced = false;
   private pocketFullT = 0;  // throttles the "pockets full" toast
+  private powerFullT = 0;   // throttles the "power pocket full" toast
   clock = 0.3;
   stars = 0; starTimer = 0;
   chased = false; // true while (or just after) any cop is hunting the player
@@ -155,6 +158,8 @@ export class GameEngine {
   /* --- rare super powers --- */
   activePower: PowerKind | null = null;
   powerT = 0; powerMax = 1;      // seconds left / total of the active power
+  /** a collected gem sits in the ✨ pocket until the player presses G — nothing is auto-fired */
+  powerPocket: number | null = null;
   morphKind: AnimalKind | null = null; // current animal look while morph lasts
   blinkCd = 0;                   // blink teleport cooldown
 
@@ -360,9 +365,9 @@ export class GameEngine {
     this.look = look;
     this.player = newBody(SPAWN.x, SPAWN.z);
     this.hp = 100; this.stamina = 100; this.stars = 0; this.starTimer = 0; this.chased = false;
-    this.inv = []; this.hurtT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0;
+    this.inv = []; this.hurtT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0; this.powerFullT = 0;
     this.flipT = 0; this.squashT = 0; this.faintT = 0; this.carHitCd = 0;
-    this.activePower = null; this.powerT = 0; this.morphKind = null; this.blinkCd = 0;
+    this.activePower = null; this.powerT = 0; this.powerPocket = null; this.morphKind = null; this.blinkCd = 0;
     for (const pw of this.powers) { pw.active = true; pw.respawn = 0; }
     this.carriedVotes = []; this.delivered = 0; this.points = 0; this.rescues = 0; this.caughtCount = 0;
     this.detainedT = 0; this.invulnT = 8; this.elapsed = 0; this.won = false; this.clock = 0.3;
@@ -724,13 +729,23 @@ export class GameEngine {
 
   /* ---------------- rare super powers ---------------- */
 
-  /** Blink Teleport: poof ~15u forward. Only while the blink gem's power lasts. */
+  /** Blink Teleport: poof ~15u in the direction the CAMERA looks. Only while the blink power lasts. */
   tryBlink() {
-    if (!this.running || this.activePower !== "blink") return;
+    if (!this.running) return;
+    if (this.activePower !== "blink") {
+      // helpful nudge when the gem is still sitting in the pocket
+      if (this.powerPocket !== null && POWERS[this.powerPocket].kind === "blink" && this.powerFullT <= 0) {
+        this.powerFullT = 2.5;
+        this.toast("🌀 Blink is pocketed — press G (or tap the ✨ slot) to unleash it first!", "info");
+      }
+      return;
+    }
     if (this.blinkCd > 0 || this.detainedT > 0 || this.faintT > 0) return;
     this.blinkCd = BLINK_CD;
     const p = this.player;
-    const dx = Math.sin(p.face), dz = Math.cos(p.face);
+    // camera convention (see stepBody/WorldView): forward = (-sin yaw, -cos yaw) —
+    // blink must go where you LOOK, not where you last walked (that was the old bug)
+    const dx = -Math.sin(this.input.yaw), dz = -Math.cos(this.input.yaw);
     // probe ahead in small hops from the FROZEN start point — buildings stop the
     // blink at the last clear hop instead of tunnelling through (or overshooting)
     const sx = p.x, sz = p.z;
@@ -746,12 +761,31 @@ export class GameEngine {
     const rr = Math.hypot(p.x, p.z);
     if (rr > WALL_RADIUS) { p.x *= WALL_RADIUS / rr; p.z *= WALL_RADIUS / rr; }
     p.vy = 2.4; // tiny magic hop on arrival
+    p.face = Math.atan2(dx, dz); // turn the body to face the blink direction
     sfx.blink();
     this.fxQueue.push({ type: "confetti", x: p.x, y: 1.1, z: p.z, hue: 0.72 });
     this.toast("🌀 Poof! Teleported!", "good");
   }
 
-  /** Collect a rare gem — the new power replaces whatever was active (one at a time). */
+  /** Unleash the pocketed power gem — the player chooses the moment (press G / tap the ✨ slot). */
+  usePower() {
+    if (!this.running || this.powerPocket === null) return;
+    if (this.detainedT > 0 || this.faintT > 0) return;
+    const def = this.powerPocket;
+    this.powerPocket = null;
+    this.activatePower(def, this.player.x, this.player.z);
+  }
+
+  /** Pocket a collected gem WITHOUT activating it — the player fires it with G when the moment is right. */
+  private storePower(def: number, x: number, z: number) {
+    this.powerPocket = def; // the gem waits here until usePower() unleashes it
+    const d = POWERS[def];
+    sfx.power();
+    this.fxQueue.push({ type: "confetti", x, y: 1.3, z, hue: Math.random() });
+    this.toast(`${d.emoji} ${d.name} collected! Stored in your ✨ pocket — press G (or tap it) when you want it.`, "good");
+  }
+
+  /** Activate a collected gem — called by usePower() when the PLAYER picks the moment. */
   private activatePower(def: number, x: number, z: number) {
     const d = POWERS[def];
     this.activePower = d.kind;
@@ -805,6 +839,7 @@ export class GameEngine {
 
     /* --- player --- */
     this.pocketFullT = Math.max(0, this.pocketFullT - dt);
+    this.powerFullT = Math.max(0, this.powerFullT - dt);
     this.hurtT = Math.max(0, this.hurtT - dt);
     this.flipT = Math.max(0, this.flipT - dt);
     this.squashT = Math.max(0, this.squashT - dt);
@@ -849,6 +884,7 @@ export class GameEngine {
       this.invulnT = Math.max(0, this.invulnT - dt);
       const prevY = p.y;
       const prevJumps = p.jumps;
+      const staminaBefore = this.stamina;
       p.stamina = this.stamina; // engine stamina is the single source of truth
       // while dizzy from a car bonk the legs don't answer — momentum carries the tumble
       const faint = this.faintT > 0;
@@ -862,12 +898,15 @@ export class GameEngine {
           jumpScale: this.activePower === "jump" ? JUMP_MULT : 1,
         });
       this.stamina = p.stamina; // sprinting drains / walking regenerates (see stepBody)
+      // ⚡ Sonic legs don't tire — sprint costs nothing while Sonic Dash lasts
+      if (this.activePower === "sonic" && this.stamina < staminaBefore) this.stamina = staminaBefore;
       if (p.jumps === 1 && prevJumps === 0) {
         sfx.jump();
-        this.stamina = Math.max(0, this.stamina - JUMP_COST);
+        // 🦘 kangaroo legs jump for free while the power lasts
+        if (this.activePower !== "jump") this.stamina = Math.max(0, this.stamina - JUMP_COST);
       } else if (p.jumps === 2 && prevJumps === 1) {
         sfx.jump2();
-        this.stamina = Math.max(0, this.stamina - JUMP2_COST);
+        if (this.activePower !== "jump") this.stamina = Math.max(0, this.stamina - JUMP2_COST);
         this.flipT = FLIP_S;
       }
       if (prevY > 0 && p.y === 0) { sfx.land(); this.squashT = LAND_SQUASH_S; }
@@ -1021,9 +1060,16 @@ export class GameEngine {
           continue;
         }
         if (dist2(p.x, p.z, pw.x, pw.z) < POWER_PICKUP_R * POWER_PICKUP_R) {
-          pw.active = false;
-          pw.respawn = POWER_RESPAWN_S;
-          this.activatePower(pw.def, pw.x, pw.z);
+          // gems are POCKETED, never auto-fired — the player unleashes with G when ready
+          if (this.powerPocket === null) {
+            pw.active = false;
+            pw.respawn = POWER_RESPAWN_S;
+            this.storePower(pw.def, pw.x, pw.z);
+          } else if (this.powerFullT <= 0) {
+            this.powerFullT = 6;
+            const held = POWERS[this.powerPocket];
+            this.toast(`✨ Power pocket full (${held.emoji} ${held.name}) — press G to unleash it first!`, "info");
+          }
         }
       }
     }
@@ -1277,6 +1323,12 @@ export class GameEngine {
         ? (() => {
             const d = POWERS.find((pd) => pd.kind === this.activePower)!;
             return { kind: d.kind, name: d.name, emoji: d.emoji, color: d.color, left: Math.max(0, this.powerT), max: this.powerMax, tip: d.tip };
+          })()
+        : null,
+      pocketPower: this.powerPocket !== null
+        ? (() => {
+            const d = POWERS[this.powerPocket!];
+            return { def: this.powerPocket!, name: d.name, emoji: d.emoji, color: d.color, tip: d.tip };
           })()
         : null,
       morphKind: this.morphKind,

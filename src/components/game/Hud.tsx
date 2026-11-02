@@ -75,8 +75,24 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     dot(cop.x, cop.z, (chasing ? 3 : 2) * U, chasing ? "#ff4d4d" : "#6aa0ff");
   }
   for (const cv of engine.civs) if (cv.mode === "detained") dot(cv.x, cv.z, 3 * U, "#ff8fa3");
+  // farm & jungle animals — little brown specks so the world feels alive on the map
+  for (const an of engine.animals) dot(an.x, an.z, 1.3 * U, "#a97b4f", 0.8);
   if (night) for (const zb of engine.zombies) dot(zb.x, zb.z, 2.4 * U, "#c084fc");
-  dot(engine.player.x, engine.player.z, 3.6 * U, "#ffffff");
+  /* player: white direction arrow (amber outline) — rotation −yaw maps camera
+     forward (−sin yaw, −cos yaw) onto the fixed-north map (up = −z) */
+  c.save();
+  c.translate(S / 2 + engine.player.x * K, S / 2 + engine.player.z * K);
+  c.rotate(-engine.input.yaw);
+  const pr = 4.6 * U;
+  c.beginPath();
+  c.moveTo(0, -pr); c.lineTo(pr * 0.78, pr * 0.82); c.lineTo(0, pr * 0.45); c.lineTo(-pr * 0.78, pr * 0.82);
+  c.closePath();
+  c.fillStyle = "#ffffff";
+  c.strokeStyle = "#f59e0b";
+  c.lineWidth = Math.max(1, 0.9 * U);
+  c.fill();
+  c.stroke();
+  c.restore();
 }
 
 /* ----------------------------- minimap ----------------------------- */
@@ -104,8 +120,8 @@ function Minimap({ engine, onOpen }: { engine: GameEngine; onOpen: () => void })
 /* ----------------------------- big map overlay ----------------------------- */
 const BIG_MAP_S = 440;
 const MAP_LEGEND: [string, string][] = [
-  ["#ffffff", "You"], ["#f7c948", "Votes"], ["#ffd166", "Food"], ["#c084fc", "Power gems (rare!)"],
-  ["#6aa0ff", "Police"], ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ["#c084fc", "Zombies · night"], ["#1d2a4a", "Police stn"],
+  ["#ffffff", "You (arrow = facing)"], ["#f7c948", "Votes"], ["#ffd166", "Food"], ["#c084fc", "Power gems (rare!)"],
+  ["#6aa0ff", "Police"], ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ["#a97b4f", "Animals"], ["#c084fc", "Zombies · night"], ["#1d2a4a", "Police stn"],
 ];
 function BigMap({ engine, onClose }: { engine: GameEngine; onClose: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -360,6 +376,40 @@ function PowerBadge() {
   );
 }
 
+/* ------------- pocketed power slot: shows the collected gem, tap or press G to unleash ------------- */
+function PowerSlot({ engine }: { engine: GameEngine }) {
+  const pocket = useGame((s) => s.hud.pocketPower);
+  if (!pocket) return null;
+  return (
+    <motion.button
+      data-ui
+      type="button"
+      initial={{ opacity: 0, scale: 0.5, y: 10 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.5 }}
+      whileTap={{ scale: 0.88 }}
+      onClick={() => engine.usePower()}
+      title={`${pocket.name} — press G to unleash it when you're ready`}
+      aria-label={`Unleash stored ${pocket.name}`}
+      className="pointer-events-auto relative flex h-12 w-12 items-center justify-center rounded-xl border-2 bg-black/45 shadow-lg backdrop-blur-md sm:h-14 sm:w-14"
+      style={{ borderColor: pocket.color, boxShadow: `0 0 12px ${pocket.color}66` }}
+    >
+      <motion.span
+        aria-hidden
+        animate={{ scale: [1, 1.14, 1], rotate: [0, -7, 7, 0] }}
+        transition={{ repeat: Infinity, duration: 1.6 }}
+        className="text-2xl leading-none sm:text-3xl"
+      >{pocket.emoji}</motion.span>
+      <span
+        className="absolute -bottom-1 -left-1 flex h-4 w-4 items-center justify-center rounded text-[9px] font-black text-black"
+        style={{ background: pocket.color }}
+      >
+        G
+      </span>
+    </motion.button>
+  );
+}
+
 /* ------------- danger compass: arrow toward nearest chasing cop ------------- */
 function DangerCompass({ engine }: { engine: GameEngine }) {
   const hud = useGame((s) => s.hud);
@@ -372,8 +422,11 @@ function DangerCompass({ engine }: { engine: GameEngine }) {
     if (!best || d < best.d) best = { d, a: Math.atan2(dx, dz) };
   }
   if (!best) return null;
-  // 0° = straight ahead of the camera; positive = clockwise (to the right)
-  const deg = ((best.a - engine.input.yaw) * 180) / Math.PI;
+  // 0° = straight ahead of the camera; positive = clockwise (to the right).
+  // camera-forward is (−sin yaw, −cos yaw) whose atan2(x,z) bearing is yaw+π,
+  // so the correct screen rotation is π − (a − yaw) — the old formula was
+  // vertically mirrored (arrow pointed AWAY from cops ahead of you).
+  const deg = ((Math.PI - (best.a - engine.input.yaw)) * 180) / Math.PI;
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.6 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.6 }}
@@ -472,6 +525,7 @@ function MobileButtons({ engine }: { engine: GameEngine }) {
   const [sprint, setSprint] = useState(false);
   const blinkActive = useGame((s) => s.hud.power?.kind === "blink");
   const blinkReady = useGame((s) => s.hud.blinkReady);
+  const pocket = useGame((s) => s.hud.pocketPower);
   return (
     <div data-ui className="flex flex-col items-end gap-3">
       <button
@@ -494,6 +548,14 @@ function MobileButtons({ engine }: { engine: GameEngine }) {
           className={`h-16 w-16 rounded-full border-2 border-white/50 text-2xl shadow-lg active:scale-95 ${blinkReady ? "bg-purple-400/90 text-purple-950" : "bg-white/20 text-white/50"}`}
           onTouchStart={(e) => { e.preventDefault(); engine.tryBlink(); }}
         >🌀</button>
+      )}
+      {pocket && (
+        <button
+          aria-label={`Unleash stored ${pocket.name}`}
+          className="h-16 w-16 rounded-full border-2 text-3xl shadow-lg active:scale-95"
+          style={{ borderColor: pocket.color, background: "rgba(0,0,0,0.45)", boxShadow: `0 0 12px ${pocket.color}66` }}
+          onTouchStart={(e) => { e.preventDefault(); engine.usePower(); }}
+        >{pocket.emoji}</button>
       )}
       <button
         aria-label="Toggle sprint"
@@ -802,8 +864,8 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
           <div className="max-w-[220px] rounded-xl bg-black/40 px-3 py-2 text-xs leading-relaxed text-white/90 backdrop-blur-md">
             <b className="text-yellow-300">Goal:</b> snatch 🗳 votes, deliver them at the Parliament ballot box. Rescue pink-bubbled friends with <b>E</b>. Dodge the police — sprint with <b>Shift</b>!
             <div className="mt-1 text-amber-200/90">⚡ Sprinting drains energy · run over 🥭☕🩹 food to pocket it, then tap the bag (or press <b>1-8</b>) to eat: heals ❤ and refills ⚡.</div>
-            <div className="mt-1 text-fuchsia-200/95">✨ <b>Rare super powers!</b> Find glowing gems in the jungle ( coloured dots on the map ): ⚡ Sonic speed · 🦘 mega jump · 🌀 Blink — press <b>Q</b> to teleport · 🐒 Animal disguise — police can&apos;t catch you · 🧲 Magnet pulls food to you!</div>
-            {!touch && <div className="mt-1 text-white/70">WASD move · mouse steers the camera (click = lock cursor) · Shift sprint · Space jump ×2 (flip!) · E rescue · Q blink · 1-8 eat · right-click drop · M map · Esc / P pause</div>}
+            <div className="mt-1 text-fuchsia-200/95">✨ <b>Rare super powers!</b> Find glowing gems in the jungle ( coloured dots on the map ): collecting <b>stores</b> the power — press <b>G</b> (or tap the ✨ slot) to unleash it when YOU choose! ⚡ Sonic speed · 🦘 mega jump · 🌀 Blink — press <b>Q</b> to teleport where you look · 🐒 Animal disguise — police can&apos;t catch you · 🧲 Magnet pulls food to you!</div>
+            {!touch && <div className="mt-1 text-white/70">WASD move · mouse steers the camera (click = lock cursor) · Shift sprint · Space jump ×2 (flip!) · E rescue · G use power · Q blink · 1-8 eat · right-click drop · M map · Esc / P pause</div>}
           </div>
         )}
       </div>
@@ -930,10 +992,11 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         )}
       </AnimatePresence>
 
-      {/* food pockets — desktop: bottom-left corner */}
+      {/* food pockets — desktop: bottom-left corner, with the ✨ power slot beside them */}
       {!touch && (
-        <div className="absolute bottom-3 left-3 z-10">
+        <div className="absolute bottom-3 left-3 z-10 flex items-end gap-2">
           <ItemBar engine={engine} />
+          <AnimatePresence>{hud.pocketPower && <PowerSlot engine={engine} />}</AnimatePresence>
         </div>
       )}
 
@@ -979,7 +1042,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       {!touch && (
         <div className="absolute bottom-3 left-1/2 z-10 hidden -translate-x-1/2 flex-col items-center gap-1.5 md:flex">
           <div className="hidden whitespace-nowrap rounded-full bg-black/45 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/75 backdrop-blur-md lg:block">
-            WASD move · Shift sprint · Space jump ×2 · E rescue · Q blink · 1-8 eat
+            WASD move · Shift sprint · Space jump ×2 · E rescue · G power · Q blink · 1-8 eat
           </div>
           <CoordsChip px={hud.px} pz={hud.pz} />
         </div>

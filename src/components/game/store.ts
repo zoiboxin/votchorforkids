@@ -159,7 +159,7 @@ export const emptyHud: HudData = {
   inv: [], hurt: false, sprinting: false, exhausted: false,
   px: 0, pz: 0,
   gain: { hp: 0, stamina: 0, at: 0 },
-  power: null, morphKind: null, blinkReady: true,
+  power: null, pocketPower: null, morphKind: null, blinkReady: true,
 };
 
 let toastId = 1;

@@ -281,16 +281,16 @@ export interface PowerDef {
   tip: string;          // HUD badge hint
 }
 export const POWERS: readonly PowerDef[] = [
-  { kind: "sonic",  name: "Sonic Dash",    emoji: "⚡", color: "#22d3ee", duration: 10,
-    msg: "⚡ SONIC DASH! Your legs are a blur — outrun EVERYONE!",       tip: "Run speed ×1.9" },
-  { kind: "jump",   name: "Kangaroo Leap", emoji: "🦘", color: "#84cc16", duration: 12,
-    msg: "🦘 KANGAROO LEAP! Jump like a superhero — bounce over anything!", tip: "Jump height ×1.65" },
-  { kind: "blink",  name: "Blink Teleport", emoji: "🌀", color: "#c084fc", duration: 9,
-    msg: "🌀 BLINK! Press Q (or tap 🌀) to teleport forward — poof!",    tip: "Press Q to teleport" },
-  { kind: "morph",  name: "Animal Morph",  emoji: "🐒", color: "#fbbf24", duration: 9,
-    msg: "🐒 ANIMAL MORPH! You look like an animal — police can't catch you!", tip: "Police can't spot you" },
-  { kind: "magnet", name: "Food Magnet",   emoji: "🧲", color: "#fb7185", duration: 12,
-    msg: "🧲 FOOD MAGNET! Nearby snacks fly straight into your pockets!", tip: "Pulls nearby food" },
+  { kind: "sonic",  name: "Sonic Dash",    emoji: "⚡", color: "#22d3ee", duration: 12,
+    msg: "⚡ SONIC DASH unleashed! Your legs are a blur — outrun EVERYONE!", tip: "Run speed ×1.9 · free sprint" },
+  { kind: "jump",   name: "Kangaroo Leap", emoji: "🦘", color: "#84cc16", duration: 14,
+    msg: "🦘 KANGAROO LEAP unleashed! Jump like a superhero — bounce over anything!", tip: "Jump height ×1.65 · free jumps" },
+  { kind: "blink",  name: "Blink Teleport", emoji: "🌀", color: "#c084fc", duration: 15,
+    msg: "🌀 BLINK unleashed! Press Q (or tap 🌀) to teleport where you LOOK — poof!", tip: "Press Q to teleport" },
+  { kind: "morph",  name: "Animal Morph",  emoji: "🐒", color: "#fbbf24", duration: 22,
+    msg: "🐒 ANIMAL MORPH unleashed! You look like an animal — police can't catch you!", tip: "Police can't spot you" },
+  { kind: "magnet", name: "Food Magnet",   emoji: "🧲", color: "#fb7185", duration: 15,
+    msg: "🧲 FOOD MAGNET unleashed! Nearby snacks fly straight into your pockets!", tip: "Pulls nearby food" },
 ];
 export const POWER_COUNT = 6;        // very rare — only 6 gems in the whole world
 export const POWER_RESPAWN_S = 80;   // a long absence keeps them feeling special
@@ -302,8 +302,8 @@ export const SONIC_MULT = 1.9;       // run/sprint speed multiplier while Sonic 
 export const JUMP_MULT = 1.65;       // jump velocity multiplier while Kangaroo Leap lasts
 export const BLINK_DIST = 15;        // teleport distance
 export const BLINK_CD = 0.9;         // seconds between blinks
-export const MAGNET_RADIUS = 12;     // food pull radius
-export const MAGNET_PULL = 10;       // units/second snacks fly toward you
+export const MAGNET_RADIUS = 14;     // food pull radius
+export const MAGNET_PULL = 12;       // units/second snacks fly toward you
 export const MORPH_ANIMALS: readonly AnimalKind[] = ["cow", "chicken", "deer", "monkey"];
 
 /* ---------- Scoring ---------- */

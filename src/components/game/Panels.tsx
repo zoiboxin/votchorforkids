@@ -24,7 +24,8 @@ const CONTROLS: [string, string][] = [
   ["Shift", "Sprint — drains ⚡ energy fast"],
   ["Space", "Jump — press again mid-air for a double-jump flip! 🤸"],
   ["E", "Rescue a detained friend"],
-  ["Q", "🌀 Blink Teleport — only while the blink power lasts"],
+  ["G", "✨ Unleash a collected super power — YOU pick the moment!"],
+  ["Q", "🌀 Blink Teleport — while the blink power is active, teleport where you look"],
   ["1 – 8", "Eat pocketed food ❤⚡ — or tap the bag bottom-left"],
   ["Right-click slot", "Drop food back on the ground"],
   ["M", "Open the big world map"],
@@ -92,9 +93,10 @@ export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange:
             <div className="mb-1.5 flex items-center gap-2 font-black text-fuchsia-300"><Sparkles size={15} /> Rare super powers</div>
             <p className="leading-relaxed text-white/85">
               Only <b className="text-fuchsia-200">6 glowing gems</b> exist in the whole world — most hide deep in the <b>jungle</b>, the rest at mystery spots (coloured dots on the map!).
-              Grab one for a short burst of magic: <b>⚡ Sonic Dash</b> run speed ×1.9 · <b>🦘 Kangaroo Leap</b> jump ×1.65 · <b>🌀 Blink</b> press Q to teleport 15m ·
-              <b> 🐒 Animal Morph</b> become a random animal — police can&apos;t spot or catch you, and real animals accept you as family · <b>🧲 Food Magnet</b> nearby snacks fly into your pockets.
-              Gems reappear after a long rest — one power at a time!
+              Collecting a gem <b className="text-fuchsia-200">stores it in your ✨ pocket</b> — nothing fires automatically! Press <b className="text-yellow-200">G</b> (or tap the ✨ slot) to unleash it at the perfect moment:
+              <b>⚡ Sonic Dash</b> run speed ×1.9 with free sprinting · <b>🦘 Kangaroo Leap</b> jump ×1.65 with free jumps · <b>🌀 Blink</b> press Q to teleport 15m where you look ·
+              <b> 🐒 Animal Morph</b> become a random animal for 22s — police can&apos;t spot or catch you, and real animals accept you as family · <b>🧲 Food Magnet</b> nearby snacks fly into your pockets.
+              Gems reappear after a long rest — one stored power at a time!
             </p>
           </section>
 

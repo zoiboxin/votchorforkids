@@ -75,6 +75,7 @@ export function useGameInput(engine: GameEngine | null) {
         setTimeout(() => { engine.input.jump = false; }, 120);
       }
       if (e.code === "KeyE" && !e.repeat) engine.interact();
+      if (e.code === "KeyG" && !e.repeat) engine.usePower(); // ✨ unleash the pocketed super power
       if (e.code === "KeyQ" && !e.repeat) engine.tryBlink(); // 🌀 Blink Teleport
       applyKey();
     };
