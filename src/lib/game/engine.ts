@@ -11,7 +11,7 @@ import {
   ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, BOT_SPAWN_GAP, policeOutfitOf, stationCage, stationGate, type AnimalKind, type Appearance, type PolicePerk, type PowerKind, type Side, type Zone, zoneOf, ZONE_TOAST,
 } from "./constants";
 import { clamp, mulberry32, range } from "./rng";
-import { freeSpot, lineClear, resolve, RING_R, ROADS, scatterSpots, spotNear, PROTEST_CAMP, type CircleCollider, type World } from "./worldgen";
+import { freeSpot, lineClear, refreshCarCircle, resolve, RING_R, ROADS, scatterSpots, spotNear, PROTEST_CAMP, type CircleCollider, type World } from "./worldgen";
 import { advanceClock, nightFactor, newBody, stepBody, stepNpc, type Body } from "./sim";
 import { sfx } from "./audio";
 
@@ -200,7 +200,7 @@ export class GameEngine {
   playerName = "You";
 
   player: Body = newBody(SPAWN.x, SPAWN.z);
-  input = { f: 0, r: 0, sprint: false, jump: false, turn: 0, yaw: Math.PI, pitch: 0.32 };
+  input = { f: 0, r: 0, sprint: false, jump: false, turn: 0, yaw: Math.PI, pitch: 0.32, mouseAt: 0 };
   touchMove = { active: false, sprint: false };
   hp = 100; stamina = 100;
   inv: { def: number; count: number }[] = []; // pocketed food, used from the HUD item bar
@@ -876,7 +876,9 @@ export class GameEngine {
   horn() { if (this.drive) sfx.horn(); }
 
   /** Keep the driven vehicle's world entry + its two axle colliders glued to the body.
-   *  The axle spread follows the body style — a bus sits on discs further apart. */
+   *  The axle spread follows the body style — a bus sits on discs further apart.
+   *  The moving axle circles also hop cells in the collider spatial hash, so bots
+   *  (and the player on foot) keep bumping into the car wherever it drives. */
   private syncCarColliders(d: DriveState) {
     const car = this.world.cars[d.ci];
     car.x = d.x; car.z = d.z; car.rot = d.rot;
@@ -886,6 +888,8 @@ export class GameEngine {
     const fx = Math.sin(d.rot), fz = Math.cos(d.rot);
     pair[0].x = d.x - fx * ax; pair[0].z = d.z - fz * ax;
     pair[1].x = d.x + fx * ax; pair[1].z = d.z + fz * ax;
+    if (pair[0].idx !== undefined) refreshCarCircle(this.world, pair[0].idx);
+    if (pair[1].idx !== undefined) refreshCarCircle(this.world, pair[1].idx);
   }
 
   /**
@@ -977,14 +981,17 @@ export class GameEngine {
     p.vx = Math.sin(d.rot) * d.v; p.vz = Math.cos(d.rot) * d.v; p.vy = 0;
     p.face = d.rot;
     // camera trails behind the car while it rolls (mouse look still nudges it)
-    if (Math.abs(d.v) > 2.5) {
+    // the auto-follow pauses for a beat after any mouse/touch look so the two
+    // never fight over the camera — that tug-of-war read as jerky driving
+    const mouseIdle = performance.now() - this.input.mouseAt > 650;
+    if (Math.abs(d.v) > 2.5 && mouseIdle) {
       const want = d.v < 0 ? d.rot : d.rot + Math.PI; // reversing: look the way the car backs
       let dd = want - this.input.yaw;
       dd = Math.atan2(Math.sin(dd), Math.cos(dd));
       this.input.yaw += dd * Math.min(1, dt * 2.6);
       this.input.yaw = ((this.input.yaw + Math.PI) % TAU + TAU) % TAU - Math.PI;
     }
-    this.input.pitch += (0.34 - this.input.pitch) * Math.min(1, dt * 1.6);
+    if (mouseIdle) this.input.pitch += (0.34 - this.input.pitch) * Math.min(1, dt * 1.6);
     // driving is restful — stamina recovers at walking rate
     this.stamina = Math.min(100, this.stamina + 12 * AGE_STATS[this.look.age].regen * dt);
   }

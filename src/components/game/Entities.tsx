@@ -38,6 +38,9 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
   const introT = useRef(0);
   const hudT = useRef(0);
   const camKeep = useRef(1); // smoothed chase-camera pull-in factor (1 = full distance)
+  // 🚗 driving glide state — the chase camera eases toward its pose instead of
+  // snapping every frame, so frame-time hiccups at car speed read as smooth sweeps
+  const camSm = useRef({ on: false, pos: new THREE.Vector3(), tgt: new THREE.Vector3() });
   const { camera } = useThree();
 
   // three dizzy stars that orbit the player's head after a car bonk
@@ -201,10 +204,21 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       const wob = engine.faintT / FAINT_S;
       const t = performance.now() / 1000;
       camera.position.set(tx + Math.sin(t * 21) * 0.09 * wob, ty + Math.sin(t * 17) * 0.06 * wob, tz);
+    } else if (engine.drive) {
+      // 🚗 behind the wheel: glide to the chase pose (exponential, frame-rate safe).
+      // Pull-in from camBlocked still applies — it feeds the glide TARGET.
+      const sm = camSm.current;
+      if (!sm.on) { sm.on = true; sm.pos.copy(camera.position); sm.tgt.set(p.x, p.y + 1.7, p.z); }
+      const k = 1 - Math.exp(-dt * 9);
+      sm.pos.lerp(camV1.set(tx, ty, tz), k);
+      sm.tgt.lerp(camV2.set(p.x, p.y + 1.7, p.z), k);
+      camera.position.copy(sm.pos);
     } else {
+      camSm.current.on = false;
       camera.position.set(tx, ty, tz);
     }
-    camera.lookAt(p.x, p.y + 1.7, p.z);
+    if (engine.drive && camSm.current.on) camera.lookAt(camSm.current.tgt);
+    else camera.lookAt(p.x, p.y + 1.7, p.z);
 
     // HUD @ ~8 Hz
     hudT.current += dt;
@@ -518,6 +532,8 @@ export function Licenses({ engine }: { engine: GameEngine }) {
 /* Items + votes + shadows — all instanced (a handful of draw calls)   */
 /* ------------------------------------------------------------------ */
 const dummy = new THREE.Object3D();
+const camV1 = new THREE.Vector3(); // scratch for the driving chase-cam glide
+const camV2 = new THREE.Vector3();
 /** Shadow-blob radius multiplier per animal kind — matches buildAnimal conf.s. */
 const ANIMAL_SCALES: Record<string, number> = { cow: 1.7, chicken: 0.95, deer: 1.45, monkey: 1.1 };
 

@@ -32,7 +32,9 @@ export function isLowPower(): boolean {
   return lowPower;
 }
 
-/** Slowly tunes render resolution up/down to hold a smooth framerate on weak GPUs. */
+/** Slowly tunes render resolution up/down to hold a smooth framerate on weak GPUs.
+ *  Wide hysteresis (down <20 fps, up >32) — a narrow band makes the resolution
+ *  pump every second or two, which itself reads as stutter while driving. */
 function AdaptiveDpr() {
   const setDpr = useThree((s) => s.setDpr);
   const st = useRef({ t: 0, n: 0, dpr: 0.62 });
@@ -42,8 +44,8 @@ function AdaptiveDpr() {
     if (a.t < 1.2) return;
     const fps = a.n / a.t;
     a.t = 0; a.n = 0;
-    if (fps < 21 && a.dpr > 0.32) { a.dpr = Math.max(0.32, a.dpr - 0.07); setDpr(a.dpr); }
-    else if (fps > 34 && a.dpr < 0.72) { a.dpr = Math.min(0.72, a.dpr + 0.05); setDpr(a.dpr); }
+    if (fps < 20 && a.dpr > 0.32) { a.dpr = Math.max(0.32, a.dpr - 0.06); setDpr(a.dpr); }
+    else if (fps > 32 && a.dpr < 0.72) { a.dpr = Math.min(0.72, a.dpr + 0.04); setDpr(a.dpr); }
   });
   return null;
 }
@@ -100,6 +102,7 @@ export function useGameInput(engine: GameEngine | null) {
       if (!document.pointerLockElement && !(e.target instanceof HTMLCanvasElement) && !dragging) return;
       engine.input.yaw -= e.movementX * 0.0028;
       engine.input.pitch = Math.min(0.95, Math.max(-0.25, engine.input.pitch + e.movementY * 0.002));
+      if (e.movementX || e.movementY) engine.input.mouseAt = performance.now(); // pause the drive auto-cam briefly
     };
 
     // click anywhere that isn't a UI control to hard-bind the cursor (pointer
@@ -152,6 +155,7 @@ export function useGameInput(engine: GameEngine | null) {
         if (t.identifier === touchId) {
           engine.input.yaw -= (t.clientX - lx) * 0.006;
           engine.input.pitch = Math.min(0.95, Math.max(-0.25, engine.input.pitch + (t.clientY - ly) * 0.004));
+          engine.input.mouseAt = performance.now(); // pause the drive auto-cam briefly
           lx = t.clientX; ly = t.clientY;
         }
       }

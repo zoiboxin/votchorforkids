@@ -511,7 +511,7 @@ const CAR_TYPES: CarType[] = [
  * tilts the top toward the nose, negative toward the tail. Unused part slots get
  * zero-scale "hidden" stamps so every body style can share one instanced set.
  */
-function placeCar(P: CarParts, i: number, x: number, y: number, z: number, rot: number, c: number, t: number) {
+function placeCar(P: CarParts, i: number, x: number, y: number, z: number, rot: number, c: number, t: number, beams = true) {
   const T = CAR_TYPES[t % CAR_TYPES.length];
   const cs = Math.cos(rot), sn = Math.sin(rot);
   const put = (m: THREE.InstancedMesh, idx: number, s: number, f: number, yy: number, sx: number, sy: number, sz: number, tilt = 0) => {
@@ -607,9 +607,12 @@ function placeCar(P: CarParts, i: number, x: number, y: number, z: number, rot: 
     put(P.tails, i * 2 + (k > 0 ? 1 : 0), k * (T.W / 2 - 0.3), -(T.L / 2 + 0.03), bodyTop - 0.22, 0.3, 0.15, 0.1);
   }
 
-  // 🔆 night headlight beams — one forward light cone per lamp, apex at the lens
+  // 🔆 night headlight beams — one forward light cone per lamp, apex at the lens.
+  // Parked cars keep them FOLDED (engine off!) — only a driven vehicle lights up,
+  // so `beams=false` stashes the cones under the ground plane.
   for (const k of [-1, 1]) {
     const bi = i * 2 + (k > 0 ? 1 : 0);
+    if (!beams) { hide(P.beam, bi); continue; }
     const s = k * (T.W / 2 - 0.3), fl = T.L / 2 + BEAM_LEN / 2 - 0.05;
     tmp.rotation.set(-Math.PI / 2, rot, 0);  // cone apex (+Y) → backward, opening forward
     tmp.position.set(x + s * cs + fl * sn, y + bodyTop - 0.24, z - s * sn + fl * cs);
@@ -689,21 +692,39 @@ function stampDone(P: CarParts) {
   if (P.body.instanceColor) P.body.instanceColor.needsUpdate = true;
   if (P.roof.instanceColor) P.roof.instanceColor.needsUpdate = true;
   if (P.bed.instanceColor) P.bed.instanceColor.needsUpdate = true;
+  if (P.lights.instanceColor) P.lights.instanceColor.needsUpdate = true;
+  if (P.tails.instanceColor) P.tails.instanceColor.needsUpdate = true;
 }
-/** Day → night: lenses brighten, tails flare, headlight beams fade in. */
+/** Day → night: lenses brighten, tails flare, headlight beams fade in. Used by the
+ *  ring-traffic set — every one of those vehicles is moving, so they all light up. */
 function nightLights(R: VehicleRefs, clock: number) {
   const nf = nightFactor(clock);
   if (R.headMat.current) R.headMat.current.color.copy(HEAD_DAY).lerp(HEAD_NIGHT, nf);
   if (R.tailMat.current) R.tailMat.current.color.copy(TAIL_DAY).lerp(TAIL_NIGHT, nf);
+  beamFade(R, nf);
+}
+/** Beam-cone fade only — the parked fleet's lamps are per-instance colours (engine
+ *  off while parked), so only the shared cone material follows the clock here. */
+function beamFade(R: VehicleRefs, nf: number) {
   const bm = R.beamMat.current;
-  if (bm) {
-    bm.opacity = Math.max(0, nf - 0.14) * 0.42;
-    bm.visible = bm.opacity > 0.015;
-  }
+  if (!bm) return;
+  bm.opacity = Math.max(0, nf - 0.14) * 0.42;
+  bm.visible = bm.opacity > 0.015;
+}
+/** Lens glow for car #i's four lamp boxes: nf 0 = engine-off day glass, 1 = blazing
+ *  night lamps. Per-instance colours let ONE driven car light up while the whole
+ *  parked fleet stays dark — the shared material stays pure white as the base. */
+function setLampGlow(P: CarParts, i: number, nf: number) {
+  col.copy(HEAD_DAY).lerp(HEAD_NIGHT, nf);
+  P.lights.setColorAt(i * 2, col); P.lights.setColorAt(i * 2 + 1, col);
+  col.copy(TAIL_DAY).lerp(TAIL_NIGHT, nf);
+  P.tails.setColorAt(i * 2, col); P.tails.setColorAt(i * 2 + 1, col);
 }
 
-/** All instanced body parts of a vehicle set (counts are per-vehicle slots × N). */
-function VehicleParts({ R, N }: { R: VehicleRefs; N: number }) {
+/** All instanced body parts of a vehicle set (counts are per-vehicle slots × N).
+ *  `lampsInstance`: the parked fleet drives lamp brightness per-instance (only the
+ *  driven car lights up), so its head/tail materials sit at pure white as the base. */
+function VehicleParts({ R, N, lampsInstance }: { R: VehicleRefs; N: number; lampsInstance?: boolean }) {
   return (
     <>
       <instancedMesh frustumCulled={false} ref={R.skirt} args={[undefined, undefined, N]}>
@@ -775,11 +796,11 @@ function VehicleParts({ R, N }: { R: VehicleRefs; N: number }) {
       {/* head & tail lamps — unlit boxes by day, blazing after dark */}
       <instancedMesh frustumCulled={false} ref={R.lights} args={[undefined, undefined, N * 2]}>
         <boxGeometry />
-        <meshBasicMaterial ref={R.headMat} color={HEAD_DAY.getHex()} />
+        <meshBasicMaterial ref={R.headMat} color={lampsInstance ? 0xffffff : HEAD_DAY.getHex()} />
       </instancedMesh>
       <instancedMesh frustumCulled={false} ref={R.tails} args={[undefined, undefined, N * 2]}>
         <boxGeometry />
-        <meshBasicMaterial ref={R.tailMat} color={TAIL_DAY.getHex()} />
+        <meshBasicMaterial ref={R.tailMat} color={lampsInstance ? 0xffffff : TAIL_DAY.getHex()} />
       </instancedMesh>
       {/* 🔆 headlight beams — additive cones, invisible by day, glowing at night */}
       <instancedMesh frustumCulled={false} ref={R.beam} args={[undefined, undefined, N * 2]}>
@@ -800,23 +821,41 @@ function VehicleParts({ R, N }: { R: VehicleRefs; N: number }) {
 
 function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.MutableRefObject<number> }) {
   const R = useVehicleRefs();
+  const lit = useRef(-1); // the parked car currently running (its lamps + beams are live)
   useLayoutEffect(() => {
     const P = partsOf(R);
-    WORLD.cars.forEach((c, i) => placeCar(P, i, c.x, 0, c.z, c.rot, c.c, c.t));
+    // parked fleet: engine OFF — beams folded, lamps at day glass (per-instance, so
+    // the ONE car being driven can blaze without lighting the whole street)
+    WORLD.cars.forEach((c, i) => placeCar(P, i, c.x, 0, c.z, c.rot, c.c, c.t, false));
+    for (let i = 0; i < WORLD.cars.length; i++) setLampGlow(P, i, 0);
     stampDone(P);
   }, []);
-  // 🚗 the player-driven vehicle moves — re-stamp just that one instance every frame
+  // 🚗 the player-driven vehicle moves — re-stamp just that one instance every frame,
+  // beams out + lamps lit; the moment you hop out, its lights fold back down
   useFrame(() => {
-    nightLights(R, clockRef.current);
+    beamFade(R, nightFactor(clockRef.current));
     const d = engine.drive;
-    if (!d) return;
-    const c = WORLD.cars[d.ci];
     const P = partsOf(R);
-    placeCar(P, d.ci, c.x, 0, c.z, c.rot, c.c, c.t);
-    stampDone(P);
+    let dirty = false;
+    if (d) {
+      const c = WORLD.cars[d.ci];
+      placeCar(P, d.ci, c.x, 0, c.z, c.rot, c.c, c.t, true);
+      setLampGlow(P, d.ci, nightFactor(clockRef.current));
+      dirty = true;
+    }
+    if ((d ? d.ci : -1) !== lit.current) {
+      if (lit.current >= 0) { // the previous ride is parked again — engine off
+        const c = WORLD.cars[lit.current];
+        placeCar(P, lit.current, c.x, 0, c.z, c.rot, c.c, c.t, false);
+        setLampGlow(P, lit.current, 0);
+      }
+      lit.current = d ? d.ci : -1;
+      dirty = true;
+    }
+    if (dirty) stampDone(P);
   });
   const N = Math.max(1, WORLD.cars.length);
-  return <VehicleParts R={R} N={N} />;
+  return <VehicleParts R={R} N={N} lampsInstance />;
 }
 
 /** Vehicles cruising the ring highway — the engine owns their positions (and collisions). */

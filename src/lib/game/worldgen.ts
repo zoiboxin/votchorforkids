@@ -2,7 +2,96 @@ import { AIRPORT, CITY_RADIUS, FARM_RADIUS, GRAVEYARD, PARLIAMENT, POLICE_STATIO
 import { mulberry32, range } from "./rng";
 
 export interface BoxCollider { x: number; z: number; w: number; d: number; /** building height (top y) — lets the chase camera ignore roofs above it */ h?: number } // half extents
-export interface CircleCollider { x: number; z: number; r: number; /** set for the two axle circles of a parked car — lets a DRIVEN car skip its own colliders */ car?: number }
+export interface CircleCollider { x: number; z: number; r: number; /** set for the two axle circles of a parked car — lets a DRIVEN car skip its own colliders */ car?: number; /** index inside world.circles — lets a DRIVEN car refresh its grid cells on every move */ idx?: number }
+
+/**
+ * 🗺️ Spatial hash over every collider — the old resolve() scanned ALL ~1,424 boxes
+ * & circles on every call, and it gets called ~150× per frame (133 bots + the
+ * player + the driven car's sub-steps). That linear grind was the single biggest
+ * frame-time hog, and it showed worst while driving (the car alone spends up to
+ * 16 resolve calls per frame). The grid registers each collider in every cell it
+ * overlaps, so a query only touches the handful of colliders around the point.
+ * The player's driven car MOVES its two axle circles every frame — those are
+ * re-registered on the fly (see refreshCarCircle), tracked in `carCells`.
+ */
+export interface ColliderGrid {
+  cs: number;               // cell size (world units)
+  x0: number; z0: number;   // world origin of cell (0,0)
+  cols: number; rows: number;
+  nb: number;               // boxes.length — indices < nb are boxes, ≥ nb are circles (idx - nb)
+  cells: number[][];        // flattened grid, each cell holds combined item indices
+  carCells: Map<number, number[]>; // circle idx → cell ids it currently occupies (dynamic circles)
+}
+
+const GRID_CS = 16;
+
+function gridCellsFor(g: ColliderGrid, x: number, z: number, r: number, out: number[]): void {
+  out.length = 0;
+  const gx0 = Math.max(0, Math.floor((x - r - g.x0) / g.cs));
+  const gx1 = Math.min(g.cols - 1, Math.floor((x + r - g.x0) / g.cs));
+  const gz0 = Math.max(0, Math.floor((z - r - g.z0) / g.cs));
+  const gz1 = Math.min(g.rows - 1, Math.floor((z + r - g.z0) / g.cs));
+  for (let gz = gz0; gz <= gz1; gz++)
+    for (let gx = gx0; gx <= gx1; gx++) out.push(gz * g.cols + gx);
+}
+
+/** Build the collider grid from the finished boxes/circles arrays (call once at world-gen). */
+function buildColliderGrid(boxes: BoxCollider[], circles: CircleCollider[]): ColliderGrid {
+  let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
+  const grow = (x: number, z: number, r: number) => {
+    if (x - r < minX) minX = x - r; if (x + r > maxX) maxX = x + r;
+    if (z - r < minZ) minZ = z - r; if (z + r > maxZ) maxZ = z + r;
+  };
+  for (const b of boxes) grow(b.x, b.z, Math.max(b.w, b.d));
+  for (const c of circles) grow(c.x, c.z, c.r);
+  const pad = GRID_CS * 2;
+  const x0 = minX - pad, z0 = minZ - pad;
+  const cols = Math.max(1, Math.ceil((maxX + pad - x0) / GRID_CS));
+  const rows = Math.max(1, Math.ceil((maxZ + pad - z0) / GRID_CS));
+  const g: ColliderGrid = { cs: GRID_CS, x0, z0, cols, rows, nb: boxes.length, cells: Array.from({ length: cols * rows }, () => []), carCells: new Map() };
+  const ids: number[] = [];
+  for (let i = 0; i < boxes.length; i++) {
+    gridCellsFor(g, boxes[i].x, boxes[i].z, Math.max(boxes[i].w, boxes[i].d), ids);
+    for (const id of ids) g.cells[id].push(i);
+  }
+  for (let j = 0; j < circles.length; j++) insertCircleGrid(g, circles[j], j);
+  return g;
+}
+
+function insertCircleGrid(g: ColliderGrid, c: CircleCollider, j: number): void {
+  const ids: number[] = [];
+  gridCellsFor(g, c.x, c.z, c.r, ids);
+  const combined = g.nb + j;
+  for (const id of ids) g.cells[id].push(combined);
+  if (c.car !== undefined) {
+    let list = g.carCells.get(j);
+    if (!list) { list = []; g.carCells.set(j, list); }
+    list.push(...ids);
+  }
+}
+
+/**
+ * Re-register a car's axle circle after it moved (the driven vehicle glides along
+ * the roads, so its two colliders hop cells every frame while driving). Cheap:
+ * removal is a swap-pop from the few cells the circle occupied, then a fresh insert.
+ */
+export function refreshCarCircle(world: World, gi: number): void {
+  const g = world.grid;
+  if (!g) return;
+  const c = world.circles[gi];
+  if (!c) return;
+  const ids = g.carCells.get(gi);
+  if (ids) {
+    const combined = g.nb + gi;
+    for (const id of ids) {
+      const arr = g.cells[id];
+      const k = arr.lastIndexOf(combined);
+      if (k >= 0) { arr[k] = arr[arr.length - 1]; arr.pop(); }
+    }
+    ids.length = 0;
+  }
+  insertCircleGrid(g, c, gi);
+}
 
 /**
  * Building kinds:
@@ -40,6 +129,8 @@ export interface World {
   umbrellas: Umbrella[];
   signs: Sign[];
   windmills: { x: number; z: number; rot: number }[];
+  /** 🗺️ spatial hash over boxes+circles — makes resolve() O(neighbours) instead of O(world) */
+  grid: ColliderGrid;
 }
 
 /* ---------------- town layout (GTA-style grid + Delhi-style central vista) ---------------- */
@@ -497,14 +588,77 @@ export function generateWorld(seed = WORLD_SEED): World {
   });
   for (const s of silos) circles.push({ x: s.x, z: s.z, r: 3.3 });
   for (const w of windmills) circles.push({ x: w.x, z: w.z, r: 0.8 });
+  // every circle remembers its array slot — the driven car refreshes its grid cells via this
+  for (let i = 0; i < circles.length; i++) circles[i].idx = i;
 
-  return { buildings, trees, flowers, boxes, circles, cars, lamps, benches, fields, silos, umbrellas, signs, windmills };
+  return { buildings, trees, flowers, boxes, circles, cars, lamps, benches, fields, silos, umbrellas, signs, windmills, grid: buildColliderGrid(boxes, circles) };
 }
 
 /** Push a point out of every collider it overlaps. skipCar: while driving car #n,
- *  that car's own axle circles are skipped so the body doesn't shove itself. */
+ *  that car's own axle circles are skipped so the body doesn't shove itself.
+ *  Uses the spatial hash (a handful of neighbouring colliders) instead of the
+ *  old full-world scan — the single biggest frame-time win, especially while
+ *  driving, where the car spends up to 16 resolve calls per frame. Colliders are
+ *  gathered from every cell the sweep circle touches, sorted box-then-circle (the
+ *  old scan's order) and the pass repeats until stable, so a push that slides the
+ *  point into a collider one cell over is still caught. */
+const resolveScratch: number[] = [];
 export function resolve(p: { x: number; z: number }, radius: number, world: World, skipCar = -1): void {
-  for (const b of world.boxes) {
+  const g = world.grid;
+  const boxes = world.boxes, circles = world.circles;
+  if (g) {
+    for (let iter = 0; iter < 4; iter++) {
+      // gather every collider registered in the cells the sweep circle touches
+      resolveScratch.length = 0;
+      const gx0 = Math.max(0, Math.floor((p.x - radius - g.x0) / g.cs));
+      const gx1 = Math.min(g.cols - 1, Math.floor((p.x + radius - g.x0) / g.cs));
+      const gz0 = Math.max(0, Math.floor((p.z - radius - g.z0) / g.cs));
+      const gz1 = Math.min(g.rows - 1, Math.floor((p.z + radius - g.z0) / g.cs));
+      for (let gz = gz0; gz <= gz1; gz++) {
+        for (let gx = gx0; gx <= gx1; gx++) {
+          const cell = g.cells[gz * g.cols + gx];
+          for (let k = 0; k < cell.length; k++) resolveScratch.push(cell[k]);
+        }
+      }
+      if (resolveScratch.length === 0) return;
+      // same order as the old linear scan: all boxes first, then circles (a collider
+      // registered in two queried cells appears twice — the second test always no-ops)
+      if (resolveScratch.length > 1) resolveScratch.sort((a, b) => a - b);
+      let pushed = false;
+      for (let k = 0; k < resolveScratch.length; k++) {
+        const idx = resolveScratch[k];
+        if (idx < g.nb) {
+          const b = boxes[idx];
+          const dx = p.x - b.x, dz = p.z - b.z;
+          const ox = b.w + radius - Math.abs(dx), oz = b.d + radius - Math.abs(dz);
+          if (ox > 0 && oz > 0) {
+            if (ox < oz) p.x += ox * (dx < 0 ? -1 : 1);
+            else p.z += oz * (dz < 0 ? -1 : 1);
+            pushed = true;
+          }
+        } else {
+          const c = circles[idx - g.nb];
+          if (skipCar >= 0 && c.car === skipCar) continue;
+          const dx = p.x - c.x, dz = p.z - c.z;
+          const rr = c.r + radius;
+          if (Math.abs(dx) > rr || Math.abs(dz) > rr) continue;
+          const d2 = dx * dx + dz * dz;
+          if (d2 < rr * rr) {
+            pushed = true;
+            const d = Math.sqrt(d2);
+            // dead-centre inside the circle has no push direction — pick east so the
+            // point can never get permanently stuck (e.g. teleports into a collider)
+            if (d < 0.01) { p.x = c.x + rr; continue; }
+            p.x = c.x + (dx / d) * rr;
+            p.z = c.z + (dz / d) * rr;
+          }
+        }
+      }
+      if (!pushed) return; // fully clear — done (the usual case: one cheap gather)
+    }
+    return;
+  }
+  for (const b of boxes) {
     const dx = p.x - b.x, dz = p.z - b.z;
     const ox = b.w + radius - Math.abs(dx), oz = b.d + radius - Math.abs(dz);
     if (ox > 0 && oz > 0) {
@@ -512,7 +666,7 @@ export function resolve(p: { x: number; z: number }, radius: number, world: Worl
       else p.z += oz * (dz < 0 ? -1 : 1);
     }
   }
-  for (const c of world.circles) {
+  for (const c of circles) {
     if (skipCar >= 0 && c.car === skipCar) continue;
     const dx = p.x - c.x, dz = p.z - c.z;
     const rr = c.r + radius;
@@ -520,8 +674,6 @@ export function resolve(p: { x: number; z: number }, radius: number, world: Worl
     const d2 = dx * dx + dz * dz;
     if (d2 < rr * rr) {
       const d = Math.sqrt(d2);
-      // dead-centre inside the circle has no push direction — pick east so the
-      // point can never get permanently stuck (e.g. teleports into a collider)
       if (d < 0.01) { p.x = c.x + rr; continue; }
       p.x = c.x + (dx / d) * rr;
       p.z = c.z + (dz / d) * rr;
@@ -529,12 +681,35 @@ export function resolve(p: { x: number; z: number }, radius: number, world: Worl
   }
 }
 
+/** All boxes overlapping the disk (x, z, r) — fed by the spatial hash. */
+function boxesNear(world: World, x: number, z: number, r: number, out: BoxCollider[]): void {
+  out.length = 0;
+  const g = world.grid;
+  if (!g) { for (const b of world.boxes) out.push(b); return; }
+  const gx0 = Math.max(0, Math.floor((x - r - g.x0) / g.cs));
+  const gx1 = Math.min(g.cols - 1, Math.floor((x + r - g.x0) / g.cs));
+  const gz0 = Math.max(0, Math.floor((z - r - g.z0) / g.cs));
+  const gz1 = Math.min(g.rows - 1, Math.floor((z + r - g.z0) / g.cs));
+  for (let gz = gz0; gz <= gz1; gz++) {
+    for (let gx = gx0; gx <= gx1; gx++) {
+      for (const idx of g.cells[gz * g.cols + gx]) {
+        if (idx < g.nb) {
+          const b = world.boxes[idx];
+          if (!out.includes(b)) out.push(b); // cells overlap — same box can show up twice
+        }
+      }
+    }
+  }
+}
+
 /** True if the segment between two points is roughly clear of buildings (cheap LOS). */
 export function lineClear(ax: number, az: number, bx: number, bz: number, world: World): boolean {
   const steps = Math.min(24, Math.max(4, Math.floor(Math.hypot(bx - ax, bz - az) / 2)));
+  const near: BoxCollider[] = [];
   for (let i = 1; i < steps; i++) {
     const t = i / steps, x = ax + (bx - ax) * t, z = az + (bz - az) * t;
-    for (const b of world.boxes)
+    boxesNear(world, x, z, 0.4, near);
+    for (const b of near)
       if (Math.abs(x - b.x) < b.w + 0.4 && Math.abs(z - b.z) < b.d + 0.4) return false;
   }
   return true;
