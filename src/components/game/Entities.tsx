@@ -14,6 +14,8 @@ import {
   buildAnimal, buildCharacter, nameTag, helpBubble, poseAnimal, poseCharacter,
   voteTokenGeometry, foodGeometry, shadowMaterial, basicVertexMaterial,
 } from "@/lib/game/character";
+import { camBlocked } from "@/lib/game/worldgen";
+import { WORLD } from "./WorldView";
 import { useGame } from "./store";
 
 export type ClockRef = { current: number };
@@ -35,6 +37,7 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
   const lantern = useRef<THREE.PointLight>(null!);
   const introT = useRef(0);
   const hudT = useRef(0);
+  const camKeep = useRef(1); // smoothed chase-camera pull-in factor (1 = full distance)
   const { camera } = useThree();
 
   // three dizzy stars that orbit the player's head after a car bonk
@@ -163,9 +166,29 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     // while driving, pull back a little for that GTA chase-camera feel
     const cd = engine.drive ? 11 : 8.6;
     const iy = engine.input.yaw, ip = engine.input.pitch;
-    const tx = p.x + Math.sin(iy) * cd * Math.cos(ip);
-    const ty = Math.max(1.2, p.y + 2.1 + Math.sin(ip) * cd);
-    const tz = p.z + Math.cos(iy) * cd * Math.cos(ip);
+    let tx = p.x + Math.sin(iy) * cd * Math.cos(ip);
+    let ty = Math.max(1.2, p.y + 2.1 + Math.sin(ip) * cd);
+    let tz = p.z + Math.cos(iy) * cd * Math.cos(ip);
+    // 🎥 chase camera vs the world — sample the focus→camera line; if a building,
+    // tree canopy or lamp post stands in the way, slide the camera closer so the
+    // hero (and their ride!) can never be hidden behind a dark blob
+    if (introT.current >= 1) {
+      const fx = p.x, fy = p.y + 1.9, fz = p.z;
+      let keep = 1;
+      for (let s = 1; s <= 7; s++) {
+        const f = s / 7;
+        if (camBlocked(fx + (tx - fx) * f, fy + (ty - fy) * f, fz + (tz - fz) * f, WORLD)) {
+          keep = Math.max(0.34, (s - 1) / 7);
+          break;
+        }
+      }
+      camKeep.current += (keep - camKeep.current) * Math.min(1, dt * 10); // smooth in & out
+      if (camKeep.current < 0.999) {
+        tx = fx + (tx - fx) * camKeep.current;
+        tz = fz + (tz - fz) * camKeep.current;
+        ty = Math.max(1.2, fy + (ty - fy) * camKeep.current); // pulled-in cam stays off the road
+      }
+    }
     if (introT.current < 1) {
       introT.current = Math.min(1, introT.current + dt / 2.4);
       const e = 1 - Math.pow(1 - introT.current, 3);

@@ -1,7 +1,7 @@
 import { AIRPORT, CITY_RADIUS, FARM_RADIUS, GRAVEYARD, PARLIAMENT, POLICE_STATIONS, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_POOL, WORLD_SEED, pickVehicle, stationCage, stationGate } from "./constants";
 import { mulberry32, range } from "./rng";
 
-export interface BoxCollider { x: number; z: number; w: number; d: number } // half extents
+export interface BoxCollider { x: number; z: number; w: number; d: number; /** building height (top y) — lets the chase camera ignore roofs above it */ h?: number } // half extents
 export interface CircleCollider { x: number; z: number; r: number; /** set for the two axle circles of a parked car — lets a DRIVEN car skip its own colliders */ car?: number }
 
 /**
@@ -84,6 +84,14 @@ export function generateWorld(seed = WORLD_SEED): World {
     x: number, z: number, w: number, d: number, h: number,
     kind: Building["kind"], color: number, roof: number, awn = 0, fz: 1 | -1 = 1,
   ) => buildings.push({ x, z, w, d, h, color, roof, kind, awn, fz });
+  /** Every street lamp goes through here — a pole standing IN the tarmac blocks
+   *  the chase camera dead-centre and reads as "my car vanished, only a shadow!".
+   *  Lamps that would land on a road are simply not planted. */
+  const pushLamp = (x: number, z: number) => {
+    if (Math.abs(x) < 12.9 && z > MAIN_ROAD.z0 - 4 && z < MAIN_ROAD.z1 + 4) return; // 24-wide main road
+    for (const o of ROADS) if (Math.abs(x - o) < 8.2 || Math.abs(z - o) < 8.2) return; // 14-wide grid roads
+    lamps.push({ x, z });
+  };
 
   /* ---- downtown towers (2 blocks × 4 towers) ---- */
   for (const [bx, bz] of [[33.75, -33.75], [-33.75, 33.75]] as const) {
@@ -112,7 +120,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     // two small offices at the back of the block
     push(bx - 13, bz - 16, 6.5, 5, range(rnd, 12, 17), 0, OFFICE_COLS[buildings.length % OFFICE_COLS.length], TOWER_ROOF);
     push(bx + 13, bz - 16, 6.5, 5, range(rnd, 12, 17), 0, OFFICE_COLS[buildings.length % OFFICE_COLS.length], TOWER_ROOF);
-    lamps.push({ x: bx - 27.5, z: bz + 27.5 }, { x: bx + 27.5, z: bz - 27.5 });
+    pushLamp(bx - 27.5, bz + 27.5); pushLamp(bx + 27.5, bz - 27.5);
   }
 
   /* ---- midtown mixed blocks (offices / shops / homes) ---- */
@@ -253,8 +261,8 @@ export function generateWorld(seed = WORLD_SEED): World {
     for (const [px, pz] of [[cage.x - 3.4, cage.z - 3.4], [cage.x + 3.4, cage.z - 3.4], [cage.x - 3.4, cage.z + 3.4], [cage.x + 3.4, cage.z + 3.4], [cage.x - 3.4, cage.z], [cage.x + 3.4, cage.z], [cage.x, cage.z - 3.4], [cage.x, cage.z + 3.4]] as const)
       push(px, pz, 0.35, 0.35, 2.6, 0, 0x6a7284, POLICE_ROOF);
     const gate = stationGate(st);
-    lamps.push({ x: gate.x + Math.sign(st.x) * 5, z: gate.z });
-    lamps.push({ x: gate.x, z: gate.z + Math.sign(st.z) * 5 });
+    pushLamp(gate.x + Math.sign(st.x) * 5, gate.z);
+    pushLamp(gate.x, gate.z + Math.sign(st.z) * 5);
   }
 
   /* ---- suburban fringe cottages (between the outer grid road and the ring highway) ---- */
@@ -297,12 +305,12 @@ export function generateWorld(seed = WORLD_SEED): World {
     cars.push({ x: MALL.x - 15 + i * 10, z: MALL.z - 26 + zr, rot: Math.PI / 2, c: (i + (zr > 0 ? 2 : 0)) % CAR_COLS.length, t: pickVehicle(rnd) });
   }
   for (let i = 0; i < 3; i++) cars.push({ x: HOSPITAL.x - 10 + i * 10, z: HOSPITAL.z - 15, rot: Math.PI / 2, c: (i + 4) % CAR_COLS.length, t: pickVehicle(rnd) });
-  lamps.push(
-    { x: MALL.x - 21, z: MALL.z - 27 }, { x: MALL.x + 21, z: MALL.z - 27 },
-    { x: MALL.x - 21, z: MALL.z - 5 }, { x: MALL.x + 21, z: MALL.z - 5 },
-    { x: HOSPITAL.x - 16, z: HOSPITAL.z - 16 }, { x: HOSPITAL.x + 16, z: HOSPITAL.z - 16 },
-    { x: SCHOOL.x - 18, z: SCHOOL.z - 20 }, { x: SCHOOL.x + 18, z: SCHOOL.z - 20 },
-  );
+  for (const [lx, lz] of [
+    [MALL.x - 21, MALL.z - 27], [MALL.x + 21, MALL.z - 27],
+    [MALL.x - 21, MALL.z - 5], [MALL.x + 21, MALL.z - 5],
+    [HOSPITAL.x - 16, HOSPITAL.z - 16], [HOSPITAL.x + 16, HOSPITAL.z - 16],
+    [SCHOOL.x - 18, SCHOOL.z - 20], [SCHOOL.x + 18, SCHOOL.z - 20],
+  ] as const) pushLamp(lx, lz);
   // park benches around the fountain + school yard + mall front
   for (let i = 0; i < 4; i++) {
     const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
@@ -330,16 +338,22 @@ export function generateWorld(seed = WORLD_SEED): World {
     }
   }
 
-  /* ---- street lamps: 2 per intersection + ring + avenue ---- */
+  /* ---- street lamps: 2 per intersection + ring + avenue ----
+   * Main-road crossings get their pair pushed to the kerb: the ±8.5 corners sit
+   * INSIDE the 24-wide tarmac, and a lamp mid-road stares straight down the
+   * chase camera's lens (the "car is only a shadow" bug). */
+  const inMainRoad = (x: number, z: number) => Math.abs(x) < 12.9 && z > MAIN_ROAD.z0 - 4 && z < MAIN_ROAD.z1 + 4;
   for (const kx of ROADS) for (const kz of ROADS) {
-    lamps.push({ x: kx + 8.5, z: kz + 8.5 }, { x: kx - 8.5, z: kz - 8.5 });
+    const lx = inMainRoad(kx + 8.5, kz + 8.5) ? 12.9 : kx + 8.5;
+    const rx = inMainRoad(kx - 8.5, kz - 8.5) ? -12.9 : kx - 8.5;
+    pushLamp(lx, kz + 8.5); pushLamp(rx, kz - 8.5);
   }
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2;
-    lamps.push({ x: Math.cos(a) * (RING_R + RING_W / 2 + 2), z: Math.sin(a) * (RING_R + RING_W / 2 + 2) });
+    pushLamp(Math.cos(a) * (RING_R + RING_W / 2 + 2), Math.sin(a) * (RING_R + RING_W / 2 + 2));
   }
-  lamps.push({ x: 15, z: -150 }, { x: -15, z: -164 }, { x: 15, z: -178 });
-  lamps.push({ x: 15, z: 24 }, { x: -15, z: 96 }, { x: 15, z: 160 });
+  pushLamp(15, -150); pushLamp(-15, -164); pushLamp(15, -178);
+  pushLamp(15, 24); pushLamp(-15, 96); pushLamp(15, 160);
 
   /* ---- central park trees + landmark trees ---- */
   const trees: Tree[] = [];
@@ -458,13 +472,13 @@ export function generateWorld(seed = WORLD_SEED): World {
   // hangar
   push(AIRPORT.hangar.x, AIRPORT.hangar.z, AIRPORT.hangar.w, AIRPORT.hangar.d, AIRPORT.hangar.h, 0, 0xb8bec8, 0x7a828e);
   // apron floodlights + a few staff cars by the terminal
-  lamps.push({ x: AIRPORT.terminal.x - 18, z: AIRPORT.terminal.z - 14 }, { x: AIRPORT.terminal.x + 18, z: AIRPORT.terminal.z - 14 }, { x: AIRPORT.hangar.x + 16, z: AIRPORT.hangar.z - 12 });
+  pushLamp(AIRPORT.terminal.x - 18, AIRPORT.terminal.z - 14); pushLamp(AIRPORT.terminal.x + 18, AIRPORT.terminal.z - 14); pushLamp(AIRPORT.hangar.x + 16, AIRPORT.hangar.z - 12);
   for (let i = 0; i < 3; i++) cars.push({ x: AIRPORT.terminal.x - 10 + i * 9, z: AIRPORT.terminal.z + 8, rot: 0, c: (i + 5) % CAR_COLS.length, t: VEHICLE_POOL[(i * 3 + 2) % VEHICLE_POOL.length] });
   // windsock pole near the runway threshold (cloth drawn by <Airport>)
   push(AIRPORT.rx0 - 14, AIRPORT.rz - 12, 0.5, 0.5, 6.5, 0, 0xd8d5cc, AP_ROOF);
 
   /* ---- colliders ---- */
-  const boxes: BoxCollider[] = buildings.map(({ x, z, w, d }) => ({ x, z, w, d }));
+  const boxes: BoxCollider[] = buildings.map(({ x, z, w, d, h }) => ({ x, z, w, d, h }));
   const circles: CircleCollider[] = trees.map(({ x, z, r }) => ({ x, z, r }));
   circles.push({ x: PARK.x - 11, z: PARK.z + 11, r: 8.2 });               // park pond
   circles.push({ x: PARK.x, z: PARK.z, r: 3.6 });                          // fountain
@@ -524,6 +538,23 @@ export function lineClear(ax: number, az: number, bx: number, bz: number, world:
       if (Math.abs(x - b.x) < b.w + 0.4 && Math.abs(z - b.z) < b.d + 0.4) return false;
   }
   return true;
+}
+
+/**
+ * Is a 3D sample point inside anything TALL enough to block the chase camera —
+ * a building, a tree canopy or a street lamp? The camera pull-in test samples a
+ * handful of points along the focus→camera segment with this, so a lamp post or
+ * a hedge can never stare straight down the lens and read as "my car vanished".
+ * (Trees: canopy base 2.6·s wide topping at ~9.3·s with r = 0.7·s — see <Forest>.)
+ */
+export function camBlocked(x: number, y: number, z: number, world: World): boolean {
+  for (const b of world.boxes)
+    if (Math.abs(x - b.x) < b.w + 0.4 && Math.abs(z - b.z) < b.d + 0.4 && y < (b.h ?? 5) + 0.6) return true;
+  for (const t of world.trees)
+    if (y < 13.4 * t.r && (x - t.x) * (x - t.x) + (z - t.z) * (z - t.z) < 3.7 * t.r * (3.7 * t.r)) return true;
+  for (const l of world.lamps)
+    if (y < 6.2 && (x - l.x) * (x - l.x) + (z - l.z) * (z - l.z) < 0.75 * 0.75) return true;
+  return false;
 }
 
 /**

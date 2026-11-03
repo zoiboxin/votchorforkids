@@ -823,9 +823,20 @@ export class GameEngine {
     return best;
   }
 
-  /** Hop into a parked car — GTA style. A 🪪 driving license is required! */
+  /** Hop into a parked car — GTA style. A 🪪 driving license is required!
+   *  Under arrest (frozen / riding the van / locked up)? No joyrides — a car
+   *  entered here would never move (stepDrive is skipped) and `drive` would
+   *  stick around after release, leaving the player INVISIBLE (mesh hides
+   *  while driving). That was the "my car is just a shadow" bug. */
   private enterCar(ci: number) {
     if (this.exitCd > 0) return; // just hopped out — don't tumble straight back in
+    if (this.detainedT > 0 || this.playerInVan) {
+      if (this.driveMsgT <= 0) {
+        this.driveMsgT = 3;
+        this.toast("🚔 You're under arrest — no car rides until the police let you go!", "bad");
+      }
+      return;
+    }
     if (!this.hasLicense) {
       if (this.driveMsgT <= 0) {
         this.driveMsgT = 3;
@@ -1202,6 +1213,7 @@ export class GameEngine {
     this.starTimer = STAR_DECAY_S;
     this.hp = Math.max(1, this.hp - 8);
     this.hurtT = HURT_FLASH_S;
+    this.drive = null; // arrested → out of the car (its colliders stay where it sits)
     this.detainedT = DETAIN_SECONDS;   // frozen during the van ride — counts down once locked up
     this.invulnT = RELEASE_GRACE_S;
     this.arrest = "called";
@@ -1316,6 +1328,8 @@ export class GameEngine {
     const p = this.player;
     p.x = gate.x; p.z = gate.z; p.y = 0; p.vx = p.vz = p.vy = 0;
     this.playerInVan = false;
+    this.drive = null; // never leave the station still "holding" a wheel — the mesh
+    this.exitCd = 0;   // hides while drive is set (the invisible-player bug)
     this.arrest = "locked";
     this.arrestStation = stationIdx;
     const cage = stationCage(st);
@@ -1400,6 +1414,7 @@ export class GameEngine {
           if (van.timer <= 0) {
             if (pr?.kind === "player") {
               this.playerInVan = true;
+              this.drive = null; // yanked out of any car — hands are cuffed!
               this.arrest = "riding";
               this.toast("🚓 In the van! Riding to the police station…", "info");
             } else if (pr?.kind === "civ") {
@@ -1648,6 +1663,7 @@ export class GameEngine {
             const st = POLICE_STATIONS[this.arrestStation];
             this.arrest = "free"; this.arrestStation = -1;
             this.invulnT = RELEASE_GRACE_S;
+            this.drive = null; // belt & suspenders — release must never leave a phantom wheel
             for (const cop of this.cops) {
               if (dist2(cop.x, cop.z, p.x, p.z) < 45 * 45) {
                 const far = this.spotAwayFromPlayer(70);
