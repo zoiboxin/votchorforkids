@@ -435,11 +435,22 @@ export const CAR_ACCEL = 14;           // u/s² on W
 export const CAR_BRAKE = 30;           // u/s² on S while rolling forward
 export const CAR_COAST = 9;            // u/s² natural drag when no pedal
 export const CAR_STEER = 1.75;         // rad/s at full lock
-/** The driven body collides as its two axle discs — the SAME ±1.25 / r 1.16 pair
- *  the parked cars use as colliders, so a moving car can never overlap a building
- *  deeper than a parked one (a single centre probe let the nose & boot clip walls). */
-export const CAR_AXLE = 1.25;          // axle offset from the car centre
-export const CAR_AXLE_R = 1.16;        // axle collision radius
+/* ---------- Vehicle fleet — 6 body styles shared by parked cars & ring traffic ----------
+ * 0 sedan · 1 hatchback · 2 van · 3 pickup truck · 4 city bus · 5 jeep */
+export const VEHICLE_LABELS = ["🚗 Car", "🚗 Hatchback", "🚐 Van", "🛻 Pickup truck", "🚌 City bus", "🚙 Jeep"];
+/** Weighted body-style pool — sedans/hatches/vans fill the streets, buses stay rare. */
+export const VEHICLE_POOL: readonly number[] = [0, 0, 1, 1, 2, 2, 2, 3, 3, 4, 5];
+export const pickVehicle = (r: () => number): number => VEHICLE_POOL[Math.floor(r() * VEHICLE_POOL.length)];
+/** Per body-style collision dims: the driven body collides as its two axle discs —
+ *  the SAME offset/radius pair the parked cars use as colliders, so a moving vehicle
+ *  can never overlap a building deeper than a parked one. Longer bodies (bus, pickup)
+ *  spread their axles further apart so the nose & tail stay protected. */
+export const VEHICLE_AXLE: readonly number[] = [1.25, 1.02, 1.5, 1.78, 2.35, 1.12];
+export const VEHICLE_AXLE_R: readonly number[] = [1.16, 1.12, 1.26, 1.3, 1.42, 1.2];
+/** Per body-style driving feel: top speed (u/s) and steering grip multiplier —
+ *  a loaded bus shouldn't corner like a go-kart. */
+export const VEHICLE_TOP: readonly number[] = [26, 24, 24, 23, 19, 25];
+export const VEHICLE_STEER: readonly number[] = [1, 1, 0.92, 0.85, 0.7, 1];
 
 /* ---------- Scoring ---------- */
 export const POINTS_DELIVER = 120;

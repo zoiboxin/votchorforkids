@@ -1,11 +1,11 @@
 import {
-  AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, BUST_CARRY_BONUS, BUST_POINTS, BUST_TARGET, CARRY_RADIUS, CAR_ACCEL, CAR_AXLE, CAR_AXLE_R, CAR_BRAKE, CAR_COAST, CAR_ENTER_R, CAR_HIT_CD, CAR_HIT_DMG, CAR_MAX_SPEED, CAR_REV_SPEED, CAR_STEER, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
+  AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, BUST_CARRY_BONUS, BUST_POINTS, BUST_TARGET, CARRY_RADIUS, CAR_ACCEL, CAR_BRAKE, CAR_COAST, CAR_ENTER_R, CAR_HIT_CD, CAR_HIT_DMG, CAR_REV_SPEED, CAR_STEER, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
   CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, CONFISCATE_FINE, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
   ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HAUL_CAMP_R, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
   ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
-  RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SCAVENGER_COUNT, SCAVENGER_SENSE_R, SPAWN, SONIC_MULT, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, VAN_AXLE, VAN_LOAD_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
+  RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SCAVENGER_COUNT, SCAVENGER_SENSE_R, SPAWN, SONIC_MULT, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_LABELS, VEHICLE_POOL, VEHICLE_STEER, VEHICLE_TOP, VAN_AXLE, VAN_LOAD_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
   AIRPORT, PLANE_COUNT,
   WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
   ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, BOT_SPAWN_GAP, policeOutfitOf, stationCage, stationGate, type AnimalKind, type Appearance, type PolicePerk, type PowerKind, type Side, type Zone, zoneOf, ZONE_TOAST,
@@ -460,7 +460,8 @@ export class GameEngine {
       const ix = g.x + Math.sign(st.x) * 4, iz = g.z + Math.sign(st.z) * 4;
       this.vans.push({ id: this.nid(), station: i, x: ix, z: iz, rot: Math.atan2(st.x - ix, st.z - iz), state: "idle", path: [], goal: { x: ix, z: iz }, timer: 0, stallT: 0, rebuilds: 0, prisoner: null });
     }
-    // ring-road traffic — two lanes, both directions, mixed body styles
+    // ring-road traffic — two lanes, both directions, the full fleet: buses, pickups,
+    // vans & jeeps cruise alongside the family cars
     for (let i = 0; i < TRAFFIC_COUNT; i++) {
       const dir: 1 | -1 = i % 2 === 0 ? 1 : -1;
       this.traffic.push({
@@ -469,7 +470,7 @@ export class GameEngine {
         a: (i / TRAFFIC_COUNT) * Math.PI * 2,
         sp: 0.034 + (i % 3) * 0.011, // ≈7–12 u/s — quicker than a walking kid, dodgeable when sprinting
         c: (i * 3 + 1) % 8,
-        t: i % 3,
+        t: VEHICLE_POOL[i % VEHICLE_POOL.length],
         x: 0, z: 0, rot: 0,
       });
       const t = this.traffic[this.traffic.length - 1];
@@ -745,8 +746,9 @@ export class GameEngine {
       const pair = this.carAxles.get(i);
       if (pair) {
         const fx = Math.sin(h.rot), fz = Math.cos(h.rot);
-        pair[0].x = h.x - fx * 1.25; pair[0].z = h.z - fz * 1.25;
-        pair[1].x = h.x + fx * 1.25; pair[1].z = h.z + fz * 1.25;
+        const ax = VEHICLE_AXLE[c.t] ?? 1.25;
+        pair[0].x = h.x - fx * ax; pair[0].z = h.z - fz * ax;
+        pair[1].x = h.x + fx * ax; pair[1].z = h.z + fz * ax;
       }
     });
     this.detainedT = 0; this.invulnT = 8; this.elapsed = 0; this.won = false; this.clock = 0.3;
@@ -838,7 +840,7 @@ export class GameEngine {
     p.vx = p.vz = p.vy = 0;
     sfx.engine();
     sfx.door();
-    this.toast("🚗 Vroom! W/S gas & brake · A/D steer · E hop out · H horn!", "good");
+    this.toast(`${VEHICLE_LABELS[car.t % VEHICLE_LABELS.length]} Vroom! W/S gas & brake · A/D steer · E hop out · H horn!`, "good");
   }
 
   /** Hop out — the car stays parked where you left it (its colliders move along). */
@@ -862,35 +864,39 @@ export class GameEngine {
   /** H key while driving — beep beep! */
   horn() { if (this.drive) sfx.horn(); }
 
-  /** Keep the driven car's world entry + its two axle colliders glued to the body. */
+  /** Keep the driven vehicle's world entry + its two axle colliders glued to the body.
+   *  The axle spread follows the body style — a bus sits on discs further apart. */
   private syncCarColliders(d: DriveState) {
     const car = this.world.cars[d.ci];
     car.x = d.x; car.z = d.z; car.rot = d.rot;
     const pair = this.carAxles.get(d.ci);
     if (!pair) return;
+    const ax = VEHICLE_AXLE[d.t % VEHICLE_AXLE.length];
     const fx = Math.sin(d.rot), fz = Math.cos(d.rot);
-    pair[0].x = d.x - fx * CAR_AXLE; pair[0].z = d.z - fz * CAR_AXLE;
-    pair[1].x = d.x + fx * CAR_AXLE; pair[1].z = d.z + fz * CAR_AXLE;
+    pair[0].x = d.x - fx * ax; pair[0].z = d.z - fz * ax;
+    pair[1].x = d.x + fx * ax; pair[1].z = d.z + fz * ax;
   }
 
   /**
-   * Push the whole car body out of buildings, trees & other cars. The body is
-   * modelled as its two axle discs — the exact ±CAR_AXLE / r CAR_AXLE_R pair the
-   * parked cars use as colliders — so the nose and boot are protected, and a
-   * moving car can never overlap a building deeper than a parked one. Both
-   * axles are resolved, then the pose (centre + heading) is rebuilt from them,
-   * which turns a head-on bonk into a natural slide along the wall. Returns
-   * how far the body was shoved (the caller spends it as scrape speed loss).
+   * Push the whole vehicle body out of buildings, trees & other vehicles. The body
+   * is modelled as its two axle discs — the same per-style ±axle / r pair the parked
+   * fleet uses as colliders — so the nose and boot are protected, and a moving vehicle
+   * can never overlap a building deeper than a parked one. Both axles are resolved,
+   * then the pose (centre + heading) is rebuilt from them, which turns a head-on bonk
+   * into a natural slide along the wall. Returns how far the body was shoved (the
+   * caller spends it as scrape speed loss).
    */
   private resolveCarBody(d: DriveState): number {
+    const ax = VEHICLE_AXLE[d.t % VEHICLE_AXLE.length];
+    const axR = VEHICLE_AXLE_R[d.t % VEHICLE_AXLE_R.length];
     let moved = 0;
     for (let iter = 0; iter < 2; iter++) {
       const sn = Math.sin(d.rot), cs = Math.cos(d.rot);
-      const rear = { x: d.x - sn * CAR_AXLE, z: d.z - cs * CAR_AXLE };
-      const front = { x: d.x + sn * CAR_AXLE, z: d.z + cs * CAR_AXLE };
+      const rear = { x: d.x - sn * ax, z: d.z - cs * ax };
+      const front = { x: d.x + sn * ax, z: d.z + cs * ax };
       const r0x = rear.x, r0z = rear.z, f0x = front.x, f0z = front.z;
-      resolve(rear, CAR_AXLE_R, this.world, d.ci);
-      resolve(front, CAR_AXLE_R, this.world, d.ci);
+      resolve(rear, axR, this.world, d.ci);
+      resolve(front, axR, this.world, d.ci);
       const push = Math.hypot(rear.x - r0x, rear.z - r0z) + Math.hypot(front.x - f0x, front.z - f0z);
       moved += push;
       // rebuild heading from the pushed axle line (axles pushed apart won't flip it)
@@ -903,20 +909,22 @@ export class GameEngine {
     return moved;
   }
 
-  /** One arcade physics step of the player-driven car — bouncy, fast, kid-friendly. */
+  /** One arcade physics step of the player-driven vehicle — bouncy, fast, kid-friendly.
+   *  Body style matters: a bus tops out slower and corners wide, a jeep zips about. */
   private stepDrive(dt: number) {
     const d = this.drive!;
     const p = this.player;
+    const ti = d.t % VEHICLE_TOP.length;
     // throttle & steering come straight from the shared input (touch joystick works too)
     const f = this.input.f;
     const steer = this.input.r;
-    const maxF = CAR_MAX_SPEED * (this.activePower === "sonic" ? 1.3 : 1);
+    const maxF = VEHICLE_TOP[ti] * (this.activePower === "sonic" ? 1.3 : 1);
     if (f > 0.01) d.v += CAR_ACCEL * dt * f;
     else if (f < -0.01) d.v -= (d.v > 0.5 ? CAR_BRAKE : CAR_ACCEL * 0.55) * dt * -f;
     else d.v -= Math.sign(d.v) * Math.min(Math.abs(d.v), CAR_COAST * dt);
     d.v = clamp(d.v, -CAR_REV_SPEED, maxF);
-    // steering only bites while rolling (like a real car) and flips while reversing
-    const grip = Math.min(1, Math.abs(d.v) / 9);
+    // steering only bites while rolling (like a real vehicle) and flips while reversing
+    const grip = Math.min(1, Math.abs(d.v) / 9) * VEHICLE_STEER[ti];
     // integrate in small slices (a 26 u/s car covers 0.43/frame — slices make sure
     // it can never LEAP a thin wall in one step), then push the WHOLE body out of
     // buildings, trees and other cars: the old single centre probe let the nose
@@ -933,12 +941,13 @@ export class GameEngine {
     if (scrape > 0.004) d.v *= 0.82; // cartoon scrape — walls eat speed
     const rr = Math.hypot(d.x, d.z);
     if (rr > WALL_RADIUS) { d.x *= WALL_RADIUS / rr; d.z *= WALL_RADIUS / rr; d.v = Math.min(d.v, 4); }
-    // ring-road traffic & police vans are solid — the car bonks off, nobody gets hurt
+    // ring-road traffic & police vans are solid — the vehicle bonks off, nobody gets hurt
     for (const t of this.traffic) {
+      const tr = VEHICLE_AXLE_R[t.t % VEHICLE_AXLE_R.length] + VEHICLE_AXLE_R[ti] + 0.12;
       const tdx = d.x - t.x, tdz = d.z - t.z, td2 = tdx * tdx + tdz * tdz;
-      if (td2 < 2.5 * 2.5 && td2 > 0.0001) {
+      if (td2 < tr * tr && td2 > 0.0001) {
         const td = Math.sqrt(td2);
-        d.x = t.x + (tdx / td) * 2.5; d.z = t.z + (tdz / td) * 2.5;
+        d.x = t.x + (tdx / td) * tr; d.z = t.z + (tdz / td) * tr;
         d.v *= 0.75;
       }
     }
@@ -1713,11 +1722,13 @@ export class GameEngine {
       t.x = Math.cos(t.a) * t.r;
       t.z = Math.sin(t.a) * t.r;
       t.rot = t.dir > 0 ? -t.a : Math.PI + t.a;
-      if (this.detainedT > 0 || this.drive) continue; // sitting out detention / safe inside a car — traffic can't touch you
+      if (this.detainedT > 0 || this.drive) continue; // sitting out detention / safe inside a vehicle — traffic can't touch you
       const fx = Math.sin(t.rot), fz = Math.cos(t.rot);
-      for (const off of [1.25, -1.25]) { // front & rear axle circles, matching parked-car colliders
+      const tax = VEHICLE_AXLE[t.t % VEHICLE_AXLE.length];
+      const taxR = VEHICLE_AXLE_R[t.t % VEHICLE_AXLE_R.length];
+      for (const off of [tax, -tax]) { // front & rear axle circles, matching the body style's colliders
         const cx = t.x + fx * off, cz = t.z + fz * off;
-        const dx = p.x - cx, dz = p.z - cz, rr = 1.16 + 0.55;
+        const dx = p.x - cx, dz = p.z - cz, rr = taxR + 0.55;
         const d2 = dx * dx + dz * dz;
         if (d2 >= rr * rr) continue;
         const d = Math.sqrt(d2) || 0.01;

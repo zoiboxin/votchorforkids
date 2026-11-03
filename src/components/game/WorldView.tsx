@@ -457,33 +457,59 @@ function Windows({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
   );
 }
 
-/* ------------------------- cars: parked + ring traffic ------------------------- */
+/* ------------------------- vehicles: parked + ring traffic ------------------------- */
 const CAR_COL_HEX = ["#e0483a", "#2a9d8f", "#f0c040", "#f2f2f2", "#8a5aa8", "#ff8c42", "#4aa3df", "#67b05f"];
 
-/** Every instanced part of one car group (the parked set or the traffic set). */
+/** Every instanced part of one vehicle group (the parked set or the traffic set). */
 interface CarParts {
   body: THREE.InstancedMesh; roof: THREE.InstancedMesh; cab: THREE.InstancedMesh; skirt: THREE.InstancedMesh;
   wind: THREE.InstancedMesh; rglass: THREE.InstancedMesh; grille: THREE.InstancedMesh;
   mirL: THREE.InstancedMesh; mirR: THREE.InstancedMesh; exh: THREE.InstancedMesh;
   bumpF: THREE.InstancedMesh; bumpR: THREE.InstancedMesh; lights: THREE.InstancedMesh; tails: THREE.InstancedMesh;
   wheels: THREE.InstancedMesh; hubs: THREE.InstancedMesh;
+  bed: THREE.InstancedMesh;    // 🛻 pickup cargo-bed walls (3 slots per vehicle)
+  sign: THREE.InstancedMesh;   // 🚌 bus destination board (1 slot)
+  bar: THREE.InstancedMesh;    // 🚙 jeep roll bar (3 slots)
+  spare: THREE.InstancedMesh;  // 🚙 jeep tailgate spare wheel (1 slot)
+  beam: THREE.InstancedMesh;   // 🔆 night headlight cones (2 slots)
 }
 
-/** Body styles — sedans, hatchbacks and chunky vans all share the same instanced parts. */
-interface CarType { L: number; W: number; bodyH: number; cabL: number; cabOff: number; cabH: number; wheelR: number; axF: number; wsTilt: number; rgTilt: number }
+const BEAM_LEN = 5.6;          // how far a headlight cone reaches
+const HEAD_DAY = new THREE.Color(0xe8e2c8);   // lens glass, engine off
+const HEAD_NIGHT = new THREE.Color(0xfff8cf); // blazing lamps after dark
+const TAIL_DAY = new THREE.Color(0xd0503c);
+const TAIL_NIGHT = new THREE.Color(0xff4530);
+
+/**
+ * Body styles — every road vehicle shares one instanced part set; `kind` decides
+ * which extras placeCar stamps on top of the shared body:
+ * 0 car (sedan/hatch) · 1 van · 2 pickup truck · 3 bus · 4 jeep.
+ */
+interface CarType {
+  L: number; W: number; bodyH: number; cabL: number; cabOff: number; cabH: number;
+  wheelR: number; axF: number; wsTilt: number; rgTilt: number;
+  kind: 0 | 1 | 2 | 3 | 4;
+  dualAxle?: boolean;          // bus & truck roll on a second rear axle (6 wheels)
+}
 const CAR_TYPES: CarType[] = [
-  { L: 4.4, W: 1.9, bodyH: 0.92, cabL: 1.9, cabOff: -0.35, cabH: 0.6, wheelR: 0.44, axF: 1.42, wsTilt: 0.44, rgTilt: 0.4 },   // sedan
-  { L: 3.5, W: 1.8, bodyH: 0.86, cabL: 1.9, cabOff: 0.15, cabH: 0.74, wheelR: 0.42, axF: 1.1, wsTilt: 0.52, rgTilt: 0.48 },   // hatchback
-  { L: 4.7, W: 2.05, bodyH: 1.18, cabL: 2.9, cabOff: 0.5, cabH: 0.85, wheelR: 0.48, axF: 1.55, wsTilt: 0.22, rgTilt: 0.12 },  // chunky van
+  { L: 4.4, W: 1.9, bodyH: 0.92, cabL: 1.9, cabOff: -0.35, cabH: 0.6, wheelR: 0.44, axF: 1.42, wsTilt: 0.44, rgTilt: 0.4, kind: 0 },                // sedan
+  { L: 3.5, W: 1.8, bodyH: 0.86, cabL: 1.9, cabOff: 0.15, cabH: 0.74, wheelR: 0.42, axF: 1.1, wsTilt: 0.52, rgTilt: 0.48, kind: 0 },               // hatchback
+  { L: 4.7, W: 2.05, bodyH: 1.18, cabL: 2.9, cabOff: 0.5, cabH: 0.85, wheelR: 0.48, axF: 1.55, wsTilt: 0.22, rgTilt: 0.12, kind: 1 },              // delivery van
+  { L: 5.3, W: 2.05, bodyH: 0.98, cabL: 1.75, cabOff: 1.32, cabH: 0.78, wheelR: 0.54, axF: 1.78, wsTilt: 0.34, rgTilt: 0.3, kind: 2 },             // pickup truck
+  { L: 7.0, W: 2.35, bodyH: 1.55, cabL: 5.5, cabOff: 0, cabH: 0.68, wheelR: 0.5, axF: 2.45, wsTilt: 0.12, rgTilt: 0.1, kind: 3, dualAxle: true },  // city bus
+  { L: 3.7, W: 2.0, bodyH: 0.88, cabL: 1.3, cabOff: 0.62, cabH: 0.5, wheelR: 0.52, axF: 1.16, wsTilt: 0.5, rgTilt: 0.4, kind: 4 },                 // jeep
 ];
 
 /**
- * Stamp one cartoon car: coloured body + roof, glass cabin with a RAKED windshield
- * and rear window, dark skirt & bumpers, grille, side mirrors, exhaust pipe,
- * glowing head/tail lights and tires with hubcaps. Offsets are car-local:
- * s = sideways, f = along the forward axis, then rotated into place.
- * `tilt` (radians, rotation around the car's side axis) leans the glass —
- * positive tilts the top toward the nose, negative toward the tail.
+ * Stamp one vehicle: coloured body, dark skirt & bumpers, grille, side mirrors,
+ * exhaust pipe, head/tail lights, night headlight BEAMS and tires with hubcaps —
+ * then the body-style extras: a raked three-box greenhouse for cars & vans, an
+ * open cargo bed for the pickup, a full-length window band + destination board
+ * for the bus, and a roll bar + tailgate spare wheel for the jeep. Offsets are
+ * vehicle-local: s = sideways, f = along the forward axis, rotated into place.
+ * `tilt` (radians around the vehicle's side axis) leans the glass — positive
+ * tilts the top toward the nose, negative toward the tail. Unused part slots get
+ * zero-scale "hidden" stamps so every body style can share one instanced set.
  */
 function placeCar(P: CarParts, i: number, x: number, y: number, z: number, rot: number, c: number, t: number) {
   const T = CAR_TYPES[t % CAR_TYPES.length];
@@ -495,43 +521,131 @@ function placeCar(P: CarParts, i: number, x: number, y: number, z: number, rot: 
     tmp.updateMatrix();
     m.setMatrixAt(idx, tmp.matrix);
   };
+  const hide = (m: THREE.InstancedMesh, idx: number) => {
+    tmp.rotation.set(0, 0, 0);
+    tmp.position.set(0, -500, 0);
+    tmp.scale.setScalar(0);
+    tmp.updateMatrix();
+    m.setMatrixAt(idx, tmp.matrix);
+  };
   const bodyC = col.set(CAR_COL_HEX[c % CAR_COL_HEX.length]);
   const bodyTop = 0.52 + T.bodyH;
+  const kind = T.kind;
+
+  // shared lower body + dark skirt
   put(P.skirt, i, 0, 0, 0.38, T.W + 0.1, 0.28, T.L + 0.08);
   put(P.body, i, 0, 0, 0.52 + T.bodyH / 2, T.W, T.bodyH, T.L);
   P.body.setColorAt(i, bodyC);
-  // greenhouse: inset cabin + raked windshield / rear window give the classic
-  // three-box car silhouette instead of one upright glass slab
-  put(P.cab, i, 0, T.cabOff, bodyTop + T.cabH / 2, T.W - 0.3, T.cabH, T.cabL);
-  put(P.roof, i, 0, T.cabOff, bodyTop + T.cabH + 0.06, T.W - 0.36, 0.12, T.cabL - 0.18);
-  P.roof.setColorAt(i, bodyC);
-  put(P.wind, i, 0, T.cabOff + T.cabL / 2 + 0.03, bodyTop + T.cabH / 2, T.W - 0.22, T.cabH + 0.03, 0.14, -T.wsTilt);
-  put(P.rglass, i, 0, T.cabOff - T.cabL / 2 - 0.03, bodyTop + T.cabH / 2, T.W - 0.22, T.cabH * 0.94, 0.14, T.rgTilt);
-  // details: grille between the headlights, side mirrors on the A-pillars, exhaust
+
+  // greenhouse — the silhouette that tells each body style apart
+  if (kind === 4) {
+    // 🚙 jeep: open cab — raked windshield only, roll bar & spare wheel out back
+    hide(P.cab, i); hide(P.roof, i); hide(P.rglass, i);
+    put(P.wind, i, 0, T.cabOff + T.cabL / 2 + 0.06, bodyTop + T.cabH / 2, T.W - 0.32, T.cabH, 0.12, -T.wsTilt);
+  } else if (kind === 3) {
+    // 🚌 bus: full-length window band under a slim body-coloured roof
+    put(P.cab, i, 0, T.cabOff, bodyTop + T.cabH / 2, T.W - 0.26, T.cabH, T.cabL);
+    put(P.roof, i, 0, 0, bodyTop + T.cabH + 0.05, T.W - 0.2, 0.1, T.L - 0.5);
+    P.roof.setColorAt(i, bodyC);
+    put(P.wind, i, 0, T.cabL / 2 + 0.06, bodyTop + T.cabH / 2, T.W - 0.32, T.cabH - 0.08, 0.12, -T.wsTilt);
+    put(P.rglass, i, 0, -(T.cabL / 2 + 0.06), bodyTop + T.cabH / 2, T.W - 0.32, T.cabH - 0.08, 0.12, T.rgTilt);
+  } else {
+    // 🚗 car / van / pickup: classic three-box — inset cabin + raked glass front & rear
+    put(P.cab, i, 0, T.cabOff, bodyTop + T.cabH / 2, T.W - 0.3, T.cabH, T.cabL);
+    put(P.roof, i, 0, T.cabOff, bodyTop + T.cabH + 0.06, T.W - 0.36, 0.12, T.cabL - 0.18);
+    P.roof.setColorAt(i, bodyC);
+    put(P.wind, i, 0, T.cabOff + T.cabL / 2 + 0.03, bodyTop + T.cabH / 2, T.W - 0.22, T.cabH + 0.03, 0.14, -T.wsTilt);
+    put(P.rglass, i, 0, T.cabOff - T.cabL / 2 - 0.03, bodyTop + T.cabH / 2, T.W - 0.22, T.cabH * 0.94, 0.14, T.rgTilt);
+  }
+
+  // 🛻 pickup: open cargo bed behind the cab — two side walls + a tailgate
+  if (kind === 2) {
+    const f0 = -(T.L / 2) + 0.3, f1 = T.cabOff - T.cabL / 2 - 0.12;
+    const bc = (f0 + f1) / 2, bl = Math.max(0.7, f1 - f0), by = bodyTop + 0.25;
+    put(P.bed, i * 3, -(T.W / 2 - 0.07), bc, by, 0.13, 0.5, bl);
+    put(P.bed, i * 3 + 1, T.W / 2 - 0.07, bc, by, 0.13, 0.5, bl);
+    put(P.bed, i * 3 + 2, 0, f0 + 0.07, by, T.W - 0.14, 0.5, 0.13);
+    P.bed.setColorAt(i * 3, bodyC); P.bed.setColorAt(i * 3 + 1, bodyC); P.bed.setColorAt(i * 3 + 2, bodyC);
+  } else {
+    hide(P.bed, i * 3); hide(P.bed, i * 3 + 1); hide(P.bed, i * 3 + 2);
+  }
+
+  // 🚌 bus destination board — the dark route band across the top of the windshield
+  if (kind === 3) put(P.sign, i, 0, T.cabL / 2 + 0.06, bodyTop + T.cabH - 0.1, T.W - 1.05, 0.26, 0.16);
+  else hide(P.sign, i);
+
+  // 🚙 jeep roll bar: two posts + a top bar over the rear bench
+  if (kind === 4) {
+    const rf = T.cabOff - T.cabL / 2 - 0.3;
+    put(P.bar, i * 3, -(T.W / 2 - 0.24), rf, bodyTop + 0.4, 0.1, 0.8, 0.1);
+    put(P.bar, i * 3 + 1, T.W / 2 - 0.24, rf, bodyTop + 0.4, 0.1, 0.8, 0.1);
+    put(P.bar, i * 3 + 2, 0, rf, bodyTop + 0.82, T.W - 0.38, 0.1, 0.1);
+  } else {
+    hide(P.bar, i * 3); hide(P.bar, i * 3 + 1); hide(P.bar, i * 3 + 2);
+  }
+
+  // 🚙 jeep spare wheel standing on the tailgate
+  if (kind === 4) {
+    tmp.rotation.set(Math.PI / 2, rot, 0);   // cylinder axis +Y → lying along the forward axis
+    tmp.position.set(x, y + bodyTop - 0.3, z - (T.L / 2 + 0.12));
+    tmp.scale.setScalar(T.wheelR * 1.6);
+    tmp.updateMatrix();
+    P.spare.setMatrixAt(i, tmp.matrix);
+  } else hide(P.spare, i);
+
+  // trim details: grille between the headlights, side mirrors, exhaust, bumpers
   put(P.grille, i, 0, T.L / 2 + 0.02, 0.62, T.W - 0.92, 0.2, 0.1);
   put(P.mirL, i, -(T.W / 2 + 0.07), T.cabOff + T.cabL / 2 - 0.02, bodyTop + T.cabH - 0.02, 0.1, 0.14, 0.2);
   put(P.mirR, i, T.W / 2 + 0.07, T.cabOff + T.cabL / 2 - 0.02, bodyTop + T.cabH - 0.02, 0.1, 0.14, 0.2);
   put(P.exh, i, 0.36, -(T.L / 2 + 0.07), 0.32, 0.14, 0.14, 0.2);
   put(P.bumpF, i, 0, T.L / 2 + 0.06, 0.6, T.W + 0.14, 0.26, 0.18);
   put(P.bumpR, i, 0, -(T.L / 2 + 0.06), 0.6, T.W + 0.14, 0.26, 0.18);
+
+  // head & tail light boxes — their MATERIALS brighten after dark (see nightLights)
   for (const k of [-1, 1]) {
     put(P.lights, i * 2 + (k > 0 ? 1 : 0), k * (T.W / 2 - 0.3), T.L / 2 + 0.03, bodyTop - 0.22, 0.3, 0.15, 0.1);
     put(P.tails, i * 2 + (k > 0 ? 1 : 0), k * (T.W / 2 - 0.3), -(T.L / 2 + 0.03), bodyTop - 0.22, 0.3, 0.15, 0.1);
   }
-  for (let k = 0; k < 4; k++) {
-    const s = (k % 2 === 0 ? -1 : 1) * (T.W / 2 - 0.08);
-    const f = k < 2 ? T.axF : -T.axF;
+
+  // 🔆 night headlight beams — one forward light cone per lamp, apex at the lens
+  for (const k of [-1, 1]) {
+    const bi = i * 2 + (k > 0 ? 1 : 0);
+    const s = k * (T.W / 2 - 0.3), fl = T.L / 2 + BEAM_LEN / 2 - 0.05;
+    tmp.rotation.set(-Math.PI / 2, rot, 0);  // cone apex (+Y) → backward, opening forward
+    tmp.position.set(x + s * cs + fl * sn, y + bodyTop - 0.24, z - s * sn + fl * cs);
+    tmp.scale.set(1, 1, 1);
+    tmp.updateMatrix();
+    P.beam.setMatrixAt(bi, tmp.matrix);
+  }
+
+  // wheels — four per vehicle, plus a second rear axle for the bus (six total)
+  for (let k = 0; k < 6; k++) {
+    let s: number, f: number;
+    if (k < 4) {
+      s = (k % 2 === 0 ? -1 : 1) * (T.W / 2 - 0.08);
+      f = k < 2 ? T.axF : -T.axF;
+    } else if (T.dualAxle) {
+      s = (k % 2 === 0 ? -1 : 1) * (T.W / 2 - 0.08);
+      f = -T.axF * 0.62;
+    } else {
+      hide(P.wheels, i * 6 + k); hide(P.hubs, i * 6 + k);
+      continue;
+    }
     for (const [m, geo] of [[P.wheels, 0], [P.hubs, 1]] as const) {
       tmp.rotation.set(0, rot, Math.PI / 2);
       tmp.position.set(x + s * cs + f * sn, y + T.wheelR, z - s * sn + f * cs);
-      tmp.scale.setScalar(geo === 1 ? T.wheelR * 2.18 : 1);
+      tmp.scale.setScalar(geo === 1 ? T.wheelR * 2.18 : T.wheelR * 2.14);
       tmp.updateMatrix();
-      m.setMatrixAt(i * 4 + k, tmp.matrix);
+      m.setMatrixAt(i * 6 + k, tmp.matrix);
     }
   }
 }
 
-function Cars({ engine }: { engine: GameEngine }) {
+/* ---- shared vehicle part set ----
+ * One hook + one JSX block render every instanced piece; the parked fleet and the
+ * ring traffic each own a set. The three light materials are day/night driven:
+ * headlight lenses brighten, tail lamps flare, and the beam cones fade in. */
+function useVehicleRefs() {
   const body = useRef<THREE.InstancedMesh>(null!);
   const roof = useRef<THREE.InstancedMesh>(null!);
   const cab = useRef<THREE.InstancedMesh>(null!);
@@ -548,87 +662,135 @@ function Cars({ engine }: { engine: GameEngine }) {
   const tails = useRef<THREE.InstancedMesh>(null!);
   const wheels = useRef<THREE.InstancedMesh>(null!);
   const hubs = useRef<THREE.InstancedMesh>(null!);
-  useLayoutEffect(() => {
-    const P: CarParts = { body: body.current, roof: roof.current, cab: cab.current, skirt: skirt.current, wind: wind.current, rglass: rglass.current, grille: grille.current, mirL: mirL.current, mirR: mirR.current, exh: exh.current, bumpF: bumpF.current, bumpR: bumpR.current, lights: lights.current, tails: tails.current, wheels: wheels.current, hubs: hubs.current };
-    WORLD.cars.forEach((c, i) => placeCar(P, i, c.x, 0, c.z, c.rot, c.c, c.t));
-    for (const m of Object.values(P)) m.instanceMatrix.needsUpdate = true;
-    if (body.current.instanceColor) body.current.instanceColor.needsUpdate = true;
-    if (roof.current.instanceColor) roof.current.instanceColor.needsUpdate = true;
-  }, []);
-  // 🚗 the player-driven car moves — re-stamp just that one instance every frame
-  useFrame(() => {
-    const d = engine.drive;
-    if (!d) return;
-    const c = WORLD.cars[d.ci];
-    const P: CarParts = { body: body.current, roof: roof.current, cab: cab.current, skirt: skirt.current, wind: wind.current, rglass: rglass.current, grille: grille.current, mirL: mirL.current, mirR: mirR.current, exh: exh.current, bumpF: bumpF.current, bumpR: bumpR.current, lights: lights.current, tails: tails.current, wheels: wheels.current, hubs: hubs.current };
-    placeCar(P, d.ci, c.x, 0, c.z, c.rot, c.c, c.t);
-    for (const m of Object.values(P)) m.instanceMatrix.needsUpdate = true;
-  });
-  const N = Math.max(1, WORLD.cars.length);
+  const bed = useRef<THREE.InstancedMesh>(null!);
+  const sign = useRef<THREE.InstancedMesh>(null!);
+  const bar = useRef<THREE.InstancedMesh>(null!);
+  const spare = useRef<THREE.InstancedMesh>(null!);
+  const beam = useRef<THREE.InstancedMesh>(null!);
+  const headMat = useRef<THREE.MeshBasicMaterial>(null!);
+  const tailMat = useRef<THREE.MeshBasicMaterial>(null!);
+  const beamMat = useRef<THREE.MeshBasicMaterial>(null!);
+  return { body, roof, cab, skirt, wind, rglass, grille, mirL, mirR, exh, bumpF, bumpR, lights, tails, wheels, hubs, bed, sign, bar, spare, beam, headMat, tailMat, beamMat };
+}
+type VehicleRefs = ReturnType<typeof useVehicleRefs>;
+
+function partsOf(R: VehicleRefs): CarParts {
+  return {
+    body: R.body.current, roof: R.roof.current, cab: R.cab.current, skirt: R.skirt.current,
+    wind: R.wind.current, rglass: R.rglass.current, grille: R.grille.current,
+    mirL: R.mirL.current, mirR: R.mirR.current, exh: R.exh.current,
+    bumpF: R.bumpF.current, bumpR: R.bumpR.current, lights: R.lights.current, tails: R.tails.current,
+    wheels: R.wheels.current, hubs: R.hubs.current,
+    bed: R.bed.current, sign: R.sign.current, bar: R.bar.current, spare: R.spare.current, beam: R.beam.current,
+  };
+}
+function stampDone(P: CarParts) {
+  for (const m of Object.values(P)) m.instanceMatrix.needsUpdate = true;
+  if (P.body.instanceColor) P.body.instanceColor.needsUpdate = true;
+  if (P.roof.instanceColor) P.roof.instanceColor.needsUpdate = true;
+  if (P.bed.instanceColor) P.bed.instanceColor.needsUpdate = true;
+}
+/** Day → night: lenses brighten, tails flare, headlight beams fade in. */
+function nightLights(R: VehicleRefs, clock: number) {
+  const nf = nightFactor(clock);
+  if (R.headMat.current) R.headMat.current.color.copy(HEAD_DAY).lerp(HEAD_NIGHT, nf);
+  if (R.tailMat.current) R.tailMat.current.color.copy(TAIL_DAY).lerp(TAIL_NIGHT, nf);
+  const bm = R.beamMat.current;
+  if (bm) {
+    bm.opacity = Math.max(0, nf - 0.14) * 0.42;
+    bm.visible = bm.opacity > 0.015;
+  }
+}
+
+/** All instanced body parts of a vehicle set (counts are per-vehicle slots × N). */
+function VehicleParts({ R, N }: { R: VehicleRefs; N: number }) {
   return (
     <>
-      <instancedMesh frustumCulled={false} ref={skirt} args={[undefined, undefined, N]}>
+      <instancedMesh frustumCulled={false} ref={R.skirt} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial color="#1c2128" />
       </instancedMesh>
-      <instancedMesh frustumCulled={false} ref={body} args={[undefined, undefined, N]}>
+      <instancedMesh frustumCulled={false} ref={R.body} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial />
       </instancedMesh>
-      <instancedMesh frustumCulled={false} ref={cab} args={[undefined, undefined, N]}>
+      <instancedMesh frustumCulled={false} ref={R.cab} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial color="#a8d8ea" />
       </instancedMesh>
-      <instancedMesh frustumCulled={false} ref={roof} args={[undefined, undefined, N]}>
+      <instancedMesh frustumCulled={false} ref={R.roof} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial />
       </instancedMesh>
-      {/* raked glass + trim details — the parts that make it read as a real car */}
-      <instancedMesh frustumCulled={false} ref={wind} args={[undefined, undefined, N]}>
+      {/* raked glass + trim details — the parts that make each body style read true */}
+      <instancedMesh frustumCulled={false} ref={R.wind} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial color="#bfe3f2" />
       </instancedMesh>
-      <instancedMesh frustumCulled={false} ref={rglass} args={[undefined, undefined, N]}>
+      <instancedMesh frustumCulled={false} ref={R.rglass} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial color="#9fc4d8" />
       </instancedMesh>
-      <instancedMesh frustumCulled={false} ref={grille} args={[undefined, undefined, N]}>
+      <instancedMesh frustumCulled={false} ref={R.grille} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial color="#232830" />
       </instancedMesh>
-      <instancedMesh frustumCulled={false} ref={mirL} args={[undefined, undefined, N]}>
+      <instancedMesh frustumCulled={false} ref={R.mirL} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial color="#232830" />
       </instancedMesh>
-      <instancedMesh frustumCulled={false} ref={mirR} args={[undefined, undefined, N]}>
+      <instancedMesh frustumCulled={false} ref={R.mirR} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial color="#232830" />
       </instancedMesh>
-      <instancedMesh frustumCulled={false} ref={exh} args={[undefined, undefined, N]}>
+      <instancedMesh frustumCulled={false} ref={R.exh} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial color="#454c56" />
       </instancedMesh>
-      <instancedMesh frustumCulled={false} ref={bumpF} args={[undefined, undefined, N]}>
+      <instancedMesh frustumCulled={false} ref={R.bumpF} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial color="#2a2f38" />
       </instancedMesh>
-      <instancedMesh frustumCulled={false} ref={bumpR} args={[undefined, undefined, N]}>
+      <instancedMesh frustumCulled={false} ref={R.bumpR} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial color="#2a2f38" />
       </instancedMesh>
-      <instancedMesh frustumCulled={false} ref={lights} args={[undefined, undefined, N * 2]}>
+      {/* 🛻 pickup cargo-bed walls + 🚌 bus destination board + 🚙 jeep roll bar & spare */}
+      <instancedMesh frustumCulled={false} ref={R.bed} args={[undefined, undefined, N * 3]}>
         <boxGeometry />
-        <meshBasicMaterial color="#ffe08a" />
+        <meshLambertMaterial />
       </instancedMesh>
-      <instancedMesh frustumCulled={false} ref={tails} args={[undefined, undefined, N * 2]}>
+      <instancedMesh frustumCulled={false} ref={R.sign} args={[undefined, undefined, N]}>
         <boxGeometry />
-        <meshBasicMaterial color="#ff5f4a" />
+        <meshLambertMaterial color="#1d232c" />
       </instancedMesh>
-      <instancedMesh frustumCulled={false} ref={wheels} args={[undefined, undefined, N * 4]}>
+      <instancedMesh frustumCulled={false} ref={R.bar} args={[undefined, undefined, N * 3]}>
+        <boxGeometry />
+        <meshLambertMaterial color="#2a2f38" />
+      </instancedMesh>
+      <instancedMesh frustumCulled={false} ref={R.spare} args={[undefined, undefined, N]}>
         <cylinderGeometry args={[0.5, 0.5, 0.34, 12]} />
         <meshLambertMaterial color="#171a1f" />
       </instancedMesh>
-      <instancedMesh frustumCulled={false} ref={hubs} args={[undefined, undefined, N * 4]}>
+      {/* head & tail lamps — unlit boxes by day, blazing after dark */}
+      <instancedMesh frustumCulled={false} ref={R.lights} args={[undefined, undefined, N * 2]}>
+        <boxGeometry />
+        <meshBasicMaterial ref={R.headMat} color={HEAD_DAY.getHex()} />
+      </instancedMesh>
+      <instancedMesh frustumCulled={false} ref={R.tails} args={[undefined, undefined, N * 2]}>
+        <boxGeometry />
+        <meshBasicMaterial ref={R.tailMat} color={TAIL_DAY.getHex()} />
+      </instancedMesh>
+      {/* 🔆 headlight beams — additive cones, invisible by day, glowing at night */}
+      <instancedMesh frustumCulled={false} ref={R.beam} args={[undefined, undefined, N * 2]}>
+        <coneGeometry args={[0.95, BEAM_LEN, 10, 1, true]} />
+        <meshBasicMaterial ref={R.beamMat} color="#ffedb0" transparent opacity={0} blending={THREE.AdditiveBlending} depthWrite={false} side={THREE.DoubleSide} />
+      </instancedMesh>
+      <instancedMesh frustumCulled={false} ref={R.wheels} args={[undefined, undefined, N * 6]}>
+        <cylinderGeometry args={[0.5, 0.5, 0.34, 12]} />
+        <meshLambertMaterial color="#171a1f" />
+      </instancedMesh>
+      <instancedMesh frustumCulled={false} ref={R.hubs} args={[undefined, undefined, N * 6]}>
         <cylinderGeometry args={[0.5, 0.5, 0.44, 8]} />
         <meshLambertMaterial color="#c9ced8" />
       </instancedMesh>
@@ -636,100 +798,56 @@ function Cars({ engine }: { engine: GameEngine }) {
   );
 }
 
-/** Cars cruising the ring highway — the engine owns their positions (and collisions). */
-function RingTraffic({ engine }: { engine: GameEngine }) {
-  const body = useRef<THREE.InstancedMesh>(null!);
-  const roof = useRef<THREE.InstancedMesh>(null!);
-  const cab = useRef<THREE.InstancedMesh>(null!);
-  const skirt = useRef<THREE.InstancedMesh>(null!);
-  const wind = useRef<THREE.InstancedMesh>(null!);
-  const rglass = useRef<THREE.InstancedMesh>(null!);
-  const grille = useRef<THREE.InstancedMesh>(null!);
-  const mirL = useRef<THREE.InstancedMesh>(null!);
-  const mirR = useRef<THREE.InstancedMesh>(null!);
-  const exh = useRef<THREE.InstancedMesh>(null!);
-  const bumpF = useRef<THREE.InstancedMesh>(null!);
-  const bumpR = useRef<THREE.InstancedMesh>(null!);
-  const lights = useRef<THREE.InstancedMesh>(null!);
-  const tails = useRef<THREE.InstancedMesh>(null!);
-  const wheels = useRef<THREE.InstancedMesh>(null!);
-  const hubs = useRef<THREE.InstancedMesh>(null!);
+function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.MutableRefObject<number> }) {
+  const R = useVehicleRefs();
+  useLayoutEffect(() => {
+    const P = partsOf(R);
+    WORLD.cars.forEach((c, i) => placeCar(P, i, c.x, 0, c.z, c.rot, c.c, c.t));
+    stampDone(P);
+  }, []);
+  // 🚗 the player-driven vehicle moves — re-stamp just that one instance every frame
   useFrame(() => {
-    const P: CarParts = { body: body.current, roof: roof.current, cab: cab.current, skirt: skirt.current, wind: wind.current, rglass: rglass.current, grille: grille.current, mirL: mirL.current, mirR: mirR.current, exh: exh.current, bumpF: bumpF.current, bumpR: bumpR.current, lights: lights.current, tails: tails.current, wheels: wheels.current, hubs: hubs.current };
+    nightLights(R, clockRef.current);
+    const d = engine.drive;
+    if (!d) return;
+    const c = WORLD.cars[d.ci];
+    const P = partsOf(R);
+    placeCar(P, d.ci, c.x, 0, c.z, c.rot, c.c, c.t);
+    stampDone(P);
+  });
+  const N = Math.max(1, WORLD.cars.length);
+  return <VehicleParts R={R} N={N} />;
+}
+
+/** Vehicles cruising the ring highway — the engine owns their positions (and collisions). */
+function RingTraffic({ engine, clockRef }: { engine: GameEngine; clockRef: React.MutableRefObject<number> }) {
+  const R = useVehicleRefs();
+  useFrame(() => {
+    const P = partsOf(R);
     engine.traffic.forEach((t, i) => placeCar(P, i, t.x, 0.07, t.z, t.rot, t.c, t.t));
-    for (const m of Object.values(P)) m.instanceMatrix.needsUpdate = true;
-    if (body.current.instanceColor) body.current.instanceColor.needsUpdate = true;
-    if (roof.current.instanceColor) roof.current.instanceColor.needsUpdate = true;
+    stampDone(P);
+    nightLights(R, clockRef.current);
   });
   const N = Math.max(1, engine.traffic.length);
-  return (
-    <>
-      <instancedMesh ref={skirt} args={[undefined, undefined, N]} frustumCulled={false}>
-        <boxGeometry />
-        <meshLambertMaterial color="#1c2128" />
-      </instancedMesh>
-      <instancedMesh ref={body} args={[undefined, undefined, N]} frustumCulled={false}>
-        <boxGeometry />
-        <meshLambertMaterial />
-      </instancedMesh>
-      <instancedMesh ref={cab} args={[undefined, undefined, N]} frustumCulled={false}>
-        <boxGeometry />
-        <meshLambertMaterial color="#a8d8ea" />
-      </instancedMesh>
-      <instancedMesh ref={roof} args={[undefined, undefined, N]} frustumCulled={false}>
-        <boxGeometry />
-        <meshLambertMaterial />
-      </instancedMesh>
-      <instancedMesh ref={wind} args={[undefined, undefined, N]} frustumCulled={false}>
-        <boxGeometry />
-        <meshLambertMaterial color="#bfe3f2" />
-      </instancedMesh>
-      <instancedMesh ref={rglass} args={[undefined, undefined, N]} frustumCulled={false}>
-        <boxGeometry />
-        <meshLambertMaterial color="#9fc4d8" />
-      </instancedMesh>
-      <instancedMesh ref={grille} args={[undefined, undefined, N]} frustumCulled={false}>
-        <boxGeometry />
-        <meshLambertMaterial color="#232830" />
-      </instancedMesh>
-      <instancedMesh ref={mirL} args={[undefined, undefined, N]} frustumCulled={false}>
-        <boxGeometry />
-        <meshLambertMaterial color="#232830" />
-      </instancedMesh>
-      <instancedMesh ref={mirR} args={[undefined, undefined, N]} frustumCulled={false}>
-        <boxGeometry />
-        <meshLambertMaterial color="#232830" />
-      </instancedMesh>
-      <instancedMesh ref={exh} args={[undefined, undefined, N]} frustumCulled={false}>
-        <boxGeometry />
-        <meshLambertMaterial color="#454c56" />
-      </instancedMesh>
-      <instancedMesh ref={bumpF} args={[undefined, undefined, N]} frustumCulled={false}>
-        <boxGeometry />
-        <meshLambertMaterial color="#2a2f38" />
-      </instancedMesh>
-      <instancedMesh ref={bumpR} args={[undefined, undefined, N]} frustumCulled={false}>
-        <boxGeometry />
-        <meshLambertMaterial color="#2a2f38" />
-      </instancedMesh>
-      <instancedMesh ref={lights} args={[undefined, undefined, N * 2]} frustumCulled={false}>
-        <boxGeometry />
-        <meshBasicMaterial color="#ffe08a" />
-      </instancedMesh>
-      <instancedMesh ref={tails} args={[undefined, undefined, N * 2]} frustumCulled={false}>
-        <boxGeometry />
-        <meshBasicMaterial color="#ff5f4a" />
-      </instancedMesh>
-      <instancedMesh ref={wheels} args={[undefined, undefined, N * 4]} frustumCulled={false}>
-        <cylinderGeometry args={[0.5, 0.5, 0.32, 10]} />
-        <meshLambertMaterial color="#171a1f" />
-      </instancedMesh>
-      <instancedMesh ref={hubs} args={[undefined, undefined, N * 4]} frustumCulled={false}>
-        <cylinderGeometry args={[0.5, 0.5, 0.42, 8]} />
-        <meshLambertMaterial color="#c9ced8" />
-      </instancedMesh>
-    </>
-  );
+  return <VehicleParts R={R} N={N} />;
+}
+
+/** A warm pool of light in front of whatever the player is driving — the headlights
+ *  that actually light the road at night (one shared light, only while driving). */
+function DriveLight({ engine, clockRef }: { engine: GameEngine; clockRef: React.MutableRefObject<number> }) {
+  const ref = useRef<THREE.PointLight>(null!);
+  useFrame(() => {
+    const l = ref.current;
+    if (!l) return;
+    const d = engine.drive;
+    const nf = nightFactor(clockRef.current);
+    l.visible = !!d && nf > 0.12;
+    if (l.visible && d) {
+      l.position.set(d.x + Math.sin(d.rot) * 5.2, 1.5, d.z + Math.cos(d.rot) * 5.2);
+      l.intensity = 30 * nf;
+    }
+  });
+  return <pointLight ref={ref} args={[0xffe2a0, 0, 24, 1.6]} visible={false} />;
 }
 
 /* ------------------------- street lamps (glow at night) ------------------------- */
@@ -2101,8 +2219,9 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
       <Buildings />
       <PoliceStations />
       <Windows clockRef={clockRef} />
-      <Cars engine={engine} />
-      <RingTraffic engine={engine} />
+      <Cars engine={engine} clockRef={clockRef} />
+      <RingTraffic engine={engine} clockRef={clockRef} />
+      <DriveLight engine={engine} clockRef={clockRef} />
       <PoliceVans engine={engine} />
       <Planes engine={engine} />
       <Lamps clockRef={clockRef} />
