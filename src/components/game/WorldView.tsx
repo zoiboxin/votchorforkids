@@ -17,6 +17,7 @@ import type { GameEngine } from "@/lib/game/engine";
 
 export const WORLD: World = generateWorld();
 const tmp = new THREE.Object3D();
+tmp.rotation.order = "YXZ"; // lets placeCar rake the windshield around the car's own side axis
 const col = new THREE.Color();
 
 /* ------------------------- ground & zones ------------------------- */
@@ -459,31 +460,36 @@ function Windows({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
 /* ------------------------- cars: parked + ring traffic ------------------------- */
 const CAR_COL_HEX = ["#e0483a", "#2a9d8f", "#f0c040", "#f2f2f2", "#8a5aa8", "#ff8c42", "#4aa3df", "#67b05f"];
 
-/** Body styles — sedans, hatchbacks and chunky vans all share the same instanced parts. */
-interface CarType { L: number; W: number; bodyH: number; cabL: number; cabOff: number; cabH: number; wheelR: number; axF: number }
-const CAR_TYPES: CarType[] = [
-  { L: 4.4, W: 1.9, bodyH: 0.92, cabL: 2.0, cabOff: -0.3, cabH: 0.6, wheelR: 0.44, axF: 1.42 },   // sedan
-  { L: 3.5, W: 1.8, bodyH: 0.86, cabL: 1.95, cabOff: 0.2, cabH: 0.72, wheelR: 0.42, axF: 1.1 },   // hatchback
-  { L: 4.7, W: 2.05, bodyH: 1.18, cabL: 2.8, cabOff: 0.55, cabH: 0.85, wheelR: 0.48, axF: 1.55 }, // chunky van
-];
-
 /** Every instanced part of one car group (the parked set or the traffic set). */
 interface CarParts {
   body: THREE.InstancedMesh; roof: THREE.InstancedMesh; cab: THREE.InstancedMesh; skirt: THREE.InstancedMesh;
+  wind: THREE.InstancedMesh; rglass: THREE.InstancedMesh; grille: THREE.InstancedMesh;
+  mirL: THREE.InstancedMesh; mirR: THREE.InstancedMesh; exh: THREE.InstancedMesh;
   bumpF: THREE.InstancedMesh; bumpR: THREE.InstancedMesh; lights: THREE.InstancedMesh; tails: THREE.InstancedMesh;
   wheels: THREE.InstancedMesh; hubs: THREE.InstancedMesh;
 }
 
+/** Body styles — sedans, hatchbacks and chunky vans all share the same instanced parts. */
+interface CarType { L: number; W: number; bodyH: number; cabL: number; cabOff: number; cabH: number; wheelR: number; axF: number; wsTilt: number; rgTilt: number }
+const CAR_TYPES: CarType[] = [
+  { L: 4.4, W: 1.9, bodyH: 0.92, cabL: 1.9, cabOff: -0.35, cabH: 0.6, wheelR: 0.44, axF: 1.42, wsTilt: 0.44, rgTilt: 0.4 },   // sedan
+  { L: 3.5, W: 1.8, bodyH: 0.86, cabL: 1.9, cabOff: 0.15, cabH: 0.74, wheelR: 0.42, axF: 1.1, wsTilt: 0.52, rgTilt: 0.48 },   // hatchback
+  { L: 4.7, W: 2.05, bodyH: 1.18, cabL: 2.9, cabOff: 0.5, cabH: 0.85, wheelR: 0.48, axF: 1.55, wsTilt: 0.22, rgTilt: 0.12 },  // chunky van
+];
+
 /**
- * Stamp one cartoon car: coloured body + roof, glass cabin, dark skirt & bumpers,
+ * Stamp one cartoon car: coloured body + roof, glass cabin with a RAKED windshield
+ * and rear window, dark skirt & bumpers, grille, side mirrors, exhaust pipe,
  * glowing head/tail lights and tires with hubcaps. Offsets are car-local:
  * s = sideways, f = along the forward axis, then rotated into place.
+ * `tilt` (radians, rotation around the car's side axis) leans the glass —
+ * positive tilts the top toward the nose, negative toward the tail.
  */
 function placeCar(P: CarParts, i: number, x: number, y: number, z: number, rot: number, c: number, t: number) {
   const T = CAR_TYPES[t % CAR_TYPES.length];
   const cs = Math.cos(rot), sn = Math.sin(rot);
-  const put = (m: THREE.InstancedMesh, idx: number, s: number, f: number, yy: number, sx: number, sy: number, sz: number) => {
-    tmp.rotation.set(0, rot, 0);
+  const put = (m: THREE.InstancedMesh, idx: number, s: number, f: number, yy: number, sx: number, sy: number, sz: number, tilt = 0) => {
+    tmp.rotation.set(tilt, rot, 0);
     tmp.position.set(x + s * cs + f * sn, y + yy, z - s * sn + f * cs);
     tmp.scale.set(sx, sy, sz);
     tmp.updateMatrix();
@@ -494,9 +500,18 @@ function placeCar(P: CarParts, i: number, x: number, y: number, z: number, rot: 
   put(P.skirt, i, 0, 0, 0.38, T.W + 0.1, 0.28, T.L + 0.08);
   put(P.body, i, 0, 0, 0.52 + T.bodyH / 2, T.W, T.bodyH, T.L);
   P.body.setColorAt(i, bodyC);
-  put(P.cab, i, 0, T.cabOff, bodyTop + T.cabH / 2, T.W - 0.26, T.cabH, T.cabL);
-  put(P.roof, i, 0, T.cabOff, bodyTop + T.cabH + 0.06, T.W - 0.34, 0.12, T.cabL - 0.16);
+  // greenhouse: inset cabin + raked windshield / rear window give the classic
+  // three-box car silhouette instead of one upright glass slab
+  put(P.cab, i, 0, T.cabOff, bodyTop + T.cabH / 2, T.W - 0.3, T.cabH, T.cabL);
+  put(P.roof, i, 0, T.cabOff, bodyTop + T.cabH + 0.06, T.W - 0.36, 0.12, T.cabL - 0.18);
   P.roof.setColorAt(i, bodyC);
+  put(P.wind, i, 0, T.cabOff + T.cabL / 2 + 0.03, bodyTop + T.cabH / 2, T.W - 0.22, T.cabH + 0.03, 0.14, -T.wsTilt);
+  put(P.rglass, i, 0, T.cabOff - T.cabL / 2 - 0.03, bodyTop + T.cabH / 2, T.W - 0.22, T.cabH * 0.94, 0.14, T.rgTilt);
+  // details: grille between the headlights, side mirrors on the A-pillars, exhaust
+  put(P.grille, i, 0, T.L / 2 + 0.02, 0.62, T.W - 0.92, 0.2, 0.1);
+  put(P.mirL, i, -(T.W / 2 + 0.07), T.cabOff + T.cabL / 2 - 0.02, bodyTop + T.cabH - 0.02, 0.1, 0.14, 0.2);
+  put(P.mirR, i, T.W / 2 + 0.07, T.cabOff + T.cabL / 2 - 0.02, bodyTop + T.cabH - 0.02, 0.1, 0.14, 0.2);
+  put(P.exh, i, 0.36, -(T.L / 2 + 0.07), 0.32, 0.14, 0.14, 0.2);
   put(P.bumpF, i, 0, T.L / 2 + 0.06, 0.6, T.W + 0.14, 0.26, 0.18);
   put(P.bumpR, i, 0, -(T.L / 2 + 0.06), 0.6, T.W + 0.14, 0.26, 0.18);
   for (const k of [-1, 1]) {
@@ -521,6 +536,12 @@ function Cars({ engine }: { engine: GameEngine }) {
   const roof = useRef<THREE.InstancedMesh>(null!);
   const cab = useRef<THREE.InstancedMesh>(null!);
   const skirt = useRef<THREE.InstancedMesh>(null!);
+  const wind = useRef<THREE.InstancedMesh>(null!);
+  const rglass = useRef<THREE.InstancedMesh>(null!);
+  const grille = useRef<THREE.InstancedMesh>(null!);
+  const mirL = useRef<THREE.InstancedMesh>(null!);
+  const mirR = useRef<THREE.InstancedMesh>(null!);
+  const exh = useRef<THREE.InstancedMesh>(null!);
   const bumpF = useRef<THREE.InstancedMesh>(null!);
   const bumpR = useRef<THREE.InstancedMesh>(null!);
   const lights = useRef<THREE.InstancedMesh>(null!);
@@ -528,7 +549,7 @@ function Cars({ engine }: { engine: GameEngine }) {
   const wheels = useRef<THREE.InstancedMesh>(null!);
   const hubs = useRef<THREE.InstancedMesh>(null!);
   useLayoutEffect(() => {
-    const P: CarParts = { body: body.current, roof: roof.current, cab: cab.current, skirt: skirt.current, bumpF: bumpF.current, bumpR: bumpR.current, lights: lights.current, tails: tails.current, wheels: wheels.current, hubs: hubs.current };
+    const P: CarParts = { body: body.current, roof: roof.current, cab: cab.current, skirt: skirt.current, wind: wind.current, rglass: rglass.current, grille: grille.current, mirL: mirL.current, mirR: mirR.current, exh: exh.current, bumpF: bumpF.current, bumpR: bumpR.current, lights: lights.current, tails: tails.current, wheels: wheels.current, hubs: hubs.current };
     WORLD.cars.forEach((c, i) => placeCar(P, i, c.x, 0, c.z, c.rot, c.c, c.t));
     for (const m of Object.values(P)) m.instanceMatrix.needsUpdate = true;
     if (body.current.instanceColor) body.current.instanceColor.needsUpdate = true;
@@ -539,7 +560,7 @@ function Cars({ engine }: { engine: GameEngine }) {
     const d = engine.drive;
     if (!d) return;
     const c = WORLD.cars[d.ci];
-    const P: CarParts = { body: body.current, roof: roof.current, cab: cab.current, skirt: skirt.current, bumpF: bumpF.current, bumpR: bumpR.current, lights: lights.current, tails: tails.current, wheels: wheels.current, hubs: hubs.current };
+    const P: CarParts = { body: body.current, roof: roof.current, cab: cab.current, skirt: skirt.current, wind: wind.current, rglass: rglass.current, grille: grille.current, mirL: mirL.current, mirR: mirR.current, exh: exh.current, bumpF: bumpF.current, bumpR: bumpR.current, lights: lights.current, tails: tails.current, wheels: wheels.current, hubs: hubs.current };
     placeCar(P, d.ci, c.x, 0, c.z, c.rot, c.c, c.t);
     for (const m of Object.values(P)) m.instanceMatrix.needsUpdate = true;
   });
@@ -562,6 +583,31 @@ function Cars({ engine }: { engine: GameEngine }) {
         <boxGeometry />
         <meshLambertMaterial />
       </instancedMesh>
+      {/* raked glass + trim details — the parts that make it read as a real car */}
+      <instancedMesh frustumCulled={false} ref={wind} args={[undefined, undefined, N]}>
+        <boxGeometry />
+        <meshLambertMaterial color="#bfe3f2" />
+      </instancedMesh>
+      <instancedMesh frustumCulled={false} ref={rglass} args={[undefined, undefined, N]}>
+        <boxGeometry />
+        <meshLambertMaterial color="#9fc4d8" />
+      </instancedMesh>
+      <instancedMesh frustumCulled={false} ref={grille} args={[undefined, undefined, N]}>
+        <boxGeometry />
+        <meshLambertMaterial color="#232830" />
+      </instancedMesh>
+      <instancedMesh frustumCulled={false} ref={mirL} args={[undefined, undefined, N]}>
+        <boxGeometry />
+        <meshLambertMaterial color="#232830" />
+      </instancedMesh>
+      <instancedMesh frustumCulled={false} ref={mirR} args={[undefined, undefined, N]}>
+        <boxGeometry />
+        <meshLambertMaterial color="#232830" />
+      </instancedMesh>
+      <instancedMesh frustumCulled={false} ref={exh} args={[undefined, undefined, N]}>
+        <boxGeometry />
+        <meshLambertMaterial color="#454c56" />
+      </instancedMesh>
       <instancedMesh frustumCulled={false} ref={bumpF} args={[undefined, undefined, N]}>
         <boxGeometry />
         <meshLambertMaterial color="#2a2f38" />
@@ -579,11 +625,11 @@ function Cars({ engine }: { engine: GameEngine }) {
         <meshBasicMaterial color="#ff5f4a" />
       </instancedMesh>
       <instancedMesh frustumCulled={false} ref={wheels} args={[undefined, undefined, N * 4]}>
-        <cylinderGeometry args={[0.5, 0.5, 0.32, 10]} />
+        <cylinderGeometry args={[0.5, 0.5, 0.34, 12]} />
         <meshLambertMaterial color="#171a1f" />
       </instancedMesh>
       <instancedMesh frustumCulled={false} ref={hubs} args={[undefined, undefined, N * 4]}>
-        <cylinderGeometry args={[0.5, 0.5, 0.42, 8]} />
+        <cylinderGeometry args={[0.5, 0.5, 0.44, 8]} />
         <meshLambertMaterial color="#c9ced8" />
       </instancedMesh>
     </>
@@ -596,6 +642,12 @@ function RingTraffic({ engine }: { engine: GameEngine }) {
   const roof = useRef<THREE.InstancedMesh>(null!);
   const cab = useRef<THREE.InstancedMesh>(null!);
   const skirt = useRef<THREE.InstancedMesh>(null!);
+  const wind = useRef<THREE.InstancedMesh>(null!);
+  const rglass = useRef<THREE.InstancedMesh>(null!);
+  const grille = useRef<THREE.InstancedMesh>(null!);
+  const mirL = useRef<THREE.InstancedMesh>(null!);
+  const mirR = useRef<THREE.InstancedMesh>(null!);
+  const exh = useRef<THREE.InstancedMesh>(null!);
   const bumpF = useRef<THREE.InstancedMesh>(null!);
   const bumpR = useRef<THREE.InstancedMesh>(null!);
   const lights = useRef<THREE.InstancedMesh>(null!);
@@ -603,7 +655,7 @@ function RingTraffic({ engine }: { engine: GameEngine }) {
   const wheels = useRef<THREE.InstancedMesh>(null!);
   const hubs = useRef<THREE.InstancedMesh>(null!);
   useFrame(() => {
-    const P: CarParts = { body: body.current, roof: roof.current, cab: cab.current, skirt: skirt.current, bumpF: bumpF.current, bumpR: bumpR.current, lights: lights.current, tails: tails.current, wheels: wheels.current, hubs: hubs.current };
+    const P: CarParts = { body: body.current, roof: roof.current, cab: cab.current, skirt: skirt.current, wind: wind.current, rglass: rglass.current, grille: grille.current, mirL: mirL.current, mirR: mirR.current, exh: exh.current, bumpF: bumpF.current, bumpR: bumpR.current, lights: lights.current, tails: tails.current, wheels: wheels.current, hubs: hubs.current };
     engine.traffic.forEach((t, i) => placeCar(P, i, t.x, 0.07, t.z, t.rot, t.c, t.t));
     for (const m of Object.values(P)) m.instanceMatrix.needsUpdate = true;
     if (body.current.instanceColor) body.current.instanceColor.needsUpdate = true;
@@ -627,6 +679,30 @@ function RingTraffic({ engine }: { engine: GameEngine }) {
       <instancedMesh ref={roof} args={[undefined, undefined, N]} frustumCulled={false}>
         <boxGeometry />
         <meshLambertMaterial />
+      </instancedMesh>
+      <instancedMesh ref={wind} args={[undefined, undefined, N]} frustumCulled={false}>
+        <boxGeometry />
+        <meshLambertMaterial color="#bfe3f2" />
+      </instancedMesh>
+      <instancedMesh ref={rglass} args={[undefined, undefined, N]} frustumCulled={false}>
+        <boxGeometry />
+        <meshLambertMaterial color="#9fc4d8" />
+      </instancedMesh>
+      <instancedMesh ref={grille} args={[undefined, undefined, N]} frustumCulled={false}>
+        <boxGeometry />
+        <meshLambertMaterial color="#232830" />
+      </instancedMesh>
+      <instancedMesh ref={mirL} args={[undefined, undefined, N]} frustumCulled={false}>
+        <boxGeometry />
+        <meshLambertMaterial color="#232830" />
+      </instancedMesh>
+      <instancedMesh ref={mirR} args={[undefined, undefined, N]} frustumCulled={false}>
+        <boxGeometry />
+        <meshLambertMaterial color="#232830" />
+      </instancedMesh>
+      <instancedMesh ref={exh} args={[undefined, undefined, N]} frustumCulled={false}>
+        <boxGeometry />
+        <meshLambertMaterial color="#454c56" />
       </instancedMesh>
       <instancedMesh ref={bumpF} args={[undefined, undefined, N]} frustumCulled={false}>
         <boxGeometry />
@@ -1873,55 +1949,101 @@ function Airport() {
 /* ---------------- bot planes ----------------
  * Cartoon prop airliners driven by the engine's PlaneState machines — they taxi
  * out, take off, circle the whole city, land and park again. */
-function PlaneRig({ color }: { color: number }) {
+function PlaneRig({ color, gearRef }: {
+  color: number;
+  gearRef: (o: THREE.Group | null) => void;
+}) {
   return (
     <group>
-      {/* fuselage along +x */}
+      {/* fuselage along +x — slim capsule with a tapered tail cone */}
       <mesh rotation-z={Math.PI / 2} castShadow>
-        <capsuleGeometry args={[1.05, 5.6, 4, 10]} />
+        <capsuleGeometry args={[0.92, 6.2, 4, 12]} />
         <meshLambertMaterial color={color} />
       </mesh>
-      <mesh position={[-4.6, 0, 0]} rotation-z={-Math.PI / 2}>
-        <coneGeometry args={[1.02, 2.4, 10]} />
+      <mesh position={[-5.15, -0.14, 0]} rotation-z={Math.PI / 2}>
+        <coneGeometry args={[0.9, 2.6, 12]} />
         <meshLambertMaterial color={color} />
       </mesh>
-      {/* cockpit glass */}
-      <mesh position={[3.1, 0.55, 0]} rotation-z={-Math.PI / 2.6}>
-        <boxGeometry args={[1.3, 0.62, 1.5]} />
+      {/* nose cone (the spinner + prop sit just ahead of it) */}
+      <mesh position={[4.2, 0, 0]} rotation-z={-Math.PI / 2}>
+        <coneGeometry args={[0.88, 1.7, 12]} />
+        <meshLambertMaterial color="#f5f2e8" />
+      </mesh>
+      {/* raked cockpit glass */}
+      <mesh position={[3.15, 0.58, 0]} rotation-z={-0.42}>
+        <boxGeometry args={[1.2, 0.58, 1.34]} />
         <meshLambertMaterial color="#22303f" />
       </mesh>
-      {/* belly stripe */}
-      <mesh position={[0, -0.86, 0]}>
-        <boxGeometry args={[7.4, 0.34, 1.7]} />
-        <meshLambertMaterial color="#f5f2e8" />
-      </mesh>
-      {/* wings + tailplane */}
-      <mesh position={[0.4, -0.15, 0]} castShadow>
-        <boxGeometry args={[2.6, 0.24, 12.5]} />
-        <meshLambertMaterial color="#f5f2e8" />
-      </mesh>
-      <mesh position={[-4.9, 0.4, 0]}>
-        <boxGeometry args={[1.5, 0.18, 5]} />
-        <meshLambertMaterial color="#f5f2e8" />
-      </mesh>
-      {/* tail fin */}
-      <mesh position={[-4.9, 1.7, 0]} castShadow>
-        <boxGeometry args={[1.7, 2.9, 0.26]} />
-        <meshLambertMaterial color={color} />
-      </mesh>
-      {/* gear */}
-      {[[-1.7, -1.35, 0], [1.4, -1.35, -1.5], [1.4, -1.35, 1.5]].map((g, i) => (
-        <mesh key={i} position={[g[0], g[1], g[2] as number]}>
-          <cylinderGeometry args={[0.38, 0.38, 0.5, 8]} />
-          <meshLambertMaterial color="#26262c" />
+      {/* cabin window strips (both sides) */}
+      {[-1, 1].map((s) => (
+        <mesh key={s} position={[0.5, 0.4, s * 0.85]}>
+          <boxGeometry args={[5.4, 0.28, 0.08]} />
+          <meshLambertMaterial color="#9fb8c8" />
         </mesh>
       ))}
+      {/* belly stripe */}
+      <mesh position={[0, -0.76, 0]}>
+        <boxGeometry args={[7.8, 0.3, 1.5]} />
+        <meshLambertMaterial color="#f5f2e8" />
+      </mesh>
+      {/* wings: two swept halves with a touch of dihedral */}
+      {[-1, 1].map((s) => (
+        <mesh key={s} position={[-0.15, -0.3, s * 3.1]} rotation-x={s * 0.09} rotation-y={s * -0.2} castShadow>
+          <boxGeometry args={[2.5, 0.2, 6.2]} />
+          <meshLambertMaterial color="#f5f2e8" />
+        </mesh>
+      ))}
+      {/* engine pods slung under the wings */}
+      {[-1, 1].map((s) => (
+        <mesh key={s} position={[0.75, -0.64, s * 2.15]} rotation-z={Math.PI / 2}>
+          <capsuleGeometry args={[0.34, 1.1, 4, 8]} />
+          <meshLambertMaterial color="#d8d4c8" />
+        </mesh>
+      ))}
+      {/* swept tail fin + dihedral stabilizers */}
+      <mesh position={[-5.45, 1.5, 0]} rotation-z={0.38} castShadow>
+        <boxGeometry args={[1.5, 2.6, 0.22]} />
+        <meshLambertMaterial color={color} />
+      </mesh>
+      {[-1, 1].map((s) => (
+        <mesh key={s} position={[-5.3, 0.28, s * 1.4]} rotation-x={s * 0.12}>
+          <boxGeometry args={[1.3, 0.16, 2.6]} />
+          <meshLambertMaterial color="#f5f2e8" />
+        </mesh>
+      ))}
+      {/* landing gear — the Planes loop hides it the moment the wheels leave the tarmac */}
+      <group ref={gearRef}>
+        <mesh position={[2.9, -1.15, 0]}>
+          <boxGeometry args={[0.14, 0.62, 0.14]} />
+          <meshLambertMaterial color="#3a3f46" />
+        </mesh>
+        <mesh position={[2.9, -1.5, 0]} rotation-x={Math.PI / 2}>
+          <cylinderGeometry args={[0.3, 0.3, 0.24, 10]} />
+          <meshLambertMaterial color="#26262c" />
+        </mesh>
+        {[-1, 1].map((s) => (
+          <group key={s}>
+            <mesh position={[-0.7, -1.08, s * 0.85]}>
+              <boxGeometry args={[0.14, 0.72, 0.14]} />
+              <meshLambertMaterial color="#3a3f46" />
+            </mesh>
+            <mesh position={[-0.7, -1.5, s * 0.85]} rotation-x={Math.PI / 2}>
+              <cylinderGeometry args={[0.36, 0.36, 0.26, 10]} />
+              <meshLambertMaterial color="#26262c" />
+            </mesh>
+          </group>
+        ))}
+      </group>
     </group>
   );}
 
 function Planes({ engine }: { engine: GameEngine }) {
   const rigs = useMemo(
-    () => engine.planes.map(() => ({ group: { current: null as THREE.Group | null }, prop: { current: null as THREE.Mesh | null } })),
+    () => engine.planes.map(() => ({
+      group: { current: null as THREE.Group | null },
+      prop: { current: null as THREE.Group | null },
+      gear: { current: null as THREE.Group | null },
+    })),
     [engine],
   );
   useFrame(() => {
@@ -1933,18 +2055,31 @@ function Planes({ engine }: { engine: GameEngine }) {
       g.rotation.z = pl.pitch;
       const p = rigs[i]?.prop.current;
       if (p) p.rotation.x = pl.propT;
+      const gear = rigs[i]?.gear.current;
+      if (gear) gear.visible = pl.alt < 0.6; // wheels up the moment we leave the tarmac
     });
   });
   return (
     <>
       {engine.planes.map((pl, i) => (
         <group key={pl.id} ref={(o) => { rigs[i].group.current = o; }}>
-          <PlaneRig color={PLANE_LIVERY[pl.c % PLANE_LIVERY.length]} />
-          {/* spinning propeller */}
-          <mesh ref={(o) => { rigs[i].prop.current = o; }} position={[5.75, 0, 0]}>
-            <boxGeometry args={[0.18, 5.4, 0.5]} />
-            <meshLambertMaterial color="#2c2c33" />
-          </mesh>
+          <PlaneRig
+            color={PLANE_LIVERY[pl.c % PLANE_LIVERY.length]}
+            gearRef={(o) => { rigs[i].gear.current = o; }}
+          />
+          {/* 3-blade propeller + spinner, spinning on the nose */}
+          <group ref={(o) => { rigs[i].prop.current = o; }} position={[5.15, 0, 0]}>
+            <mesh rotation-z={-Math.PI / 2} position={[0.28, 0, 0]}>
+              <coneGeometry args={[0.3, 0.75, 8]} />
+              <meshLambertMaterial color="#c8c4b8" />
+            </mesh>
+            {[0, 1, 2].map((k) => (
+              <mesh key={k} rotation-x={(k * Math.PI * 2) / 3} position={[0.1, 0, 0]}>
+                <boxGeometry args={[0.09, 4.6, 0.3]} />
+                <meshLambertMaterial color="#2c2c33" />
+              </mesh>
+            ))}
+          </group>
         </group>
       ))}
     </>

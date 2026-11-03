@@ -435,7 +435,11 @@ export const CAR_ACCEL = 14;           // u/s² on W
 export const CAR_BRAKE = 30;           // u/s² on S while rolling forward
 export const CAR_COAST = 9;            // u/s² natural drag when no pedal
 export const CAR_STEER = 1.75;         // rad/s at full lock
-export const CAR_RADIUS = 1.5;         // collision radius while the body slides around town
+/** The driven body collides as its two axle discs — the SAME ±1.25 / r 1.16 pair
+ *  the parked cars use as colliders, so a moving car can never overlap a building
+ *  deeper than a parked one (a single centre probe let the nose & boot clip walls). */
+export const CAR_AXLE = 1.25;          // axle offset from the car centre
+export const CAR_AXLE_R = 1.16;        // axle collision radius
 
 /* ---------- Scoring ---------- */
 export const POINTS_DELIVER = 120;

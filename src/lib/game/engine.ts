@@ -1,5 +1,5 @@
 import {
-  AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, BUST_CARRY_BONUS, BUST_POINTS, BUST_TARGET, CARRY_RADIUS, CAR_ACCEL, CAR_BRAKE, CAR_COAST, CAR_ENTER_R, CAR_HIT_CD, CAR_HIT_DMG, CAR_MAX_SPEED, CAR_RADIUS, CAR_REV_SPEED, CAR_STEER, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
+  AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, BUST_CARRY_BONUS, BUST_POINTS, BUST_TARGET, CARRY_RADIUS, CAR_ACCEL, CAR_AXLE, CAR_AXLE_R, CAR_BRAKE, CAR_COAST, CAR_ENTER_R, CAR_HIT_CD, CAR_HIT_DMG, CAR_MAX_SPEED, CAR_REV_SPEED, CAR_STEER, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
   CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, CONFISCATE_FINE, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
   ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HAUL_CAMP_R, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
@@ -43,7 +43,12 @@ export interface PlaneState {
 const PLANE_COLORS = [0xe0483a, 0x2a9d8f, 0xf0c040, 0x4aa3df, 0x8a5aa8];
 const PLANE_TAXI_SPD = 6, PLANE_VR = 40 /* rotation speed */, PLANE_CLIMB = 15, PLANE_CRUISE_SPD = 34;
 const PLANE_APPR_SPD = 26, PLANE_TURN_TAXI = 2.2, PLANE_TURN_AIR = 0.55;
-const PLANE_CALT = 58; // cruise altitude
+/** Cruise altitude — downtown towers grow to 58, so anything lower skims rooftops
+ *  (the old 58 value put planes exactly level with the tallest skyscrapers). */
+const PLANE_CALT = 66;
+/** Below this altitude planes fly STRAIGHT OUT from the city / stay off downtown —
+ *  the climb-out and approach corridors never cross a rooftop until cleared. */
+const PLANE_ROOF_SAFE = 44;
 
 export interface Npc {
   id: number; kind: "police" | "civilian";
@@ -543,14 +548,18 @@ export class GameEngine {
         case "climb": {
           pl.spd = Math.min(PLANE_CRUISE_SPD + 2, pl.spd + 4 * dt);
           pl.alt = Math.min(PLANE_CALT + pl.slot * 9, pl.alt + PLANE_CLIMB * dt);
-          // bank back toward the city while climbing so flights stay inside the
-          // mountain wall instead of shooting straight out past the peaks
-          pl.hdg = this.steerHdg(pl.hdg, Math.atan2(-pl.z, -pl.x), PLANE_TURN_AIR * 1.15 * dt);
+          // keep flying STRAIGHT OUT (away from town) until safely above every
+          // rooftop — banking back at low altitude used to fly the plane right
+          // through the 30-tall control tower; above PLANE_ROOF_SAFE (and past
+          // the mountain-wall guard) it curves back toward the city
+          const rr = Math.hypot(pl.x, pl.z);
+          const want = pl.alt >= PLANE_ROOF_SAFE || rr > 560 ? Math.atan2(-pl.z, -pl.x) : Math.atan2(pl.z, pl.x);
+          pl.hdg = this.steerHdg(pl.hdg, want, PLANE_TURN_AIR * 1.15 * dt);
           pl.x += Math.cos(pl.hdg) * pl.spd * dt;
           pl.z += Math.sin(pl.hdg) * pl.spd * dt;
           if (pl.alt >= PLANE_CALT + pl.slot * 9 - 0.5) {
             pl.mode = "joinArc"; // steer onto a clean circle around the city
-            pl.arcR = 320 + this.rnd() * 110;
+            pl.arcR = 336 + this.rnd() * 96;
           }
           break;
         }
@@ -583,7 +592,10 @@ export class GameEngine {
           pl.hdg = pl.arcA + pl.arcDir * (Math.PI / 2);
           if (pl.arcLeft <= 0) {
             pl.mode = "joinFinal";
-            pl.wx = AIRPORT.rx0 - 120; pl.wz = AIRPORT.rz; pl.walt = 30;
+            // stay at cruise altitude while crossing back to the approach gate —
+            // descending early used to clip planes straight through the downtown
+            // towers on the diagonal; the descent only happens over the runway
+            pl.wx = AIRPORT.rx0 - 120; pl.wz = AIRPORT.rz; pl.walt = PLANE_CALT;
           }
           break;
         }
@@ -606,8 +618,9 @@ export class GameEngine {
           pl.hdg = this.steerHdg(pl.hdg, Math.atan2(pl.wz - pl.z, pl.wx - pl.x), PLANE_TURN_AIR * 0.8 * dt);
           pl.x += Math.cos(pl.hdg) * pl.spd * dt;
           pl.z += Math.sin(pl.hdg) * pl.spd * dt;
-          // hold altitude until over the runway fence, then flare down onto the tarmac
-          if (pl.x > AIRPORT.rx0 - 40) pl.alt = Math.max(0, pl.alt - 11 * dt);
+          // hold altitude until over the runway fence, then flare down onto the
+          // tarmac — a steeper dive shortens the float so we still stop in range
+          if (pl.x > AIRPORT.rx0 - 40) pl.alt = Math.max(0, pl.alt - 13 * dt);
           if (pl.alt <= 0.05) {
             pl.mode = "rollout"; pl.t = 0; pl.alt = 0;
           }
@@ -856,8 +869,38 @@ export class GameEngine {
     const pair = this.carAxles.get(d.ci);
     if (!pair) return;
     const fx = Math.sin(d.rot), fz = Math.cos(d.rot);
-    pair[0].x = d.x - fx * 1.25; pair[0].z = d.z - fz * 1.25;
-    pair[1].x = d.x + fx * 1.25; pair[1].z = d.z + fz * 1.25;
+    pair[0].x = d.x - fx * CAR_AXLE; pair[0].z = d.z - fz * CAR_AXLE;
+    pair[1].x = d.x + fx * CAR_AXLE; pair[1].z = d.z + fz * CAR_AXLE;
+  }
+
+  /**
+   * Push the whole car body out of buildings, trees & other cars. The body is
+   * modelled as its two axle discs — the exact ±CAR_AXLE / r CAR_AXLE_R pair the
+   * parked cars use as colliders — so the nose and boot are protected, and a
+   * moving car can never overlap a building deeper than a parked one. Both
+   * axles are resolved, then the pose (centre + heading) is rebuilt from them,
+   * which turns a head-on bonk into a natural slide along the wall. Returns
+   * how far the body was shoved (the caller spends it as scrape speed loss).
+   */
+  private resolveCarBody(d: DriveState): number {
+    let moved = 0;
+    for (let iter = 0; iter < 2; iter++) {
+      const sn = Math.sin(d.rot), cs = Math.cos(d.rot);
+      const rear = { x: d.x - sn * CAR_AXLE, z: d.z - cs * CAR_AXLE };
+      const front = { x: d.x + sn * CAR_AXLE, z: d.z + cs * CAR_AXLE };
+      const r0x = rear.x, r0z = rear.z, f0x = front.x, f0z = front.z;
+      resolve(rear, CAR_AXLE_R, this.world, d.ci);
+      resolve(front, CAR_AXLE_R, this.world, d.ci);
+      const push = Math.hypot(rear.x - r0x, rear.z - r0z) + Math.hypot(front.x - f0x, front.z - f0z);
+      moved += push;
+      // rebuild heading from the pushed axle line (axles pushed apart won't flip it)
+      const nx = front.x - rear.x, nz = front.z - rear.z;
+      if (Math.hypot(nx, nz) > 0.05) d.rot = Math.atan2(nx, nz);
+      d.x = (front.x + rear.x) / 2;
+      d.z = (front.z + rear.z) / 2;
+      if (push < 0.0005) break; // settled — no need for the second pass
+    }
+    return moved;
   }
 
   /** One arcade physics step of the player-driven car — bouncy, fast, kid-friendly. */
@@ -874,14 +917,20 @@ export class GameEngine {
     d.v = clamp(d.v, -CAR_REV_SPEED, maxF);
     // steering only bites while rolling (like a real car) and flips while reversing
     const grip = Math.min(1, Math.abs(d.v) / 9);
-    d.rot -= steer * CAR_STEER * grip * dt * Math.sign(d.v || 1);
-    d.x += Math.sin(d.rot) * d.v * dt;
-    d.z += Math.cos(d.rot) * d.v * dt;
-    // slide around buildings, trees and other parked cars (our own axles are skipped)
-    const probe = { x: d.x, z: d.z };
-    resolve(probe, CAR_RADIUS, this.world, d.ci);
-    if (Math.hypot(probe.x - d.x, probe.z - d.z) > 0.01) d.v *= 0.82; // cartoon scrape — walls eat speed
-    d.x = probe.x; d.z = probe.z;
+    // integrate in small slices (a 26 u/s car covers 0.43/frame — slices make sure
+    // it can never LEAP a thin wall in one step), then push the WHOLE body out of
+    // buildings, trees and other cars: the old single centre probe let the nose
+    // and boot hang deep inside houses, or pop clean through at speed.
+    const slices = Math.max(1, Math.ceil((Math.abs(d.v) * dt) / 0.35));
+    const sdt = dt / slices;
+    let scrape = 0;
+    for (let s = 0; s < slices; s++) {
+      d.rot -= steer * CAR_STEER * grip * sdt * Math.sign(d.v || 1);
+      d.x += Math.sin(d.rot) * d.v * sdt;
+      d.z += Math.cos(d.rot) * d.v * sdt;
+      scrape += this.resolveCarBody(d);
+    }
+    if (scrape > 0.004) d.v *= 0.82; // cartoon scrape — walls eat speed
     const rr = Math.hypot(d.x, d.z);
     if (rr > WALL_RADIUS) { d.x *= WALL_RADIUS / rr; d.z *= WALL_RADIUS / rr; d.v = Math.min(d.v, 4); }
     // ring-road traffic & police vans are solid — the car bonks off, nobody gets hurt
