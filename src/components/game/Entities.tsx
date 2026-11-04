@@ -4,12 +4,13 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  ANIMAL_SET, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, SHIRT_COLORS, SKIN_TONES,
+  ANIMAL_SET, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, SHIRT_COLORS, SKIN_TONES, TOOLS,
   TOTAL_VOTES, type AnimalKind, type Appearance,
 } from "@/lib/game/constants";
 import type { GameEngine } from "@/lib/game/engine";
 import { nightFactor } from "@/lib/game/sim";
 import { mulberry32 } from "@/lib/game/rng";
+import { terrainHeight } from "@/lib/game/worldgen";
 import {
   buildAnimal, buildCharacter, nameTag, helpBubble, poseAnimal, poseCharacter,
   voteTokenGeometry, foodGeometry, shadowMaterial, basicVertexMaterial,
@@ -353,7 +354,7 @@ export function Zombies({ engine }: { engine: GameEngine }) {
     const cam = s.camera.position;
     for (const z of engine.zombies) {
       const m = views.get(z.id)!;
-      const vis = night > 0.4;
+      const vis = night > 0.4 && z.downT <= 0; // 🗡️ sworded zombies stay hidden
       const dx = z.x - cam.x, dz = z.z - cam.z;
       m.visible = vis && dx * dx + dz * dz < CULL_SQ;
       if (!m.visible) continue;
@@ -720,4 +721,101 @@ function useLayoutEffectInit(mesh: React.RefObject<THREE.InstancedMesh | null>, 
     for (let i = 0; i < N_CONF; i++) mesh.current.setMatrixAt(i, zero);
     mesh.current.instanceMatrix.needsUpdate = true;
   }, [mesh, colors]);
+}
+
+/* ------------------------------------------------------------------ */
+/* 🔧 Tool pickups — floating emoji + glow + ring, one group per spawn  */
+/* ------------------------------------------------------------------ */
+export function Tools({ engine }: { engine: GameEngine }) {
+  const views = useMemo(() => engine.tools.map((tl, i) => {
+    const d = TOOLS[tl.def];
+    const g = new THREE.Group();
+    const gem = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.42), new THREE.MeshBasicMaterial({ color: d.color }));
+    gem.position.y = 0.95;
+    g.add(gem);
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: d.color, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending }));
+    glow.scale.setScalar(1.7);
+    glow.position.y = 0.95;
+    g.add(glow);
+    const em = emojiSprite(d.emoji, 0.52);
+    em.position.y = 1.6;
+    g.add(em);
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.64, 0.05, 6, 26),
+      new THREE.MeshBasicMaterial({ color: d.color, transparent: true, opacity: 0.85 }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.07;
+    g.add(ring);
+    g.visible = tl.active;
+    return { group: g, gem, glow, em, ring, i };
+  }), [engine]);
+
+  useFrame((s) => {
+    const t = s.clock.elapsedTime;
+    for (let idx = 0; idx < engine.tools.length; idx++) {
+      const tl = engine.tools[idx];
+      const v = views[idx];
+      v.group.visible = tl.active;
+      if (!tl.active) continue;
+      // tools on the ⛰️ slopes ride the terrain height
+      v.group.position.set(tl.x, terrainHeight(tl.x, tl.z), tl.z);
+      v.gem.rotation.y = t * 1.5 + idx;
+      v.gem.rotation.x = t * 1.1;
+      v.gem.position.y = 0.95 + Math.sin(t * 2.2 + idx * 1.7) * 0.12;
+      v.glow.position.y = v.gem.position.y;
+      (v.glow.material as THREE.SpriteMaterial).opacity = 0.4 + Math.sin(t * 3 + idx) * 0.15;
+      v.em.position.y = 1.6 + Math.sin(t * 2.6 + idx) * 0.08;
+      v.ring.scale.setScalar(1 + Math.sin(t * 2 + idx) * 0.1);
+    }
+  });
+
+  return <>{views.map((v) => <primitive object={v.group} key={v.i} />)}</>;
+}
+
+/* ------------------------------------------------------------------ */
+/* 🧱 Player-built structures — crate stacks (wood) / stone blocks      */
+/* ------------------------------------------------------------------ */
+export function Builds({ engine }: { engine: GameEngine }) {
+  const views = useMemo(() => {
+    // one group per builder-pool circle, keyed by its REAL circles-array index
+    const pool = engine.world.circles.filter((c) => c.build !== undefined);
+    return pool.map((c) => {
+      const gi = c.idx ?? -1;
+      const g = new THREE.Group();
+      const wood = new THREE.Group(); // wooden barricade: 3 stacked crates
+      const crateMat = new THREE.MeshLambertMaterial({ color: "#9a6b3f" });
+      for (let k = 0; k < 3; k++) {
+        const crate = new THREE.Mesh(new THREE.BoxGeometry(1.7 - k * 0.28, 0.62, 1.7 - k * 0.28), crateMat);
+        crate.position.y = 0.31 + k * 0.62;
+        crate.rotation.y = k * 0.28;
+        wood.add(crate);
+      }
+      const stone = new THREE.Group(); // stone wall: rough gray block pile
+      const stoneMat = new THREE.MeshLambertMaterial({ color: "#8b8f96", flatShading: true });
+      for (let k = 0; k < 3; k++) {
+        const blk = new THREE.Mesh(new THREE.BoxGeometry(1.8 - k * 0.2, 0.58, 1.1), stoneMat);
+        blk.position.set((k % 2 ? 0.16 : -0.16) * k, 0.29 + k * 0.58, (k % 2 ? -0.1 : 0.1) * (k - 1));
+        blk.rotation.y = k * 0.17 - 0.2;
+        stone.add(blk);
+      }
+      g.add(wood, stone);
+      g.visible = false;
+      return { group: g, wood, stone, gi };
+    });
+  }, [engine]);
+
+  useFrame(() => {
+    for (const v of views) {
+      const b = engine.builds.find((bb) => bb.gi === v.gi);
+      v.group.visible = !!b;
+      if (!b) continue;
+      v.group.position.set(b.x, terrainHeight(b.x, b.z), b.z);
+      v.wood.visible = b.mat === 0;
+      v.stone.visible = b.mat === 1;
+      v.group.rotation.y = (b.gi * 2.399) % Math.PI; // golden-angle variety
+    }
+  });
+
+  return <>{views.map((v) => <primitive object={v.group} key={v.gi} />)}</>;
 }

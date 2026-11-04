@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { GameLoop, Npcs, Zombies, Animals, Pickups, Powers, Licenses, Shadows, Confetti, type ClockRef } from "./Entities";
+import { GameLoop, Npcs, Zombies, Animals, Pickups, Powers, Licenses, Tools, Builds, Shadows, Confetti, type ClockRef } from "./Entities";
 import { WorldView, WORLD } from "./WorldView";
 import { GameEngine } from "@/lib/game/engine";
 import type { Appearance } from "@/lib/game/constants";
@@ -57,6 +57,7 @@ export function useGameInput(engine: GameEngine | null) {
     const typing = (e: Event) => e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
     const keys = new Set<string>();
     let gDownAt = 0; // for the quick-tap-G-fires-first-gem fallback
+    let bDownAt = 0; // for the quick-tap-B-uses-first-tool fallback
 
     const applyKey = () => {
       const k = keys;
@@ -88,6 +89,14 @@ export function useGameInput(engine: GameEngine | null) {
         if (s.hud.pocketPowers.length > 0 && !s.paused && !s.victoryOpen && !s.bigMapOpen) s.setPowerWheelOpen(true);
         else engine.usePower(); // empty pockets → engine no-ops (keeps the silent path)
       }
+      if (e.code === "KeyB" && !e.repeat) {
+        // 🔧 hold B → radial TOOL wheel opens (same mouse-aim as the power wheel);
+        // quick-tap still uses the first belt tool. Empty belt → friendly hint.
+        const s = useGame.getState();
+        bDownAt = performance.now();
+        if (s.hud.tools.length > 0 && !s.paused && !s.victoryOpen && !s.bigMapOpen) s.setToolWheelOpen(true);
+        else engine.hintToolBelt();
+      }
       if (e.code === "KeyQ" && !e.repeat) engine.tryBlink(); // 🌀 Blink Teleport
       if (e.code === "KeyH" && !e.repeat) engine.horn();     // 🚗 car horn while driving
       applyKey();
@@ -103,6 +112,15 @@ export function useGameInput(engine: GameEngine | null) {
           s.setPowerWheelOpen(false);
         }
       }
+      if (e.code === "KeyB") {
+        // release B → USE the AIMED tool (wheel selection), or slot 0 on a quick tap
+        const s = useGame.getState();
+        if (s.toolWheelOpen) {
+          if (s.toolWheelSel >= 0) engine.useTool(s.toolWheelSel);
+          else if (performance.now() - bDownAt < 250) engine.useTool(0);
+          s.setToolWheelOpen(false);
+        }
+      }
     };
     const blur = () => { keys.clear(); applyKey(); };
 
@@ -115,7 +133,7 @@ export function useGameInput(engine: GameEngine | null) {
     const mm = (e: MouseEvent) => {
       const s = useGame.getState();
       if (s.screen !== "play" || s.paused || s.victoryOpen || s.bigMapOpen) return;
-      if (s.powerWheelOpen) return; // the power wheel eats mouse aim while it's open
+      if (s.powerWheelOpen || s.toolWheelOpen) return; // a wheel eats mouse aim while it's open
       // mouse is bound to the game: steer when the cursor is hard-locked (FPS
       // style), whenever it glides over the open world, or while drag-looking
       if (!document.pointerLockElement && !(e.target instanceof HTMLCanvasElement) && !dragging) return;
@@ -254,6 +272,8 @@ export function Scene({ engine }: { engine: GameEngine }) {
       <Pickups engine={engine} />
       <Powers engine={engine} />
       <Licenses engine={engine} />
+      <Tools engine={engine} />
+      <Builds engine={engine} />
       <Shadows engine={engine} />
       <Confetti engine={engine} />
     </Canvas>

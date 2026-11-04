@@ -8,7 +8,7 @@ import {
   ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon, Mouse,
 } from "lucide-react";
 import type { GameEngine } from "@/lib/game/engine";
-import { BUST_TARGET, DETAIN_SECONDS, ITEMS, INV_SLOTS, POLICE_STATIONS, POWERS, RUNNER_LOSE_DELIVERIES } from "@/lib/game/constants";
+import { BUST_TARGET, DETAIN_SECONDS, ITEMS, INV_SLOTS, POLICE_STATIONS, POWERS, RUNNER_LOSE_DELIVERIES, TOOLS } from "@/lib/game/constants";
 import { useGame } from "./store";
 import { requestGameLock } from "./Scene";
 import { setMuted as setAudioMuted, sfx, stopMusic, startMusic } from "@/lib/game/audio";
@@ -17,7 +17,7 @@ import { HowToPlay, SettingsDialog } from "./Panels";
 
 /* ------- shared world-map canvas painting (156px minimap + 440px big map) ------- */
 function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine, night: boolean) {
-  const K = S / 1150;         // world units → px (fits the bigger 545-radius wall)
+  const K = S / 1520;         // world units → px (fits the bigger 712-radius wall)
   const U = S / 156;          // scale for the hand-tuned 156px marker sizes
   const dot = (x: number, z: number, r: number, col: string, alpha = 1) => {
     c.globalAlpha = alpha;
@@ -28,8 +28,9 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     c.globalAlpha = 1;
   };
   c.clearRect(0, 0, S, S);
-  dot(0, 0, 545 * K, "#1c3f24");   // deep jungle — darker outer band hugging the wall
-  dot(0, 0, 500 * K, "#2d5a2e");
+  dot(0, 0, 712 * K, "#4a4038");     // ⛰️ rough mountain band hugging the wall
+  dot(0, 0, 610 * K, "#1c3f24");     // deep jungle — darker outer band hugging the mountains
+  dot(0, 0, 545 * K, "#2d5a2e");
   dot(0, 0, 465 * K, "#7a8f3f");
   dot(0, 0, 405 * K, "#8d8a80");
   dot(-255, 215, 45 * K, "#3a3a46");
@@ -42,15 +43,19 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     // big map only: zone rings, graveyard fence and district labels
     c.strokeStyle = "rgba(255,255,255,0.22)";
     c.lineWidth = 1;
-    for (const r of [405, 465, 500, 535]) { c.beginPath(); c.arc(S / 2, S / 2, r * K, 0, 6.3); c.stroke(); }
+    for (const r of [405, 465, 545, 610]) { c.beginPath(); c.arc(S / 2, S / 2, r * K, 0, 6.3); c.stroke(); }
+    c.setLineDash([3, 3]);
+    c.beginPath(); c.arc(S / 2, S / 2, 700 * K, 0, 6.3); c.stroke();
+    c.setLineDash([]);
     c.beginPath(); c.arc(S / 2 - 255 * K, S / 2 + 215 * K, 45 * K, 0, 6.3); c.stroke();
     c.fillStyle = "rgba(255,255,255,0.55)";
     c.font = `700 ${Math.round(7 * U)}px ui-sans-serif, system-ui, sans-serif`;
     c.textAlign = "center";
     c.fillText("CITY", S / 2, S / 2 + 150 * K);
     c.fillText("FARMLAND", S / 2, S / 2 + 435 * K);
-    c.fillText("JUNGLE", S / 2 - 340 * K, S / 2 - 340 * K);
-    c.fillText("DEEP JUNGLE", S / 2 + 360 * K, S / 2 - 360 * K);
+    c.fillText("JUNGLE", S / 2 - 350 * K, S / 2 - 350 * K);
+    c.fillText("DEEP JUNGLE", S / 2 + 390 * K, S / 2 - 390 * K);
+    c.fillText("⛰ MOUNTAINS", S / 2 + 480 * K, S / 2 + 480 * K);
     c.fillText("GRAVEYARD", S / 2 - 255 * K, S / 2 + 265 * K);
     c.fillText("✈ AIRPORT", S / 2 + 295 * K, S / 2 + 345 * K);
   }
@@ -80,6 +85,10 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
   for (const lc of engine.licenses) if (lc.active) { dot(lc.x, lc.z, 2.7 * U, "#38bdf8", 0.95); dot(lc.x, lc.z, 1.15 * U, "#ffffff", 0.9); }
   // rare super-power gems — glowing coloured dots (hunt them in the jungle!)
   for (const pw of engine.powers) if (pw.active) dot(pw.x, pw.z, 2.8 * U, POWERS[pw.def].color, 0.95);
+  // 🔧 wild tools — orange specks so the belt-hunt reads on the map
+  for (const tl of engine.tools) if (tl.active) dot(tl.x, tl.z, 2.4 * U, TOOLS[tl.def].color, 0.95);
+  // 🧱 player-built barricades — chunky little squares
+  for (const b of engine.builds) { dot(b.x, b.z, 3 * U, b.mat === 0 ? "#b07a44" : "#9aa0a8"); }
   for (const v of engine.votes) if (v.state === "world") dot(v.x, v.z, 2.2 * U, "#f7c948");
   for (const cop of engine.cops) {
     const chasing = cop.mode === "chase";
@@ -152,7 +161,7 @@ function Minimap({ engine, onOpen }: { engine: GameEngine; onOpen: () => void })
 const BIG_MAP_S = 440;
 const MAP_LEGEND: [string, string][] = [
   ["#ffffff", "You (arrow = facing)"], ["#f7c948", "Votes"], ["#ffd166", "Food"], ["#c084fc", "Power gems (rare!)"],
-  ["#38bdf8", "Driving license 🪪"], ["#6aa0ff", "Police"], ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ["#a97b4f", "Animals"], ["#c084fc", "Zombies · night"], ["#1d2a4a", "Police stn"],
+  ["#f59e0b", "🔧 Tools (axe/sword/hammer/builder)"], ["#38bdf8", "Driving license 🪪"], ["#6aa0ff", "Police"], ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ["#a97b4f", "Animals"], ["#c084fc", "Zombies · night"], ["#1d2a4a", "Police stn"],
   ["#ffb020", "Vote runner (bright = carrying)"],
 ];
 function BigMap({ engine, onClose }: { engine: GameEngine; onClose: () => void }) {
@@ -548,6 +557,175 @@ function PowerWheel({ engine }: { engine: GameEngine }) {
   );
 }
 
+/* ------------- 🔧 tool belt slots: collected tools — tap one (or hold B and aim
+   the tool wheel) to use it. Each tool copy is a SINGLE use; similar tools STACK. ------------- */
+function ToolSlots({ engine }: { engine: GameEngine }) {
+  const tools = useGame((s) => s.hud.tools);
+  const wood = useGame((s) => s.hud.wood);
+  const stone = useGame((s) => s.hud.stone);
+  if (tools.length === 0 && wood === 0 && stone === 0) return null;
+  return (
+    <div className="flex flex-col items-start gap-1.5">
+      {tools.length > 0 && (
+        <div className="flex items-end gap-1.5">
+          <AnimatePresence initial={false}>
+            {tools.map((tool, i) => (
+              <motion.button
+                data-ui
+                key={`${tool.def}-${tools.length}`}
+                type="button"
+                layout
+                initial={{ opacity: 0, scale: 0.5, y: 10 }}
+                animate={{ opacity: 1, scale: 1, y: 0 }}
+                exit={{ opacity: 0, scale: 0.5, y: 6 }}
+                whileTap={{ scale: 0.88 }}
+                onClick={() => engine.useTool(i)}
+                title={`${tool.name} ×${tool.count} — ${tool.tip} (hold B & aim the tool wheel)`}
+                aria-label={`Use ${tool.name}`}
+                className="pointer-events-auto relative flex h-12 w-12 items-center justify-center rounded-xl border-2 bg-black/45 shadow-lg backdrop-blur-md sm:h-14 sm:w-14"
+                style={{ borderColor: tool.color, boxShadow: `0 0 12px ${tool.color}55` }}
+              >
+                <span className="text-2xl leading-none sm:text-3xl" aria-hidden>{tool.emoji}</span>
+                <span
+                  className="absolute -bottom-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-black text-black shadow"
+                  style={{ background: tool.color }}
+                >
+                  ×{tool.count}
+                </span>
+                {i === 0 && (
+                  <span
+                    className="absolute -bottom-1 -left-1 flex h-4 w-4 items-center justify-center rounded text-[9px] font-black text-black"
+                    style={{ background: tool.color }}
+                  >
+                    B
+                  </span>
+                )}
+              </motion.button>
+            ))}
+          </AnimatePresence>
+        </div>
+      )}
+      {(wood > 0 || stone > 0) && (
+        <div className="flex items-center gap-1.5" aria-label="Harvested resources">
+          {wood > 0 && (
+            <span className="flex items-center gap-1 rounded-full border border-amber-300/40 bg-black/50 px-2 py-0.5 text-[11px] font-black text-amber-200 backdrop-blur-md" title="Wood — the builder spends it to raise barricades">
+              🪵 {wood}
+            </span>
+          )}
+          {stone > 0 && (
+            <span className="flex items-center gap-1 rounded-full border border-slate-300/40 bg-black/50 px-2 py-0.5 text-[11px] font-black text-slate-200 backdrop-blur-md" title="Stone — the builder spends it to raise walls">
+              🪨 {stone}
+            </span>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ------------- 🔧 radial tool wheel: HOLD B → it pops at screen center, move the
+   mouse to aim at a belted tool, RELEASE B to use it. Same mouse-movement aiming
+   as the power wheel, so it works while the pointer is hard-locked. Quick tap of
+   B (no aim, <250ms) uses the first tool — old muscle memory preserved. ------------- */
+function ToolWheel({ engine }: { engine: GameEngine }) {
+  const tools = useGame((s) => s.hud.tools);
+  const wood = useGame((s) => s.hud.wood);
+  const stone = useGame((s) => s.hud.stone);
+  const sel = useGame((s) => s.toolWheelSel);
+  const setSel = useGame((s) => s.setToolWheelSel);
+  const setOpen = useGame((s) => s.setToolWheelOpen);
+  const vec = useRef({ x: 0, y: 0 });
+  const n = tools.length;
+  const R = 118; // px from the hub where the tools sit
+
+  // mouse aim — accumulate movement deltas into a virtual stick from the hub
+  useEffect(() => {
+    vec.current = { x: 0, y: 0 };
+    const DEAD = 26, MAXR = 150;
+    const mm = (e: MouseEvent) => {
+      const v = vec.current;
+      v.x = Math.max(-MAXR, Math.min(MAXR, v.x + e.movementX));
+      v.y = Math.max(-MAXR, Math.min(MAXR, v.y + e.movementY));
+      const m = Math.hypot(v.x, v.y);
+      if (m < DEAD) { setSel(-1); return; }
+      const cur = (Math.atan2(v.y, v.x) * 180) / Math.PI;   // −180…180
+      let best = -1, bestDiff = 1e9;
+      for (let i = 0; i < n; i++) {
+        const a = -90 + (i * 360) / n;                      // segment 0 sits at 12 o'clock
+        const d = Math.abs(((cur - a + 540) % 360) - 180);  // 0…180
+        if (d < bestDiff) { bestDiff = d; best = i; }
+      }
+      setSel(bestDiff <= 180 / n ? best : -1);              // inside this segment's sector?
+    };
+    addEventListener("mousemove", mm);
+    return () => removeEventListener("mousemove", mm);
+  }, [n, setSel]);
+
+  const aimed = sel >= 0 && sel < n ? tools[sel] : null;
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-30" role="dialog" aria-label="Tool wheel — move the mouse to aim, release B to use">
+      {/* soft focus backdrop */}
+      <motion.div
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full"
+        style={{ width: 400, height: 400, background: "radial-gradient(circle, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.28) 55%, transparent 72%)" }}
+      />
+      {/* belted tools around the hub — click one to use it instantly */}
+      {tools.map((tool, i) => {
+        const a = ((-90 + (i * 360) / n) * Math.PI) / 180;
+        const on = i === sel;
+        return (
+          <div
+            key={`${tool.def}-${i}`}
+            className="absolute left-1/2 top-1/2"
+            style={{ transform: `translate(calc(-50% + ${Math.cos(a) * R}px), calc(-50% + ${Math.sin(a) * R}px))` }}
+          >
+            <motion.button
+              data-ui type="button"
+              initial={{ opacity: 0, scale: 0.4 }} animate={{ opacity: 1, scale: on ? 1.22 : 1 }}
+              transition={{ type: "spring", stiffness: 320, damping: 20 }}
+              onClick={() => { engine.useTool(i); setOpen(false); }}
+              aria-label={`Use ${tool.name}${on ? " (aimed)" : ""}`}
+              className={`pointer-events-auto flex h-16 w-16 items-center justify-center rounded-full border-[3px] text-3xl shadow-xl backdrop-blur-md transition-colors ${on ? "bg-white/25" : "bg-black/50"}`}
+              style={{
+                borderColor: tool.color,
+                boxShadow: on ? `0 0 26px ${tool.color}, 0 0 60px ${tool.color}55` : `0 0 10px ${tool.color}66`,
+              }}
+            >
+              {tool.emoji}
+              <span
+                className="absolute -bottom-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-black text-black shadow"
+                style={{ background: tool.color }}
+              >
+                ×{tool.count}
+              </span>
+            </motion.button>
+          </div>
+        );
+      })}
+      {/* hub — shows the aimed tool's name & tip, plus the wood/stone purse */}
+      <div className="absolute left-1/2 top-1/2 flex h-24 w-24 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border-2 border-white/25 bg-black/65 px-1 backdrop-blur-md">
+        {aimed ? (
+          <>
+            <span className="px-1 text-center text-[11px] font-black leading-tight text-white">{aimed.name} ×{aimed.count}</span>
+            <span className="mt-0.5 px-1 text-center text-[9px] font-bold leading-tight text-white/65">{aimed.tip}</span>
+          </>
+        ) : (
+          <>
+            <span className="text-base leading-none" aria-hidden>🪵{wood} 🪨{stone}</span>
+            <span className="mt-0.5 px-1 text-center text-[9px] font-bold uppercase tracking-wider text-white/70">aim · release B</span>
+          </>
+        )}
+      </div>
+      {/* hint under the wheel */}
+      <div className="absolute left-1/2 top-1/2 mt-[172px] -translate-x-1/2 whitespace-nowrap rounded-full bg-black/55 px-3 py-1 text-[10px] font-bold text-white/85 backdrop-blur-md">
+        move the mouse to aim · release <b className="text-orange-300">B</b> to use · <b className="text-orange-300">Esc</b> cancels
+      </div>
+    </div>
+  );
+}
+
 /* ------------- danger compass: arrow toward nearest chasing cop ------------- */
 function DangerCompass({ engine }: { engine: GameEngine }) {
   const hud = useGame((s) => s.hud);
@@ -664,6 +842,7 @@ function MobileButtons({ engine }: { engine: GameEngine }) {
   const blinkActive = useGame((s) => s.hud.power?.kind === "blink");
   const blinkReady = useGame((s) => s.hud.blinkReady);
   const pockets = useGame((s) => s.hud.pocketPowers);
+  const tools = useGame((s) => s.hud.tools);
   return (
     <div data-ui className="flex flex-col items-end gap-3">
       <button
@@ -695,6 +874,21 @@ function MobileButtons({ engine }: { engine: GameEngine }) {
           style={{ borderColor: pocket.color, background: "rgba(0,0,0,0.45)", boxShadow: `0 0 12px ${pocket.color}66` }}
           onTouchStart={(e) => { e.preventDefault(); engine.usePower(i); }}
         >{pocket.emoji}</button>
+      ))}
+      {tools.map((tool, i) => (
+        <button
+          key={`${tool.def}-${i}-${tools.length}`}
+          aria-label={`Use ${tool.name} (×${tool.count})`}
+          className="relative h-14 w-14 rounded-full border-2 text-2xl shadow-lg active:scale-95"
+          style={{ borderColor: tool.color, background: "rgba(0,0,0,0.45)", boxShadow: `0 0 12px ${tool.color}55` }}
+          onTouchStart={(e) => { e.preventDefault(); engine.useTool(i); }}
+        >
+          {tool.emoji}
+          <span
+            className="absolute -bottom-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-black text-black shadow"
+            style={{ background: tool.color }}
+          >×{tool.count}</span>
+        </button>
       ))}
       <button
         aria-label="Toggle sprint"
@@ -781,6 +975,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
   const bigMap = useGame((s) => s.bigMapOpen);
   const setBigMap = useGame((s) => s.setBigMapOpen);
   const powerWheelOpen = useGame((s) => s.powerWheelOpen);
+  const toolWheelOpen = useGame((s) => s.toolWheelOpen);
   // after the cursor gets hard-bound, remind the player how to free it (4 s)
   const [lockTip, setLockTip] = useState(false);
   useEffect(() => {
@@ -806,6 +1001,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
     Jungle: "text-emerald-200",
     "Deep Jungle": "text-teal-300",
     Graveyard: "text-violet-200",
+    Mountains: "text-orange-300",
     "Mountain Wall": "text-slate-200",
   };
 
@@ -823,10 +1019,13 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (useGame.getState().victoryOpen) return;
-      // the power wheel swallows Esc / P / M — it always closes first, never pauses
+      // the power/tool wheels swallow Esc / P / M — they always close first, never pause
       const st0 = useGame.getState();
       if (st0.powerWheelOpen && (e.code === "Escape" || e.code === "KeyP" || e.code === "KeyM")) {
         e.preventDefault(); st0.setPowerWheelOpen(false); return;
+      }
+      if (st0.toolWheelOpen && (e.code === "Escape" || e.code === "KeyP" || e.code === "KeyM")) {
+        e.preventDefault(); st0.setToolWheelOpen(false); return;
       }
       if (bigMap) {
         // the map swallows M / Esc so it always closes first
@@ -1091,7 +1290,9 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
               <div className="mt-1.5 space-y-0.5 text-[10.5px] leading-snug text-amber-200/90">
                 <div>🥭 Run over food → tap bag or press <b>1-8</b> to eat</div>
                 <div>✨ Gems: carry up to <b>3</b> · hold <b>G</b> → aim → release · <b>Q</b> blink · deep-jungle hoard</div>
+                <div>🔧 Tools: hold <b>B</b> → aim → release · 🪓 wood · 🔨 stone · 🗡️ zombies · 🧱 build</div>
                 <div>🪪 License + <b>E</b> at any car = drive · <b>E</b> rescues friends</div>
+                <div>⛰️ Climb the SCARY mountains past the deep jungle!</div>
               </div>
               {!touch && <div className="mt-1.5 text-[10px] leading-snug text-white/60">WASD move · mouse camera · Space jump ×2 · M map</div>}
               <div className="mt-1.5 border-t border-white/10 pt-1 text-[9.5px] text-white/50">Press <b className="text-white/80">I</b> to toggle · auto-hides</div>
@@ -1146,6 +1347,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
 
       {/* ✨ radial power wheel — hold G, aim with the mouse, release to unleash */}
       <AnimatePresence>{powerWheelOpen && <PowerWheel engine={engine} />}</AnimatePresence>
+      <AnimatePresence>{toolWheelOpen && <ToolWheel engine={engine} />}</AnimatePresence>
 
       {/* toasts */}
       <div className="absolute bottom-24 left-1/2 z-10 flex w-[90%] max-w-md -translate-x-1/2 flex-col items-center gap-1.5 sm:bottom-24">
@@ -1234,11 +1436,12 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         )}
       </AnimatePresence>
 
-      {/* food pockets — desktop: bottom-left corner, with the ✨ power slots beside them */}
+      {/* food pockets — desktop: bottom-left corner, with the ✨ power + 🔧 tool slots beside them */}
       {!touch && (
         <div className="absolute bottom-3 left-3 z-10 flex items-end gap-2">
           <ItemBar engine={engine} />
           <AnimatePresence>{hud.pocketPowers.length > 0 && <PowerSlots engine={engine} />}</AnimatePresence>
+          <AnimatePresence>{(hud.tools.length > 0 || hud.wood > 0 || hud.stone > 0) && <ToolSlots engine={engine} />}</AnimatePresence>
         </div>
       )}
 
@@ -1284,7 +1487,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       {!touch && (
         <div className="absolute bottom-3 left-1/2 z-10 hidden -translate-x-1/2 flex-col items-center gap-1.5 md:flex">
           <div className="hidden whitespace-nowrap rounded-full bg-black/45 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/75 backdrop-blur-md lg:block">
-            WASD move · Shift sprint · Space jump ×2 · E rescue / drive · G power · Q blink · 1-8 eat
+            WASD move · Shift sprint · Space jump ×2 · E rescue / drive · G power · B tools · Q blink · 1-8 eat
           </div>
           <CoordsChip px={hud.px} pz={hud.pz} />
         </div>

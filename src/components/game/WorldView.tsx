@@ -4,10 +4,10 @@ import { useLayoutEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  AIRPORT, BALLOT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, PARLIAMENT, POLICE_STATIONS, WALL_RADIUS, stationCage, stationGate,
+  AIRPORT, BALLOT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, PARLIAMENT, POLICE_STATIONS, WALL_RADIUS, stationCage, stationGate,
 } from "@/lib/game/constants";
 import {
-  AVENUE, GATE, generateWorld, HOSPITAL, MALL, MAIN_ROAD, PARK, ROAD_W, ROADS, RING_R, RING_W, SCHOOL, PROTEST_CAMP,
+  AVENUE, GATE, generateWorld, HOSPITAL, MALL, MAIN_ROAD, PARK, ROAD_W, ROADS, RING_R, RING_W, SCHOOL, PROTEST_CAMP, terrainHeight,
   type World,
 } from "@/lib/game/worldgen";
 import { buildBallotBox, nameTag } from "@/lib/game/character";
@@ -261,7 +261,7 @@ function windify(mat: THREE.Material, amp: number, key: string) {
   mat.customProgramCacheKey = () => key;
 }
 
-function Forest() {
+function Forest({ engine }: { engine: GameEngine }) {
   const trunks = useRef<THREE.InstancedMesh>(null!);
   const tiers = useRef<THREE.InstancedMesh>(null!);
   const blobs = useRef<THREE.InstancedMesh>(null!);
@@ -270,6 +270,17 @@ function Forest() {
     for (const t of WORLD.trees) if (t.kind === 0) pine++;
     return { pine, round: WORLD.trees.length - pine };
   }, []);
+  // per-tree instance slots — lets the axe hide exactly one tree's trunk + canopy
+  const slots = useMemo(() => {
+    let ti = 0, bi = 0;
+    return WORLD.trees.map((t) => {
+      const s = { tier: ti, blob: bi, pine: t.kind === 0 };
+      if (t.kind === 0) ti += 3; else bi += 5;
+      return s;
+    });
+  }, []);
+  const choppedV = useRef(-1); // engine.worldV at last hide-sync
+  const zeroM = useMemo(() => new THREE.Matrix4().makeScale(0, 0, 0), []);
 
   useLayoutEffect(() => {
     const r = mulberry32(20240);
@@ -334,7 +345,23 @@ function Forest() {
     if (blobs.current.instanceColor) blobs.current.instanceColor.needsUpdate = true;
   }, [n]);
 
-  useFrame((s) => { WIND.value = s.clock.elapsedTime; });
+  useFrame((s) => {
+    WIND.value = s.clock.elapsedTime;
+    // 🪓 chopped trees vanish — synced whenever the engine bumps its world version
+    if (choppedV.current !== engine.worldV) {
+      choppedV.current = engine.worldV;
+      WORLD.trees.forEach((t, i) => {
+        if (t.s > 0) return;
+        const sl = slots[i];
+        trunks.current.setMatrixAt(i, zeroM);
+        if (sl.pine) for (let k = 0; k < 3; k++) tiers.current.setMatrixAt(sl.tier + k, zeroM);
+        else for (let k = 0; k < 5; k++) blobs.current.setMatrixAt(sl.blob + k, zeroM);
+      });
+      trunks.current.instanceMatrix.needsUpdate = true;
+      tiers.current.instanceMatrix.needsUpdate = true;
+      blobs.current.instanceMatrix.needsUpdate = true;
+    }
+  });
 
   const trunkMat = useMemo(() => new THREE.MeshLambertMaterial(), []);
   const pineMat = useMemo(() => {
@@ -1344,8 +1371,8 @@ function ridgeMul(p: Peak, a: number): number {
 const profile = (t: number, k: number) =>
   Math.pow(1 - t, k) * (1 + 0.14 * Math.pow(Math.sin(Math.min(1, t) * Math.PI), 2));
 
-/** Peaks must keep their lowest ring outside this radius — the player wall is at 545. */
-const MOUNTAIN_CLEAR_R = 556;
+/** Peaks must keep their lowest ring outside this radius — the player wall is at 712. */
+const MOUNTAIN_CLEAR_R = 726;
 
 /** Smallest horizontal distance to origin reached by a peak's base ring. */
 function baseMinRadius(p: Peak): number {
@@ -1513,12 +1540,13 @@ function Mountains() {
     // Major peaks — heights cluster by sector so some directions are huge snowy
     // ranges and others are low rocky hills, instead of a uniform spike fence.
     // Wide bases (h/w < ~1) + strong flank asymmetry keep silhouettes massif-like,
-    // never isoceles-triangle.
+    // never isoceles-triangle. They sit BEYOND the playable wall (712) as the
+    // horizon backdrop — the CLIMBABLE mountains are <MountainTerrain> inside.
     const majors: Peak[] = Array.from({ length: 26 }, (_, i) => {
       const a = (i / 26) * Math.PI * 2 + range(r, -0.06, 0.06);
       const cl = 0.5 + 0.5 * Math.sin(2 * a + 1.7) * Math.sin(3 * a + 0.6); // 0..1
       const h = 58 + cl * 96 + range(r, -10, 10);
-      const d = 424 + cl * 48 + range(r, -22, 22);
+      const d = 748 + cl * 44 + range(r, -20, 20);
       const w = range(r, 96, 172) + cl * 52;
       return {
         x: Math.cos(a) * d, z: Math.sin(a) * d, h, w,
@@ -1564,7 +1592,7 @@ function Mountains() {
     });
     // Lumpy grassy foothills, kept outside the playable ring.
     const hills: Peak[] = Array.from({ length: 44 }, (_, i) => {
-      const a = range(r, 0, Math.PI * 2), d = range(r, 408, 448);
+      const a = range(r, 0, Math.PI * 2), d = range(r, 720, 745);
       return {
         x: Math.cos(a) * d, z: Math.sin(a) * d,
         h: range(r, 14, 30), w: range(r, 30, 62),
@@ -1588,6 +1616,69 @@ function Mountains() {
 
   const mat = useMemo(() => new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), []);
   return <mesh geometry={geo} material={mat} frustumCulled={false} />;
+}
+
+/* --------- ⛰️ CLIMBABLE mountain band — the real terrain the player walks on ---------
+ * One displaced ring mesh driven by the SAME terrainHeight() the sim uses, so
+ * what you see is exactly what you climb. Flat-shaded + fluted height noise =
+ * a rough, scary basalt massif. */
+function MountainTerrain() {
+  const geo = useMemo(() => {
+    const R0 = MOUNTAIN_INNER - 8, R1 = MOUNTAIN_OUTER + 18;
+    const rg = new THREE.RingGeometry(R0, R1, 150, 48);
+    rg.rotateX(-Math.PI / 2); // lie flat on the x/z plane
+    const pos = rg.attributes.position as THREE.BufferAttribute;
+    const colors = new Float32Array(pos.count * 3);
+    const c = new THREE.Color();
+    for (let i = 0; i < pos.count; i++) {
+      const x = pos.getX(i), z = pos.getZ(i);
+      const h = terrainHeight(x, z);
+      pos.setY(i, h);
+      // scary dark palette: mossy valley floor → gray scree → near-black crags
+      if (h < 1.2) c.set("#414d38");
+      else if (h < 5) c.set("#565348");
+      else if (h < 12) c.set("#615f59");
+      else c.set("#494645");
+      c.offsetHSL(0, 0, (hash2(x * 0.37 + 3.1, z * 0.41) - 0.5) * 0.055);
+      colors[i * 3] = c.r; colors[i * 3 + 1] = c.g; colors[i * 3 + 2] = c.b;
+    }
+    rg.setAttribute("color", new THREE.BufferAttribute(colors, 3));
+    rg.computeVertexNormals();
+    return rg;
+  }, []);
+  const mat = useMemo(() => new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), []);
+  return <mesh geometry={geo} material={mat} frustumCulled={false} position-y={-0.02} />;
+}
+
+/* --------- 🔨 breakable boulders — the hammer's food, hidden once smashed --------- */
+function Rocks() {
+  const refs = useRef<(THREE.Group | null)[]>([]);
+  useFrame(() => {
+    WORLD.rocks.forEach((rk, i) => {
+      const g = refs.current[i];
+      if (g) g.visible = rk.s > 0;
+    });
+  });
+  return (
+    <>
+      {WORLD.rocks.map((rk, i) => (
+        <group
+          key={i}
+          ref={(el) => { refs.current[i] = el; }}
+          position={[rk.x, terrainHeight(rk.x, rk.z), rk.z]}
+        >
+          <mesh position-y={0.42 * rk.s} rotation-y={rk.x * 0.7 + rk.z * 1.3} scale={[rk.s, rk.s * 0.82, rk.s]}>
+            <dodecahedronGeometry args={[0.8, 0]} />
+            <meshLambertMaterial color="#7d7a72" flatShading />
+          </mesh>
+          <mesh position={[0.5 * rk.s, 0.2 * rk.s, 0.42 * rk.s]} rotation-y={rk.z * 0.9} scale={0.45 * rk.s}>
+            <dodecahedronGeometry args={[0.8, 0]} />
+            <meshLambertMaterial color="#6e6b64" flatShading />
+          </mesh>
+        </group>
+      ))}
+    </>
+  );
 }
 
 /* ------------------------- parliament + ballot (Delhi Sansad Bhavan style) ------------------------- */
@@ -2279,11 +2370,14 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
   return (
     <>
       <Env clockRef={clockRef} />
-      <Disc r={780} color="#3f7a36" y={-0.12} />
+      <Disc r={900} color="#3f7a36" y={-0.12} />
       <Disc r={CITY_RADIUS} color="#9a968c" y={0} />
       <Ring a={CITY_RADIUS} b={FARM_RADIUS} color="#9cb84e" y={0.02} />
       <Ring a={FARM_RADIUS} b={DEEP_JUNGLE_RADIUS} color="#2d7a3a" y={0.03} />
-      <Ring a={DEEP_JUNGLE_RADIUS} b={WALL_RADIUS} color="#1e5630" y={0.031} />
+      <Ring a={DEEP_JUNGLE_RADIUS} b={JUNGLE_RADIUS} color="#1e5630" y={0.031} />
+      <Ring a={JUNGLE_RADIUS} b={WALL_RADIUS + 4} color="#232b20" y={0.032} />
+      <MountainTerrain />
+      <Rocks />
       <Disc r={GRAVEYARD.r} color="#3a3a46" y={0.06} x={GRAVEYARD.x} z={GRAVEYARD.z} />
       <Roads />
       <Airport />
@@ -2301,7 +2395,7 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
       <Umbrellas />
       <Farm />
       <Landmarks />
-      <Forest />
+      <Forest engine={engine} />
       <Graves />
       <Flowers />
       <Mountains />

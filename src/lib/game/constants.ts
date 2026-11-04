@@ -1,12 +1,17 @@
 /** VoteChor 2.0 — shared constants. Tuned for a fast, kid-friendly cartoon chase game. */
 
 export const WORLD_SEED = 1337;
-export const WALL_RADIUS = 545;
+/** The world grew! City → farmland → BIG jungle → DEEP jungle → climbable ⛰️ mountains → wall. */
+export const WALL_RADIUS = 712;
 export const CITY_RADIUS = 405;
 export const FARM_RADIUS = 465;
-export const JUNGLE_RADIUS = 535;
-/** inner edge of the DEEP jungle — the darker, denser band hugging the mountain wall */
-export const DEEP_JUNGLE_RADIUS = 500;
+/** outer edge of the DEEP jungle band (deep jungle = DEEP_JUNGLE_RADIUS → JUNGLE_RADIUS) */
+export const JUNGLE_RADIUS = 610;
+/** inner edge of the DEEP jungle — the darker, denser band hugging the mountains */
+export const DEEP_JUNGLE_RADIUS = 545;
+/** Playable ⛰️ mountain band — rough, scary, and CLIMBABLE (see worldgen.terrainHeight). */
+export const MOUNTAIN_INNER = 610;
+export const MOUNTAIN_OUTER = 700;
 export const GRAVEYARD = { x: -255, z: 215, r: 45 } as const;
 export const SPAWN = { x: 0, z: 6 } as const;
 
@@ -392,7 +397,8 @@ export const RUNNER_CATCH_CD = 0.9;       // min seconds between two busts
 export const BUST_POINTS = 150;           // score per busted runner
 export const BUST_CARRY_BONUS = 100;      // extra score when the runner was carrying a vote
 
-/* ---------- Rare super powers (glowing jungle finds & mystery spots) ---------- */
+/* ---------- Rare super powers (glowing jungle finds & mystery spots) ----------
+ *  Note: the map grew, so gems now also hide on the ⛰️ mountain slopes!        */
 export type PowerKind = "sonic" | "jump" | "blink" | "morph" | "magnet";
 export interface PowerDef {
   kind: PowerKind; name: string; emoji: string;
@@ -462,18 +468,56 @@ export const POINTS_PICKUP = 10;
 export const POINTS_RESCUE = 60;
 export const WIN_BONUS = 500;
 
-export type Zone = "City" | "Farmland" | "Jungle" | "Deep Jungle" | "Graveyard" | "Mountain Wall";
+export type Zone = "City" | "Farmland" | "Jungle" | "Deep Jungle" | "Graveyard" | "Mountains" | "Mountain Wall";
 export function zoneOf(x: number, z: number): Zone {
   if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < 45) return "Graveyard";
   const r = Math.hypot(x, z);
-  return r < CITY_RADIUS ? "City" : r < FARM_RADIUS ? "Farmland" : r < DEEP_JUNGLE_RADIUS ? "Jungle" : r < JUNGLE_RADIUS - 10 ? "Deep Jungle" : "Mountain Wall";
+  return r < CITY_RADIUS ? "City"
+    : r < FARM_RADIUS ? "Farmland"
+    : r < DEEP_JUNGLE_RADIUS ? "Jungle"
+    : r < JUNGLE_RADIUS ? "Deep Jungle"
+    : r < MOUNTAIN_OUTER ? "Mountains"
+    : "Mountain Wall";
 }
 
 export const ZONE_TOAST: Record<Zone, string> = {
   City: "Welcome to the city! Grab those votes!",
   Farmland: "Farmland — mind the cows!",
-  Jungle: "The jungle… listen, the monkeys are watching.",
-  "Deep Jungle": "DEEP jungle — dark, dense, and full of secrets… gems hide here!",
-  Graveyard: "Graveyard! At night the zombies wake up…",
-  "Mountain Wall": "The mountains say no. Turn back!",
+  Jungle: "The big jungle… listen, the monkeys are watching.",
+  "Deep Jungle": "DEEP jungle — dark, dense, and full of secrets… gems & rocks hide here!",
+  Graveyard: "Graveyard! At night the zombies wake up… bring a 🗡️ sword!",
+  Mountains: "⛰️ The SCARY Mountains! Rough peaks & loose rocks — climb up, mine, build… if you dare!",
+  "Mountain Wall": "The world ends here. Turn back!",
 };
+
+/* ---------- 🔧 Tool belt — collect tools, harvest the wild, build stuff ----------
+ *  🪓 Axe chops trees → wood · 🗡️ Sword fights zombies · 🔨 Hammer breaks rocks → stone
+ *  🧱 Builder spends wood/stone to raise barricades. Each tool copy = ONE use, and
+ *  you can carry MULTIPLE copies of the same tool (they stack in the belt).      */
+export type ToolKind = "axe" | "sword" | "hammer" | "builder";
+export interface ToolDef { kind: ToolKind; name: string; emoji: string; color: string; tip: string }
+export const TOOLS: readonly ToolDef[] = [
+  { kind: "axe",     name: "Axe",     emoji: "🪓", color: "#f59e0b", tip: "Stand by a tree — chop it for wood" },
+  { kind: "sword",   name: "Sword",   emoji: "🗡️", color: "#e2e8f0", tip: "Swing at zombies to defeat them" },
+  { kind: "hammer",  name: "Hammer",  emoji: "🔨", color: "#94a3b8", tip: "Stand by a rock — smash it for stone" },
+  { kind: "builder", name: "Builder", emoji: "🧱", color: "#fb923c", tip: "Spend wood/stone to build a barricade" },
+];
+export const TOOL_COUNT = 16;       // tool pickups scattered across the wild
+export const TOOL_PICKUP_R = 2.1;
+export const TOOL_RESPAWN_S = 75;   // used tools eventually reappear in the world
+export const TOOL_STACK = 9;        // max copies of one tool kind in the belt
+export const TOOL_SLOTS = 4;        // one belt slot per tool kind
+export const WOOD_CAP = 30;         // 🪵 resource pocket cap
+export const STONE_CAP = 30;        // 🪨 resource pocket cap
+export const CHOP_WOOD = 2;         // wood per chopped tree
+export const MINE_STONE = 2;        // stone per smashed rock
+export const BUILD_WOOD_COST = 2;   // builder: wooden barricade cost
+export const BUILD_STONE_COST = 3;  // builder: stone wall cost
+export const BUILD_POOL = 26;       // max simultaneous player-built structures
+export const BUILD_R = 1.3;         // collider radius of a built structure
+export const ZOMBIE_DOWN_S = 40;    // a sworded zombie stays down this long, then rises again
+
+export const POINTS_CHOP = 15;
+export const POINTS_MINE = 15;
+export const POINTS_FIGHT = 40;
+export const POINTS_BUILD = 30;

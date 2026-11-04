@@ -1,8 +1,8 @@
-import { AIRPORT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, PARLIAMENT, POLICE_STATIONS, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_POOL, WALL_RADIUS, WORLD_SEED, pickVehicle, stationCage, stationGate } from "./constants";
+import { AIRPORT, BUILD_POOL, BUILD_R, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, PARLIAMENT, POLICE_STATIONS, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_POOL, WALL_RADIUS, WORLD_SEED, pickVehicle, stationCage, stationGate } from "./constants";
 import { mulberry32, range } from "./rng";
 
 export interface BoxCollider { x: number; z: number; w: number; d: number; /** building height (top y) — lets the chase camera ignore roofs above it */ h?: number } // half extents
-export interface CircleCollider { x: number; z: number; r: number; /** set for the two axle circles of a parked car — lets a DRIVEN car skip its own colliders */ car?: number; /** index inside world.circles — lets a DRIVEN car refresh its grid cells on every move */ idx?: number }
+export interface CircleCollider { x: number; z: number; r: number; /** set for the two axle circles of a parked car — lets a DRIVEN car skip its own colliders */ car?: number; /** index inside world.circles — lets a DRIVEN car refresh its grid cells on every move */ idx?: number; /** set on the 🔨 breakable boulder this circle belongs to (index into world.rocks) */ rock?: number; /** set on the 🧱 builder pool circles — they MOVE onto built spots via moveCircle */ build?: number }
 
 /**
  * 🗺️ Spatial hash over every collider — the old resolve() scanned ALL ~1,424 boxes
@@ -63,7 +63,9 @@ function insertCircleGrid(g: ColliderGrid, c: CircleCollider, j: number): void {
   gridCellsFor(g, c.x, c.z, c.r, ids);
   const combined = g.nb + j;
   for (const id of ids) g.cells[id].push(combined);
-  if (c.car !== undefined) {
+  // car circles AND builder pool circles are DYNAMIC — their cells are tracked so
+  // refreshCarCircle()/moveCircle() can unregister them before a fresh insert
+  if (c.car !== undefined || c.build !== undefined) {
     let list = g.carCells.get(j);
     if (!list) { list = []; g.carCells.set(j, list); }
     list.push(...ids);
@@ -115,9 +117,12 @@ export interface Silo { x: number; z: number }
 export interface Umbrella { x: number; z: number; c: number }
 export interface Sign { x: number; z: number; rot: number; text: string; c: number }
 
+export interface Rock { x: number; z: number; s: number }
+
 export interface World {
   buildings: Building[];
   trees: Tree[];
+  rocks: Rock[];
   flowers: Flower[];
   boxes: BoxCollider[];
   circles: CircleCollider[];
@@ -131,6 +136,61 @@ export interface World {
   windmills: { x: number; z: number; rot: number }[];
   /** 🗺️ spatial hash over boxes+circles — makes resolve() O(neighbours) instead of O(world) */
   grid: ColliderGrid;
+}
+
+/* ---------------- ⛰️ playable mountain band — rough, scary & CLIMBABLE ----------------
+ * A ring of jagged peaks between the deep jungle and the world wall. The SAME
+ * deterministic height field drives (a) the 3D terrain mesh in WorldView and
+ * (b) the player's ground in sim.stepBody — so what you see is what you walk on. */
+interface MTPeak { x: number; z: number; R: number; h: number; k: number; r1: number; r2: number; p1: number; p2: number }
+const MT_PEAKS: MTPeak[] = (() => {
+  const rnd = mulberry32(WORLD_SEED + 777);
+  const list: MTPeak[] = [];
+  // major summits — clustered by sector so some directions are huge dark ranges
+  const N = 15;
+  for (let i = 0; i < N; i++) {
+    const a = (i / N) * Math.PI * 2 + range(rnd, -0.1, 0.1);
+    const cl = 0.5 + 0.5 * Math.sin(2 * a + 2.3) * Math.sin(3 * a + 0.9);
+    const d = MOUNTAIN_INNER + 30 + cl * 34 + range(rnd, -12, 12);
+    list.push({
+      x: Math.cos(a) * d, z: Math.sin(a) * d,
+      R: range(rnd, 30, 44), h: range(rnd, 14, 26) + cl * 6, k: range(rnd, 1.35, 1.8),
+      r1: 2 + Math.floor(rnd() * 2), r2: 4 + Math.floor(rnd() * 2),
+      p1: range(rnd, 0, 6.283), p2: range(rnd, 0, 6.283),
+    });
+  }
+  // shoulder bumps — fill the valleys so the band reads as one rough massif
+  for (let i = 0; i < 12; i++) {
+    const a = range(rnd, 0, Math.PI * 2), d = range(rnd, MOUNTAIN_INNER + 16, MOUNTAIN_OUTER - 8);
+    list.push({ x: Math.cos(a) * d, z: Math.sin(a) * d, R: range(rnd, 15, 23), h: range(rnd, 6, 13), k: 1.5, r1: 3, r2: 5, p1: range(rnd, 0, 6.283), p2: range(rnd, 0, 6.283) });
+  }
+  return list;
+})();
+
+/** Ground height of the playable ⛰️ band (0 everywhere else). Climbing slows you
+ *  the steeper it gets — see stepBody. NEVER make this expensive: it runs per frame. */
+export function terrainHeight(x: number, z: number): number {
+  const r = Math.hypot(x, z);
+  if (r < MOUNTAIN_INNER - 10 || r > MOUNTAIN_OUTER + 14) return 0;
+  let h = 0;
+  for (const p of MT_PEAKS) {
+    const dx = x - p.x, dz = z - p.z;
+    const dd = Math.hypot(dx, dz);
+    if (dd >= p.R) continue;
+    const ang = Math.atan2(dz, dx);
+    // fluted ridges → the silhouette reads craggy, and flat-shaded facets look rough
+    const ridge = 1 + 0.17 * Math.sin(p.r1 * ang + p.p1) + 0.1 * Math.sin(p.r2 * ang + p.p2);
+    const ph = p.h * Math.pow(1 - dd / p.R, p.k) * ridge;
+    if (ph > h) h = ph;
+  }
+  if (h <= 0) {
+    // rolling scary valley floor between peaks — never a flat ring
+    h = 1.6 + 1.25 * Math.sin(x * 0.045 + 1.7) * Math.cos(z * 0.05 - 0.6) + 0.9 * Math.sin(x * 0.11) * Math.sin(z * 0.13);
+    if (h < 0) h = 0;
+  }
+  const inner = Math.min(1, (r - (MOUNTAIN_INNER - 10)) / 16); // rises out of the jungle floor
+  const outer = Math.min(1, (MOUNTAIN_OUTER + 14 - r) / 16);   // falls back down at the wall
+  return h * Math.max(0, Math.min(inner, outer));
 }
 
 /* ---------------- town layout (GTA-style grid + Delhi-style central vista) ---------------- */
@@ -509,12 +569,13 @@ export function generateWorld(seed = WORLD_SEED): World {
     { x: 425, z: -68, rot: 0 }, { x: 403, z: 195, rot: 1.2 }, { x: -412, z: 193, rot: 2.1 },
   ];
 
-  /* ---- jungle forest (outer ring) + DEEP jungle (denser, darker band hugging the wall) ----
-   * The deep band (DEEP_JUNGLE_RADIUS → wall) is where the rare gems hide: nearly
-   * double tree density, bigger canopies and mostly round dark crowns so it reads
-   * visually darker than the regular jungle ring. */
+  /* ---- jungle forest (outer ring) + DEEP jungle (denser, darker band hugging the mountains) ----
+   * The map grew: the outer jungle band is now 465 → 545 and the deep band 545 → 610.
+   * The deep band is where rare gems & rocks hide: nearly double tree density, bigger
+   * canopies and mostly round dark crowns so it reads visually darker than the regular
+   * jungle ring. Trees keep out of the ⛰️ mountain band (that's rock country). */
   let n = 0;
-  while (n < 400) {
+  while (n < 560) {
     const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 472, DEEP_JUNGLE_RADIUS);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
@@ -522,11 +583,32 @@ export function generateWorld(seed = WORLD_SEED): World {
     n++;
   }
   n = 0;
-  while (n < 430) {
-    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, DEEP_JUNGLE_RADIUS + 2, WALL_RADIUS - 4);
+  while (n < 520) {
+    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, DEEP_JUNGLE_RADIUS + 2, JUNGLE_RADIUS - 2);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
     addTree(x, z, range(rnd, 1.1, 1.95), rnd() < 0.28 ? 0 : 1); // big dark round canopies dominate
+    n++;
+  }
+
+  /* ---- 🔨 breakable boulders: scattered on the ⛰️ mountain slopes, through the
+   * deep jungle and along its inner edge — hammer food for the wild explorer ---- */
+  const rocks: Rock[] = [];
+  n = 0;
+  while (n < 26) {
+    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, MOUNTAIN_INNER + 4, MOUNTAIN_OUTER - 4);
+    const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    const h = terrainHeight(x, z);
+    if (h < 0.8 || h > 15) continue; // on the slopes, not buried in a summit or the flat rim
+    rocks.push({ x, z, s: range(rnd, 1, 2.1) });
+    n++;
+  }
+  while (n < 40) {
+    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, DEEP_JUNGLE_RADIUS + 3, JUNGLE_RADIUS - 6);
+    const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 6) continue;
+    if (trees.some((t) => Math.hypot(t.x - x, t.z - z) < 2.6)) continue;
+    rocks.push({ x, z, s: range(rnd, 0.9, 1.8) });
     n++;
   }
 
@@ -602,10 +684,27 @@ export function generateWorld(seed = WORLD_SEED): World {
   });
   for (const s of silos) circles.push({ x: s.x, z: s.z, r: 3.3 });
   for (const w of windmills) circles.push({ x: w.x, z: w.z, r: 0.8 });
+  // 🔨 breakable boulders — each rock owns one solid collider tagged with its index
+  rocks.forEach((rk, i) => circles.push({ x: rk.x, z: rk.z, r: 0.8 * rk.s, rock: i }));
+  // 🧱 builder pool — dormant circles parked under the parliament podium (r≈0 never
+  // collides). moveCircle() teleports one onto a build spot; reset() brings it back.
+  for (let i = 0; i < BUILD_POOL; i++) circles.push({ x: PARLIAMENT.x, z: PARLIAMENT.z, r: 0.001, build: i });
   // every circle remembers its array slot — the driven car refreshes its grid cells via this
   for (let i = 0; i < circles.length; i++) circles[i].idx = i;
 
-  return { buildings, trees, flowers, boxes, circles, cars, lamps, benches, fields, silos, umbrellas, signs, windmills, grid: buildColliderGrid(boxes, circles) };
+  return { buildings, trees, rocks, flowers, boxes, circles, cars, lamps, benches, fields, silos, umbrellas, signs, windmills, grid: buildColliderGrid(boxes, circles) };
+}
+
+/**
+ * Teleport a DYNAMIC circle (builder pool) to a new spot & radius, re-registering
+ * its collider-grid cells — the same trick the driven car uses, for player-built
+ * 🧱 barricades. Call with r=0.001 at the pool origin to "remove" a build.
+ */
+export function moveCircle(world: World, gi: number, x: number, z: number, r: number): void {
+  const c = world.circles[gi];
+  if (!c) return;
+  c.x = x; c.z = z; c.r = r;
+  refreshCarCircle(world, gi);
 }
 
 /** Push a point out of every collider it overlaps. skipCar: while driving car #n,

@@ -122,6 +122,10 @@ export interface GameStore {
   powerWheelOpen: boolean;
   /** which wheel segment is aimed at (−1 = none) */
   powerWheelSel: number;
+  /** 🔧 radial tool wheel — opens while B is held, aim with the mouse, release to use */
+  toolWheelOpen: boolean;
+  /** which tool-wheel segment is aimed at (−1 = none) */
+  toolWheelSel: number;
   /** true while the browser pointer is hard-bound to the game (pointer lock) */
   mouseLocked: boolean;
   settings: Settings;
@@ -151,6 +155,8 @@ export interface GameStore {
   setBigMapOpen: (v: boolean) => void;
   setPowerWheelOpen: (v: boolean) => void;
   setPowerWheelSel: (v: number) => void;
+  setToolWheelOpen: (v: boolean) => void;
+  setToolWheelSel: (v: number) => void;
   setMouseLocked: (v: boolean) => void;
   patchSettings: (p: Partial<Settings>) => void;
   recordRun: (score: number, votes?: number, rescues?: number, caught?: number, won?: boolean, timeMs?: number) => RunRecord;
@@ -168,6 +174,7 @@ export const emptyHud: HudData = {
   px: 0, pz: 0,
   gain: { hp: 0, stamina: 0, at: 0 },
   power: null, pocketPowers: [], morphKind: null, blinkReady: true,
+  tools: [], wood: 0, stone: 0,
   side: "protester", busted: 0, runnerDelivered: 0, lost: false, outfitLabel: "",
   hasLicense: false, driving: false, speed: 0,
 };
@@ -194,6 +201,8 @@ export const useGame = create<GameStore>()((set, get) => ({
   bigMapOpen: false,
   powerWheelOpen: false,
   powerWheelSel: -1,
+  toolWheelOpen: false,
+  toolWheelSel: -1,
   mouseLocked: false,
   settings: typeof window !== "undefined" ? loadSettings() : { music: 0.7, sfx: 0.8, showFps: false },
   runsPlayed: saved.stats.runs,
@@ -248,6 +257,8 @@ export const useGame = create<GameStore>()((set, get) => ({
   setBigMapOpen: (v) => set({ bigMapOpen: v }),
   setPowerWheelOpen: (v) => set({ powerWheelOpen: v, powerWheelSel: -1 }), // fresh aim every open
   setPowerWheelSel: (v) => set({ powerWheelSel: v }),
+  setToolWheelOpen: (v) => set({ toolWheelOpen: v, toolWheelSel: -1 }), // fresh aim every open
+  setToolWheelSel: (v) => set({ toolWheelSel: v }),
   patchSettings: (p) => {
     set((s) => {
       const settings = { ...s.settings, ...p };

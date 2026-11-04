@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Play, Settings, Gamepad2, UserCog, Trophy, ShieldAlert, Sunrise, MapPin, Sparkles, Vote, User, BarChart3, History as HistoryIcon } from "lucide-react";
+import { Play, Settings, Gamepad2, UserCog, Trophy, ShieldAlert, Sunrise, MapPin, Sparkles, Vote, User, BarChart3, History as HistoryIcon, Hammer } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { TICKER_LINES } from "@/lib/game/constants";
 import { primeAudio, sfx, startMusic } from "@/lib/game/audio";
@@ -11,7 +11,8 @@ import { HowToPlay, SettingsDialog, ProfileDialog, StatsDialog, HistoryDialog } 
 import { RankBadge, RankProgress } from "./RankCard";
 
 const FEATURES: { emoji: string; icon: React.ReactNode; title: string; text: string; tint: string }[] = [
-  { emoji: "🏙️", icon: <MapPin size={18} />, title: "Huge GTA-style city", text: "Towers, shops, homes, a mega mall, farms, jungle, deep jungle & graveyard — all explorable", tint: "text-emerald-300" },
+  { emoji: "🏙️", icon: <MapPin size={18} />, title: "Huge GTA-style city", text: "Towers, shops, a mega mall, farms, big jungle, deep jungle, a graveyard AND scary climbable mountains", tint: "text-emerald-300" },
+  { emoji: "🔧", icon: <Hammer size={18} />, title: "Tool belt & the wild", text: "Collect 🪓🗡️🔨🧱 — chop trees for wood, fight zombies, mine rocks, build barricades!", tint: "text-orange-300" },
   { emoji: "🚓", icon: <ShieldAlert size={18} />, title: "Cartoon police chase", text: "9 bumbling cops hunt you the moment you pocket votes — sprint, juke, hide!", tint: "text-rose-300" },
   { emoji: "🌙", icon: <Sunrise size={18} />, title: "Day & night cycle", text: "Chai stops by day… when the sun sets, the graveyard wakes up 🧟", tint: "text-amber-300" },
   { emoji: "🏆", icon: <Trophy size={18} />, title: "High scores", text: "Rescue friends, dodge cops, deliver 16 votes and save democracy!", tint: "text-yellow-300" },

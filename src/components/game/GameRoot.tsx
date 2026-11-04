@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import dynamic from "next/dynamic";
 import { WORLD } from "./WorldView";
 import { GameEngine } from "@/lib/game/engine";
+import { terrainHeight } from "@/lib/game/worldgen";
 import { useGame } from "./store";
 import { sfx, startMusic, stopMusic } from "@/lib/game/audio";
 import { useGameInput, requestGameLock } from "./Scene";
@@ -40,6 +41,7 @@ export function GameRoot() {
     useGame.getState().setVictoryOpen(false);
     useGame.getState().setShowHelp(true); // goal card re-shows every round, auto-hides after 12 s
     useGame.getState().setPowerWheelOpen(false); // never carry a stale power wheel into a fresh run
+    useGame.getState().setToolWheelOpen(false);  // same for the 🔧 tool wheel
     sfx.click();
     startMusic();
     setTimeout(() => {
@@ -52,7 +54,7 @@ export function GameRoot() {
         eng = new GameEngine(WORLD, freshLook, (msg, kind) => pushToast(msg, kind));
         engineRef.current = eng;
         setEngine(eng);
-        (window as unknown as { __vc?: unknown }).__vc = { engine: eng, world: WORLD };
+        (window as unknown as { __vc?: unknown }).__vc = { engine: eng, world: WORLD, terrainH: terrainHeight };
         (window as unknown as { __vcStore?: unknown }).__vcStore = useGame; // debug/test hook
       } else {
         eng.reset(freshLook);

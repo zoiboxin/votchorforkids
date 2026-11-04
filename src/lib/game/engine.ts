@@ -6,13 +6,16 @@ import {
   DEEP_JUNGLE_RADIUS,
   ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_POCKETS, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
+  TOOL_COUNT, TOOL_PICKUP_R, TOOL_RESPAWN_S, TOOL_STACK, TOOL_SLOTS, TOOLS,
+  WOOD_CAP, STONE_CAP, CHOP_WOOD, MINE_STONE, BUILD_WOOD_COST, BUILD_STONE_COST, BUILD_POOL, BUILD_R, ZOMBIE_DOWN_S,
+  POINTS_CHOP, POINTS_MINE, POINTS_FIGHT, POINTS_BUILD, MOUNTAIN_INNER, MOUNTAIN_OUTER,
   RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SCAVENGER_COUNT, SCAVENGER_SENSE_R, SPAWN, SONIC_MULT, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_LABELS, VEHICLE_POOL, VEHICLE_STEER, VEHICLE_TOP, VAN_AXLE, VAN_LOAD_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
-  AIRPORT, PLANE_COUNT,
+  AIRPORT, PLANE_COUNT, PARLIAMENT,
   WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
   ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, BOT_SPAWN_GAP, policeOutfitOf, stationCage, stationGate, type AnimalKind, type Appearance, type PolicePerk, type PowerKind, type Side, type Zone, zoneOf, ZONE_TOAST,
 } from "./constants";
 import { clamp, mulberry32, range } from "./rng";
-import { freeSpot, lineClear, refreshCarCircle, resolve, RING_R, ROADS, scatterSpots, spotNear, PROTEST_CAMP, type CircleCollider, type World } from "./worldgen";
+import { freeSpot, lineClear, moveCircle, refreshCarCircle, resolve, RING_R, ROADS, scatterSpots, spotNear, terrainHeight, PROTEST_CAMP, type CircleCollider, type World } from "./worldgen";
 import { advanceClock, nightFactor, newBody, stepBody, stepNpc, type Body } from "./sim";
 import { sfx } from "./audio";
 
@@ -76,7 +79,11 @@ export interface Npc {
   /** the dedicated "just joined" bot — spawns right beside the player's site on every game start */
   companion?: boolean;
 }
-export interface Zombie { id: number; x: number; z: number; vx: number; vz: number; face: number; phase: number; touchCd: number }
+export interface Zombie { id: number; x: number; z: number; vx: number; vz: number; face: number; phase: number; touchCd: number; /** 🗡️ sworded! lies down for this many seconds, then rises from the grave again */ downT: number }
+/** A 🔧 tool pickup lying somewhere in the wild (each copy = 1 use of the tool). */
+export interface ToolEnt { id: number; def: number; x: number; z: number; active: boolean; respawn: number }
+/** A 🧱 player-built structure (wooden barricade or stone wall) with its pool-circle slot. */
+export interface Build { gi: number; x: number; z: number; mat: 0 | 1 } // mat 0 wood · 1 stone
 export interface Animal { id: number; kind: AnimalKind; x: number; z: number; vx: number; vz: number; face: number; tx: number; tz: number; timer: number; phase: number; resting: boolean }
 export interface ItemEnt { id: number; def: number; x: number; z: number; active: boolean; respawn: number }
 export interface VoteEnt { id: number; x: number; z: number; state: "world" | "carried" | "delivered"; /** runner only: which runner holds this vote */ carrierId?: number; /** police side: a runner-delivered vote sneaks back into the city after this timer */ respawnT?: number; /** AI vote-claim ticket: the bot currently walking to grab it (spread bots across the map) */ claimBy?: number }
@@ -134,6 +141,10 @@ export interface HudData {
   /** collected-but-not-yet-used power gems waiting in the ✨ pockets — each fires
    *  once (hold G → aim the wheel, or tap a slot) and is consumed while its effect runs */
   pocketPowers: { def: number; name: string; emoji: string; color: string; tip: string }[];
+  /** 🔧 tool belt — collected tools, stacked by kind; each copy is ONE use (hold B → tool wheel) */
+  tools: { def: number; name: string; emoji: string; color: string; count: number; tip: string }[];
+  /** 🪵 wood & 🪨 stone harvested with the axe/hammer — the builder spends these */
+  wood: number; stone: number;
   /** animal the player currently looks like (morph power) */
   morphKind: AnimalKind | null;
   /** true when Blink is charged and Q will teleport right now */
@@ -241,7 +252,19 @@ export class GameEngine {
   vans: PoliceVan[] = [];
   powers: PowerEnt[] = [];
   licenses: LicenseEnt[] = [];
+  tools: ToolEnt[] = [];
+  builds: Build[] = [];
   fxQueue: Fx[] = [];
+
+  /* --- 🔧 tool belt — collect tools, harvest the wild, build stuff --- */
+  /** stacked tools waiting in the belt: one entry per kind, count = copies (1 use each) */
+  toolBelt: { def: number; count: number }[] = [];
+  wood = 0; stone = 0;            // 🪵 / 🪨 harvested resources (the builder spends them)
+  /** bumped whenever the world is edited (chop/smash/build) — renderers re-sync on change */
+  worldV = 0;
+  private toolHintT = 0;          // throttles the "belt is empty" toast
+  /** rock index → its collider circle index (built once — rocks never move) */
+  private rockCircle = new Map<number, number>();
 
   /* --- GTA-style driving (license-gated) --- */
   /** collected 🪪 card — without it the driver's seat stays locked */
@@ -442,7 +465,7 @@ export class GameEngine {
     // zombies (graveyard)
     for (let i = 0; i < ZOMBIE_COUNT; i++) {
       const a = range(r, 0, Math.PI * 2), d = range(r, 4, 36);
-      this.zombies.push({ id: this.nid(), x: GRAVEYARD.x + Math.cos(a) * d, z: GRAVEYARD.z + Math.sin(a) * d, vx: 0, vz: 0, face: 0, phase: Math.random() * 6, touchCd: 0 });
+      this.zombies.push({ id: this.nid(), x: GRAVEYARD.x + Math.cos(a) * d, z: GRAVEYARD.z + Math.sin(a) * d, vx: 0, vz: 0, face: 0, phase: Math.random() * 6, touchCd: 0, downT: 0 });
     }
     // animals
     let ai = 0;
@@ -476,6 +499,29 @@ export class GameEngine {
       const p = freeSpot(r, this.world, far ? CITY_RADIUS + 8 : 14, far ? FARM_RADIUS - 14 : 240);
       this.licenses.push({ id: this.nid(), x: p.x, z: p.z, active: true });
     }
+    // 🔧 tools — spread across the wild: city edge, farmland, jungle, deep jungle, mountains
+    const toolZone: [number, number][] = [
+      [300, 398], [300, 398],           // city outskirts
+      [CITY_RADIUS + 10, FARM_RADIUS - 10], [CITY_RADIUS + 12, FARM_RADIUS - 12], // farmland
+      [FARM_RADIUS + 8, DEEP_JUNGLE_RADIUS - 6], [FARM_RADIUS + 10, DEEP_JUNGLE_RADIUS - 8], // jungle
+      [DEEP_JUNGLE_RADIUS + 4, JUNGLE_RADIUS - 6], [DEEP_JUNGLE_RADIUS + 4, JUNGLE_RADIUS - 6], // deep jungle
+      [MOUNTAIN_INNER + 4, MOUNTAIN_OUTER - 8], // ⛰️ mountain slopes
+      [MOUNTAIN_INNER + 4, MOUNTAIN_OUTER - 8],
+    ];
+    for (let i = 0; i < TOOL_COUNT; i++) {
+      const [r0, r1] = toolZone[i % toolZone.length];
+      let p = freeSpot(r, this.world, r0, r1);
+      if (r0 >= MOUNTAIN_INNER) {
+        // tools must sit on a walkable slope — retry until the ground is gentle
+        for (let k = 0; k < 14; k++) {
+          if (terrainHeight(p.x, p.z) < 12) break;
+          p = freeSpot(r, this.world, r0, r1);
+        }
+      }
+      this.tools.push({ id: this.nid(), def: i % TOOLS.length, x: p.x, z: p.z, active: true, respawn: 0 });
+    }
+    // index every rock's collider circle once — the hammer needs it to switch the rock off
+    this.world.circles.forEach((c, gi) => { if (c.rock !== undefined) this.rockCircle.set(c.rock, gi); });
     // police van fleet — one van per station, parked at its gate
     for (let i = 0; i < POLICE_STATIONS.length; i++) {
       const st = POLICE_STATIONS[i];
@@ -783,7 +829,7 @@ export class GameEngine {
       };
       pushBots(this.civs);
       pushBots(this.cops);
-      pushBots(this.zombies);
+      pushBots(this.zombies.filter((z) => z.downT <= 0)); // sworded zombies stay down
     }
   }
 
@@ -877,6 +923,12 @@ export class GameEngine {
     this.inv = []; this.hurtT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0; this.powerFullT = 0;
     this.flipT = 0; this.squashT = 0; this.faintT = 0; this.carHitCd = 0;
     this.activePower = null; this.powerT = 0; this.powerPockets = []; this.morphKind = null; this.blinkCd = 0;
+    // 🔧 tool belt reset — tools return to the wild, builds vanish, zombies rise again
+    this.toolBelt = []; this.wood = 0; this.stone = 0; this.toolHintT = 0;
+    for (const tl of this.tools) { tl.active = true; tl.respawn = 0; }
+    for (const b of this.builds) moveCircle(this.world, b.gi, PARLIAMENT.x, PARLIAMENT.z, 0.001); // pool back to sleep
+    this.builds = [];
+    for (const zb of this.zombies) { zb.downT = 0; }
     for (const pw of this.powers) { pw.active = true; pw.respawn = 0; }
     this.carriedVotes = []; this.delivered = 0; this.points = 0; this.rescues = 0; this.caughtCount = 0;
     this.runnerDelivered = 0; this.lost = false; this.catchCd = 0;
@@ -1108,6 +1160,16 @@ export class GameEngine {
     }
     const rr = Math.hypot(d.x, d.z);
     if (rr > WALL_RADIUS) { d.x *= WALL_RADIUS / rr; d.z *= WALL_RADIUS / rr; d.v = Math.min(d.v, 4); }
+    // ⛰️ cars can't climb the rough mountain band — park & explore on foot
+    if (rr > MOUNTAIN_INNER - 7) {
+      const f = (MOUNTAIN_INNER - 7) / rr;
+      d.x *= f; d.z *= f;
+      d.v = Math.min(d.v, 3);
+      if (this.driveMsgT <= 0) {
+        this.driveMsgT = 4;
+        this.toast("⛰️ The car refuses to climb these rough mountains — park it and hike!", "info");
+      }
+    }
     // ring-road traffic & police vans are solid — the vehicle bonks off, nobody
     // gets hurt. The speed loss follows the actual overlap depth, so a continuous
     // nudge can't compound into the old per-frame ×0.75 speed cliff.
@@ -1774,6 +1836,138 @@ export class GameEngine {
     }
   }
 
+  /* ---------------- 🔧 tool belt: axe · sword · hammer · builder ---------------- */
+
+  /** Friendly hint when B is pressed with nothing in the belt (throttled). */
+  hintToolBelt() {
+    if (this.toolHintT > 0) return;
+    this.toolHintT = 5;
+    this.toast("🔧 Your tool belt is empty! Hunt the wild for 🪓 axe, 🗡️ sword, 🔨 hammer & 🧱 builder — the jungle & mountains hide them.", "info");
+  }
+
+  /** Nearest choppable tree (index into world.trees / its circle) within maxD, else −1. */
+  private nearestTree(maxD: number): number {
+    let best = -1, bd = maxD * maxD;
+    const trees = this.world.trees, p = this.player;
+    for (let i = 0; i < trees.length; i++) {
+      const t = trees[i];
+      if (t.s <= 0) continue; // already chopped
+      const d = dist2(p.x, p.z, t.x, t.z);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  /** Nearest breakable rock (index into world.rocks) within maxD, else −1. */
+  private nearestRock(maxD: number): number {
+    let best = -1, bd = maxD * maxD;
+    const rocks = this.world.rocks, p = this.player;
+    for (let i = 0; i < rocks.length; i++) {
+      const rk = rocks[i];
+      if (rk.s <= 0) continue; // already smashed
+      const d = dist2(p.x, p.z, rk.x, rk.z);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  /** Consume one copy of the belt tool at `slot` and DO the tool's thing:
+   *  🪓 chop tree → wood · 🗡️ fight zombie · 🔨 smash rock → stone · 🧱 build barricade.
+   *  If the tool's target isn't in reach, nothing is consumed — a hint explains why. */
+  useTool(slot = 0) {
+    if (!this.running || this.detainedT > 0 || this.faintT > 0) return;
+    const b = this.toolBelt[slot];
+    if (!b || b.count <= 0) return;
+    if (this.drive) {
+      if (this.driveMsgT <= 0) { this.driveMsgT = 3; this.toast("Hop out of the car (E) to use your tools!", "info"); }
+      return;
+    }
+    const d = TOOLS[b.def];
+    const p = this.player;
+    const consume = () => {
+      b.count--;
+      if (b.count <= 0) this.toolBelt.splice(slot, 1);
+    };
+    const fwd = { x: -Math.sin(this.input.yaw), z: -Math.cos(this.input.yaw) }; // camera forward
+    if (d.kind === "axe") {
+      const ti = this.nearestTree(3.4);
+      if (ti < 0) { this.toast("🪓 No tree close enough — stand right next to one and try again!", "info"); return; }
+      consume();
+      const t = this.world.trees[ti];
+      t.s = 0; // felled — Forest hides it, collider circle goes r=0
+      if (this.world.circles[ti]) this.world.circles[ti].r = 0;
+      this.wood = Math.min(WOOD_CAP, this.wood + CHOP_WOOD);
+      this.points += POINTS_CHOP;
+      this.worldV++;
+      sfx.chop();
+      this.fxQueue.push({ type: "confetti", x: t.x, y: 1.4, z: t.z, hue: 0.29 });
+      this.toast(`🪓 TIMBER! +${CHOP_WOOD} 🪵 wood (${this.wood}/${WOOD_CAP}) — the builder can raise barricades!`, "good");
+      return;
+    }
+    if (d.kind === "sword") {
+      let best: Zombie | null = null, bd = 3.6 * 3.6;
+      for (const zb of this.zombies) {
+        if (zb.downT > 0) continue;
+        const dd = dist2(p.x, p.z, zb.x, zb.z);
+        if (dd < bd) { bd = dd; best = zb; }
+      }
+      if (!best) { this.toast("🗡️ Swing and a miss! Zombies wake at night in the graveyard — get closer!", "info"); return; }
+      consume();
+      best.downT = ZOMBIE_DOWN_S;
+      best.vx = 0; best.vz = 0;
+      this.points += POINTS_FIGHT;
+      sfx.swipe();
+      sfx.zombie();
+      this.fxQueue.push({ type: "confetti", x: best.x, y: 1.3, z: best.z, hue: 0.36 });
+      this.toast(`⚔️ ZOMBIE DEFEATED! +${POINTS_FIGHT} points — it rises again in ${ZOMBIE_DOWN_S}s!`, "good");
+      return;
+    }
+    if (d.kind === "hammer") {
+      const ri = this.nearestRock(3.2);
+      if (ri < 0) { this.toast("🔨 No rock close enough — boulders litter the ⛰️ mountains & deep jungle!", "info"); return; }
+      consume();
+      const rk = this.world.rocks[ri];
+      rk.s = 0; // smashed — renderer hides it, collider goes r=0
+      const gi = this.rockCircle.get(ri);
+      if (gi !== undefined && this.world.circles[gi]) this.world.circles[gi].r = 0;
+      this.stone = Math.min(STONE_CAP, this.stone + MINE_STONE);
+      this.points += POINTS_MINE;
+      this.worldV++;
+      sfx.smash();
+      this.fxQueue.push({ type: "confetti", x: rk.x, y: 1.2, z: rk.z, hue: 0.62 });
+      this.toast(`💥 CRUNCH! +${MINE_STONE} 🪨 stone (${this.stone}/${STONE_CAP}) — solid building material!`, "good");
+      return;
+    }
+    // 🧱 builder — spend resources, raise a solid barricade a step ahead of the player
+    let mat: 0 | 1 = 0;
+    if (this.wood >= BUILD_WOOD_COST) mat = 0;
+    else if (this.stone >= BUILD_STONE_COST) mat = 1;
+    else {
+      this.toast(`🧱 You need ${BUILD_WOOD_COST} 🪵 wood (axe) or ${BUILD_STONE_COST} 🪨 stone (hammer) to build!`, "info");
+      return;
+    }
+    const bx = p.x + fwd.x * 2.7, bz = p.z + fwd.z * 2.7;
+    if (terrainHeight(bx, bz) > 10) { this.toast("🧱 Too steep to build here — find flatter ground!", "info"); return; }
+    // find a free pool circle
+    let gi = -1;
+    for (let i = 0; i < this.world.circles.length; i++) {
+      const c = this.world.circles[i];
+      if (c.build !== undefined && c.r < 0.01) { gi = i; break; }
+    }
+    if (gi < 0) { this.toast("🧱 Build limit reached — the wild is getting crowded!", "info"); return; }
+    consume();
+    if (mat === 0) this.wood -= BUILD_WOOD_COST; else this.stone -= BUILD_STONE_COST;
+    moveCircle(this.world, gi, bx, bz, BUILD_R);
+    this.builds.push({ gi, x: bx, z: bz, mat });
+    this.points += POINTS_BUILD;
+    this.worldV++;
+    sfx.build();
+    this.fxQueue.push({ type: "confetti", x: bx, y: 1.4, z: bz, hue: 0.08 });
+    this.toast(mat === 0
+      ? `🏗️ Wooden barricade BUILT! (+${POINTS_BUILD}) Zombies hate it. (${this.wood} 🪵 left)`
+      : `🏰 Stone wall BUILT! (+${POINTS_BUILD}) Rock solid. (${this.stone} 🪨 left)`, "good");
+  }
+
   private grazeSpot(an: Animal, farm: boolean): { x: number; z: number } | null {
     const minR = farm ? CITY_RADIUS + 6 : FARM_RADIUS + 6;
     const maxR = farm ? FARM_RADIUS - 10 : JUNGLE_RADIUS - 30;
@@ -2082,6 +2276,39 @@ export class GameEngine {
       }
     }
 
+    /* --- 🔧 tools: walk over a tool to belt it — collect MULTIPLE copies of a kind --- */
+    this.toolHintT = Math.max(0, this.toolHintT - dt);
+    for (const tl of this.tools) {
+      if (!tl.active) {
+        tl.respawn -= dt;
+        if (tl.respawn <= 0) tl.active = true; // wild tools eventually reappear
+        continue;
+      }
+      if (this.detainedT > 0) continue; // locked up — no scavenging from the cell
+      if (dist2(p.x, p.z, tl.x, tl.z) < TOOL_PICKUP_R * TOOL_PICKUP_R) {
+        const d = TOOLS[tl.def];
+        let slot = this.toolBelt.find((s) => s.def === tl.def);
+        if (slot) {
+          if (slot.count >= TOOL_STACK) continue; // belt stack full — leave it on the ground
+          slot.count++;
+        } else {
+          if (this.toolBelt.length >= TOOL_SLOTS) {
+            if (this.toolHintT <= 0) {
+              this.toolHintT = 6;
+              this.toast("🔧 Tool belt full! Hold B & aim the wheel to use one first.", "info");
+            }
+            continue;
+          }
+          this.toolBelt.push({ def: tl.def, count: 1 });
+          slot = this.toolBelt[this.toolBelt.length - 1];
+        }
+        tl.active = false; tl.respawn = TOOL_RESPAWN_S;
+        sfx.pickup();
+        this.fxQueue.push({ type: "confetti", x: tl.x, y: 1.2, z: tl.z, hue: 0.1 });
+        this.toast(`${d.emoji} ${d.name} collected (×${slot.count}) — hold B & aim the tool wheel, or tap the belt slot!`, "good");
+      }
+    }
+
     /* --- police side: runner busts + vote respawn --- */
     if (this.side === "police") this.updatePoliceMode(dt);
 
@@ -2265,6 +2492,16 @@ export class GameEngine {
     this.groanT -= dt;
     for (const zb of this.zombies) {
       zb.touchCd = Math.max(0, zb.touchCd - dt);
+      // 🗡️ sworded zombies lie down for a while, then claw out of the grave again
+      if (zb.downT > 0) {
+        zb.downT -= dt;
+        if (zb.downT <= 0) {
+          const a = Math.random() * TAU, d = 4 + Math.random() * 32;
+          zb.x = GRAVEYARD.x + Math.cos(a) * d; zb.z = GRAVEYARD.z + Math.sin(a) * d;
+          zb.vx = 0; zb.vz = 0; zb.touchCd = 2;
+        }
+        continue;
+      }
       const d2p = dist2(zb.x, zb.z, p.x, p.z);
       if (night > 0.55) {
         const inGrave = dist2(zb.x, zb.z, GRAVEYARD.x, GRAVEYARD.z) < 55 * 55;
@@ -2385,6 +2622,11 @@ export class GameEngine {
         const d = POWERS[def];
         return { def, name: d.name, emoji: d.emoji, color: d.color, tip: d.tip };
       }),
+      tools: this.toolBelt.map((s) => {
+        const d = TOOLS[s.def];
+        return { def: s.def, name: d.name, emoji: d.emoji, color: d.color, count: s.count, tip: d.tip };
+      }),
+      wood: this.wood, stone: this.stone,
       morphKind: this.morphKind,
       blinkReady: this.blinkCd <= 0,
     };

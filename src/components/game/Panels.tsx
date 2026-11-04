@@ -9,7 +9,7 @@ import { Slider } from "@/components/ui/slider";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
   Music, Volume2, Gauge, Gamepad2, Flag, ShieldAlert, Siren, Sunrise, HeartHandshake, Vote,
-  User, Pencil, BarChart3, History as HistoryIcon, Trash2, Trophy, Timer, Star, Shirt, Zap, Sparkles,
+  User, Pencil, BarChart3, History as HistoryIcon, Trash2, Trophy, Timer, Star, Shirt, Zap, Sparkles, Wrench,
 } from "lucide-react";
 import { AGE_STATS, HAIR_STYLES } from "@/lib/game/constants";
 import { rankFor } from "@/lib/game/ranks";
@@ -25,6 +25,7 @@ const CONTROLS: [string, string][] = [
   ["Space", "Jump — press again mid-air for a double-jump flip! 🤸"],
   ["E", "Rescue a detained friend"],
   ["G", "✨ Unleash a collected super power — YOU pick the moment!"],
+  ["B", "🔧 Use a belted tool — hold B, aim the wheel with the mouse, release to use"],
   ["Q", "🌀 Blink Teleport — while the blink power is active, teleport where you look"],
   ["1 – 8", "Eat pocketed food ❤⚡ — or tap the bag bottom-left"],
   ["Right-click slot", "Drop food back on the ground"],
@@ -106,6 +107,17 @@ export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange:
               <b>⚡ Sonic Dash</b> run speed ×1.9 with free sprinting · <b>🦘 Kangaroo Leap</b> jump ×1.65 with free jumps · <b>🌀 Blink</b> press Q to teleport 15m where you look ·
               <b> 🐒 Animal Morph</b> become a random animal for 22s — police can&apos;t spot or catch you, and real animals accept you as family · <b>🧲 Food Magnet</b> nearby snacks fly into your pockets.
               Gems reappear after a long rest — one stored power at a time!
+            </p>
+          </section>
+
+          <section className="rounded-2xl border border-orange-400/25 bg-orange-500/10 p-3">
+            <div className="mb-1.5 flex items-center gap-2 font-black text-orange-300"><Wrench size={15} /> Tool belt & the wild frontier</div>
+            <p className="leading-relaxed text-white/85">
+              🔧 <b className="text-orange-200">16 tools</b> lie hidden across the wild — city edge, farmland, jungle, deep jungle and up on the ⛰️ mountains (coloured specks on the map!).
+              Collect <b>multiple copies</b> of the same tool — they stack in your belt, and each copy is <b>one use</b>.
+              <b className="text-yellow-200"> Hold B</b> to open the radial tool wheel at screen center, <b className="text-yellow-200">move the mouse</b> to aim, then <b className="text-yellow-200">release B</b> to use the tool (or tap a belt slot):
+              <b> 🪓 Axe</b> chop trees → collect 🪵 wood · <b>🗡️ Sword</b> fight the graveyard zombies at night · <b>🔨 Hammer</b> smash boulders → collect 🪨 stone ·
+              <b> 🧱 Builder</b> spends 2 🪵 (or 3 🪨) to raise a solid barricade a step ahead of you — block zombies, build a fort! Climbing mountains is slow and scary — that&apos;s half the fun.
             </p>
           </section>
 

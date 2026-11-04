@@ -99,6 +99,11 @@ export const sfx = {
   horn: () => { tone(466, 0.16, "square", 0.26); tone(466, 0.2, "square", 0.22, undefined, 0.2); },
   // little car-door clunk when hopping in/out
   door: () => { tone(180, 0.08, "square", 0.3, 120); noise(0.05, 0.12, 500); },
+  // 🔧 tool-belt sounds — chop / smash / swing / build
+  chop: () => { noise(0.09, 0.32, 240); tone(170, 0.11, "square", 0.28, 85); },
+  smash: () => { noise(0.18, 0.4, 480); tone(110, 0.15, "sawtooth", 0.3, 55); },
+  swipe: () => { noise(0.07, 0.2, 1700); tone(820, 0.06, "triangle", 0.12, 300); },
+  build: () => [262, 330, 392].forEach((f, i) => tone(f, 0.09, "square", 0.18, undefined, i * 0.06)),
 };
 
 /* ------- generative ambient music (super light) ------- */

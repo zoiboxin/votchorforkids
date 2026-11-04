@@ -1,6 +1,6 @@
-import { AGE_STATS, COYOTE_S, DAY_SECONDS, DOUBLE_JUMP_VY, GRAVITY, SPRINT_MULT, WALL_RADIUS, type AgeGroup } from "./constants";
+import { AGE_STATS, COYOTE_S, DAY_SECONDS, DOUBLE_JUMP_VY, GRAVITY, MOUNTAIN_INNER, MOUNTAIN_OUTER, SPRINT_MULT, WALL_RADIUS, type AgeGroup } from "./constants";
 import { clamp } from "./rng";
-import { resolve, type World } from "./worldgen";
+import { resolve, terrainHeight, type World } from "./worldgen";
 
 export interface Body {
   x: number; y: number; z: number; vx: number; vy: number; vz: number;
@@ -37,7 +37,16 @@ export function stepBody(
   b.sprinting = inp.sprint && moving && b.stamina > 2;
   // 🎖️ police squad perks ride along here: SWAT sprint boost, city-beat fitness,
   // army march endurance — all default to 1 for protesters & unpicked squads
-  const speed = A.speed * (opts.speedScale ?? 1) * (b.sprinting ? SPRINT_MULT * (opts.sprintMult ?? 1) : 1);
+  // ⛰️ rough ground slows the climb — the steeper the slope, the harder the hike
+  // (gradient sampled ±0.8u; on the flat it's 1, a 45° scree slope ≈ 0.5, cliffs floor at 0.38)
+  let climb = 1;
+  if (b.x > MOUNTAIN_INNER - 12 || b.x < -MOUNTAIN_INNER + 12 || b.z > MOUNTAIN_INNER - 12 || b.z < -MOUNTAIN_INNER + 12) {
+    const hx = terrainHeight(b.x + 0.8, b.z) - terrainHeight(b.x - 0.8, b.z);
+    const hz = terrainHeight(b.x, b.z + 0.8) - terrainHeight(b.x, b.z - 0.8);
+    const slope = Math.hypot(hx, hz) / 1.6;
+    climb = clamp(1 - slope * 0.62, 0.38, 1);
+  }
+  const speed = A.speed * (opts.speedScale ?? 1) * (b.sprinting ? SPRINT_MULT * (opts.sprintMult ?? 1) : 1) * climb;
   b.stamina = clamp(
     b.stamina + (b.sprinting ? -20 * (opts.drainMult ?? 1) : 12 * A.regen * (opts.regenMult ?? 1)) * dt,
     0, maxSt,
@@ -48,12 +57,15 @@ export function stepBody(
   b.vz += (dz * speed - b.vz) * k;
 
   // ---- jump / double jump (edge-detected via latch) ----
+  // ⛰️ "ground" is the terrain height in the mountain band — hills are jumpable,
+  // and walking up a slope pops you onto it like a ramp
+  const ground = terrainHeight(b.x, b.z);
   if (inp.jump && !b.jumpLatch) {
     const js = opts.jumpScale ?? 1;
     b.jumpLatch = true;
-    if (b.y <= 0.02 || b.airT < COYOTE_S) {
+    if (b.y <= ground + 0.02 || b.airT < COYOTE_S) {
       b.vy = A.jump * js;                  // ground (or coyote) jump
-      if (b.y <= 0) b.y = 0.01;
+      if (b.y <= ground) b.y = ground + 0.01;
       b.jumps = 1;
     } else if (b.jumps < 2) {
       b.vy = A.jump * DOUBLE_JUMP_VY * js; // mid-air double jump — a touch weaker
@@ -63,8 +75,9 @@ export function stepBody(
   if (!inp.jump) b.jumpLatch = false;
 
   b.vy -= GRAVITY * dt;
-  b.y = Math.max(0, b.y + b.vy * dt);
-  if (b.y === 0) {
+  b.y += b.vy * dt;
+  if (b.y <= ground) {
+    b.y = ground;      // landed (or the hill rose to meet us)
     b.vy = 0;
     b.jumps = 0;
     b.airT = 0;
