@@ -56,6 +56,7 @@ export function useGameInput(engine: GameEngine | null) {
     if (!engine) return;
     const typing = (e: Event) => e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
     const keys = new Set<string>();
+    let gDownAt = 0; // for the quick-tap-G-fires-first-gem fallback
 
     const applyKey = () => {
       const k = keys;
@@ -80,12 +81,29 @@ export function useGameInput(engine: GameEngine | null) {
         setTimeout(() => { engine.input.jump = false; }, 120);
       }
       if (e.code === "KeyE" && !e.repeat) engine.interact();
-      if (e.code === "KeyG" && !e.repeat) engine.usePower(); // ✨ unleash the pocketed super power
+      if (e.code === "KeyG" && !e.repeat) {
+        // ✨ hold G → radial power wheel opens; quick-tap still fires the first gem
+        const s = useGame.getState();
+        gDownAt = performance.now();
+        if (s.hud.pocketPowers.length > 0 && !s.paused && !s.victoryOpen && !s.bigMapOpen) s.setPowerWheelOpen(true);
+        else engine.usePower(); // empty pockets → engine no-ops (keeps the silent path)
+      }
       if (e.code === "KeyQ" && !e.repeat) engine.tryBlink(); // 🌀 Blink Teleport
       if (e.code === "KeyH" && !e.repeat) engine.horn();     // 🚗 car horn while driving
       applyKey();
     };
-    const up = (e: KeyboardEvent) => { keys.delete(e.code); applyKey(); };
+    const up = (e: KeyboardEvent) => {
+      keys.delete(e.code); applyKey();
+      if (e.code === "KeyG") {
+        // release G → fire the AIMED gem (wheel selection), or slot 0 on a quick tap
+        const s = useGame.getState();
+        if (s.powerWheelOpen) {
+          if (s.powerWheelSel >= 0) engine.usePower(s.powerWheelSel);
+          else if (performance.now() - gDownAt < 250) engine.usePower(0);
+          s.setPowerWheelOpen(false);
+        }
+      }
+    };
     const blur = () => { keys.clear(); applyKey(); };
 
     let dragging = false;
@@ -97,6 +115,7 @@ export function useGameInput(engine: GameEngine | null) {
     const mm = (e: MouseEvent) => {
       const s = useGame.getState();
       if (s.screen !== "play" || s.paused || s.victoryOpen || s.bigMapOpen) return;
+      if (s.powerWheelOpen) return; // the power wheel eats mouse aim while it's open
       // mouse is bound to the game: steer when the cursor is hard-locked (FPS
       // style), whenever it glides over the open world, or while drag-looking
       if (!document.pointerLockElement && !(e.target instanceof HTMLCanvasElement) && !dragging) return;

@@ -118,6 +118,10 @@ export interface GameStore {
   paused: boolean;
   /** true while the big world map overlay is open (M) */
   bigMapOpen: boolean;
+  /** ✨ radial power wheel — opens while G is held, aim with the mouse, release to fire */
+  powerWheelOpen: boolean;
+  /** which wheel segment is aimed at (−1 = none) */
+  powerWheelSel: number;
   /** true while the browser pointer is hard-bound to the game (pointer lock) */
   mouseLocked: boolean;
   settings: Settings;
@@ -145,6 +149,8 @@ export interface GameStore {
   setVictoryOpen: (v: boolean) => void;
   setPaused: (p: boolean) => void;
   setBigMapOpen: (v: boolean) => void;
+  setPowerWheelOpen: (v: boolean) => void;
+  setPowerWheelSel: (v: number) => void;
   setMouseLocked: (v: boolean) => void;
   patchSettings: (p: Partial<Settings>) => void;
   recordRun: (score: number, votes?: number, rescues?: number, caught?: number, won?: boolean, timeMs?: number) => RunRecord;
@@ -186,6 +192,8 @@ export const useGame = create<GameStore>()((set, get) => ({
   victoryOpen: false,
   paused: false,
   bigMapOpen: false,
+  powerWheelOpen: false,
+  powerWheelSel: -1,
   mouseLocked: false,
   settings: typeof window !== "undefined" ? loadSettings() : { music: 0.7, sfx: 0.8, showFps: false },
   runsPlayed: saved.stats.runs,
@@ -238,6 +246,8 @@ export const useGame = create<GameStore>()((set, get) => ({
   setPaused: (p) => set({ paused: p }),
   setMouseLocked: (v) => set({ mouseLocked: v }),
   setBigMapOpen: (v) => set({ bigMapOpen: v }),
+  setPowerWheelOpen: (v) => set({ powerWheelOpen: v, powerWheelSel: -1 }), // fresh aim every open
+  setPowerWheelSel: (v) => set({ powerWheelSel: v }),
   patchSettings: (p) => {
     set((s) => {
       const settings = { ...s.settings, ...p };

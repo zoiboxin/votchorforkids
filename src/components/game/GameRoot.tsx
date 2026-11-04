@@ -39,6 +39,7 @@ export function GameRoot() {
     useGame.getState().setPaused(false);
     useGame.getState().setVictoryOpen(false);
     useGame.getState().setShowHelp(true); // goal card re-shows every round, auto-hides after 12 s
+    useGame.getState().setPowerWheelOpen(false); // never carry a stale power wheel into a fresh run
     sfx.click();
     startMusic();
     setTimeout(() => {

@@ -408,8 +408,8 @@ function PowerBadge() {
   );
 }
 
-/* ------------- pocketed power slots: the collected gems — tap any one (or press G
-   for the first) to unleash it. Each gem is a SINGLE use and leaves the pocket. ------------- */
+/* ------------- pocketed power slots: the collected gems — tap any one (or hold G
+   and aim the power wheel) to unleash it. Each gem is a SINGLE use. ------------- */
 function PowerSlots({ engine }: { engine: GameEngine }) {
   const pockets = useGame((s) => s.hud.pocketPowers);
   if (pockets.length === 0) return null;
@@ -427,7 +427,7 @@ function PowerSlots({ engine }: { engine: GameEngine }) {
             exit={{ opacity: 0, scale: 0.5, y: 6 }}
             whileTap={{ scale: 0.88 }}
             onClick={() => engine.usePower(i)}
-            title={`${pocket.name} — tap or press ${i === 0 ? "G" : "a ✨ slot"} to unleash it (1 use)`}
+            title={`${pocket.name} — tap to unleash (or hold G & aim the power wheel) · 1 use`}
             aria-label={`Unleash stored ${pocket.name}`}
             className="pointer-events-auto relative flex h-12 w-12 items-center justify-center rounded-xl border-2 bg-black/45 shadow-lg backdrop-blur-md sm:h-14 sm:w-14"
             style={{ borderColor: pocket.color, boxShadow: `0 0 12px ${pocket.color}66` }}
@@ -449,6 +449,101 @@ function PowerSlots({ engine }: { engine: GameEngine }) {
           </motion.button>
         ))}
       </AnimatePresence>
+    </div>
+  );
+}
+
+/* ------------- ✨ radial power wheel: HOLD G → it pops at screen center, move the
+   mouse to aim at a pocketed gem, RELEASE G to unleash it. Selection reads mouse
+   MOVEMENT deltas, so it works even while the pointer is hard-locked. A quick tap
+   of G (no aim, <250ms) still fires the first gem — old muscle memory preserved. ------------- */
+function PowerWheel({ engine }: { engine: GameEngine }) {
+  const pockets = useGame((s) => s.hud.pocketPowers);
+  const sel = useGame((s) => s.powerWheelSel);
+  const setSel = useGame((s) => s.setPowerWheelSel);
+  const setOpen = useGame((s) => s.setPowerWheelOpen);
+  const vec = useRef({ x: 0, y: 0 });
+  const n = pockets.length;
+  const R = 118; // px from the hub where the gems sit
+
+  // mouse aim — accumulate movement deltas into a virtual stick from the hub
+  useEffect(() => {
+    vec.current = { x: 0, y: 0 };
+    const DEAD = 26, MAXR = 150;
+    const mm = (e: MouseEvent) => {
+      const v = vec.current;
+      v.x = Math.max(-MAXR, Math.min(MAXR, v.x + e.movementX));
+      v.y = Math.max(-MAXR, Math.min(MAXR, v.y + e.movementY));
+      const m = Math.hypot(v.x, v.y);
+      if (m < DEAD) { setSel(-1); return; }
+      const cur = (Math.atan2(v.y, v.x) * 180) / Math.PI;   // −180…180
+      let best = -1, bestDiff = 1e9;
+      for (let i = 0; i < n; i++) {
+        const a = -90 + (i * 360) / n;                      // segment 0 sits at 12 o'clock
+        const d = Math.abs(((cur - a + 540) % 360) - 180);  // 0…180
+        if (d < bestDiff) { bestDiff = d; best = i; }
+      }
+      setSel(bestDiff <= 180 / n ? best : -1);              // inside this segment's sector?
+    };
+    addEventListener("mousemove", mm);
+    return () => removeEventListener("mousemove", mm);
+  }, [n, setSel]);
+
+  const aimed = sel >= 0 && sel < n ? pockets[sel] : null;
+
+  return (
+    <div className="pointer-events-none absolute inset-0 z-30" role="dialog" aria-label="Power wheel — move the mouse to aim, release G to unleash">
+      {/* soft focus backdrop */}
+      <motion.div
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }}
+        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full"
+        style={{ width: 400, height: 400, background: "radial-gradient(circle, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.28) 55%, transparent 72%)" }}
+      />
+      {/* pocketed gems around the hub — click one to fire it instantly */}
+      {pockets.map((pocket, i) => {
+        const a = ((-90 + (i * 360) / n) * Math.PI) / 180;
+        const on = i === sel;
+        return (
+          <div
+            key={`${pocket.def}-${i}`}
+            className="absolute left-1/2 top-1/2"
+            style={{ transform: `translate(calc(-50% + ${Math.cos(a) * R}px), calc(-50% + ${Math.sin(a) * R}px))` }}
+          >
+            <motion.button
+              data-ui type="button"
+              initial={{ opacity: 0, scale: 0.4 }} animate={{ opacity: 1, scale: on ? 1.22 : 1 }}
+              transition={{ type: "spring", stiffness: 320, damping: 20 }}
+              onClick={() => { engine.usePower(i); setOpen(false); }}
+              aria-label={`Unleash ${pocket.name}${on ? " (aimed)" : ""}`}
+              className={`pointer-events-auto flex h-16 w-16 items-center justify-center rounded-full border-[3px] text-3xl shadow-xl backdrop-blur-md transition-colors ${on ? "bg-white/25" : "bg-black/50"}`}
+              style={{
+                borderColor: pocket.color,
+                boxShadow: on ? `0 0 26px ${pocket.color}, 0 0 60px ${pocket.color}55` : `0 0 10px ${pocket.color}66`,
+              }}
+            >
+              {pocket.emoji}
+            </motion.button>
+          </div>
+        );
+      })}
+      {/* hub — shows the aimed power's name & tip */}
+      <div className="absolute left-1/2 top-1/2 flex h-24 w-24 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border-2 border-white/25 bg-black/65 backdrop-blur-md">
+        {aimed ? (
+          <>
+            <span className="px-2 text-center text-[11px] font-black leading-tight text-white">{aimed.name}</span>
+            <span className="mt-0.5 px-2 text-center text-[9px] font-bold leading-tight text-white/65">{aimed.tip}</span>
+          </>
+        ) : (
+          <>
+            <span className="text-lg" aria-hidden>✨</span>
+            <span className="mt-0.5 px-2 text-center text-[9px] font-bold uppercase tracking-wider text-white/70">aim · release G</span>
+          </>
+        )}
+      </div>
+      {/* hint under the wheel */}
+      <div className="absolute left-1/2 top-1/2 mt-[172px] -translate-x-1/2 whitespace-nowrap rounded-full bg-black/55 px-3 py-1 text-[10px] font-bold text-white/85 backdrop-blur-md">
+        move the mouse to aim · release <b className="text-yellow-300">G</b> to unleash · <b className="text-yellow-300">Esc</b> cancels
+      </div>
     </div>
   );
 }
@@ -685,6 +780,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
   const mouseLocked = useGame((s) => s.mouseLocked);
   const bigMap = useGame((s) => s.bigMapOpen);
   const setBigMap = useGame((s) => s.setBigMapOpen);
+  const powerWheelOpen = useGame((s) => s.powerWheelOpen);
   // after the cursor gets hard-bound, remind the player how to free it (4 s)
   const [lockTip, setLockTip] = useState(false);
   useEffect(() => {
@@ -727,6 +823,11 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (useGame.getState().victoryOpen) return;
+      // the power wheel swallows Esc / P / M — it always closes first, never pauses
+      const st0 = useGame.getState();
+      if (st0.powerWheelOpen && (e.code === "Escape" || e.code === "KeyP" || e.code === "KeyM")) {
+        e.preventDefault(); st0.setPowerWheelOpen(false); return;
+      }
       if (bigMap) {
         // the map swallows M / Esc so it always closes first
         if (e.code === "KeyM" || e.code === "Escape") { e.preventDefault(); setBigMap(false); requestGameLock(); }
@@ -989,7 +1090,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
               </p>
               <div className="mt-1.5 space-y-0.5 text-[10.5px] leading-snug text-amber-200/90">
                 <div>🥭 Run over food → tap bag or press <b>1-8</b> to eat</div>
-                <div>✨ Gems: carry up to <b>3</b>, press <b>G</b> to use · <b>Q</b> blink · hunt the <b>deep jungle</b></div>
+                <div>✨ Gems: carry up to <b>3</b> · hold <b>G</b> → aim → release · <b>Q</b> blink · deep-jungle hoard</div>
                 <div>🪪 License + <b>E</b> at any car = drive · <b>E</b> rescues friends</div>
               </div>
               {!touch && <div className="mt-1.5 text-[10px] leading-snug text-white/60">WASD move · mouse camera · Space jump ×2 · M map</div>}
@@ -1042,6 +1143,9 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
           <span className="hidden whitespace-nowrap text-[10px] font-bold uppercase tracking-widest text-white/70 sm:inline">W/S gas · A/D steer · E hop out · H horn</span>
         </div>
       )}
+
+      {/* ✨ radial power wheel — hold G, aim with the mouse, release to unleash */}
+      <AnimatePresence>{powerWheelOpen && <PowerWheel engine={engine} />}</AnimatePresence>
 
       {/* toasts */}
       <div className="absolute bottom-24 left-1/2 z-10 flex w-[90%] max-w-md -translate-x-1/2 flex-col items-center gap-1.5 sm:bottom-24">

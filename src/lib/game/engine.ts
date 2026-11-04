@@ -132,7 +132,7 @@ export interface HudData {
   /** active rare super power — HUD shows a countdown badge (null = none) */
   power: { kind: PowerKind; name: string; emoji: string; color: string; left: number; max: number; tip: string } | null;
   /** collected-but-not-yet-used power gems waiting in the ✨ pockets — each fires
-   *  once (tap a slot or press G) and is consumed while its effect runs */
+   *  once (hold G → aim the wheel, or tap a slot) and is consumed while its effect runs */
   pocketPowers: { def: number; name: string; emoji: string; color: string; tip: string }[];
   /** animal the player currently looks like (morph power) */
   morphKind: AnimalKind | null;
@@ -1699,7 +1699,7 @@ export class GameEngine {
       // helpful nudge when a blink gem is still sitting in a pocket
       if (this.powerPockets.some((def) => POWERS[def].kind === "blink") && this.powerFullT <= 0) {
         this.powerFullT = 2.5;
-        this.toast("🌀 Blink is pocketed — press G (or tap the ✨ slot) to unleash it first!", "info");
+        this.toast("🌀 Blink is pocketed — hold G & aim the wheel (or tap the ✨ slot) to unleash it first!", "info");
       }
       return;
     }
@@ -1730,8 +1730,9 @@ export class GameEngine {
     this.toast("🌀 Poof! Teleported!", "good");
   }
 
-  /** Unleash a pocketed power gem — the player chooses the moment (press G for
-   *  the first gem / tap any ✨ slot). The gem is CONSUMED: one use each. */
+  /** Unleash a pocketed power gem — the player chooses the moment (HOLD G to open
+   *  the radial wheel, aim with the mouse, release to fire — or tap any ✨ slot).
+   *  The gem is CONSUMED: one use each. */
   usePower(slot = 0) {
     if (!this.running || this.powerPockets.length === 0) return;
     if (this.detainedT > 0 || this.faintT > 0) return;
@@ -1747,7 +1748,7 @@ export class GameEngine {
     const d = POWERS[def];
     sfx.power();
     this.fxQueue.push({ type: "confetti", x, y: 1.3, z, hue: Math.random() });
-    this.toast(`${d.emoji} ${d.name} collected (${this.powerPockets.length}/${POWER_POCKETS} pocketed) — press G or tap a ✨ slot to unleash it!`, "good");
+    this.toast(`${d.emoji} ${d.name} collected (${this.powerPockets.length}/${POWER_POCKETS} pocketed) — hold G & aim the wheel (or tap a ✨ slot) to unleash it!`, "good");
   }
 
   /** Activate a collected gem — called by usePower() when the PLAYER picks the moment. */
@@ -2060,7 +2061,7 @@ export class GameEngine {
           } else if (this.powerFullT <= 0) {
             this.powerFullT = 6;
             const held = POWERS[this.powerPockets[0]];
-            this.toast(`✨ All ${POWER_POCKETS} power pockets full (${held.emoji} ${held.name} +${this.powerPockets.length - 1} more) — press G to unleash one first!`, "info");
+            this.toast(`✨ All ${POWER_POCKETS} power pockets full (${held.emoji} ${held.name} +${this.powerPockets.length - 1} more) — hold G & aim the wheel to unleash one first!`, "info");
           }
         }
       }

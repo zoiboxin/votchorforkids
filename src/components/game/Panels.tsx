@@ -102,7 +102,7 @@ export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange:
             <div className="mb-1.5 flex items-center gap-2 font-black text-fuchsia-300"><Sparkles size={15} /> Rare super powers</div>
             <p className="leading-relaxed text-white/85">
               Only <b className="text-fuchsia-200">6 glowing gems</b> exist in the whole world — most hide deep in the <b>jungle</b>, the rest at mystery spots (coloured dots on the map!).
-              Collecting a gem <b className="text-fuchsia-200">stores it in your ✨ pocket</b> — nothing fires automatically! Press <b className="text-yellow-200">G</b> (or tap the ✨ slot) to unleash it at the perfect moment:
+              Collecting a gem <b className="text-fuchsia-200">stores it in your ✨ pocket</b> — nothing fires automatically! <b className="text-yellow-200">Hold G</b> to open the radial power wheel at screen center, <b className="text-yellow-200">move the mouse</b> to aim at the gem you want, then <b className="text-yellow-200">release G</b> to unleash it (or tap a ✨ slot) at the perfect moment:
               <b>⚡ Sonic Dash</b> run speed ×1.9 with free sprinting · <b>🦘 Kangaroo Leap</b> jump ×1.65 with free jumps · <b>🌀 Blink</b> press Q to teleport 15m where you look ·
               <b> 🐒 Animal Morph</b> become a random animal for 22s — police can&apos;t spot or catch you, and real animals accept you as family · <b>🧲 Food Magnet</b> nearby snacks fly into your pockets.
               Gems reappear after a long rest — one stored power at a time!
