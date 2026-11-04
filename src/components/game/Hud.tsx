@@ -406,37 +406,48 @@ function PowerBadge() {
   );
 }
 
-/* ------------- pocketed power slot: shows the collected gem, tap or press G to unleash ------------- */
-function PowerSlot({ engine }: { engine: GameEngine }) {
-  const pocket = useGame((s) => s.hud.pocketPower);
-  if (!pocket) return null;
+/* ------------- pocketed power slots: the collected gems — tap any one (or press G
+   for the first) to unleash it. Each gem is a SINGLE use and leaves the pocket. ------------- */
+function PowerSlots({ engine }: { engine: GameEngine }) {
+  const pockets = useGame((s) => s.hud.pocketPowers);
+  if (pockets.length === 0) return null;
   return (
-    <motion.button
-      data-ui
-      type="button"
-      initial={{ opacity: 0, scale: 0.5, y: 10 }}
-      animate={{ opacity: 1, scale: 1, y: 0 }}
-      exit={{ opacity: 0, scale: 0.5 }}
-      whileTap={{ scale: 0.88 }}
-      onClick={() => engine.usePower()}
-      title={`${pocket.name} — press G to unleash it when you're ready`}
-      aria-label={`Unleash stored ${pocket.name}`}
-      className="pointer-events-auto relative flex h-12 w-12 items-center justify-center rounded-xl border-2 bg-black/45 shadow-lg backdrop-blur-md sm:h-14 sm:w-14"
-      style={{ borderColor: pocket.color, boxShadow: `0 0 12px ${pocket.color}66` }}
-    >
-      <motion.span
-        aria-hidden
-        animate={{ scale: [1, 1.14, 1], rotate: [0, -7, 7, 0] }}
-        transition={{ repeat: Infinity, duration: 1.6 }}
-        className="text-2xl leading-none sm:text-3xl"
-      >{pocket.emoji}</motion.span>
-      <span
-        className="absolute -bottom-1 -left-1 flex h-4 w-4 items-center justify-center rounded text-[9px] font-black text-black"
-        style={{ background: pocket.color }}
-      >
-        G
-      </span>
-    </motion.button>
+    <div className="flex items-end gap-1.5">
+      <AnimatePresence initial={false}>
+        {pockets.map((pocket, i) => (
+          <motion.button
+            data-ui
+            key={`${pocket.def}-${i}-${pockets.length}`}
+            type="button"
+            layout
+            initial={{ opacity: 0, scale: 0.5, y: 10 }}
+            animate={{ opacity: 1, scale: 1, y: 0 }}
+            exit={{ opacity: 0, scale: 0.5, y: 6 }}
+            whileTap={{ scale: 0.88 }}
+            onClick={() => engine.usePower(i)}
+            title={`${pocket.name} — tap or press ${i === 0 ? "G" : "a ✨ slot"} to unleash it (1 use)`}
+            aria-label={`Unleash stored ${pocket.name}`}
+            className="pointer-events-auto relative flex h-12 w-12 items-center justify-center rounded-xl border-2 bg-black/45 shadow-lg backdrop-blur-md sm:h-14 sm:w-14"
+            style={{ borderColor: pocket.color, boxShadow: `0 0 12px ${pocket.color}66` }}
+          >
+            <motion.span
+              aria-hidden
+              animate={{ scale: [1, 1.14, 1], rotate: [0, -7, 7, 0] }}
+              transition={{ repeat: Infinity, duration: 1.6 }}
+              className="text-2xl leading-none sm:text-3xl"
+            >{pocket.emoji}</motion.span>
+            {i === 0 && (
+              <span
+                className="absolute -bottom-1 -left-1 flex h-4 w-4 items-center justify-center rounded text-[9px] font-black text-black"
+                style={{ background: pocket.color }}
+              >
+                G
+              </span>
+            )}
+          </motion.button>
+        ))}
+      </AnimatePresence>
+    </div>
   );
 }
 
@@ -555,7 +566,7 @@ function MobileButtons({ engine }: { engine: GameEngine }) {
   const [sprint, setSprint] = useState(false);
   const blinkActive = useGame((s) => s.hud.power?.kind === "blink");
   const blinkReady = useGame((s) => s.hud.blinkReady);
-  const pocket = useGame((s) => s.hud.pocketPower);
+  const pockets = useGame((s) => s.hud.pocketPowers);
   return (
     <div data-ui className="flex flex-col items-end gap-3">
       <button
@@ -579,14 +590,15 @@ function MobileButtons({ engine }: { engine: GameEngine }) {
           onTouchStart={(e) => { e.preventDefault(); engine.tryBlink(); }}
         >🌀</button>
       )}
-      {pocket && (
+      {pockets.map((pocket, i) => (
         <button
+          key={`${pocket.def}-${i}-${pockets.length}`}
           aria-label={`Unleash stored ${pocket.name}`}
-          className="h-16 w-16 rounded-full border-2 text-3xl shadow-lg active:scale-95"
+          className="h-14 w-14 rounded-full border-2 text-2xl shadow-lg active:scale-95"
           style={{ borderColor: pocket.color, background: "rgba(0,0,0,0.45)", boxShadow: `0 0 12px ${pocket.color}66` }}
-          onTouchStart={(e) => { e.preventDefault(); engine.usePower(); }}
+          onTouchStart={(e) => { e.preventDefault(); engine.usePower(i); }}
         >{pocket.emoji}</button>
-      )}
+      ))}
       <button
         aria-label="Toggle sprint"
         className={`h-14 w-14 rounded-full border-2 border-white/50 text-sm font-black shadow-lg active:scale-95 ${sprint ? "bg-rose-500/90 text-white" : "bg-white/25 text-white"}`}
@@ -949,7 +961,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
               ? <>Bust <b>12 vote runners</b> before they smuggle <b>10 votes</b> into Parliament — chase and <b>walk into</b> (or drive into!) a runner to arrest them. Vans haul them to the station cage. Officers eat snacks &amp; grab power gems too!</>
               : <>snatch 🗳 votes, deliver them at the Parliament ballot box. Rescue pink-bubbled friends with <b>E</b>. Dodge the police — sprint with <b>Shift</b>!</>}
             <div className="mt-1 text-amber-200/90">⚡ Sprinting drains energy · run over 🥭☕🩹 food to pocket it, then tap the bag (or press <b>1-8</b>) to eat: heals ❤ and refills ⚡.</div>
-            <div className="mt-1 text-fuchsia-200/95">✨ <b>Rare super powers!</b> Find glowing gems in the jungle ( coloured dots on the map ): collecting <b>stores</b> the power — press <b>G</b> (or tap the ✨ slot) to unleash it when YOU choose! ⚡ Sonic speed · 🦘 mega jump · 🌀 Blink — press <b>Q</b> to teleport where you look · 🐒 Animal disguise — police can&apos;t catch you · 🧲 Magnet pulls food to you!</div>
+            <div className="mt-1 text-fuchsia-200/95">✨ <b>Rare super powers!</b> Find glowing gems in the jungle ( coloured dots on the map ): collecting <b>stores</b> it — carry up to <b>3</b> at once, press <b>G</b> (or tap a ✨ slot) to unleash one when YOU choose — every gem is a single use! ⚡ Sonic speed · 🦘 mega jump · 🌀 Blink — press <b>Q</b> to teleport where you look · 🐒 Animal disguise — police can&apos;t catch you · 🧲 Magnet pulls food to you!</div>
             <div className="mt-1 text-sky-200/95">🪪 <b>Driving licenses!</b> Collect a glowing blue card, walk to <b>any parked car</b> and press <b>E</b> to drive it — W/S gas &amp; brake, A/D steer, <b>H</b> horn, E hop out. Traffic bounces, zombies can&apos;t touch a car, and protesters escape chase cars!</div>
             {!touch && <div className="mt-1 text-white/70">WASD move · mouse steers the camera (click = lock cursor, hold Z/X to turn) · Shift sprint · Space jump ×2 (flip!) · E rescue · G use power · Q blink · 1-8 eat · right-click drop · M map · Esc / P pause</div>}
           </div>
@@ -1087,11 +1099,11 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         )}
       </AnimatePresence>
 
-      {/* food pockets — desktop: bottom-left corner, with the ✨ power slot beside them */}
+      {/* food pockets — desktop: bottom-left corner, with the ✨ power slots beside them */}
       {!touch && (
         <div className="absolute bottom-3 left-3 z-10 flex items-end gap-2">
           <ItemBar engine={engine} />
-          <AnimatePresence>{hud.pocketPower && <PowerSlot engine={engine} />}</AnimatePresence>
+          <AnimatePresence>{hud.pocketPowers.length > 0 && <PowerSlots engine={engine} />}</AnimatePresence>
         </div>
       )}
 

@@ -410,7 +410,10 @@ export function generateWorld(seed = WORLD_SEED): World {
   benches.push({ x: SCHOOL.x - 8, z: SCHOOL.z - 17, rot: Math.PI }, { x: SCHOOL.x + 2, z: SCHOOL.z - 17, rot: Math.PI }, { x: SCHOOL.x + 10, z: SCHOOL.z - 17, rot: Math.PI });
   benches.push({ x: MALL.x - 8, z: MALL.z - 32.5, rot: 0 }, { x: MALL.x + 8, z: MALL.z - 32.5, rot: 0 });
 
-  /* ---- parked cars along road edges ---- */
+  /* ---- parked cars along road edges ----
+   * Airport plot (runway, apron, taxi paths) stays CAR-FREE — the old loop let
+   * road-edge spawns from the x≈270 street land right on the runway, where bot
+   * planes then taxied straight through them. */
   for (const k of ROADS) {
     for (const vertical of [true, false]) {
       let side = 1;
@@ -421,6 +424,10 @@ export function generateWorld(seed = WORLD_SEED): World {
         if (main && (d < MAIN_ROAD.z0 + 45 || d > MAIN_ROAD.z1 - 8)) continue;
         // keep station gates clear so the van always has room to stop
         if (POLICE_STATIONS.some((st) => { const g = stationGate(st); return Math.hypot((vertical ? k + side * 5.2 : d) - g.x, (vertical ? d : k + side * 5.2) - g.z) < 18; })) continue;
+        const spot = vertical
+          ? { x: k + side * 5.2, z: d }
+          : { x: d, z: k + side * 5.2 };
+        if (inAirportPlot(spot.x, spot.z)) continue; // never park on the runway / apron / taxi paths
         const off = main ? 9.5 : 5.2;
         cars.push(vertical
           ? { x: k + side * off, z: d + range(rnd, -4, 4), rot: side > 0 ? 0 : Math.PI, c: Math.floor(rnd() * CAR_COLS.length), t: pickVehicle(rnd) }

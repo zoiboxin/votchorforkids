@@ -4,7 +4,7 @@ import {
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
   ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HAUL_CAMP_R, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
   ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
-  POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
+  POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_POCKETS, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
   RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SCAVENGER_COUNT, SCAVENGER_SENSE_R, SPAWN, SONIC_MULT, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_LABELS, VEHICLE_POOL, VEHICLE_STEER, VEHICLE_TOP, VAN_AXLE, VAN_LOAD_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
   AIRPORT, PLANE_COUNT,
   WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
@@ -130,8 +130,9 @@ export interface HudData {
   arrest: ArrestState; station: string;
   /** active rare super power — HUD shows a countdown badge (null = none) */
   power: { kind: PowerKind; name: string; emoji: string; color: string; left: number; max: number; tip: string } | null;
-  /** collected-but-not-yet-used power gem waiting in the ✨ pocket (null = empty) */
-  pocketPower: { def: number; name: string; emoji: string; color: string; tip: string } | null;
+  /** collected-but-not-yet-used power gems waiting in the ✨ pockets — each fires
+   *  once (tap a slot or press G) and is consumed while its effect runs */
+  pocketPowers: { def: number; name: string; emoji: string; color: string; tip: string }[];
   /** animal the player currently looks like (morph power) */
   morphKind: AnimalKind | null;
   /** true when Blink is charged and Q will teleport right now */
@@ -155,6 +156,16 @@ export interface HudData {
 }
 
 export type ToastFn = (msg: string, kind?: "info" | "good" | "bad") => void;
+
+/** Push direction out of a plane fuselage disc — handles the dead-centre case
+ *  (dx=dz=0, where a radial direction is undefined) by shoving along the plane's
+ *  RIGHT vector, so nothing can ever sit inside a disc. */
+function discDir(dx: number, dz: number, fx: number, fz: number): { x: number; z: number } {
+  const d = Math.hypot(dx, dz);
+  if (d > 1e-4) return { x: dx / d, z: dz / d };
+  const len = Math.hypot(fx, fz) || 1;
+  return { x: -fz / len, z: fx / len }; // plane's right-hand vector
+}
 
 const dist2 = (ax: number, az: number, bx: number, bz: number) => (ax - bx) * (ax - bx) + (az - bz) * (az - bz);
 
@@ -201,6 +212,9 @@ export class GameEngine {
 
   player: Body = newBody(SPAWN.x, SPAWN.z);
   input = { f: 0, r: 0, sprint: false, jump: false, turn: 0, yaw: Math.PI, pitch: 0.32, mouseAt: 0 };
+  /** 1 = driving auto-camera fully in charge · eases toward 0 while the player
+   *  looks with mouse/touch and recovers after — no hard on/off snapping. */
+  driveCamBlend = 1;
   touchMove = { active: false, sprint: false };
   hp = 100; stamina = 100;
   inv: { def: number; count: number }[] = []; // pocketed food, used from the HUD item bar
@@ -242,8 +256,9 @@ export class GameEngine {
   /* --- rare super powers --- */
   activePower: PowerKind | null = null;
   powerT = 0; powerMax = 1;      // seconds left / total of the active power
-  /** a collected gem sits in the ✨ pocket until the player presses G — nothing is auto-fired */
-  powerPocket: number | null = null;
+  /** Pocketed-but-not-yet-used power gems — the player can carry SEVERAL at once
+   *  (each is 1 use: firing it consumes the gem while the effect runs its timer). */
+  powerPockets: number[] = [];
   morphKind: AnimalKind | null = null; // current animal look while morph lasts
   blinkCd = 0;                   // blink teleport cooldown
 
@@ -475,7 +490,9 @@ export class GameEngine {
       });
       const t = this.traffic[this.traffic.length - 1];
       t.x = Math.cos(t.a) * t.r; t.z = Math.sin(t.a) * t.r;
-      t.rot = t.dir > 0 ? -t.a : Math.PI + t.a;
+      // heading must MATCH the direction of travel — the old π+a value pointed
+      // clockwise cars backwards (nose-first slides!) around half the ring
+      t.rot = t.dir > 0 ? -t.a : Math.PI - t.a;
     }
     // police side: a slice of the civilians become vote-runners (the player hunts THEM)
     this.assignRunners();
@@ -660,6 +677,124 @@ export class GameEngine {
     }
   }
 
+  /* ---------------- planes are SOLID while on the ground ---------------- */
+
+  /** A grounded plane owns four solid discs along the fuselage — nothing can bypass
+   *  straight through it. The on-foot player gets shoved (a ROLLING plane gives the
+   *  classic cartoon bonk), the driven car bounces off like it does off traffic,
+   *  parked cars are nudged clear of the taxi path, and bots slide around it. */
+  private planeSolidStep() {
+    const p = this.player;
+    // four overlapping solid discs along the fuselage (plane is ~11.5 long, r 0.92):
+    // +2.7 nose / 0 mid / −2.6 rear / −4.6 tail — no gap in the middle to slip through
+    const DISCS = [
+      { off: 2.7, r: 1.5 }, { off: 0, r: 1.6 }, { off: -2.6, r: 1.5 }, { off: -4.6, r: 1.1 },
+    ];
+    for (const pl of this.planes) {
+      if (pl.alt > 3) continue; // airborne — nothing down here can reach it
+      const fx = Math.cos(pl.hdg), fz = Math.sin(pl.hdg);
+      const discs = DISCS.map((dd) => ({ x: pl.x + fx * dd.off, z: pl.z + fz * dd.off, r: dd.r }));
+      // --- parked fleet: a taxiing/lined-up plane shoves straying cars off its path
+      for (let ci = 0; ci < this.world.cars.length; ci++) {
+        if (this.drive?.ci === ci) continue; // the driven car is handled below
+        const car = this.world.cars[ci];
+        const axR = VEHICLE_AXLE_R[car.t % VEHICLE_AXLE_R.length];
+        const cdx = car.x - pl.x, cdz = car.z - pl.z;
+        if (cdx * cdx + cdz * cdz > 144) continue; // broad phase (discs reach ±5.7)
+        for (const disc of discs) {
+          const rr = disc.r + axR;
+          const d2 = (car.x - disc.x) ** 2 + (car.z - disc.z) ** 2;
+          if (d2 >= rr * rr) continue;
+          const dir = discDir(car.x - disc.x, car.z - disc.z, fx, fz);
+          const chk = { x: disc.x + dir.x * rr, z: disc.z + dir.z * rr };
+          resolve(chk, axR + 0.2, this.world); // don't shove it INTO a building
+          this.shoveParkedCar(ci, chk.x, chk.z);
+          break;
+        }
+      }
+      // --- the player's vehicle: bounce off like it does off ring traffic
+      if (this.drive) {
+        const d = this.drive;
+        const ti = d.t % VEHICLE_AXLE_R.length;
+        for (const disc of discs) {
+          const rr = disc.r + VEHICLE_AXLE_R[ti] + 0.12;
+          const d2 = (d.x - disc.x) ** 2 + (d.z - disc.z) ** 2;
+          if (d2 < rr * rr) {
+            const dir = discDir(d.x - disc.x, d.z - disc.z, fx, fz);
+            d.x = disc.x + dir.x * rr; d.z = disc.z + dir.z * rr;
+            if (d2 > 0.0001) d.v *= 1 - Math.min(0.5, (rr - Math.sqrt(d2)) * 0.4);
+            this.syncCarColliders(d);
+          }
+        }
+      }
+      // --- the on-foot player: solid shove + a cartoon bonk if the plane is rolling
+      else if (this.detainedT <= 0) {
+        let hit = false;
+        for (const disc of discs) {
+          const rr = disc.r + 0.55;
+          const d2 = (p.x - disc.x) ** 2 + (p.z - disc.z) ** 2;
+          if (d2 < rr * rr) {
+            const dir = discDir(p.x - disc.x, p.z - disc.z, fx, fz);
+            p.x = disc.x + dir.x * rr; p.z = disc.z + dir.z * rr;
+            hit = true;
+          }
+        }
+        if (hit && pl.spd > 6 && this.carHitCd <= 0 && this.faintT <= 0) {
+          this.carHitCd = CAR_HIT_CD;
+          this.faintT = FAINT_S;
+          const push = Math.min(10, pl.spd * 0.65);
+          p.vx = fx * push + (p.x - pl.x) * 0.6;
+          p.vz = fz * push + (p.z - pl.z) * 0.6;
+          p.vy = 4.6;
+          this.hp = Math.max(1, this.hp - CAR_HIT_DMG);
+          this.stamina = Math.max(0, this.stamina - 8);
+          this.hurtT = HURT_FLASH_S;
+          sfx.bonk();
+          const PLANE_BONKS = [
+            "✈️ BONK! A plane taxied right into you — stay OFF the runway!",
+            "🛬 Wham! That plane didn't see you — everything is spinning…",
+            "✈️ Ouch! Runway 1 — planes 1, you: 0. Shake it off!",
+          ];
+          this.toast(PLANE_BONKS[Math.floor(this.rnd() * PLANE_BONKS.length)], "bad");
+        }
+        if (hit) {
+          resolve(p, 0.45, this.world);
+          const rr2 = Math.hypot(p.x, p.z);
+          if (rr2 > WALL_RADIUS) { p.x *= WALL_RADIUS / rr2; p.z *= WALL_RADIUS / rr2; }
+        }
+      }
+      // --- bots: cops, civilians & zombies slide around the fuselage too
+      const pushBots = (list: { x: number; z: number }[]) => {
+        for (const b of list) {
+          const dx = b.x - pl.x, dz = b.z - pl.z, d2 = dx * dx + dz * dz;
+          const rr = 4.2; // cheap single probe — under the wing tips is fine, they're up high
+          if (d2 >= rr * rr || d2 < 0.0001) continue;
+          const d = Math.sqrt(d2);
+          b.x = pl.x + (dx / d) * rr; b.z = pl.z + (dz / d) * rr;
+        }
+      };
+      pushBots(this.civs);
+      pushBots(this.cops);
+      pushBots(this.zombies);
+    }
+  }
+
+  /** Teleport-free way to move a parked car (plane shove): glue the body + its two
+   *  axle colliders to the new spot, exactly like syncCarColliders does for driving. */
+  private shoveParkedCar(ci: number, x: number, z: number) {
+    const car = this.world.cars[ci];
+    if (!car) return;
+    car.x = x; car.z = z;
+    const pair = this.carAxles.get(ci);
+    if (!pair) return;
+    const ax = VEHICLE_AXLE[car.t % VEHICLE_AXLE.length];
+    const fx = Math.sin(car.rot), fz = Math.cos(car.rot);
+    pair[0].x = car.x - fx * ax; pair[0].z = car.z - fz * ax;
+    pair[1].x = car.x + fx * ax; pair[1].z = car.z + fz * ax;
+    if (pair[0].idx !== undefined) refreshCarCircle(this.world, pair[0].idx);
+    if (pair[1].idx !== undefined) refreshCarCircle(this.world, pair[1].idx);
+  }
+
   /* ---------------- lifecycle ---------------- */
   /**
    * Police side: promote a spread of civilians into vote-runners (protest marchers
@@ -733,7 +868,7 @@ export class GameEngine {
     this.hp = 100; this.stamina = 100; this.stars = 0; this.starTimer = 0; this.chased = false;
     this.inv = []; this.hurtT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0; this.powerFullT = 0;
     this.flipT = 0; this.squashT = 0; this.faintT = 0; this.carHitCd = 0;
-    this.activePower = null; this.powerT = 0; this.powerPocket = null; this.morphKind = null; this.blinkCd = 0;
+    this.activePower = null; this.powerT = 0; this.powerPockets = []; this.morphKind = null; this.blinkCd = 0;
     for (const pw of this.powers) { pw.active = true; pw.respawn = 0; }
     this.carriedVotes = []; this.delivered = 0; this.points = 0; this.rescues = 0; this.caughtCount = 0;
     this.runnerDelivered = 0; this.lost = false; this.catchCd = 0;
@@ -953,17 +1088,28 @@ export class GameEngine {
       d.z += Math.cos(d.rot) * d.v * sdt;
       scrape += this.resolveCarBody(d);
     }
-    if (scrape > 0.004) d.v *= 0.82; // cartoon scrape — walls eat speed
+    // cartoon scrape — walls eat speed. The loss is exactly the INTO-wall velocity
+    // component the wall absorbs (scrape/dt ≈ v·sinθ): a head-on bonk kills the
+    // speed stone dead, while a shallow graze keeps almost everything — the car
+    // SLIDES along the wall smoothly instead of the old flat ×0.82-per-frame chop
+    // that made even light brushes read as a jerk. Frame-rate independent.
+    if (scrape > 0.001) {
+      const sinIn = Math.min(1, scrape / (Math.abs(d.v) * dt + 1e-5));
+      const loss = Math.abs(d.v) * (1 - Math.sqrt(Math.max(0, 1 - sinIn * sinIn)));
+      d.v -= Math.sign(d.v) * Math.min(Math.abs(d.v), loss);
+    }
     const rr = Math.hypot(d.x, d.z);
     if (rr > WALL_RADIUS) { d.x *= WALL_RADIUS / rr; d.z *= WALL_RADIUS / rr; d.v = Math.min(d.v, 4); }
-    // ring-road traffic & police vans are solid — the vehicle bonks off, nobody gets hurt
+    // ring-road traffic & police vans are solid — the vehicle bonks off, nobody
+    // gets hurt. The speed loss follows the actual overlap depth, so a continuous
+    // nudge can't compound into the old per-frame ×0.75 speed cliff.
     for (const t of this.traffic) {
       const tr = VEHICLE_AXLE_R[t.t % VEHICLE_AXLE_R.length] + VEHICLE_AXLE_R[ti] + 0.12;
       const tdx = d.x - t.x, tdz = d.z - t.z, td2 = tdx * tdx + tdz * tdz;
       if (td2 < tr * tr && td2 > 0.0001) {
         const td = Math.sqrt(td2);
         d.x = t.x + (tdx / td) * tr; d.z = t.z + (tdz / td) * tr;
-        d.v *= 0.75;
+        d.v *= 1 - Math.min(0.5, (tr - td) * 0.4);
       }
     }
     for (const van of this.vans) {
@@ -971,7 +1117,7 @@ export class GameEngine {
       if (vd2 < 3.2 * 3.2 && vd2 > 0.0001) {
         const vd = Math.sqrt(vd2);
         d.x = van.x + (vdx / vd) * 3.2; d.z = van.z + (vdz / vd) * 3.2;
-        d.v *= 0.75;
+        d.v *= 1 - Math.min(0.5, (3.2 - vd) * 0.4);
       }
     }
     this.syncCarColliders(d);
@@ -980,18 +1126,23 @@ export class GameEngine {
     p.x = d.x; p.z = d.z; p.y = 0.32;
     p.vx = Math.sin(d.rot) * d.v; p.vz = Math.cos(d.rot) * d.v; p.vy = 0;
     p.face = d.rot;
-    // camera trails behind the car while it rolls (mouse look still nudges it)
-    // the auto-follow pauses for a beat after any mouse/touch look so the two
-    // never fight over the camera — that tug-of-war read as jerky driving
-    const mouseIdle = performance.now() - this.input.mouseAt > 650;
-    if (Math.abs(d.v) > 2.5 && mouseIdle) {
+    // camera trails behind the car while it rolls. Mouse/touch look no longer
+    // hard-switches the auto-follow off — a blend eases down while you look
+    // around and recovers smoothly after, so resuming never yanks the camera
+    // (that on/off tug-of-war read as jerky driving), and the follow strength
+    // also fades in with speed so take-off has no kick either.
+    const looking = performance.now() - this.input.mouseAt < 650;
+    this.driveCamBlend = clamp(this.driveCamBlend + (looking ? -dt * 3.5 : dt * 1.1), 0, 1);
+    const spdBlend = Math.min(1, Math.max(0, (Math.abs(d.v) - 1.5) / 2.5));
+    const follow = this.driveCamBlend * spdBlend;
+    if (follow > 0.001) {
       const want = d.v < 0 ? d.rot : d.rot + Math.PI; // reversing: look the way the car backs
       let dd = want - this.input.yaw;
       dd = Math.atan2(Math.sin(dd), Math.cos(dd));
-      this.input.yaw += dd * Math.min(1, dt * 2.6);
+      this.input.yaw += dd * Math.min(1, dt * 2.6) * follow;
       this.input.yaw = ((this.input.yaw + Math.PI) % TAU + TAU) % TAU - Math.PI;
     }
-    if (mouseIdle) this.input.pitch += (0.34 - this.input.pitch) * Math.min(1, dt * 1.6);
+    this.input.pitch += (0.34 - this.input.pitch) * Math.min(1, dt * 1.6) * this.driveCamBlend;
     // driving is restful — stamina recovers at walking rate
     this.stamina = Math.min(100, this.stamina + 12 * AGE_STATS[this.look.age].regen * dt);
   }
@@ -1537,8 +1688,8 @@ export class GameEngine {
       return;
     }
     if (this.activePower !== "blink") {
-      // helpful nudge when the gem is still sitting in the pocket
-      if (this.powerPocket !== null && POWERS[this.powerPocket].kind === "blink" && this.powerFullT <= 0) {
+      // helpful nudge when a blink gem is still sitting in a pocket
+      if (this.powerPockets.some((def) => POWERS[def].kind === "blink") && this.powerFullT <= 0) {
         this.powerFullT = 2.5;
         this.toast("🌀 Blink is pocketed — press G (or tap the ✨ slot) to unleash it first!", "info");
       }
@@ -1571,22 +1722,24 @@ export class GameEngine {
     this.toast("🌀 Poof! Teleported!", "good");
   }
 
-  /** Unleash the pocketed power gem — the player chooses the moment (press G / tap the ✨ slot). */
-  usePower() {
-    if (!this.running || this.powerPocket === null) return;
+  /** Unleash a pocketed power gem — the player chooses the moment (press G for
+   *  the first gem / tap any ✨ slot). The gem is CONSUMED: one use each. */
+  usePower(slot = 0) {
+    if (!this.running || this.powerPockets.length === 0) return;
     if (this.detainedT > 0 || this.faintT > 0) return;
-    const def = this.powerPocket;
-    this.powerPocket = null;
+    const i = Math.max(0, Math.min(slot, this.powerPockets.length - 1));
+    const def = this.powerPockets.splice(i, 1)[0];
     this.activatePower(def, this.player.x, this.player.z);
   }
 
-  /** Pocket a collected gem WITHOUT activating it — the player fires it with G when the moment is right. */
+  /** Pocket a collected gem WITHOUT activating it — up to POWER_POCKETS ride
+   *  along; the player fires each one (single use) with G or a ✨ slot tap. */
   private storePower(def: number, x: number, z: number) {
-    this.powerPocket = def; // the gem waits here until usePower() unleashes it
+    this.powerPockets.push(def);
     const d = POWERS[def];
     sfx.power();
     this.fxQueue.push({ type: "confetti", x, y: 1.3, z, hue: Math.random() });
-    this.toast(`${d.emoji} ${d.name} collected! Stored in your ✨ pocket — press G (or tap it) when you want it.`, "good");
+    this.toast(`${d.emoji} ${d.name} collected (${this.powerPockets.length}/${POWER_POCKETS} pocketed) — press G or tap a ✨ slot to unleash it!`, "good");
   }
 
   /** Activate a collected gem — called by usePower() when the PLAYER picks the moment. */
@@ -1744,7 +1897,7 @@ export class GameEngine {
       t.a += t.sp * t.dir * dt;
       t.x = Math.cos(t.a) * t.r;
       t.z = Math.sin(t.a) * t.r;
-      t.rot = t.dir > 0 ? -t.a : Math.PI + t.a;
+      t.rot = t.dir > 0 ? -t.a : Math.PI - t.a; // nose leads the motion (see spawn note)
       if (this.detainedT > 0 || this.drive) continue; // sitting out detention / safe inside a vehicle — traffic can't touch you
       const fx = Math.sin(t.rot), fz = Math.cos(t.rot);
       const tax = VEHICLE_AXLE[t.t % VEHICLE_AXLE.length];
@@ -1787,6 +1940,9 @@ export class GameEngine {
 
     /* --- bot planes: taxi → take off → cruise the city → land (pure spectacle) --- */
     this.updatePlanes(dt);
+    // grounded planes are solid — shove players, cars & bots out of the fuselage
+    // (a rolling plane bonks the same way traffic does) — no more bypass-through
+    this.planeSolidStep();
     // vans are solid — shove the player out of their footprint (no bonk, police don't ram kids)
     // (while driving, stepDrive already bounces the CAR off vans instead)
     if (this.detainedT <= 0 && !this.drive) {
@@ -1888,15 +2044,15 @@ export class GameEngine {
           continue;
         }
         if (dist2(p.x, p.z, pw.x, pw.z) < POWER_PICKUP_R * POWER_PICKUP_R) {
-          // gems are POCKETED, never auto-fired — the player unleashes with G when ready
-          if (this.powerPocket === null) {
+          // gems are POCKETED, never auto-fired — the player unleashes each with G when ready
+          if (this.powerPockets.length < POWER_POCKETS) {
             pw.active = false;
             pw.respawn = POWER_RESPAWN_S;
             this.storePower(pw.def, pw.x, pw.z);
           } else if (this.powerFullT <= 0) {
             this.powerFullT = 6;
-            const held = POWERS[this.powerPocket];
-            this.toast(`✨ Power pocket full (${held.emoji} ${held.name}) — press G to unleash it first!`, "info");
+            const held = POWERS[this.powerPockets[0]];
+            this.toast(`✨ All ${POWER_POCKETS} power pockets full (${held.emoji} ${held.name} +${this.powerPockets.length - 1} more) — press G to unleash one first!`, "info");
           }
         }
       }
@@ -2216,12 +2372,10 @@ export class GameEngine {
             return { kind: d.kind, name: d.name, emoji: d.emoji, color: d.color, left: Math.max(0, this.powerT), max: this.powerMax, tip: d.tip };
           })()
         : null,
-      pocketPower: this.powerPocket !== null
-        ? (() => {
-            const d = POWERS[this.powerPocket!];
-            return { def: this.powerPocket!, name: d.name, emoji: d.emoji, color: d.color, tip: d.tip };
-          })()
-        : null,
+      pocketPowers: this.powerPockets.map((def) => {
+        const d = POWERS[def];
+        return { def, name: d.name, emoji: d.emoji, color: d.color, tip: d.tip };
+      }),
       morphKind: this.morphKind,
       blinkReady: this.blinkCd <= 0,
     };

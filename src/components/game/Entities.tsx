@@ -97,7 +97,6 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     engine.update(dt);
     clockRef.current = engine.clock;
     if (lantern.current) lantern.current.intensity = nightFactor(engine.clock) * 26;
-
     // player mesh (hidden while riding in the police van, wearing an animal disguise, or driving a car)
     const p = engine.player;
     const morphing = engine.morphKind != null;
@@ -226,7 +225,9 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       hudT.current = 0;
       setHud(engine.getHud());
     }
-  });
+  }, -1); // negative priority = the SIM steps before every visual useFrame
+  // (cars, traffic, NPCs…) reads engine state — no more one-frame-stale vehicle
+  // poses wobbling under a fresh camera, which read as driving jitter
 
   return (
     <>
