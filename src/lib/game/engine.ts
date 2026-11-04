@@ -3,6 +3,7 @@ import {
   CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, CONFISCATE_FINE, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
   ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HAUL_CAMP_R, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
+  DEEP_JUNGLE_RADIUS,
   ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_POCKETS, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
   RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SCAVENGER_COUNT, SCAVENGER_SENSE_R, SPAWN, SONIC_MULT, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_LABELS, VEHICLE_POOL, VEHICLE_STEER, VEHICLE_TOP, VAN_AXLE, VAN_LOAD_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
@@ -456,10 +457,17 @@ export class GameEngine {
       const p = freeSpot(r, this.world, 10, 430);
       this.items.push({ id: this.nid(), def: Math.floor(r() * ITEMS.length), x: p.x, z: p.z, active: true, respawn: 0 });
     }
-    // rare super powers — mostly deep-jungle treasures, a couple of mystery spots anywhere
+    // rare super powers — half deep in the DEEP jungle (the dark treasure band),
+    // the rest scattered through the regular jungle + a couple of mystery spots anywhere
     for (let i = 0; i < POWER_COUNT; i++) {
-      const jungle = r() < POWER_JUNGLE_SHARE;
-      const p = freeSpot(r, this.world, jungle ? FARM_RADIUS + 12 : 10, jungle ? JUNGLE_RADIUS - 14 : 430);
+      const roll = r();
+      const deep = roll < POWER_JUNGLE_SHARE * 0.55;
+      const jungle = roll < POWER_JUNGLE_SHARE;
+      const p = deep
+        ? freeSpot(r, this.world, DEEP_JUNGLE_RADIUS + 4, JUNGLE_RADIUS - 4)
+        : jungle
+          ? freeSpot(r, this.world, FARM_RADIUS + 12, DEEP_JUNGLE_RADIUS - 4)
+          : freeSpot(r, this.world, 10, 430);
       this.powers.push({ id: this.nid(), def: i % POWERS.length, x: p.x, z: p.z, active: true, respawn: 0 });
     }
     // driving-license cards — most around town streets, two out in the farmland

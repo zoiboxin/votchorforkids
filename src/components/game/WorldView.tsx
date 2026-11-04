@@ -4,7 +4,7 @@ import { useLayoutEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  AIRPORT, BALLOT, CITY_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, PARLIAMENT, POLICE_STATIONS, stationCage, stationGate,
+  AIRPORT, BALLOT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, PARLIAMENT, POLICE_STATIONS, WALL_RADIUS, stationCage, stationGate,
 } from "@/lib/game/constants";
 import {
   AVENUE, GATE, generateWorld, HOSPITAL, MALL, MAIN_ROAD, PARK, ROAD_W, ROADS, RING_R, RING_W, SCHOOL, PROTEST_CAMP,
@@ -283,12 +283,13 @@ function Forest() {
     WORLD.trees.forEach((t, i) => {
       const rot = t.x * 0.7 + t.z * 1.3;
       const hm = range(r, 0.9, 1.14); // per-tree height variety
+      const deep = Math.hypot(t.x, t.z) > DEEP_JUNGLE_RADIUS ? 0.66 : 1; // deep-jungle canopy reads darker
       tmp.rotation.set(0, rot, 0);
       tmp.scale.set(t.s, t.s, t.s);
       tmp.position.set(t.x, 1.6 * t.s, t.z);
       tmp.updateMatrix();
       trunks.current.setMatrixAt(i, tmp.matrix);
-      trunks.current.setColorAt(i, col.set(TRUNK_COLS[i % TRUNK_COLS.length]));
+      trunks.current.setColorAt(i, col.set(TRUNK_COLS[i % TRUNK_COLS.length]).multiplyScalar(deep ? 0.85 : 1));
 
       if (t.kind === 0) {
         const g = col.set(PINE_COLS[Math.floor(r() * PINE_COLS.length)]).clone();
@@ -298,7 +299,7 @@ function Forest() {
           tmp.position.set(t.x, tier.y * t.s * hm, t.z);
           tmp.updateMatrix();
           tiers.current.setMatrixAt(ti, tmp.matrix);
-          tiers.current.setColorAt(ti, col.copy(g).multiplyScalar(tier.shade));
+          tiers.current.setColorAt(ti, col.copy(g).multiplyScalar(tier.shade * deep));
           ti++;
         }
       } else {
@@ -309,7 +310,7 @@ function Forest() {
           tmp.position.set(t.x + dx * t.s, dy * t.s, t.z + dz * t.s);
           tmp.updateMatrix();
           blobs.current.setMatrixAt(bi, tmp.matrix);
-          blobs.current.setColorAt(bi, col.copy(g).multiplyScalar(shade));
+          blobs.current.setColorAt(bi, col.copy(g).multiplyScalar(shade * deep));
           bi++;
         };
         put(0, 5.1, 0, 2.5, 1);        // main puffy crown
@@ -2281,7 +2282,8 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
       <Disc r={780} color="#3f7a36" y={-0.12} />
       <Disc r={CITY_RADIUS} color="#9a968c" y={0} />
       <Ring a={CITY_RADIUS} b={FARM_RADIUS} color="#9cb84e" y={0.02} />
-      <Ring a={FARM_RADIUS} b={JUNGLE_RADIUS} color="#2d7a3a" y={0.03} />
+      <Ring a={FARM_RADIUS} b={DEEP_JUNGLE_RADIUS} color="#2d7a3a" y={0.03} />
+      <Ring a={DEEP_JUNGLE_RADIUS} b={WALL_RADIUS} color="#1e5630" y={0.031} />
       <Disc r={GRAVEYARD.r} color="#3a3a46" y={0.06} x={GRAVEYARD.x} z={GRAVEYARD.z} />
       <Roads />
       <Airport />

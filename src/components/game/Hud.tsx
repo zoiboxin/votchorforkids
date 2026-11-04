@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
   Heart, Zap, Star, Sun, Moon, Vote, MapPin, Volume2, VolumeX, Pause, Play as PlayIcon,
-  Keyboard, Gauge, CircleHelp, Flag, Home, Settings as SettingsIcon, CheckCircle2, Siren, Info, ShieldCheck,
+  Gauge, CircleHelp, Flag, Home, Settings as SettingsIcon, CheckCircle2, Siren, Info, ShieldCheck,
   ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon, Mouse,
 } from "lucide-react";
 import type { GameEngine } from "@/lib/game/engine";
@@ -28,7 +28,8 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     c.globalAlpha = 1;
   };
   c.clearRect(0, 0, S, S);
-  dot(0, 0, 535 * K, "#2d5a2e");
+  dot(0, 0, 545 * K, "#1c3f24");   // deep jungle — darker outer band hugging the wall
+  dot(0, 0, 500 * K, "#2d5a2e");
   dot(0, 0, 465 * K, "#7a8f3f");
   dot(0, 0, 405 * K, "#8d8a80");
   dot(-255, 215, 45 * K, "#3a3a46");
@@ -41,14 +42,15 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     // big map only: zone rings, graveyard fence and district labels
     c.strokeStyle = "rgba(255,255,255,0.22)";
     c.lineWidth = 1;
-    for (const r of [405, 465, 535]) { c.beginPath(); c.arc(S / 2, S / 2, r * K, 0, 6.3); c.stroke(); }
+    for (const r of [405, 465, 500, 535]) { c.beginPath(); c.arc(S / 2, S / 2, r * K, 0, 6.3); c.stroke(); }
     c.beginPath(); c.arc(S / 2 - 255 * K, S / 2 + 215 * K, 45 * K, 0, 6.3); c.stroke();
     c.fillStyle = "rgba(255,255,255,0.55)";
     c.font = `700 ${Math.round(7 * U)}px ui-sans-serif, system-ui, sans-serif`;
     c.textAlign = "center";
     c.fillText("CITY", S / 2, S / 2 + 150 * K);
     c.fillText("FARMLAND", S / 2, S / 2 + 435 * K);
-    c.fillText("JUNGLE", S / 2 - 370 * K, S / 2 - 350 * K);
+    c.fillText("JUNGLE", S / 2 - 340 * K, S / 2 - 340 * K);
+    c.fillText("DEEP JUNGLE", S / 2 + 360 * K, S / 2 - 360 * K);
     c.fillText("GRAVEYARD", S / 2 - 255 * K, S / 2 + 265 * K);
     c.fillText("✈ AIRPORT", S / 2 + 295 * K, S / 2 + 345 * K);
   }
@@ -706,6 +708,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
     City: "text-sky-200",
     Farmland: "text-lime-200",
     Jungle: "text-emerald-200",
+    "Deep Jungle": "text-teal-300",
     Graveyard: "text-violet-200",
     "Mountain Wall": "text-slate-200",
   };
@@ -730,6 +733,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         return;
       }
       if (e.code === "KeyM") { e.preventDefault(); setBigMap(true); return; }
+      if (e.code === "KeyI") { e.preventDefault(); toggleHelp(); return; } // goal card show/hide
       if (e.code === "KeyP" || e.code === "Escape") { e.preventDefault(); togglePause(); }
       // top-row Digit keys AND keypad Numpad keys both eat pocketed food
       const dig = /^(?:Digit|Numpad)([1-8])$/.exec(e.code);
@@ -740,7 +744,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
-  }, [victoryOpen, engine, bigMap, togglePause]);
+  }, [victoryOpen, engine, bigMap, togglePause, toggleHelp, setBigMap]);
 
   useEffect(() => {
     if (!toasts.length) return;
@@ -748,12 +752,13 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
     return () => clearTimeout(t);
   }, [toasts, dropToast]);
 
-  // auto-hide the help card on touch devices so the view stays clear
+  // goal card auto-hides after 12 s on EVERY device so the view stays clear —
+  // press I (or tap the ⓘ button) to bring it back anytime
   useEffect(() => {
-    if (!touch) return;
-    const t = setTimeout(() => useGame.setState({ showHelp: false }), 9000);
+    if (!showHelp) return;
+    const t = setTimeout(() => useGame.setState({ showHelp: false }), 12000);
     return () => clearTimeout(t);
-  }, [touch]);
+  }, [showHelp]);
 
   const toastIcon = (kind: string) =>
     kind === "good" ? <CheckCircle2 size={15} className="mt-0.5 shrink-0" /> :
@@ -941,11 +946,14 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
             {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
           </Button>
           <Button
-            size="icon" variant="ghost" aria-label="Toggle controls help"
-            className="h-9 w-9 rounded-xl bg-black/35 text-white backdrop-blur-md hover:bg-black/50"
+            size="icon" variant="ghost"
+            aria-label="Toggle goal card"
+            aria-expanded={showHelp}
+            title="Goal card (I)"
+            className={`h-9 w-9 rounded-xl bg-black/35 text-white backdrop-blur-md hover:bg-black/50 ${showHelp ? "ring-2 ring-yellow-300/70" : ""}`}
             onClick={toggleHelp}
           >
-            {showHelp ? <Keyboard size={16} /> : <CircleHelp size={16} />}
+            <Info size={16} />
           </Button>
           <Button
             size="icon" variant="ghost" aria-label="Pause game"
@@ -955,17 +963,40 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
             <Pause size={16} />
           </Button>
         </div>
-        {showHelp && (
-          <div className="max-w-[220px] rounded-xl bg-black/40 px-3 py-2 text-xs leading-relaxed text-white/90 backdrop-blur-md">
-            <b className="text-yellow-300">Goal:</b> {hud.side === "police"
-              ? <>Bust <b>12 vote runners</b> before they smuggle <b>10 votes</b> into Parliament — chase and <b>walk into</b> (or drive into!) a runner to arrest them. Vans haul them to the station cage. Officers eat snacks &amp; grab power gems too!</>
-              : <>snatch 🗳 votes, deliver them at the Parliament ballot box. Rescue pink-bubbled friends with <b>E</b>. Dodge the police — sprint with <b>Shift</b>!</>}
-            <div className="mt-1 text-amber-200/90">⚡ Sprinting drains energy · run over 🥭☕🩹 food to pocket it, then tap the bag (or press <b>1-8</b>) to eat: heals ❤ and refills ⚡.</div>
-            <div className="mt-1 text-fuchsia-200/95">✨ <b>Rare super powers!</b> Find glowing gems in the jungle ( coloured dots on the map ): collecting <b>stores</b> it — carry up to <b>3</b> at once, press <b>G</b> (or tap a ✨ slot) to unleash one when YOU choose — every gem is a single use! ⚡ Sonic speed · 🦘 mega jump · 🌀 Blink — press <b>Q</b> to teleport where you look · 🐒 Animal disguise — police can&apos;t catch you · 🧲 Magnet pulls food to you!</div>
-            <div className="mt-1 text-sky-200/95">🪪 <b>Driving licenses!</b> Collect a glowing blue card, walk to <b>any parked car</b> and press <b>E</b> to drive it — W/S gas &amp; brake, A/D steer, <b>H</b> horn, E hop out. Traffic bounces, zombies can&apos;t touch a car, and protesters escape chase cars!</div>
-            {!touch && <div className="mt-1 text-white/70">WASD move · mouse steers the camera (click = lock cursor, hold Z/X to turn) · Shift sprint · Space jump ×2 (flip!) · E rescue · G use power · Q blink · 1-8 eat · right-click drop · M map · Esc / P pause</div>}
-          </div>
-        )}
+        {/* compact goal card — auto-hides after 12 s, I / ⓘ brings it back */}
+        <AnimatePresence>
+          {showHelp && (
+            <motion.div
+              initial={{ opacity: 0, y: -8, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -8, scale: 0.96 }}
+              transition={{ type: "spring", stiffness: 300, damping: 24 }}
+              role="note" aria-label="Goal and quick tips"
+              className="pointer-events-auto w-[228px] rounded-2xl border border-white/15 bg-black/55 p-3 text-white shadow-xl backdrop-blur-md sm:w-[248px]"
+            >
+              <div className="flex items-center justify-between">
+                <span className="flex items-center gap-1 text-xs font-black text-yellow-300"><Flag size={12} /> Goal</span>
+                <button
+                  onClick={() => useGame.getState().setShowHelp(false)}
+                  aria-label="Close goal card"
+                  className="rounded-md p-0.5 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+                >
+                  <X size={14} />
+                </button>
+              </div>
+              <p className="mt-1 text-[11px] leading-snug text-white/90">
+                {hud.side === "police"
+                  ? <>Bust <b>12 vote runners</b> before 10 votes reach Parliament — walk or drive into them to arrest.</>
+                  : <>Snatch 🗳 votes, deliver them at the Parliament ballot box. Dodge police — <b>Shift</b> sprint!</>}
+              </p>
+              <div className="mt-1.5 space-y-0.5 text-[10.5px] leading-snug text-amber-200/90">
+                <div>🥭 Run over food → tap bag or press <b>1-8</b> to eat</div>
+                <div>✨ Gems: carry up to <b>3</b>, press <b>G</b> to use · <b>Q</b> blink · hunt the <b>deep jungle</b></div>
+                <div>🪪 License + <b>E</b> at any car = drive · <b>E</b> rescues friends</div>
+              </div>
+              {!touch && <div className="mt-1.5 text-[10px] leading-snug text-white/60">WASD move · mouse camera · Space jump ×2 · M map</div>}
+              <div className="mt-1.5 border-t border-white/10 pt-1 text-[9.5px] text-white/50">Press <b className="text-white/80">I</b> to toggle · auto-hides</div>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* mouse steering hint — the cursor is bound to the game while playing */}

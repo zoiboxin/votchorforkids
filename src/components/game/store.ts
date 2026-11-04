@@ -141,6 +141,7 @@ export interface GameStore {
   setTouch: (t: boolean) => void;
   setScores: (s: ScoreRow[]) => void;
   toggleHelp: () => void;
+  setShowHelp: (v: boolean) => void;
   setVictoryOpen: (v: boolean) => void;
   setPaused: (p: boolean) => void;
   setBigMapOpen: (v: boolean) => void;
@@ -232,6 +233,7 @@ export const useGame = create<GameStore>()((set, get) => ({
   setTouch: (t) => set({ touch: t }),
   setScores: (sc) => set({ scores: sc }),
   toggleHelp: () => set((s) => ({ showHelp: !s.showHelp })),
+  setShowHelp: (v) => set({ showHelp: v }),
   setVictoryOpen: (v) => set({ victoryOpen: v }),
   setPaused: (p) => set({ paused: p }),
   setMouseLocked: (v) => set({ mouseLocked: v }),

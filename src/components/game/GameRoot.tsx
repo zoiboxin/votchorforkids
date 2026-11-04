@@ -38,6 +38,7 @@ export function GameRoot() {
     useGame.getState().setScreen("connecting");
     useGame.getState().setPaused(false);
     useGame.getState().setVictoryOpen(false);
+    useGame.getState().setShowHelp(true); // goal card re-shows every round, auto-hides after 12 s
     sfx.click();
     startMusic();
     setTimeout(() => {

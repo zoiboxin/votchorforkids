@@ -1,4 +1,4 @@
-import { AIRPORT, CITY_RADIUS, FARM_RADIUS, GRAVEYARD, PARLIAMENT, POLICE_STATIONS, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_POOL, WORLD_SEED, pickVehicle, stationCage, stationGate } from "./constants";
+import { AIRPORT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, PARLIAMENT, POLICE_STATIONS, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_POOL, WALL_RADIUS, WORLD_SEED, pickVehicle, stationCage, stationGate } from "./constants";
 import { mulberry32, range } from "./rng";
 
 export interface BoxCollider { x: number; z: number; w: number; d: number; /** building height (top y) — lets the chase camera ignore roofs above it */ h?: number } // half extents
@@ -509,18 +509,25 @@ export function generateWorld(seed = WORLD_SEED): World {
     { x: 425, z: -68, rot: 0 }, { x: 403, z: 195, rot: 1.2 }, { x: -412, z: 193, rot: 2.1 },
   ];
 
-  /* ---- jungle forest (dense ring) + decorative outer band ---- */
+  /* ---- jungle forest (outer ring) + DEEP jungle (denser, darker band hugging the wall) ----
+   * The deep band (DEEP_JUNGLE_RADIUS → wall) is where the rare gems hide: nearly
+   * double tree density, bigger canopies and mostly round dark crowns so it reads
+   * visually darker than the regular jungle ring. */
   let n = 0;
-  while (n < 560) {
-    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 472, 528);
+  while (n < 400) {
+    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 472, DEEP_JUNGLE_RADIUS);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
     addTree(x, z, range(rnd, 0.85, 1.55), rnd() < 0.75 ? 0 : 1);
     n++;
   }
-  for (let i = 0; i < 46; i++) {
-    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 528, 542);
-    addTree(Math.cos(a) * r, Math.sin(a) * r, range(rnd, 0.9, 1.5), rnd() < 0.7 ? 0 : 1);
+  n = 0;
+  while (n < 430) {
+    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, DEEP_JUNGLE_RADIUS + 2, WALL_RADIUS - 4);
+    const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
+    addTree(x, z, range(rnd, 1.1, 1.95), rnd() < 0.28 ? 0 : 1); // big dark round canopies dominate
+    n++;
   }
 
   /* ---- sparse farmland trees (avoid fields, buildings & the airport plot) ---- */

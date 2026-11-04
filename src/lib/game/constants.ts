@@ -5,6 +5,8 @@ export const WALL_RADIUS = 545;
 export const CITY_RADIUS = 405;
 export const FARM_RADIUS = 465;
 export const JUNGLE_RADIUS = 535;
+/** inner edge of the DEEP jungle — the darker, denser band hugging the mountain wall */
+export const DEEP_JUNGLE_RADIUS = 500;
 export const GRAVEYARD = { x: -255, z: 215, r: 45 } as const;
 export const SPAWN = { x: 0, z: 6 } as const;
 
@@ -460,17 +462,18 @@ export const POINTS_PICKUP = 10;
 export const POINTS_RESCUE = 60;
 export const WIN_BONUS = 500;
 
-export type Zone = "City" | "Farmland" | "Jungle" | "Graveyard" | "Mountain Wall";
+export type Zone = "City" | "Farmland" | "Jungle" | "Deep Jungle" | "Graveyard" | "Mountain Wall";
 export function zoneOf(x: number, z: number): Zone {
   if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < 45) return "Graveyard";
   const r = Math.hypot(x, z);
-  return r < CITY_RADIUS ? "City" : r < FARM_RADIUS ? "Farmland" : r < JUNGLE_RADIUS - 10 ? "Jungle" : "Mountain Wall";
+  return r < CITY_RADIUS ? "City" : r < FARM_RADIUS ? "Farmland" : r < DEEP_JUNGLE_RADIUS ? "Jungle" : r < JUNGLE_RADIUS - 10 ? "Deep Jungle" : "Mountain Wall";
 }
 
 export const ZONE_TOAST: Record<Zone, string> = {
   City: "Welcome to the city! Grab those votes!",
   Farmland: "Farmland — mind the cows!",
   Jungle: "The jungle… listen, the monkeys are watching.",
+  "Deep Jungle": "DEEP jungle — dark, dense, and full of secrets… gems hide here!",
   Graveyard: "Graveyard! At night the zombies wake up…",
   "Mountain Wall": "The mountains say no. Turn back!",
 };
