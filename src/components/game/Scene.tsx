@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { GameLoop, Npcs, Zombies, Animals, Pickups, Powers, Licenses, Shadows, Confetti, CrewRig, ToolDrops, BuildsView, RocksView, Stumps, type ClockRef } from "./Entities";
+import { GameLoop, Npcs, Zombies, Animals, Pickups, Powers, Licenses, Shadows, Confetti, CrewRig, ToolDrops, BuildsView, RocksView, Stumps, LootView, type ClockRef } from "./Entities";
 import { WorldView, WORLD } from "./WorldView";
 import { GameEngine } from "@/lib/game/engine";
 import type { Appearance } from "@/lib/game/constants";
@@ -74,11 +74,18 @@ export function useGameInput(engine: GameEngine | null) {
     const down = (e: KeyboardEvent) => {
       if (typing(e)) return;
       keys.add(e.code);
+      // 🖱️ menus own the keyboard: the big map, the tool wheel and the victory
+      // screen swallow every game verb (E/F/B/V/R/Q/H) so nothing fires unseen
+      const s0 = useGame.getState();
+      const menuOwns = s0.victoryOpen || s0.bigMapOpen || s0.wheelOpen;
       if (e.code === "Space") {
         e.preventDefault();
-        engine.input.jump = true;
-        setTimeout(() => { engine.input.jump = false; }, 120);
+        if (!menuOwns) {
+          engine.input.jump = true;
+          setTimeout(() => { engine.input.jump = false; }, 120);
+        }
       }
+      if (menuOwns) { applyKey(); return; }
       if (e.code === "KeyE" && !e.repeat) engine.interact();
       // 🎒 G opens the tool wheel at screen center — move the mouse to a slice, click/G to ready it
       if (e.code === "KeyG" && !e.repeat) {
@@ -250,6 +257,7 @@ export function Scene({ engine }: { engine: GameEngine }) {
       <Powers engine={engine} />
       <Licenses engine={engine} />
       <ToolDrops engine={engine} />
+      <LootView engine={engine} />
       <BuildsView engine={engine} />
       <RocksView engine={engine} />
       <Stumps engine={engine} />

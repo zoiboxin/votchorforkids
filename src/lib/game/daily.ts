@@ -18,7 +18,7 @@ export interface DailyTaskDef {
 }
 
 export const DAILY_TASK_POOL: readonly DailyTaskDef[] = [
-  { id: "votes",   emoji: "🗳", label: (n) => `Secure ${n} votes — deliver 🗳 or bust 🚓`, target: 10,  xp: 80 },
+  { id: "votes",   emoji: "💰", label: (n) => `Bank ₹${n} — scoop 💰 cash piles & loot the fallen`, target: 150, xp: 80 },
   { id: "rescues", emoji: "❤", label: (n) => `Rescue ${n} bubbled friends`,              target: 5,   xp: 70 },
   { id: "runs",    emoji: "🏃", label: (n) => `Finish ${n} runs`,                         target: 3,   xp: 50 },
   { id: "score",   emoji: "⭐", label: (n) => `Bank ${n.toLocaleString()} points`,        target: 1500, xp: 90 },
@@ -116,7 +116,7 @@ export function ensureDaily(state: DailyState | undefined | null): DailyState {
 }
 
 export interface DailyRunFacts {
-  /** votes delivered by a protester */
+  /** 💰 money banked this run (cash piles + loot from the fallen) */
   votes: number;
   /** runners busted by a police officer */
   busts: number;
@@ -152,7 +152,7 @@ export function applyRunToDaily(prevDaily: DailyState, run: DailyRunFacts): Dail
     streakJustGrew = true;
   }
 
-  // task progress — "secure votes" merges protester deliveries & police busts
+  // task progress — "bank money" counts the cash you scooped & looted
   const byId: Record<string, number> = {
     votes: (run.votes || 0) + (run.busts || 0),
     rescues: run.rescues || 0,

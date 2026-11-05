@@ -963,12 +963,15 @@ export function poseAnimal(g: THREE.Object3D, speed: number, t: number, phase = 
 /* ------------------------------------------------------------------ */
 const _bucket = new Bucket();
 
-/** Merged vertex-coloured vote-token geometry (for instanced rendering). */
+/** Merged vertex-coloured 💰 cash-pile geometry (for instanced rendering) —
+ *  a banded banknote bundle with loose notes and two gold coins. Replaces the
+ *  old vote token: in 7Nights the town runs on MONEY. */
 export function voteTokenGeometry(): THREE.BufferGeometry {
-  _bucket.add(box(0.5, 0.34, 0.06), GOLD, true);
-  _bucket.add(cone(0.25, 0.2, 4), "#e8b028", true, 0, 0.06, 0, Math.PI, 0, 0, 1, 1, 0.18);
-  _bucket.add(box(0.2, 0.2, 0.07), "#ffffff", true, 0, -0.03, 0.01);
-  _bucket.add(cone(0.08, 0.16, 5), "#e0483a", true, 0, 0.12, 0.05, Math.PI / 2);
+  _bucket.add(box(0.52, 0.16, 0.3), "#2f9e57", true, 0, 0.09, 0);                            // note stack
+  _bucket.add(box(0.2, 0.18, 0.32), "#e6f7ec", true, 0, 0.09, 0);                            // paper band
+  _bucket.add(box(0.54, 0.05, 0.32), "#41b76f", true, 0.03, 0.2, 0.02, 0.14, 0.1, 0.06);     // loose note on top
+  _bucket.add(sphere(0.13, 12, 8), GOLD, true, 0.28, 0.06, 0.17, 0, 0, 0, 1, 0.45, 1);       // gold coin
+  _bucket.add(sphere(0.1, 10, 8), "#e8b028", true, -0.25, 0.05, -0.15, 0, 0, 0, 1, 0.5, 1);  // second coin
   return _bucket.mesh("basic")!.geometry;
 }
 

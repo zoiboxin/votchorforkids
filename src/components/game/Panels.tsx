@@ -363,7 +363,7 @@ export function StatsDialog({ open, onOpenChange }: { open: boolean; onOpenChang
           <StatCell icon={<Trophy size={14} />} label="Wins" value={String(wins)} />
           <StatCell icon={<Gauge size={14} />} label="Win rate" value={`${winRate}%`} />
           <StatCell icon={<Star size={14} />} label="Best score" value={bestScore.toLocaleString()} />
-          <StatCell icon={<Vote size={14} />} label="Votes delivered" value={String(lifeVotes)} />
+          <StatCell icon={<span className="text-sm">💰</span>} label="Money banked" value={String(lifeVotes)} />
           <StatCell icon={<HeartHandshake size={14} />} label="Friends rescued" value={String(lifeRescues)} />
           <StatCell icon={<ShieldAlert size={14} />} label="Times caught" value={String(lifeCaught)} />
           <StatCell icon={<Timer size={14} />} label="Playtime" value={playH > 0 ? `${playH}h ${playM}m` : `${playM}m`} />
@@ -382,7 +382,7 @@ export function StatsDialog({ open, onOpenChange }: { open: boolean; onOpenChang
                   <span aria-hidden>{r.won ? "🏆" : "🏃"}</span>
                   <b className="text-yellow-200">{r.score.toLocaleString()}</b>
                   <span className="text-white/55">pts</span>
-                  <span className="ml-auto text-white/60">🗳 {r.votes} · ❤ {r.rescues} · {fmtClock(r.timeMs)}</span>
+                  <span className="ml-auto text-white/60">💰 ₹{r.votes} · ❤ {r.rescues} · {fmtClock(r.timeMs)}</span>
                 </div>
               ))}
             </div>
@@ -475,7 +475,7 @@ export function HistoryDialog({ open, onOpenChange }: { open: boolean; onOpenCha
                         {r.won && <span className="rounded-full bg-yellow-300/25 px-1.5 text-[9px] font-black uppercase text-yellow-200">Democracy saved</span>}
                       </div>
                       <div className="mt-0.5 flex flex-wrap gap-x-2.5 text-[10px] font-bold text-white/60">
-                        <span>🗳 {r.votes}/16</span>
+                        <span>💰 ₹{r.votes}</span>
                         <span>❤ {r.rescues}</span>
                         <span>⭐ {r.caught} caught</span>
                         <span>⏱ {fmtClock(r.timeMs)}</span>

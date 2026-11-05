@@ -564,6 +564,19 @@ export const POINTS_WRONG_ACCUSE = -60;
 export const POINTS_BUILD = 30;
 export const POINTS_HARVEST = 15;
 
+/* ---------- 💰 money — votes are gone, cash rules the town ---------- */
+export const MONEY_PER_PILE = 25;        // a 💰 cash pile lying around town
+export const CASH_RESPAWN_S = 70;        // scattered cash re-stocks somewhere else
+export const CREW_PURSE: readonly [number, number] = [40, 120]; // ₹ each survivor carries
+export const CIV_PURSE: readonly [number, number] = [10, 60];   // ₹ each townsfolk carries
+export const ZOMBIE_PURSE: readonly [number, number] = [10, 30]; // ₹ dropped by a slain zombie
+export const POINTS_LOOT = 5;            // points per ₹ pickup (money ALSO scores)
+/** Zombies & beasts terrify everyone: bots panic-flee within this range… */
+export const CIV_PANIC_R = 11;
+export const CREW_PANIC_R = 12;
+/** …and graveyard zombies SHUFFLE after any living soul (player or townsfolk). */
+export const ZOMBIE_HUNT_R = 26;
+
 /* ---------- horror-hint ticker lines (landing page) ---------- */
 export const NIGHT_TICKER: readonly string[] = [
   "🌙 NIGHT 1 of 7 — the town sleeps with one eye open.",

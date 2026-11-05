@@ -342,6 +342,8 @@ export function Npcs({ engine }: { engine: GameEngine }) {
   useFrame((s) => {
     const t = s.clock.elapsedTime;
     const cam = s.camera.position;
+    // 🌙 names hide at dusk & night — the dark takes identities away; they return at dawn
+    const namesHidden = engine.phase === "dusk" || engine.phase === "night";
     for (const list of [engine.cops, engine.civs]) {
       for (const n of list) {
         const v = views.get(n.id);
@@ -354,17 +356,27 @@ export function Npcs({ engine }: { engine: GameEngine }) {
         const close = d2 < DETAIL_SQ;
         const rig = v.mesh.userData.rig as { lids: THREE.Object3D[]; brows: THREE.Object3D[] } | undefined;
         if (rig) {
-          for (const l of rig.lids) l.visible = close;
-          for (const b of rig.brows) b.visible = close;
+          for (const l of rig.lids) l.visible = close && !n.dead;
+          for (const b of rig.brows) b.visible = close && !n.dead;
+        }
+        if (n.dead) {
+          // 🧟💀 a fallen townsfolk lies still where the night took them
+          v.mesh.position.set(n.x, 0.34, n.z);
+          v.mesh.rotation.x = -Math.PI / 2.1;
+          poseCharacter(v.mesh, 0, t, { phase: n.phase, detained: true });
+          if (v.bubble) v.bubble.visible = false;
+          if (v.tag) v.tag.visible = false;
+          continue;
         }
         v.mesh.position.set(n.x, 0, n.z);
+        v.mesh.rotation.x = 0;
         let dd = n.face - v.mesh.rotation.y;
         dd = Math.atan2(Math.sin(dd), Math.cos(dd));
         v.mesh.rotation.y += dd * 0.15;
         const speed = Math.hypot(n.vx, n.vz);
         poseCharacter(v.mesh, speed, t, { phase: n.phase, detained: n.mode === "detained" });
         if (v.bubble) v.bubble.visible = close && n.mode === "detained";
-        if (v.tag) v.tag.visible = close && n.mode !== "detained";
+        if (v.tag) v.tag.visible = close && n.mode !== "detained" && !namesHidden;
       }
     }
   });
@@ -794,6 +806,8 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
   useFrame((s) => {
     const t = s.clock.elapsedTime;
     const cam = s.camera.position;
+    // 🌙 names hide at dusk & night — identify by CLOTH COLOR, not tags
+    const namesHidden = engine.phase === "dusk" || engine.phase === "night";
     engine.crew.forEach((c, i) => {
       const v = views[i];
       if (!v) return;
@@ -835,7 +849,7 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
         const tag = possessed ? v.btag : v.tag;
         const otherTag = possessed ? v.tag : v.btag;
         if (otherTag) otherTag.visible = false;
-        if (tag) tag.visible = close;
+        if (tag) tag.visible = close && !namesHidden;
       } else {
         // a body on the ground — lie still, tag says their name one last time
         body.position.set(c.deathX, 0.34, c.deathZ);
@@ -847,7 +861,7 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
           for (const l of rig.lids) l.visible = false;
           for (const b of rig.brows) b.visible = false;
         }
-        if (v.tag) v.tag.visible = d2 < DETAIL_SQ;
+        if (v.tag) v.tag.visible = d2 < DETAIL_SQ && !namesHidden;
         if (v.btag) v.btag.visible = false;
       }
     });
@@ -863,13 +877,59 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
   );
 }
 
+/* ------------------------------------------------------------------ */
+/* 💰 7Nights — dropped loot: purses of the fallen & zombie hoards      */
+/* ------------------------------------------------------------------ */
+const MAX_LOOT_POOLS = 24; // plenty — drops are rare and collected fast
+
+export function LootView({ engine }: { engine: GameEngine }) {
+  // a fixed pool of pile groups, recycled as loot drops & gets collected
+  const piles = useMemo(() => Array.from({ length: MAX_LOOT_POOLS }, () => {
+    const g = new THREE.Group();
+    const em = emojiSprite("💰", 0.62);
+    em.position.y = 0.85;
+    g.add(em);
+    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: "#ffd447", transparent: true, opacity: 0.45, depthWrite: false, blending: THREE.AdditiveBlending }));
+    glow.scale.setScalar(1.5);
+    glow.position.y = 0.6;
+    g.add(glow);
+    const ring = new THREE.Mesh(
+      new THREE.TorusGeometry(0.55, 0.045, 6, 24),
+      new THREE.MeshBasicMaterial({ color: "#ffd447", transparent: true, opacity: 0.8 }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = 0.07;
+    g.add(ring);
+    g.visible = false;
+    return g;
+  }), []);
+
+  useFrame((s) => {
+    const t = s.clock.elapsedTime;
+    const cam = s.camera.position;
+    for (let i = 0; i < MAX_LOOT_POOLS; i++) {
+      const g = piles[i];
+      const live = i < engine.loot.length ? engine.loot[i] : null;
+      if (!live) { g.visible = false; continue; }
+      const dx = live.x - cam.x, dz = live.z - cam.z;
+      g.visible = dx * dx + dz * dz < CULL_SQ;
+      if (!g.visible) continue;
+      g.position.set(live.x, 0, live.z);
+      const em = g.children[0];
+      em.position.y = 0.85 + Math.sin(t * 2.6 + live.bob) * 0.12;
+      em.rotation.y = t * 1.4 + live.bob;
+      (g.children[1] as THREE.Sprite).position.y = em.position.y - 0.15;
+    }
+  });
+  return <>{piles.map((g, i) => <primitive object={g} key={i} />)}</>;
+}
+
 function hexToTagBg(hex: string): string {
   // opaque dark background tinted with the crew color so tags read at a glance
   const n = parseInt(hex.slice(1), 16);
   const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
   return `rgba(${Math.round(r * 0.5)},${Math.round(g * 0.5)},${Math.round(b * 0.5)},0.92)`;
 }
-
 /* ------------------------------------------------------------------ */
 /* 🪓 7Nights — tool pickups lying around the world                    */
 /* ------------------------------------------------------------------ */

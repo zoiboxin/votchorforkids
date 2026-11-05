@@ -17,6 +17,8 @@ import {
   POINTS_BUILD, POINTS_HARVEST, POINTS_KILL_BEAST, POINTS_KILL_ZOMBIE, POINTS_NIGHT, POINTS_RIGHT_ACCUSE,
   POINTS_WRONG_ACCUSE, POSSESS_PLAYER_CHANCE, ROCK_HITS, ROCK_PER_BOULDER, TOOL_PICKUP_R, TOOL_SPAWN, TOOLS,
   TREE_HITS, WOOD_PER_TREE, WIN_BONUS, ZOMBIE_HP,
+  MONEY_PER_PILE, CASH_RESPAWN_S, CREW_PURSE, CIV_PURSE, ZOMBIE_PURSE, POINTS_LOOT,
+  CIV_PANIC_R, CREW_PANIC_R, ZOMBIE_HUNT_R,
   type AnimalKind, type Appearance, type Phase, type PolicePerk, type PowerKind, type Side, type ToolKind, type Zone, zoneOf, ZONE_TOAST,
 } from "./constants";
 import { clamp, mulberry32, range } from "./rng";
@@ -94,6 +96,12 @@ export interface Npc {
   pauseT?: number;
   /** the dedicated "just joined" bot — spawns right beside the player's site on every game start */
   companion?: boolean;
+  /** 💰 every townsfolk carries a purse — it drops where they fall */
+  purse?: number;
+  /** 🧟 slain by the night (lies still; the town refills at dawn) */
+  dead?: boolean;
+  /** true while this bot's death has already dropped its loot */
+  looted?: boolean;
 }
 export interface Zombie { id: number; x: number; z: number; vx: number; vz: number; face: number; phase: number; touchCd: number; hp?: number; dead?: boolean }
 
@@ -113,7 +121,12 @@ export interface Crew {
   clue: string;
   /** true once the player inspected the body */
   inspected: boolean;
+  /** 💰 the purse they carry — drops where they fall */
+  purse: number;
 }
+
+/** 💰 a dropped stash of money — purses of the fallen, zombie hoards… walk over it! */
+export interface LootPile { id: number; x: number; z: number; amt: number; label: string; bob: number }
 export interface ToolSlot { kind: ToolKind; count: number }
 export interface ToolEnt { id: number; kind: ToolKind; x: number; z: number; active: boolean; respawn: number }
 export interface Build {
@@ -187,6 +200,8 @@ export interface HudData {
   /** collected-but-not-yet-used power gems waiting in the ✨ pockets — each fires ONCE,
    *  G unleashes the first, tapping a specific slot fires that one (max POWER_CARRY) */
   pockets: { def: number; name: string; emoji: string; color: string; tip: string }[];
+  /** 💰 cash banked this run — piles scooped + loot from the fallen */
+  money: number;
   /** animal the player currently looks like (morph power) */
   morphKind: AnimalKind | null;
   /** true when Blink is charged and Q will teleport right now */
@@ -343,6 +358,12 @@ export class GameEngine {
 
   points = 0; rescues = 0; caughtCount = 0;
   delivered = 0;
+  /** 💰 cash collected this run — replaces the old vote chase */
+  money = 0;
+  /** 💰 dropped stashes lying in the world (purses of the fallen, zombie hoards) */
+  loot: LootPile[] = [];
+  /** townsfolk the night took — refilled at dawn (living city) */
+  civsLostTonight = 0;
   // daily-task counters: snacks munched & gems unleashed this run
   snacksEaten = 0; powersUsed = 0;
   detainedT = 0; invulnT = 8; elapsed = 0; // 8s spawn grace — cops can't spot or catch you
@@ -547,7 +568,7 @@ export class GameEngine {
     const civSpots = scatterSpots(r, this.world, CIVILIAN_COUNT, 8, CITY_RADIUS - 8, BOT_SPAWN_GAP);
     for (let i = 0; i < CIVILIAN_COUNT; i++) {
       const p = civSpots[i];
-      this.civs.push({ id: this.nid(), kind: "civilian", x: p.x, z: p.z, vx: 0, vz: 0, face: 0, mode: "wander", tx: p.x, tz: p.z, timer: range(r, 0, 4), phase: Math.random() * 6, name: CIVIL_NAMES[i % CIVIL_NAMES.length], speed: range(r, 2.2, 3.4), alertT: 0 });
+      this.civs.push({ id: this.nid(), kind: "civilian", x: p.x, z: p.z, vx: 0, vz: 0, face: 0, mode: "wander", tx: p.x, tz: p.z, timer: range(r, 0, 4), phase: Math.random() * 6, name: CIVIL_NAMES[i % CIVIL_NAMES.length], speed: range(r, 2.2, 3.4), alertT: 0, purse: Math.round(range(r, CIV_PURSE[0], CIV_PURSE[1])) });
     }
     // protest march — old-game homage: a slow column of civilians walks the main road,
     // spread down its FULL length instead of bunched right at the player's spawn
@@ -564,7 +585,7 @@ export class GameEngine {
     // their site: a fellow vote-scavenger beside protesters, a wanted vote-runner
     // beside the officer (set up in assignScavengers/assignRunners below)
     const jx = spotNear(r, this.world, SPAWN.x, SPAWN.z, 14, 26);
-    this.civs.push({ id: this.nid(), kind: "civilian", x: jx.x, z: jx.z, vx: 0, vz: 0, face: 0, mode: "wander", tx: jx.x, tz: jx.z, timer: range(r, 1, 3), phase: Math.random() * 6, name: "Bijli", speed: 3.15, alertT: 0, companion: true });
+    this.civs.push({ id: this.nid(), kind: "civilian", x: jx.x, z: jx.z, vx: 0, vz: 0, face: 0, mode: "wander", tx: jx.x, tz: jx.z, timer: range(r, 1, 3), phase: Math.random() * 6, name: "Bijli", speed: 3.15, alertT: 0, companion: true, purse: Math.round(range(r, CIV_PURSE[0], CIV_PURSE[1])) });
     // zombies (graveyard) — they rise every night, and NOW they can be slain
     for (let i = 0; i < ZOMBIE_COUNT; i++) {
       const a = range(r, 0, Math.PI * 2), d = range(r, 4, 36);
@@ -887,7 +908,7 @@ export class GameEngine {
    */
   private assignScavengers() {
     for (const c of this.civs) { c.scav = false; c.pauseT = 0; }
-    if (this.side !== "protester") return;
+    if (this.side !== "protester" || this.horror) return; // 💰 7Nights: nobody hauls votes — the cash rush is the player's game
     let made = 0;
     const comp = this.civs.find((c) => c.companion);
     if (comp) { comp.scav = true; made++; }
@@ -905,8 +926,9 @@ export class GameEngine {
   start() {
     this.running = true;
     this.toast(`🌙 Welcome, ${this.playerName}. You and ${CREW_COUNT} strangers must survive SEVEN nights.`, "info");
+    this.toast("💰 Cash piles lie around town — scoop them up! The fallen drop their purses… first one there is richer.", "info");
     this.toast("☀️ DAY: chop trees (🪓 + F), smash rocks (🔨 + F), build defenses (🔧 + B). Find arms around town — press G to open your pack!", "info");
-    this.toast("⚠️ DUSK: sirens howl… SEVERAL of us turn. NIGHT: the pack hunts. Hide, run… or FIGHT (🗡️ + F).", "info");
+    this.toast("⚠️ DUSK: sirens howl… SEVERAL of us turn. Names vanish in the dark! NIGHT: the pack hunts. Hide, run… or FIGHT (🗡️ + F).", "info");
   }
   setToast(fn: ToastFn) { this.toast = fn; }
 
@@ -1897,6 +1919,7 @@ export class GameEngine {
         alive: true, mode: "wander", tx: spot.x, tz: spot.z,
         timer: range(this.rnd, 2, 6), phase: Math.random() * 6,
         hp: CREW_HP, touchCd: 0, attackAnimT: 0, deathX: 0, deathZ: 0, clue: "", inspected: false,
+        purse: Math.round(range(this.rnd, CREW_PURSE[0], CREW_PURSE[1])),
       });
     }
   }
@@ -1977,6 +2000,7 @@ export class GameEngine {
       const c = this.crew[idx];
       if (c && c.alive) { c.mode = "possessed"; c.hp = HUNTER_HP; }
     }
+    if (!this.youPossessed) this.toast("🌑 Names vanish in the dark — watch CLOTHES, not name tags!", "info");
     if (this.youPossessed) {
       this.held = -1;
       this.toast(this.possessed.length > 0
@@ -1998,6 +2022,19 @@ export class GameEngine {
     this.youPossessed = false;
     this.nightsSurvived = Math.min(NIGHTS_TOTAL, this.nightNo);
     if (!early) this.points += POINTS_NIGHT;
+    // 🌤️ the living city refills: everyone the night took is replaced by fresh faces
+    let revived = 0;
+    for (const c of this.civs) {
+      if (!c.dead) continue;
+      const t = freeSpot(this.rnd, this.world, 12, CITY_RADIUS - 10);
+      c.x = t.x; c.z = t.z; c.tx = t.x; c.tz = t.z;
+      c.vx = 0; c.vz = 0; c.dead = false; c.looted = false;
+      c.mode = "wander"; c.timer = range(this.rnd, 1, 5);
+      c.purse = Math.round(range(this.rnd, CIV_PURSE[0], CIV_PURSE[1]));
+      revived++;
+    }
+    if (revived > 0) this.toast(`🌤️ Dawn light… ${revived} fresh face${revived > 1 ? "s" : ""} wander${revived > 1 ? "" : "s"} back into town (and 💰 loot may still lie where the fallen did).`, "info");
+    this.civsLostTonight = 0;
     stopDrone();
     sfx.bell();
     const alive = this.crew.filter((c) => c.alive).length;
@@ -2038,19 +2075,26 @@ export class GameEngine {
       const d2p = dist2(c.x, c.z, p.x, p.z);
 
       if (c.mode === "possessed") {
-        // 🩸 THE PACK — each beast hunts the nearest living soul, fears fire, chews barricades
+        // 🩸 THE PACK — each beast hunts the nearest living soul (crew, townsfolk, or you), fears fire, chews barricades
         c.attackAnimT = Math.max(0, c.attackAnimT - dt);
-        let tx = p.x, tz = p.z, td = d2p, victim = -1;
+        let tx = p.x, tz = p.z, td = d2p, victim = -1, victimCiv: Npc | null = null;
+        if (this.detainedT > 0 || this.drive) { td = Infinity; } // can't reach you in the van / the car
         for (let j = 0; j < this.crew.length; j++) {
           const o = this.crew[j];
           if (j === i || !o.alive || o.mode === "possessed") continue; // the pack never turns on itself
           const d = dist2(c.x, c.z, o.x, o.z);
-          if (d < td) { td = d; tx = o.x; tz = o.z; victim = j; }
+          if (d < td) { td = d; tx = o.x; tz = o.z; victim = j; victimCiv = null; }
+        }
+        // 💀 townsfolk caught out in the dark are prey too
+        for (const cv of this.civs) {
+          if (cv.dead) continue;
+          const d = dist2(c.x, c.z, cv.x, cv.z);
+          if (d < td) { td = d; tx = cv.x; tz = cv.z; victim = -1; victimCiv = cv; }
         }
         const fire = this.nearestBuildOf("campfire", c.x, c.z);
         if (fire && dist2(fire.x, fire.z, c.x, c.z) < CAMPFIRE_R * CAMPFIRE_R) {
           const dx = c.x - fire.x, dz = c.z - fire.z, dl = Math.hypot(dx, dz) || 1;
-          tx = c.x + (dx / dl) * 12; tz = c.z + (dz / dl) * 12; victim = -1;
+          tx = c.x + (dx / dl) * 12; tz = c.z + (dz / dl) * 12; victim = -1; victimCiv = null;
         }
         stepNpc(c, tx, tz, HUNTER_SPEED, dt, this.world);
         // maul barricades that block the path
@@ -2065,7 +2109,7 @@ export class GameEngine {
         }
         // caught someone?
         if (c.touchCd <= 0) {
-          if (victim < 0 && td < 1.8 * 1.8 && this.detainedT <= 0 && !this.drive) {
+          if (victim < 0 && !victimCiv && td < 1.8 * 1.8 && this.detainedT <= 0 && !this.drive) {
             c.touchCd = HUNTER_TOUCH_CD;
             c.attackAnimT = 0.45; // claw swipe animation
             this.hp = Math.max(0, this.hp - HUNTER_DMG);
@@ -2078,6 +2122,10 @@ export class GameEngine {
             c.touchCd = HUNTER_TOUCH_CD;
             c.attackAnimT = 0.45;
             this.killCrew(victim, false, i);
+          } else if (victimCiv && td < 1.5 * 1.5) {
+            c.touchCd = HUNTER_TOUCH_CD;
+            c.attackAnimT = 0.45;
+            this.killCiv(victimCiv, "beast");
           }
         }
         if (this.groanT <= 0 && d2p < 24 * 24) { this.groanT = range(this.rnd, 2.5, 5); sfx.groan(); }
@@ -2108,7 +2156,7 @@ export class GameEngine {
       } else {
         c.vx *= 0.8; c.vz *= 0.8;
       }
-      // a beast of the pack nearby → blind panic away from the CLOSEST one
+      // a beast of the pack — or a graveyard zombie — nearby → blind panic away from the CLOSEST one
       let bx = 0, bz = 0, bd2 = Infinity;
       if (this.youPossessed) { bx = p.x; bz = p.z; bd2 = d2p; }
       for (const bi of this.possessed) {
@@ -2117,10 +2165,42 @@ export class GameEngine {
         const d = dist2(c.x, c.z, b.x, b.z);
         if (d < bd2) { bd2 = d; bx = b.x; bz = b.z; }
       }
+      for (const zb of this.zombies) { // 🧟 the crew fear the shamblers too — self-preservation!
+        if (zb.dead) continue;
+        const d = dist2(c.x, c.z, zb.x, zb.z);
+        if (d < bd2) { bd2 = d; bx = zb.x; bz = zb.z; }
+      }
       if (this.phase === "night" && bd2 < 12 * 12) {
         const dx = c.x - bx, dz = c.z - bz, dl = Math.hypot(dx, dz) || 1;
         stepNpc(c, c.x + (dx / dl) * 14, c.z + (dz / dl) * 14, CREW_SPEED * 1.7, dt, this.world);
       }
+    }
+  }
+
+  /** 💰 drop a stash of money where someone fell — first one there pockets it. */
+  private dropLoot(x: number, z: number, amt: number, label: string) {
+    if (amt <= 0) return;
+    const s = { x: x + range(this.rnd, -1, 1), z: z + range(this.rnd, -1, 1) };
+    resolve(s, 0.4, this.world);
+    this.loot.push({ id: this.nid(), x: s.x, z: s.z, amt: Math.round(amt), label, bob: Math.random() * 6 });
+  }
+
+  /** 🧟 a townsfolk is caught by the dark — they fall, their purse drops,
+   *  and the town quietly refills them at dawn (the city stays alive). */
+  private killCiv(c: Npc, by: "zombie" | "beast") {
+    if (c.dead) return;
+    c.dead = true;
+    c.mode = "wander"; // frozen while dead — the renderer lays the body down
+    c.vx = 0; c.vz = 0;
+    if (!c.looted) {
+      c.looted = true;
+      this.dropLoot(c.x, c.z, c.purse ?? 0, `${c.name}'s purse`);
+    }
+    this.civsLostTonight++;
+    const d2p = dist2(c.x, c.z, this.player.x, this.player.z);
+    if (d2p < 40 * 40) {
+      sfx.scream();
+      this.toast(by === "zombie" ? `🧟 The zombies got ${c.name}! Their 💰 purse dropped — grab it!` : `🩸 A beast tore ${c.name} apart! Their 💰 dropped — run for it!`, "bad");
     }
   }
 
@@ -2134,6 +2214,8 @@ export class GameEngine {
     c.mode = "dead";
     c.deathX = c.x; c.deathZ = c.z;
     c.inspected = false;
+    // 💰 their purse scatters where they fell — risk the night to loot it!
+    this.dropLoot(c.deathX, c.deathZ, c.purse, slain ? `${c.name}'s dropped pouch` : `${c.name}'s purse`);
     if (slain) {
       c.clue = "no fibers, no footprints… the beast fell right where it stood.";
     } else if (this.youPossessed) {
@@ -2229,7 +2311,8 @@ export class GameEngine {
           this.kills++;
           this.points += POINTS_KILL_ZOMBIE;
           sfx.scream();
-          this.toast("🧟 The zombie crumbles! +40", "good");
+          this.dropLoot(zb.x, zb.z, range(this.rnd, ZOMBIE_PURSE[0], ZOMBIE_PURSE[1]), "the zombie's hoard");
+          this.toast("🧟 The zombie crumbles — its 💰 hoard drops! +40", "good");
         }
         return;
       }
@@ -2411,6 +2494,7 @@ export class GameEngine {
       c.deathX = c.x; c.deathZ = c.z;
       c.clue = "they were dragged away screaming… the spirit left their body.";
       c.inspected = true;
+      this.dropLoot(c.deathX, c.deathZ, c.purse, `${c.name}'s seized purse`);
       this.accusesRight++;
       this.points += POINTS_RIGHT_ACCUSE;
       sfx.mob();
@@ -2421,6 +2505,7 @@ export class GameEngine {
       c.deathX = c.x; c.deathZ = c.z;
       c.clue = "innocent… the mob fled in shame.";
       c.inspected = true;
+      this.dropLoot(c.deathX, c.deathZ, c.purse, `${c.name}'s left-behind purse`);
       this.accusesWrong++;
       this.points = Math.max(0, this.points + POINTS_WRONG_ACCUSE);
       sfx.scream();
@@ -2656,22 +2741,42 @@ export class GameEngine {
       if (this.starTimer <= 0) { this.stars--; this.starTimer = STAR_DECAY_S; if (this.stars === 0) this.toast("Wanted level cleared. Nice and sneaky!", "info"); }
     }
 
-    /* --- votes (7Nights: the vote chase is retired — the story scores instead) --- */
-    if (!this.horror && this.side === "protester" && this.detainedT <= 0 && !this.won) {
-      if (this.carriedVotes.length < MAX_CARRY) {
-        for (const v of this.votes) {
-          if (v.state !== "world") continue;
-          if (dist2(p.x, p.z, v.x, v.z) < CARRY_RADIUS * CARRY_RADIUS) {
-            v.state = "carried";
-            this.carriedVotes.push(v);
-            this.points += POINTS_PICKUP;
-            sfx.pickup();
-            this.toast(`Vote snatched! (${this.carriedVotes.length}/${MAX_CARRY} carried)`, "good");
-            break;
+    /* --- 💰 MONEY — the vote chase is retired; cash piles & dropped loot rule now --- */
+    if (this.detainedT <= 0 && !this.won) {
+      // scattered 💰 cash piles: walk over one to pocket it (a fresh pile restocks elsewhere)
+      for (const v of this.votes) {
+        if (v.state !== "world") {
+          if (v.state === "delivered") { // horror: "delivered" = pocketed — restock it far away
+            v.respawnT = (v.respawnT ?? 0) - dt;
+            if (v.respawnT <= 0) {
+              const np = freeSpot(this.rnd, this.world, 16, 420);
+              v.x = np.x; v.z = np.z; v.state = "world";
+            }
           }
+          continue;
+        }
+        v.respawnT = undefined;
+        if (dist2(p.x, p.z, v.x, v.z) < CARRY_RADIUS * CARRY_RADIUS) {
+          v.state = "delivered";
+          v.respawnT = CASH_RESPAWN_S;
+          this.money += MONEY_PER_PILE;
+          this.points += POINTS_PICKUP;
+          sfx.pickup();
+          this.toast(`💰 +₹${MONEY_PER_PILE} — you have ₹${this.money}!`, "good");
         }
       }
-      if (this.carriedVotes.length > 0 && dist2(p.x, p.z, BALLOT.x, BALLOT.z) < DELIVER_RADIUS * DELIVER_RADIUS) this.deliver();
+      // 💰 dropped loot: purses of the fallen & zombie hoards — race the bots for them!
+      for (let i = this.loot.length - 1; i >= 0; i--) {
+        const l = this.loot[i];
+        if (dist2(p.x, p.z, l.x, l.z) < 1.9 * 1.9) {
+          this.loot.splice(i, 1);
+          this.money += l.amt;
+          this.points += POINTS_LOOT;
+          sfx.pickup();
+          this.fxQueue.push({ type: "confetti", x: l.x, y: 1.1, z: l.z, hue: 0.13 });
+          this.toast(`💰 Looted ${l.label}: +₹${l.amt} (₹${this.money} total)!`, "good");
+        }
+      }
     }
 
     /* --- items: walk over food to pocket it, use it later from the HUD --- */
@@ -2909,10 +3014,51 @@ export class GameEngine {
     /* --- civilians: wander + get detained + rescue --- */
     for (const c of this.civs) {
       c.phase += dt;
+      // 🧟💀 a fallen townsfolk lies still until dawn refills the town
+      if (c.dead) continue;
+      // 🏃 SAVE YOURSELF! zombies or beasts anywhere close → blind panic away from
+      // the closest horror (dusk & night). Survival instinct beats every other job.
+      if (this.phase === "dusk" || this.phase === "night") {
+        let hx = 0, hz = 0, hd2 = Infinity, horror: "zombie" | "beast" | null = null;
+        if (!this.youPossessed) { const d = dist2(c.x, c.z, p.x, p.z); if (d < hd2) { hd2 = d; hx = p.x; hz = p.z; horror = "beast"; } }
+        for (const bi of this.possessed) {
+          const b = this.crew[bi];
+          if (!b || !b.alive) continue;
+          const d = dist2(c.x, c.z, b.x, b.z);
+          if (d < hd2) { hd2 = d; hx = b.x; hz = b.z; horror = "beast"; }
+        }
+        for (const zb of this.zombies) {
+          if (zb.dead) continue;
+          const d = dist2(c.x, c.z, zb.x, zb.z);
+          if (d < hd2) { hd2 = d; hx = zb.x; hz = zb.z; horror = "zombie"; }
+        }
+        if (horror && hd2 < CIV_PANIC_R * CIV_PANIC_R) {
+          const dx = c.x - hx, dz = c.z - hz, dl = Math.hypot(dx, dz) || 1;
+          // sprint for the nearest campfire if one is roughly on the run direction — fire = safety
+          const fire = this.nearestBuildOf("campfire", c.x, c.z);
+          if (fire && dist2(fire.x, fire.z, c.x, c.z) < 45 * 45) {
+            const fdx = fire.x - c.x, fdz = fire.z - c.z, fl = Math.hypot(fdx, fdz) || 1;
+            if ((fdx / fl) * (dx / dl) + (fdz / fl) * (dz / dl) > 0.25) { stepNpc(c, fire.x, fire.z, c.speed * CIV_FLEE_MULT, dt, this.world); continue; }
+          }
+          stepNpc(c, c.x + (dx / dl) * 13, c.z + (dz / dl) * 13, c.speed * CIV_FLEE_MULT, dt, this.world);
+          continue;
+        }
+      }
+      // 🤝 living city: passers-by scoop up dropped purses when the coast is clear
+      if (this.phase === "day" || this.phase === "dawn") {
+        for (let li = this.loot.length - 1; li >= 0; li--) {
+          const l = this.loot[li];
+          if (dist2(c.x, c.z, l.x, l.z) < 1.5 * 1.5 && this.rnd() < dt * 0.9) {
+            this.loot.splice(li, 1);
+            if (dist2(c.x, c.z, p.x, p.z) < 26 * 26) this.toast(`👋 ${c.name} scooped up ${l.label} (₹${l.amt}) — should've been quicker!`, "info");
+            break;
+          }
+        }
+      }
       // police side: vote-runners live in their own state machine (seek → smuggle → lay low)
       if (c.runner && this.side === "police" && (c.mode === "wander" || c.mode === "flee")) { this.stepRunner(c, dt); continue; }
-      // protester side: scavengers gather loose votes & haul them to the protest camp
-      if (c.scav && this.side === "protester" && (c.mode === "wander" || c.mode === "flee") && !c.runner) {
+      // protester side: scavengers gather loose votes & haul them to the protest camp (old game only)
+      if (!this.horror && c.scav && this.side === "protester" && (c.mode === "wander" || c.mode === "flee") && !c.runner) {
         if (c.mode === "wander") { this.stepScavenger(c, dt); continue; }
         // fleeing with a cop on their heels — same panic-run as everyone else (below)
       }
@@ -2991,17 +3137,31 @@ export class GameEngine {
       if (night > 0.55) {
         const fire = this.nearestBuildOf("campfire", zb.x, zb.z);
         const scared = !!fire && dist2(fire.x, fire.z, zb.x, zb.z) < CAMPFIRE_R * CAMPFIRE_R;
-        const inGrave = dist2(zb.x, zb.z, GRAVEYARD.x, GRAVEYARD.z) < 55 * 55;
         const beastYou = this.youPossessed && this.phase === "night"; // monsters don't fight monsters
         if (scared) {
           // fire wins — the zombie stumbles away from the flames
           const dx = zb.x - fire!.x, dz = zb.z - fire!.z, dl = Math.hypot(dx, dz) || 1;
           stepNpc(zb, zb.x + (dx / dl) * 9, zb.z + (dz / dl) * 9, ZOMBIE_SPEED, dt, this.world);
-        } else if (inGrave && d2p < 26 * 26 && !beastYou) {
-          stepNpc(zb, p.x, p.z, ZOMBIE_NIGHT_SPEED, dt, this.world);
         } else {
-          zb.vx *= 0.95; zb.vz *= 0.95;
-          if (Math.random() < dt * 0.2) { const t = freeSpot(this.rnd, this.world, 4, 34); stepNpc(zb, GRAVEYARD.x + t.x * 0.2, GRAVEYARD.z + t.z * 0.2, ZOMBIE_SPEED * 0.4, dt, this.world); }
+          // 🧟 hunt the NEAREST living soul — you OR any townsfolk out in the dark
+          let tx = p.x, tz = p.z, td = d2p, victimCiv: Npc | null = null;
+          if (beastYou || this.detainedT > 0 || this.drive) { td = Infinity; } // beasts are invisible to shamblers
+          for (const c of this.civs) {
+            if (c.dead) continue; // the fallen don't interest the shamblers
+            const d = dist2(zb.x, zb.z, c.x, c.z);
+            if (d < td) { td = d; tx = c.x; tz = c.z; victimCiv = c; }
+          }
+          if (td < ZOMBIE_HUNT_R * ZOMBIE_HUNT_R) {
+            stepNpc(zb, tx, tz, ZOMBIE_NIGHT_SPEED, dt, this.world);
+            // caught a townsfolk — they fall, their purse scatters (respawned at dawn)
+            if (victimCiv && zb.touchCd <= 0 && td < 1.5 * 1.5) {
+              zb.touchCd = ZOMBIE_TOUCH_CD;
+              this.killCiv(victimCiv, "zombie");
+            }
+          } else {
+            zb.vx *= 0.95; zb.vz *= 0.95;
+            if (Math.random() < dt * 0.2) { const t = freeSpot(this.rnd, this.world, 4, 34); stepNpc(zb, GRAVEYARD.x + t.x * 0.2, GRAVEYARD.z + t.z * 0.2, ZOMBIE_SPEED * 0.4, dt, this.world); }
+          }
         }
         if (d2p < 1.6 * 1.6 && zb.touchCd <= 0 && this.detainedT <= 0 && !this.drive && !beastYou) { // the car shell keeps zombies out
           zb.touchCd = ZOMBIE_TOUCH_CD;
@@ -3129,6 +3289,7 @@ export class GameEngine {
       pockets: this.powerPockets.map((def) => ({
         def, name: POWERS[def].name, emoji: POWERS[def].emoji, color: POWERS[def].color, tip: POWERS[def].tip,
       })),
+      money: this.money,
       morphKind: this.morphKind,
       blinkReady: this.blinkCd <= 0,
       /* --- 7 Nights --- */

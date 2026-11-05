@@ -86,6 +86,8 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
   // rare super-power gems — glowing coloured dots (hunt them in the jungle!)
   for (const pw of engine.powers) if (pw.active) dot(pw.x, pw.z, 2.8 * U, POWERS[pw.def].color, 0.95);
   for (const v of engine.votes) if (v.state === "world") dot(v.x, v.z, 2.2 * U, "#f7c948");
+  // 💰 dropped loot — bright pulsing gold so you can race the bots to it
+  for (const l of engine.loot) { dot(l.x, l.z, 3 * U, "#ffd447", 0.95); dot(l.x, l.z, 1.3 * U, "#fff7d6", 0.9); }
   for (const cop of engine.cops) {
     const chasing = cop.mode === "chase";
     dot(cop.x, cop.z, (chasing ? 3 : 2) * U, chasing ? "#ff4d4d" : "#6aa0ff");
@@ -178,11 +180,11 @@ function Minimap({ engine, onOpen }: { engine: GameEngine; onOpen: () => void })
 /* ----------------------------- big map overlay ----------------------------- */
 const BIG_MAP_S = 440;
 const MAP_LEGEND: [string, string][] = [
-  ["#ffffff", "You (arrow = facing)"], ["#f7c948", "Votes"], ["#ffd166", "Food"], ["#c084fc", "Power gems (rare!)"],
+  ["#ffffff", "You (arrow = facing)"], ["#f7c948", "💰 Cash piles"], ["#ffd166", "Food"], ["#c084fc", "Power gems (rare!)"],
   ["#38bdf8", "Driving license 🪪"], ["#6aa0ff", "Police"], ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ["#a97b4f", "Animals"], ["#c084fc", "Zombies · night"], ["#1d2a4a", "Police stn"],
   ["#ffb020", "Vote runner (bright = carrying)"],
   ["#e2e8f0", "Crew survivors (each their color)"], ["#7f1d1d", "Fallen crew ✕"],
-  ["#facc15", "Dropped arms"], ["#92400e", "Barricade"], ["#fb923c", "Campfire"],
+  ["#facc15", "Dropped arms"], ["#ffd447", "💰 Loot drops"], ["#92400e", "Barricade"], ["#fb923c", "Campfire"],
 ];
 function BigMap({ engine, onClose }: { engine: GameEngine; onClose: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -919,9 +921,9 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
             <Home size={16} className="mr-2" /> Quit to menu
           </Button>
         </div>
-        {hud.delivered > 0 && (
+        {hud.money > 0 && (
           <p className="mt-3 text-center text-[11px] text-emerald-300/90">
-            This run: {hud.delivered} votes delivered · {hud.rescues} rescued · {hud.points} pts
+            This run: 💰 ₹{hud.money} banked · {hud.rescues} rescued · {hud.points} pts
           </p>
         )}
       </motion.div>
@@ -1228,6 +1230,17 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
           >
             {hud.points} pts
           </motion.div>
+          <motion.div
+            key={hud.money}
+            initial={{ scale: 1.35 }}
+            animate={{ scale: 1 }}
+            transition={{ type: "spring", stiffness: 420, damping: 15 }}
+            className="rounded-xl bg-black/35 px-3 py-1 text-sm font-black tabular-nums text-emerald-300 backdrop-blur-md"
+            aria-label="Money collected"
+            title="Cash piles scooped + loot from the fallen"
+          >
+            💰 ₹{hud.money}
+          </motion.div>
           {showFps && <FpsCounter />}
           <Button
             size="icon" variant="ghost" aria-label={muted ? "Unmute" : "Mute"}
@@ -1288,6 +1301,8 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
                 </button>
               </div>
               <div className="mt-1.5 space-y-1 border-t border-white/15 pt-1.5 text-[10px] leading-snug text-white/75">
+                <p className="text-emerald-200/95">💰 Scoop cash piles &amp; loot the fallen (their purse drops where they die!) — bots grab it first if you're slow</p>
+                <p className="text-rose-200/90">🌙 At night name tags VANISH — tell friends by their shirt COLOR. Dawn returns the names.</p>
                 <p className="text-amber-200/90">🥭 Run over food to pocket it — eat with <b>1-8</b> (heals ❤ · refills ⚡)</p>
                 <p className="text-fuchsia-200/95">🎒 Arms &amp; ✨ gem powers sit on the belt — press <b>G</b> for the tool wheel · <b>Q</b> blink</p>
                 <p className="text-lime-200/95">🪓🪨 Axe fells trees, hammer smashes boulders — then <b>B</b> barricade · <b>V</b> campfire</p>
@@ -1424,7 +1439,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
               stopMusic();
               setPaused(false);
               useGame.getState().setVictoryOpen(false);
-              useGame.getState().recordRun(useGame.getState().hud.points, useGame.getState().hud.delivered, useGame.getState().hud.rescues, engine.caughtCount, false, Math.round(useGame.getState().hud.elapsed * 1000));
+              useGame.getState().recordRun(useGame.getState().hud.points, useGame.getState().hud.money, useGame.getState().hud.rescues, engine.caughtCount, false, Math.round(useGame.getState().hud.elapsed * 1000));
               useGame.getState().setScreen("landing");
             }}
           />

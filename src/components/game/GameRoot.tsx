@@ -75,7 +75,7 @@ export function GameRoot() {
       // save unfinished runs too (quit mid-story) — wins are recorded by the victory watcher
       if (!eng.won && eng.points > 0) {
         const timeMs = Math.round(eng.elapsed * 1000);
-        useGame.getState().recordRun(eng.points, eng.delivered, eng.rescues, eng.caughtCount, false, timeMs);
+        useGame.getState().recordRun(eng.points, eng.money, eng.rescues, eng.caughtCount, false, timeMs);
         fetch("/api/scores", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
@@ -109,7 +109,7 @@ export function GameRoot() {
       if ((eng.won || eng.lost) && !useGame.getState().victoryOpen) {
         useGame.getState().setVictoryOpen(true);
         const h = useGame.getState().hud;
-        useGame.getState().recordRun(h.points, eng.side === "police" ? eng.caughtCount : h.delivered, h.rescues, eng.caughtCount, eng.won, Math.round(h.elapsed * 1000));
+        useGame.getState().recordRun(h.points, h.money, h.rescues, eng.caughtCount, eng.won, Math.round(h.elapsed * 1000));
       }
     }, 400);
     return () => clearInterval(id);

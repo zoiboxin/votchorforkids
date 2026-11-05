@@ -176,7 +176,7 @@ export const emptyHud: HudData = {
   inv: [], hurt: false, sprinting: false, exhausted: false,
   px: 0, pz: 0,
   gain: { hp: 0, stamina: 0, at: 0 },
-  power: null, pockets: [], morphKind: null, blinkReady: true,
+  power: null, pockets: [], money: 0, morphKind: null, blinkReady: true,
   side: "protester", busted: 0, runnerDelivered: 0, lost: false, outfitLabel: "",
   hasLicense: false, driving: false, speed: 0,
   /* --- 7 Nights --- */
