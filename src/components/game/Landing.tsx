@@ -1,24 +1,26 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Play, Settings, Gamepad2, UserCog, Trophy, ShieldAlert, Sunrise, MapPin, Sparkles, Vote, User, BarChart3, History as HistoryIcon, Hammer } from "lucide-react";
+import { Play, Settings, Gamepad2, UserCog, Trophy, Moon, MoonStar, Axe, Scale, Flame, Sparkles, User, BarChart3, History as HistoryIcon } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { TICKER_LINES } from "@/lib/game/constants";
+import { NIGHT_TICKER } from "@/lib/game/constants";
 import { primeAudio, sfx, startMusic } from "@/lib/game/audio";
 import { useGame } from "./store";
 import { Leaderboard } from "./Creator";
 import { HowToPlay, SettingsDialog, ProfileDialog, StatsDialog, HistoryDialog } from "./Panels";
 import { RankBadge, RankProgress } from "./RankCard";
+import { DailyCard } from "./DailyCard";
 
 const FEATURES: { emoji: string; icon: React.ReactNode; title: string; text: string; tint: string }[] = [
-  { emoji: "🏙️", icon: <MapPin size={18} />, title: "Huge GTA-style city", text: "Towers, shops, a mega mall, farms, big jungle, deep jungle, a graveyard AND scary climbable mountains", tint: "text-emerald-300" },
-  { emoji: "🔧", icon: <Hammer size={18} />, title: "Tool belt & the wild", text: "Collect 🪓🗡️🔨🧱 — chop trees for wood, fight zombies, mine rocks, build barricades!", tint: "text-orange-300" },
-  { emoji: "🚓", icon: <ShieldAlert size={18} />, title: "Cartoon police chase", text: "9 bumbling cops hunt you the moment you pocket votes — sprint, juke, hide!", tint: "text-rose-300" },
-  { emoji: "🌙", icon: <Sunrise size={18} />, title: "Day & night cycle", text: "Chai stops by day… when the sun sets, the graveyard wakes up 🧟", tint: "text-amber-300" },
-  { emoji: "🏆", icon: <Trophy size={18} />, title: "High scores", text: "Rescue friends, dodge cops, deliver 16 votes and save democracy!", tint: "text-yellow-300" },
+  { emoji: "🌙", icon: <Moon size={18} />, title: "7 nights of suspense", text: "Eight souls, one sleepy town. Every dusk the sirens wail — and the dark picks its next victim.", tint: "text-indigo-300" },
+  { emoji: "🪓", icon: <Axe size={18} />, title: "Chop, smash & build by day", text: "Fell trees, smash boulders, stack barricades and light campfires before the sun dies.", tint: "text-amber-300" },
+  { emoji: "🔪", icon: <MoonStar size={18} />, title: "One player turns at night — could be YOU", text: "The possessed becomes a zombie beast and hunts the crew. Some nights, the dark chooses you…", tint: "text-rose-300" },
+  { emoji: "⚖️", icon: <Scale size={18} />, title: "Inspect, follow clues, accuse", text: "At dawn, search the bodies for clues and accuse your suspect — guess right, or doom an innocent.", tint: "text-sky-300" },
+  { emoji: "🔥", icon: <Flame size={18} />, title: "Campfires keep the beast away", text: "Beasts and zombies shy from firelight. Circle the flames — but the wood runs out…", tint: "text-orange-300" },
+  { emoji: "🏆", icon: <Trophy size={18} />, title: "Outlast the darkness", text: "See the dawn after night 7 — or be the last one standing. Those are the only ways to win.", tint: "text-yellow-300" },
 ];
 
-const FLOATERS = ["🗳️", "💨", "🥁", "✊", "🌼", "🕊️"];
+const FLOATERS = ["🌙", "🦇", "🔥", "🪓", "✨", "🧟"];
 
 export function Landing() {
   const setScreen = useGame((s) => s.setScreen);
@@ -29,6 +31,7 @@ export function Landing() {
   const lifeVotes = useGame((s) => s.lifeVotes);
   const lifeRescues = useGame((s) => s.lifeRescues);
   const careerXp = useGame((s) => s.careerXp);
+  const dailyStreak = useGame((s) => s.daily.streak);
   const [help, setHelp] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [profileOpen, setProfileOpen] = useState(false);
@@ -43,16 +46,12 @@ export function Landing() {
     return () => window.removeEventListener("pointerdown", unlock);
   }, []);
 
-  // PLAY: the hero-selection flow — everyone picks a side first (protester
-  // runner or police), police continue to the squad-uniform page
-  const goPlay = () => {
-    sfx.click();
-    setScreen("select");
-  };
-  const goCreate = () => { sfx.click(); setScreen("creator"); };
+  // PLAY: there are no sides anymore — everyone joins the same 7 nights,
+  // straight through the survivor creator (pick a name + look, then start)
+  const goCreator = () => { sfx.click(); setScreen("creator"); };
 
   return (
-    <div className="relative h-screen w-full overflow-y-auto">
+    <div className="relative h-screen w-full overflow-y-auto bg-slate-950">
       <style>{`
         @keyframes vc-marquee { 0% { transform: translateX(0); } 100% { transform: translateX(-50%); } }
         @keyframes vc-float { 0%,100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-16px) rotate(3deg); } }
@@ -62,20 +61,20 @@ export function Landing() {
         @keyframes vc-spin-slow { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
       `}</style>
 
-      {/* painted hero backdrop (fixed so it covers the viewport while the page scrolls) */}
+      {/* painted night-town backdrop (fixed so it covers the viewport while the page scrolls) */}
       <div
         aria-hidden
         className="fixed inset-0 bg-cover bg-center"
-        style={{ backgroundImage: "url(/hero-votechor.png)" }}
+        style={{ backgroundImage: "url(/hero-7nights.png)" }}
       />
-      <div aria-hidden className="fixed inset-0 bg-gradient-to-b from-sky-900/55 via-sky-800/40 to-slate-950/80" />
+      <div aria-hidden className="fixed inset-0 bg-gradient-to-b from-slate-950/85 via-indigo-950/65 to-slate-950/90" />
 
-      {/* sky life: drifting clouds + bouncing sun + floating props */}
+      {/* night sky: drifting clouds + a pale moon + floating spooky props */}
       <div aria-hidden className="pointer-events-none fixed inset-0 overflow-hidden">
-        <div className="absolute left-[6%] top-[10%] h-14 w-28 rounded-full bg-white/50 blur-[1px]" style={{ animation: "vc-drift 38s linear infinite" }} />
-        <div className="absolute left-[30%] top-[20%] h-10 w-24 rounded-full bg-white/40 blur-[1px]" style={{ animation: "vc-drift 52s linear infinite", animationDelay: "-18s" }} />
-        <div className="absolute top-[5%] h-12 w-24 rounded-full bg-white/30 blur-[1px]" style={{ animation: "vc-drift 64s linear infinite", animationDelay: "-40s" }} />
-        <div className="absolute right-[6%] top-[7%] h-16 w-16 rounded-full bg-yellow-200 shadow-[0_0_70px_26px_rgba(253,224,71,0.45)]" style={{ animation: "vc-float 7s ease-in-out infinite" }} />
+        <div className="absolute left-[6%] top-[10%] h-14 w-28 rounded-full bg-white/20 blur-[1px]" style={{ animation: "vc-drift 38s linear infinite" }} />
+        <div className="absolute left-[30%] top-[20%] h-10 w-24 rounded-full bg-white/15 blur-[1px]" style={{ animation: "vc-drift 52s linear infinite", animationDelay: "-18s" }} />
+        <div className="absolute top-[5%] h-12 w-24 rounded-full bg-white/10 blur-[1px]" style={{ animation: "vc-drift 64s linear infinite", animationDelay: "-40s" }} />
+        <div className="absolute right-[7%] top-[6%] h-14 w-14 rounded-full bg-slate-100 shadow-[0_0_70px_26px_rgba(199,210,254,0.3)]" style={{ animation: "vc-float 7s ease-in-out infinite" }} />
         {FLOATERS.map((e, i) => (
           <span
             key={i}
@@ -95,23 +94,23 @@ export function Landing() {
       <div className="relative mx-auto flex min-h-full w-full max-w-6xl flex-col px-4 py-6">
         {/* hero */}
         <header className="flex flex-col items-center pt-4 text-center sm:pt-8" style={{ animation: "vc-pop .5s ease-out both" }}>
-          <div className="mb-3 flex items-center gap-2 rounded-full border border-yellow-300/40 bg-black/40 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-yellow-200 backdrop-blur sm:text-xs">
-            <Sparkles size={13} className="text-yellow-300" /> The Great Parliament Run · v2
+          <div className="mb-3 flex items-center gap-2 rounded-full border border-red-300/40 bg-black/40 px-3 py-1 text-[10px] font-black uppercase tracking-[0.2em] text-red-200 backdrop-blur sm:text-xs">
+            <Sparkles size={13} className="text-red-300" /> Survive the Seven Nights · A cozy horror story
           </div>
           <div className="relative">
             <h1 className="text-6xl font-black tracking-tight text-white drop-shadow-[0_6px_0_rgba(0,0,0,0.4)] sm:text-7xl md:text-8xl" style={{ animation: "vc-breathe 4s ease-in-out infinite" }}>
-              Vote<span className="text-yellow-300">Chor!</span>
+              7<span className="text-red-400 drop-shadow-[0_0_22px_rgba(248,113,113,0.55)]">Nights</span>
             </h1>
             <span
               aria-hidden
-              className="absolute -right-10 -top-4 hidden -rotate-12 rounded-lg border-[3px] border-rose-300/90 bg-rose-500/20 px-2 py-0.5 text-[11px] font-black uppercase tracking-widest text-rose-100 sm:block"
+              className="absolute -right-10 -top-4 hidden -rotate-12 rounded-lg border-[3px] border-red-300/90 bg-red-500/20 px-2 py-0.5 text-[11px] font-black uppercase tracking-widest text-red-100 sm:block"
               style={{ animation: "vc-spin-slow 1.2s ease-out both" }}
             >
-              Everybody run!
+              Don&apos;t trust anyone!
             </span>
           </div>
-          <p className="mt-2 max-w-xl text-base font-bold text-emerald-100 drop-shadow sm:text-lg">
-            The votes are missing. The protest is on. <span className="text-yellow-200">Everybody run!</span>
+          <p className="mt-2 max-w-xl text-base font-bold text-slate-200 drop-shadow sm:text-lg">
+            One of us won&apos;t see dawn. Days are for building. <span className="text-red-300">Nights are for surviving.</span>
           </p>
 
           {/* profile console: rank + identity + manage buttons */}
@@ -120,7 +119,7 @@ export function Landing() {
               <RankBadge xp={careerXp} size={46} />
               <div className="min-w-0 flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="truncate font-black text-yellow-200">{hasProfile ? `Hi, ${playerName}!` : "New challenger!"}</span>
+                  <span className="truncate font-black text-red-200">{hasProfile ? `Hi, ${playerName}!` : "New survivor!"}</span>
                   <span className="shrink-0 text-white/75">{look.girl ? "👧" : "👦"} {look.age}{look.cap ? " 🧢" : ""}{look.glasses ? " 👓" : ""}</span>
                 </div>
                 <div className="mt-1">
@@ -128,9 +127,10 @@ export function Landing() {
                 </div>
                 <div className="mt-1.5 flex flex-wrap gap-1.5 text-[10px] font-bold">
                   {runsPlayed > 0 && <span className="rounded-full bg-white/10 px-2 py-0.5">🏃 {runsPlayed} run{runsPlayed === 1 ? "" : "s"}</span>}
-                  {bestScore > 0 && <span className="rounded-full bg-yellow-400/20 px-2 py-0.5 text-yellow-200">🏆 best {bestScore.toLocaleString()}</span>}
-                  {lifeVotes > 0 && <span className="rounded-full bg-emerald-400/15 px-2 py-0.5 text-emerald-200">🗳️ {lifeVotes} delivered</span>}
-                  {lifeRescues > 0 && <span className="rounded-full bg-rose-400/15 px-2 py-0.5 text-rose-200">❤️ {lifeRescues} rescued</span>}
+                  {bestScore > 0 && <span className="rounded-full bg-red-400/20 px-2 py-0.5 text-red-200">🏆 best {bestScore.toLocaleString()}</span>}
+                  {lifeVotes > 0 && <span className="rounded-full bg-indigo-400/15 px-2 py-0.5 text-indigo-200">🗳️ {lifeVotes} delivered</span>}
+                  {lifeRescues > 0 && <span className="rounded-full bg-emerald-400/15 px-2 py-0.5 text-emerald-200">❤️ {lifeRescues} rescues</span>}
+                  <span className={`rounded-full px-2 py-0.5 ${dailyStreak > 0 ? "bg-orange-500/20 text-orange-200" : "bg-white/10"}`}>🔥 {dailyStreak}-day streak</span>
                 </div>
               </div>
             </div>
@@ -161,17 +161,17 @@ export function Landing() {
         <div className="mt-6 flex flex-col items-center justify-center gap-3 sm:flex-row">
           <Button
             size="lg"
-            onClick={goPlay}
-            className="h-16 min-w-56 rounded-2xl bg-gradient-to-r from-amber-400 to-yellow-300 px-8 text-xl font-black text-amber-950 shadow-[0_8px_0_rgba(180,120,0,0.55)] transition-transform hover:scale-[1.03] active:scale-95"
+            onClick={goCreator}
+            className="h-16 min-w-56 rounded-2xl bg-gradient-to-r from-red-500 to-amber-400 px-8 text-xl font-black text-red-950 shadow-[0_8px_0_rgba(127,29,29,0.6)] transition-transform hover:scale-[1.03] active:scale-95"
           >
-            <Play size={24} className="mr-2" fill="currentColor" /> {hasProfile ? `PLAY, ${playerName}!` : "PLAY"}
+            <Play size={24} className="mr-2" fill="currentColor" /> {hasProfile ? `JOIN, ${playerName}!` : "PLAY"}
           </Button>
           <div className="flex flex-wrap items-center justify-center gap-2">
             <Button
-              size="lg" onClick={goCreate} aria-label="Customize your hero"
+              size="lg" onClick={goCreator} aria-label="Customize your survivor"
               className="h-14 rounded-2xl border-white/30 bg-black/35 px-5 font-black text-white backdrop-blur hover:bg-black/50"
             >
-              <UserCog size={18} className="mr-1.5" /> {hasProfile ? "Customize hero" : "Create hero"}
+              <UserCog size={18} className="mr-1.5" /> {hasProfile ? "Customize survivor" : "Create survivor"}
             </Button>
             <Button
               size="lg" variant="outline" onClick={() => { sfx.click(); setHelp(true); }}
@@ -191,16 +191,16 @@ export function Landing() {
         {/* marquee ticker */}
         <div className="mt-6 overflow-hidden rounded-full border border-white/20 bg-black/45 py-2 backdrop-blur" aria-hidden>
           <div className="flex w-max gap-10 whitespace-nowrap px-4 text-sm font-bold text-white/90" style={{ animation: "vc-marquee 36s linear infinite" }}>
-            {[...TICKER_LINES, ...TICKER_LINES].map((l, i) => (
+            {[...NIGHT_TICKER, ...NIGHT_TICKER].map((l, i) => (
               <span key={i} className="inline-block">{l}</span>
             ))}
           </div>
         </div>
 
         {/* features */}
-        <section aria-label="Game features" className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <section aria-label="Game features" className="mt-6 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {FEATURES.map((f) => (
-            <div key={f.title} className="group rounded-2xl border border-white/20 bg-black/40 p-4 backdrop-blur transition-all hover:-translate-y-1 hover:border-yellow-300/40 hover:bg-black/55">
+            <div key={f.title} className="group rounded-2xl border border-white/20 bg-black/40 p-4 backdrop-blur transition-all hover:-translate-y-1 hover:border-red-300/40 hover:bg-black/55">
               <div className="mb-1.5 flex items-center gap-2">
                 <span className="text-2xl transition-transform group-hover:scale-125">{f.emoji}</span>
                 <span className={f.tint}>{f.icon}</span>
@@ -213,22 +213,22 @@ export function Landing() {
 
         {/* objective strip */}
         <div className="mx-auto mt-5 flex w-full max-w-2xl items-center justify-center gap-3 rounded-2xl border border-white/15 bg-black/40 px-4 py-3 text-center backdrop-blur">
-          <Vote size={20} className="shrink-0 text-yellow-300" />
+          <Moon size={20} className="shrink-0 text-indigo-300" />
           <p className="text-xs font-bold text-white/85 sm:text-sm">
-            Snatch the <b className="text-yellow-300">16 missing votes</b>, dodge <b className="text-rose-300">9 cartoon cops</b>, rescue jailed friends —
-            then deliver everything to the Parliament ballot box before nightfall. <span className="text-emerald-300">Democracy is counting on you!</span>
+            Survive <b className="text-red-300">7 nights</b> · <b className="text-amber-300">Build by day</b> · <b className="text-indigo-300">Hide or hunt by night</b> · <b className="text-yellow-200">Accuse the possessed</b>
           </p>
         </div>
 
-        {/* leaderboard */}
-        <div className="mx-auto mt-5 w-full max-w-xl">
+        {/* daily tasks + hall of fame — side by side */}
+        <div className="mx-auto mt-5 grid w-full max-w-3xl grid-cols-1 gap-3 md:grid-cols-2">
+          <DailyCard />
           <Leaderboard compact />
         </div>
 
         {/* footer */}
         <footer className="mt-auto pt-6 pb-4 text-center">
           <p className="text-[11px] text-white/60">
-            VoteChor is a work of silliness. All politicians, committees and samosas are fictional. 🥸
+            7Nights is a work of spooky silliness. All possessions strictly fictional. No zombies were harmed. 🌙
           </p>
           <p className="mt-0.5 text-[11px] text-white/40">Rebuilt with Next.js 16 · React Three Fiber · TypeScript</p>
         </footer>

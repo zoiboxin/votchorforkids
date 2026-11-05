@@ -270,17 +270,21 @@ function Forest({ engine }: { engine: GameEngine }) {
     for (const t of WORLD.trees) if (t.kind === 0) pine++;
     return { pine, round: WORLD.trees.length - pine };
   }, []);
-  // per-tree instance slots — lets the axe hide exactly one tree's trunk + canopy
-  const slots = useMemo(() => {
+  // First foliage-pool instance per tree (-1 = none): pine tiers pack 3 per tree,
+  // round blobs pack 5 — lets a chop zero/restore exactly that tree's share.
+  const share = useMemo(() => {
+    const tier0 = new Int32Array(WORLD.trees.length).fill(-1);
+    const blob0 = new Int32Array(WORLD.trees.length).fill(-1);
     let ti = 0, bi = 0;
-    return WORLD.trees.map((t) => {
-      const s = { tier: ti, blob: bi, pine: t.kind === 0 };
-      if (t.kind === 0) ti += 3; else bi += 5;
-      return s;
-    });
+    for (let i = 0; i < WORLD.trees.length; i++) {
+      if (WORLD.trees[i].kind === 0) { tier0[i] = ti; ti += 3; }
+      else { blob0[i] = bi; bi += 5; }
+    }
+    return { tier0, blob0 };
   }, []);
-  const choppedV = useRef(-1); // engine.worldV at last hide-sync
-  const zeroM = useMemo(() => new THREE.Matrix4().makeScale(0, 0, 0), []);
+  // Pristine instance matrices — a felled tree can pop back on engine reset.
+  const snap = useRef<{ trunks?: Float32Array; tiers?: Float32Array; blobs?: Float32Array }>({});
+  const lastFell = useRef(-1);
 
   useLayoutEffect(() => {
     const r = mulberry32(20240);
@@ -343,23 +347,41 @@ function Forest({ engine }: { engine: GameEngine }) {
     if (trunks.current.instanceColor) trunks.current.instanceColor.needsUpdate = true;
     if (tiers.current.instanceColor) tiers.current.instanceColor.needsUpdate = true;
     if (blobs.current.instanceColor) blobs.current.instanceColor.needsUpdate = true;
+    snap.current.trunks = (trunks.current.instanceMatrix.array as Float32Array).slice();
+    snap.current.tiers = (tiers.current.instanceMatrix.array as Float32Array).slice();
+    snap.current.blobs = (blobs.current.instanceMatrix.array as Float32Array).slice();
+    lastFell.current = -1; // force the fell pass to re-apply after a rebuild
   }, [n]);
+
+  // 7Nights fell pass — scale felled trees' instances to 0 (or restore on reset).
+  // Only reruns when engine.fellVersion bumps; no per-chop geometry rebuilds.
+  const applyFelled = () => {
+    const st = snap.current;
+    if (!st.trunks || !st.tiers || !st.blobs) return;
+    const put = (mesh: THREE.InstancedMesh, inst: number, gone: boolean, src: Float32Array) => {
+      const arr = mesh.instanceMatrix.array as Float32Array;
+      const off = inst * 16;
+      if (gone) arr.fill(0, off, off + 16);
+      else arr.set(src.subarray(off, off + 16), off);
+    };
+    for (let i = 0; i < WORLD.trees.length; i++) {
+      const gone = engine.felled.has(i);
+      put(trunks.current, i, gone, st.trunks);
+      const t0 = share.tier0[i];
+      if (t0 >= 0) for (let k = 0; k < 3; k++) put(tiers.current, t0 + k, gone, st.tiers);
+      const b0 = share.blob0[i];
+      if (b0 >= 0) for (let k = 0; k < 5; k++) put(blobs.current, b0 + k, gone, st.blobs);
+    }
+    trunks.current.instanceMatrix.needsUpdate = true;
+    tiers.current.instanceMatrix.needsUpdate = true;
+    blobs.current.instanceMatrix.needsUpdate = true;
+  };
 
   useFrame((s) => {
     WIND.value = s.clock.elapsedTime;
-    // 🪓 chopped trees vanish — synced whenever the engine bumps its world version
-    if (choppedV.current !== engine.worldV) {
-      choppedV.current = engine.worldV;
-      WORLD.trees.forEach((t, i) => {
-        if (t.s > 0) return;
-        const sl = slots[i];
-        trunks.current.setMatrixAt(i, zeroM);
-        if (sl.pine) for (let k = 0; k < 3; k++) tiers.current.setMatrixAt(sl.tier + k, zeroM);
-        else for (let k = 0; k < 5; k++) blobs.current.setMatrixAt(sl.blob + k, zeroM);
-      });
-      trunks.current.instanceMatrix.needsUpdate = true;
-      tiers.current.instanceMatrix.needsUpdate = true;
-      blobs.current.instanceMatrix.needsUpdate = true;
+    if (engine.fellVersion !== lastFell.current) {
+      lastFell.current = engine.fellVersion;
+      applyFelled();
     }
   });
 
@@ -2055,7 +2077,7 @@ function Sky({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
         <pointsMaterial color="#ffffff" size={2.6} transparent opacity={0} sizeAttenuation={false} />
       </points>
       <mesh ref={sun}><sphereGeometry args={[22, 12, 10]} /><meshBasicMaterial color="#ffdd66" /></mesh>
-      <mesh ref={moon}><sphereGeometry args={[16, 12, 10]} /><meshBasicMaterial color="#e8ecf8" /></mesh>
+      <mesh ref={moon}><sphereGeometry args={[18, 12, 10]} /><meshBasicMaterial color="#ffc9a0" /></mesh> {/* 7Nights moon — a touch larger, blood-warm */}
     </>
   );
 }
@@ -2092,7 +2114,7 @@ function Fireflies({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
 /* ------------------------- environment ------------------------- */
 const DAY = new THREE.Color(0x8fd3ff);
 const DUSK = new THREE.Color(0xff9a5a);
-const NIGHT = new THREE.Color(0x0a0e2a);
+const NIGHT = new THREE.Color(0x070a1c); // 7Nights — colder, darker nights
 
 function Env({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
   const { scene } = useThree();
@@ -2112,10 +2134,10 @@ function Env({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
     if (dk > 0) sky.lerp(DUSK, dk * 0.6);
     scene.background = sky;
     fog.color.copy(sky);
-    fog.far = n > 0.5 ? 310 : 900;
+    fog.far = n > 0.5 ? 235 : 900; // night fog closes in — claustrophobic
     scene.fog = fog;
-    hemi.current.intensity = 0.35 + 0.55 * (1 - n);
-    sun.current.intensity = 0.25 + 0.95 * (1 - n);
+    hemi.current.intensity = 0.30 + 0.55 * (1 - n); // night floor: lamps/fireflies keep it readable
+    sun.current.intensity = 0.16 + 0.95 * (1 - n);  // moonlight floor — never pitch black
     sun.current.position.set(Math.cos(PI2 * (clock - 0.25)) * 200, Math.max(24, h * 200), 90);
   });
   return (

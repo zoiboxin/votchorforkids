@@ -62,7 +62,7 @@ export function RankCard({ className = "" }: { className?: string }) {
       </div>
       {progress >= 1 && (
         <div className="mt-2 text-center text-[11px] font-black text-fuchsia-200">
-          👑 Top rank reached — you are a VoteChor legend!
+          👑 Top rank reached — you are a 7Nights legend!
         </div>
       )}
     </div>

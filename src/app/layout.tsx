@@ -14,17 +14,17 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "VoteChor! — The Great Parliament Run",
-  description: "A cartoon 3D chase game: snatch the missing votes, dodge the police, rescue your friends and save democracy! Built with Next.js 16 + React Three Fiber.",
-  keywords: ["VoteChor", "game", "3D", "cartoon", "kids", "parliament", "Next.js"],
+  title: "7Nights — Survive the Seven Nights",
+  description: "A cozy-horror survival story for kids: 8 survivors, 7 nights, 1 possessed beast. Build by day, survive by night, accuse the suspect by dawn — or be the last one standing!",
+  keywords: ["7Nights", "survival game", "horror game", "night game", "kids game"],
   authors: [{ name: "Z.ai" }],
   icons: {
     icon: "https://z-cdn.chatglm.cn/z-ai/static/logo.svg",
   },
   openGraph: {
-    title: "VoteChor! — The Great Parliament Run",
-    description: "Snatch the votes, dodge the police, save democracy!",
-    siteName: "VoteChor",
+    title: "7Nights — Survive the Seven Nights",
+    description: "One of us won't see dawn. Build by day — survive the night.",
+    siteName: "7Nights",
     type: "website",
   },
 };

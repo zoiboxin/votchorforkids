@@ -5,7 +5,7 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { motion } from "framer-motion";
 import {
-  Play, Trophy, Sparkles, ArrowLeft, Dices, HelpCircle, Check, Hand,
+  Play, Trophy, Sparkles, ArrowLeft, Dices, HelpCircle, Check, Hand, Moon,
   Gauge, ChevronsUp, HeartPulse, Shirt, Palette, Baby,
 } from "lucide-react";
 // (icons kept minimal — Hand = drag hint)
@@ -15,9 +15,9 @@ import { Switch } from "@/components/ui/switch";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
-  AGE_STATS, CAP_COLORS, HAIR_COLORS, HAIR_STYLES, NAME_SUGGESTIONS, OUTFIT_PRESETS, PANTS_COLORS, POLICE_COLORS, POLICE_OUTFITS, SHIRT_COLORS, SHOE_COLORS, SKIN_TONES,
-  policeOutfitOf, randomAppearance,
-  type AgeGroup, type Appearance, type HairStyle, type OutfitPreset, type PoliceOutfitDef,
+  AGE_STATS, CAP_COLORS, HAIR_COLORS, HAIR_STYLES, NAME_SUGGESTIONS, OUTFIT_PRESETS, PANTS_COLORS, SHIRT_COLORS, SHOE_COLORS, SKIN_TONES,
+  randomAppearance,
+  type AgeGroup, type Appearance, type HairStyle, type OutfitPreset,
 } from "@/lib/game/constants";
 import { buildCharacter, poseCharacter } from "@/lib/game/character";
 import { sfx } from "@/lib/game/audio";
@@ -28,9 +28,8 @@ import { HowToPlay } from "./Panels";
 /* Drag to spin the hero; auto turntable resumes after you let go.     */
 
 export function Preview({ look }: { look: Appearance }) {
-  // the preview wears the REAL in-game gear — police squads show cap/helmet/beret/visor here too
   const mesh = useMemo(
-    () => buildCharacter(look, { shadow: true, police: look.fac === "police" }),
+    () => buildCharacter(look, { shadow: true }),
     [look],
   );
   const g = useRef<THREE.Group>(null!);
@@ -62,7 +61,7 @@ export function Preview({ look }: { look: Appearance }) {
       onPointerCancel={endDrag}
       onPointerLeave={endDrag}
       role="img"
-      aria-label={`3D preview of your hero: ${look.girl ? "girl" : "boy"}, ${look.age}, ${look.hairStyle} hair`}
+      aria-label={`3D preview of your survivor: ${look.girl ? "girl" : "boy"}, ${look.age}, ${look.hairStyle} hair`}
     >
       <Canvas
         className="absolute inset-0"
@@ -222,60 +221,6 @@ function matchesPreset(look: Appearance, p: OutfitPreset) {
   return (Object.entries(p.look) as [keyof Appearance, unknown][]).every(([k, v]) => look[k] === v);
 }
 
-/* ---------------- police squads — the hero outfits shown when Side = Police ---------------- */
-
-function SquadPicker({ value, onPick }: { value: string; onPick: (o: PoliceOutfitDef) => void }) {
-  const sel = policeOutfitOf(value);
-  return (
-    <div>
-      <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-xs font-bold uppercase tracking-wide text-white/70">Police outfits</span>
-        <span className="text-[10px] font-black uppercase tracking-wide text-sky-300">each squad has a perk</span>
-      </div>
-      <div className="grid grid-cols-3 gap-2">
-        {POLICE_OUTFITS.map((o) => {
-          const on = value === o.id;
-          return (
-            <button
-              key={o.id}
-              onClick={() => { sfx.click(); onPick(o); }}
-              aria-pressed={on}
-              className={`relative rounded-xl border-2 p-1.5 text-center transition-all hover:scale-105 ${
-                on
-                  ? "border-sky-300 bg-sky-300/15 shadow-[0_0_12px_rgba(125,211,252,0.4)]"
-                  : "border-white/15 bg-white/5 hover:border-sky-300/50"
-              }`}
-            >
-              {on && (
-                <span className="absolute -right-1.5 -top-1.5 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-sky-300 text-sky-950 shadow">
-                  <Check size={11} strokeWidth={3.5} />
-                </span>
-              )}
-              <div className="text-lg">{o.emoji}</div>
-              <div className="text-[10px] font-bold leading-tight text-white/85">{o.label}</div>
-            </button>
-          );
-        })}
-      </div>
-      {/* selected squad — flavour + perk strip */}
-      <motion.div
-        key={sel.id}
-        initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}
-        className="mt-2 space-y-1.5 rounded-xl bg-sky-400/10 p-2.5 ring-1 ring-sky-300/25"
-      >
-        <div className="text-[11px] font-bold leading-snug text-white/85">
-          {sel.emoji} <b className="text-white">{sel.label}</b> — {sel.tagline}
-        </div>
-        <div className="flex items-center gap-1.5">
-          <span className="rounded-full bg-emerald-400/20 px-2 py-0.5 text-[10px] font-black text-emerald-300">
-            ⭐ {sel.perkLabel}
-          </span>
-        </div>
-      </motion.div>
-    </div>
-  );
-}
-
 function PresetRow({ look, onPick }: { look: Appearance; onPick: (p: Partial<Appearance>) => void }) {
   return (
     <div>
@@ -328,7 +273,7 @@ export function Leaderboard({ compact = false }: { compact?: boolean }) {
                   {i + 1}
                 </span>
                 <span className="flex-1 truncate font-bold">{s.name}</span>
-                {s.won && <span title="Saved democracy">🏆</span>}
+                {s.won && <span title="Survived the 7 nights">🏆</span>}
                 <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs font-black text-yellow-200">{s.points}</span>
                 <span className="w-10 text-right text-xs text-white/50">{Math.round(s.timeMs / 1000)}s</span>
               </div>
@@ -359,6 +304,12 @@ export function Creator({ onStart }: { onStart: () => void }) {
     return () => window.removeEventListener("pointerdown", unlock);
   }, []);
 
+  // the old side-selection flow is gone — normalize any stale saved "police" look
+  useEffect(() => {
+    const s = useGame.getState();
+    if (s.look.fac === "police" || s.look.outfit) s.setLook({ fac: "protester", outfit: "" });
+  }, []);
+
   // random name chips (client only — safe, this tree is client-rendered)
   const nameChips = useMemo(
     () => [...NAME_SUGGESTIONS].sort(() => Math.random() - 0.5).slice(0, 6),
@@ -369,7 +320,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
   const ready = playerName.trim().length > 0;
 
   const lookChips = [
-    look.fac === "police" ? `${policeOutfitOf(look.outfit).emoji} ${policeOutfitOf(look.outfit).label}` : "🏃 Protester",
+    "🏕️ Survivor",
     look.girl ? "👧 Girl" : "👦 Boy",
     `${look.age.charAt(0).toUpperCase()}${look.age.slice(1)}`,
     HAIR_STYLES.find((h) => h.id === look.hairStyle)?.label ?? "",
@@ -383,9 +334,9 @@ export function Creator({ onStart }: { onStart: () => void }) {
       <div
         aria-hidden
         className="fixed inset-0 bg-cover bg-center"
-        style={{ backgroundImage: "url(/hero-votechor.png)" }}
+        style={{ backgroundImage: "url(/hero-7nights.png)" }}
       />
-      <div aria-hidden className="fixed inset-0 bg-gradient-to-b from-slate-950/70 via-slate-900/55 to-slate-950/80" />
+      <div aria-hidden className="fixed inset-0 bg-gradient-to-b from-slate-950/85 via-indigo-950/65 to-slate-950/90" />
 
       <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-5 px-4 py-5 pb-28 lg:pb-8">
         {/* header */}
@@ -398,10 +349,10 @@ export function Creator({ onStart }: { onStart: () => void }) {
           </Button>
           <div className="min-w-0">
             <h1 className="truncate text-2xl font-black tracking-tight text-white drop-shadow-[0_3px_0_rgba(0,0,0,0.45)] sm:text-3xl">
-              Build your hero <span aria-hidden>{look.fac === "police" ? "🚓" : "🏃‍♀️💨"}</span>
+              Join the 7 Nights <span aria-hidden>🌙</span>
             </h1>
-            <p className="hidden text-xs font-bold text-emerald-300 sm:block">
-              Pick a side, style it up — drag the stage to spin your hero!
+            <p className="hidden text-xs font-bold text-red-300 sm:block">
+              Pick a name, style your survivor — drag the stage to spin!
             </p>
           </div>
         </header>
@@ -416,36 +367,32 @@ export function Creator({ onStart }: { onStart: () => void }) {
                 <Hand size={11} /> drag to spin
               </div>
               <div className="pointer-events-none absolute bottom-2 left-0 right-0 text-center text-xs font-bold text-white/85">
-                {ready ? playerName : "Name your hero"} · {lookChips.join(" · ")}
+                {ready ? playerName : "Name your survivor"} · {lookChips.join(" · ")}
               </div>
             </div>
 
             <div className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-center text-xs text-white/85 backdrop-blur">
               <Sparkles size={14} className="shrink-0 text-yellow-300" />
               {runsPlayed > 0
-                ? `${runsPlayed} run${runsPlayed === 1 ? "" : "s"} played — make hero #${runsPlayed + 1} even better!`
-                : "Day-night city · zombies after dark · cute cows & cheeky monkeys"}
+                ? `${runsPlayed} run${runsPlayed === 1 ? "" : "s"} played — night ${runsPlayed + 1} awaits, survivor!`
+                : "8 survivors · 7 nights · 1 beast in disguise"}
             </div>
 
             <div className="w-full max-w-[430px] lg:w-full">
               <Leaderboard compact />
             </div>
 
-            <div className="w-full max-w-[430px] rounded-2xl border border-white/15 bg-black/40 p-4 text-xs leading-relaxed text-white/75 backdrop-blur-md lg:w-full">
-              {look.fac === "police" ? (
-                <>
-                  <b className="text-white">Mission (Police):</b> vote-runners are smuggling 🗳 votes to Parliament!
-                  Chase them down and <b>walk into (or drive into!) a runner to bust them</b> — police vans haul them to the
-                  station cage. Bust <b>12 runners</b> before they deliver <b>10 votes</b>. Pick a squad outfit above — each
-                  one grants a small perk! Eat food, grab super-power gems, collect a 🪪 license and patrol by car. 🚓
-                </>
-              ) : (
-                <>
-                  <b className="text-white">Mission:</b> walk into 🗳 votes to carry them (max 3), then deliver them at the big
-                  glowing ballot box by Parliament. Police chase you when you carry votes — sprint away! Rescued friends give
-                  points, chai restores energy, zombies only come out at night… and a 🪪 license card + parked car = getaway ride!
-                </>
-              )}
+            <div className="w-full max-w-[430px] rounded-2xl border border-red-400/20 bg-black/45 p-4 text-xs leading-relaxed text-white/80 backdrop-blur-md lg:w-full">
+              <div className="mb-2 flex items-center gap-2 text-sm font-black text-red-300">
+                <Moon size={15} /> How the 7 Nights work
+              </div>
+              <ul className="space-y-1.5">
+                <li>☀️ <b className="text-white">Day:</b> gather wood &amp; stone, build defenses</li>
+                <li>⚠️ <b className="text-white">Dusk:</b> sirens — someone is chosen</li>
+                <li>🌑 <b className="text-white">Night:</b> the beast hunts — hide, run or fight</li>
+                <li>⚖️ <b className="text-white">Dawn:</b> inspect bodies, accuse your suspect</li>
+              </ul>
+              <p className="mt-2 text-white/60">Outlast all 7 nights — or be the last one standing. That&apos;s the only way home.</p>
             </div>
           </div>
 
@@ -454,7 +401,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
             <div className="rounded-2xl border border-white/15 bg-black/40 p-4 backdrop-blur-md">
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2 font-black text-white">
-                  <Sparkles size={16} className="text-emerald-300" /> Create your hero
+                  <Sparkles size={16} className="text-red-300" /> Create your survivor
                 </div>
                 <div className="flex gap-1.5">
                   <Button
@@ -474,50 +421,10 @@ export function Creator({ onStart }: { onStart: () => void }) {
                 </div>
               </div>
 
-              {/* side — protester or police (the old-game "Side" row) */}
-              <div className="mb-4">
-                <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-white/70">Choose your side</div>
-                <div className="grid grid-cols-2 gap-2">
-                  <button
-                    type="button"
-                    aria-pressed={look.fac === "protester"}
-                    onClick={() => { sfx.click(); update({ fac: "protester", outfit: "", ...(look.shirt && POLICE_COLORS.includes(look.shirt) ? { shirt: SHIRT_COLORS[0], pants: PANTS_COLORS[0] } : {}) }); }}
-                    className={`rounded-xl border-2 p-2.5 text-left transition-all ${
-                      look.fac === "protester"
-                        ? "border-yellow-300 bg-yellow-300/15 shadow-[0_0_0_1px_rgba(253,224,71,0.4)]"
-                        : "border-white/15 bg-white/5 hover:border-white/35"
-                    }`}
-                  >
-                    <div className="text-sm font-black text-white">🏃 Protester</div>
-                    <div className="mt-0.5 text-[10px] leading-tight text-white/65">Steal votes, dodge police, escape by car!</div>
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={look.fac === "police"}
-                    onClick={() => { sfx.click(); update({ fac: "police", ...POLICE_OUTFITS[0].look }); }}
-                    className={`rounded-xl border-2 p-2.5 text-left transition-all ${
-                      look.fac === "police"
-                        ? "border-sky-300 bg-sky-300/15 shadow-[0_0_0_1px_rgba(125,211,252,0.4)]"
-                        : "border-white/15 bg-white/5 hover:border-white/35"
-                    }`}
-                  >
-                    <div className="text-sm font-black text-white">🚓 Police</div>
-                    <div className="mt-0.5 text-[10px] leading-tight text-white/65">Pick a squad outfit &amp; catch the vote runners!</div>
-                  </button>
-                </div>
-              </div>
-
-              {/* hero squads — the outfit suggestions appear the moment Police is picked */}
-              {look.fac === "police" && (
-                <div className="mb-4">
-                  <SquadPicker value={look.outfit || "city"} onPick={(o) => update(o.look)} />
-                </div>
-              )}
-
               {/* name — always visible */}
               <div className="mb-4">
                 <div className="mb-1.5 flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wide text-white/70">Hero name</span>
+                  <span className="text-xs font-bold uppercase tracking-wide text-white/70">Survivor name</span>
                   <button
                     aria-label="Suggest a random name"
                     onClick={() => {
@@ -535,7 +442,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
                   value={playerName}
                   onChange={(e) => setName(e.target.value.slice(0, 16))}
                   placeholder="e.g. Chintu"
-                  aria-label="Hero name"
+                  aria-label="Survivor name"
                   className="border-white/25 bg-white/10 text-white placeholder:text-white/40"
                   maxLength={16}
                 />
@@ -586,10 +493,10 @@ export function Creator({ onStart }: { onStart: () => void }) {
                     initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}
                     className="space-y-4"
                   >
-                    {/* police officers pick a squad above — civilian quick outfits would clash with the uniform */}
-                    {look.fac !== "police" && <PresetRow look={look} onPick={update} />}
+                    {/* quick outfits — pick a starter look, then fine-tune below */}
+                    <PresetRow look={look} onPick={update} />
                     <Swatches label="Skin" colors={SKIN_TONES} value={look.skin} onChange={(skin) => update({ skin })} />
-                    <Swatches label={look.fac === "police" ? "Uniform" : "Shirt"} colors={look.fac === "police" ? POLICE_COLORS : SHIRT_COLORS} value={look.shirt} onChange={(shirt) => update({ shirt })} />
+                    <Swatches label="Shirt" colors={SHIRT_COLORS} value={look.shirt} onChange={(shirt) => update({ shirt })} />
                     <Swatches label="Pants" colors={PANTS_COLORS} value={look.pants} onChange={(pants) => update({ pants })} />
                     <Swatches label="Shoes" colors={SHOE_COLORS} value={look.shoe} onChange={(shoe) => update({ shoe })} />
                     <div className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-2">
@@ -645,13 +552,13 @@ export function Creator({ onStart }: { onStart: () => void }) {
               className="hidden h-14 w-full rounded-2xl bg-gradient-to-r from-amber-400 to-yellow-300 text-lg font-black text-amber-950 shadow-[0_6px_0_rgba(180,120,0,0.6)] transition-transform hover:scale-[1.02] active:scale-95 disabled:opacity-50 lg:flex"
             >
               <Play size={20} className="mr-2" fill="currentColor" />
-              {starting ? "Warming up…" : !ready ? "Pick a name to play" : look.fac === "police" ? `Start the shift, Officer ${playerName}!` : `Enter the City, ${playerName}!`}
+              {starting ? "Lighting the campfire…" : !ready ? "Pick a name to join" : `Join the 7 Nights, ${playerName}!`}
             </Button>
           </div>
         </div>
 
         <div className="hidden pb-2 text-center text-[11px] text-white/40 lg:block">
-          Your hero is saved on this device — no account needed.
+          Your survivor is saved on this device — no account needed.
         </div>
       </div>
 
@@ -664,7 +571,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
           className="h-13 w-full rounded-2xl bg-gradient-to-r from-amber-400 to-yellow-300 text-base font-black text-amber-950 shadow-[0_5px_0_rgba(180,120,0,0.6)] active:scale-95 disabled:opacity-50"
         >
           <Play size={18} className="mr-2" fill="currentColor" />
-          {starting ? "Warming up…" : !ready ? "Pick a name to play" : look.fac === "police" ? `Start the shift, Officer ${playerName}!` : `Enter the City, ${playerName}!`}
+          {starting ? "Lighting the campfire…" : !ready ? "Pick a name to join" : `Join the 7 Nights, ${playerName}!`}
         </Button>
       </div>
 

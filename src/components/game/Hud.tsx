@@ -3,12 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "framer-motion";
 import {
-  Heart, Zap, Star, Sun, Moon, Vote, MapPin, Volume2, VolumeX, Pause, Play as PlayIcon,
+  Heart, Zap, Star, Sun, Moon, MapPin, Volume2, VolumeX, Pause, Play as PlayIcon,
   Gauge, CircleHelp, Flag, Home, Settings as SettingsIcon, CheckCircle2, Siren, Info, ShieldCheck,
   ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon, Mouse,
 } from "lucide-react";
 import type { GameEngine } from "@/lib/game/engine";
-import { BUST_TARGET, DETAIN_SECONDS, ITEMS, INV_SLOTS, POLICE_STATIONS, POWERS, RUNNER_LOSE_DELIVERIES, TOOLS } from "@/lib/game/constants";
+import { DETAIN_SECONDS, ITEMS, INV_SLOTS, NIGHTS_TOTAL, POLICE_STATIONS, POWERS, TOOLS } from "@/lib/game/constants";
 import { useGame } from "./store";
 import { requestGameLock } from "./Scene";
 import { setMuted as setAudioMuted, sfx, stopMusic, startMusic } from "@/lib/game/audio";
@@ -17,7 +17,7 @@ import { HowToPlay, SettingsDialog } from "./Panels";
 
 /* ------- shared world-map canvas painting (156px minimap + 440px big map) ------- */
 function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine, night: boolean) {
-  const K = S / 1520;         // world units → px (fits the bigger 712-radius wall)
+  const K = S / 1150;         // world units → px (fits the bigger 545-radius wall)
   const U = S / 156;          // scale for the hand-tuned 156px marker sizes
   const dot = (x: number, z: number, r: number, col: string, alpha = 1) => {
     c.globalAlpha = alpha;
@@ -53,7 +53,7 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     c.textAlign = "center";
     c.fillText("CITY", S / 2, S / 2 + 150 * K);
     c.fillText("FARMLAND", S / 2, S / 2 + 435 * K);
-    c.fillText("JUNGLE", S / 2 - 350 * K, S / 2 - 350 * K);
+    c.fillText("JUNGLE", S / 2 - 370 * K, S / 2 - 350 * K);
     c.fillText("DEEP JUNGLE", S / 2 + 390 * K, S / 2 - 390 * K);
     c.fillText("⛰ MOUNTAINS", S / 2 + 480 * K, S / 2 + 480 * K);
     c.fillText("GRAVEYARD", S / 2 - 255 * K, S / 2 + 265 * K);
@@ -85,10 +85,6 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
   for (const lc of engine.licenses) if (lc.active) { dot(lc.x, lc.z, 2.7 * U, "#38bdf8", 0.95); dot(lc.x, lc.z, 1.15 * U, "#ffffff", 0.9); }
   // rare super-power gems — glowing coloured dots (hunt them in the jungle!)
   for (const pw of engine.powers) if (pw.active) dot(pw.x, pw.z, 2.8 * U, POWERS[pw.def].color, 0.95);
-  // 🔧 wild tools — orange specks so the belt-hunt reads on the map
-  for (const tl of engine.tools) if (tl.active) dot(tl.x, tl.z, 2.4 * U, TOOLS[tl.def].color, 0.95);
-  // 🧱 player-built barricades — chunky little squares
-  for (const b of engine.builds) { dot(b.x, b.z, 3 * U, b.mat === 0 ? "#b07a44" : "#9aa0a8"); }
   for (const v of engine.votes) if (v.state === "world") dot(v.x, v.z, 2.2 * U, "#f7c948");
   for (const cop of engine.cops) {
     const chasing = cop.mode === "chase";
@@ -105,6 +101,28 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
   // farm & jungle animals — little brown specks so the world feels alive on the map
   for (const an of engine.animals) dot(an.x, an.z, 1.3 * U, "#a97b4f", 0.8);
   if (night) for (const zb of engine.zombies) dot(zb.x, zb.z, 2.4 * U, "#c084fc");
+  // 7 Nights: the crew — each survivor in their color; the fallen leave a dark-red ✕ where they died
+  for (const cm of engine.crew) {
+    if (cm.alive) dot(cm.x, cm.z, 2.7 * U, cm.color, 0.95);
+    else {
+      const dx = S / 2 + cm.deathX * K, dz = S / 2 + cm.deathZ * K;
+      c.strokeStyle = "#7f1d1d";
+      c.lineWidth = Math.max(1, 1.1 * U);
+      c.beginPath();
+      c.moveTo(dx - 2.2 * U, dz - 2.2 * U); c.lineTo(dx + 2.2 * U, dz + 2.2 * U);
+      c.moveTo(dx + 2.2 * U, dz - 2.2 * U); c.lineTo(dx - 2.2 * U, dz + 2.2 * U);
+      c.stroke();
+    }
+  }
+  // dropped arms (yellow specks) + builds — brown barricade square / ember campfire
+  for (const te of engine.toolEnts) if (te.active) dot(te.x, te.z, 1.7 * U, "#facc15", 0.9);
+  for (const b of engine.builds) {
+    if (b.kind === "campfire") { dot(b.x, b.z, 2.7 * U, "#fb923c", 0.95); dot(b.x, b.z, 1.2 * U, "#fde68a", 0.9); }
+    else {
+      c.fillStyle = "#92400e";
+      c.fillRect(S / 2 + b.x * K - 2.2 * U, S / 2 + b.z * K - 2.2 * U, 4.4 * U, 4.4 * U);
+    }
+  }
   // bot planes — sky-blue arrow heads so the random flights read on the map
   for (const pl of engine.planes) {
     const px = S / 2 + pl.x * K, pz = S / 2 + pl.z * K;
@@ -161,8 +179,10 @@ function Minimap({ engine, onOpen }: { engine: GameEngine; onOpen: () => void })
 const BIG_MAP_S = 440;
 const MAP_LEGEND: [string, string][] = [
   ["#ffffff", "You (arrow = facing)"], ["#f7c948", "Votes"], ["#ffd166", "Food"], ["#c084fc", "Power gems (rare!)"],
-  ["#f59e0b", "🔧 Tools (axe/sword/hammer/builder)"], ["#38bdf8", "Driving license 🪪"], ["#6aa0ff", "Police"], ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ["#a97b4f", "Animals"], ["#c084fc", "Zombies · night"], ["#1d2a4a", "Police stn"],
+  ["#38bdf8", "Driving license 🪪"], ["#6aa0ff", "Police"], ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ["#a97b4f", "Animals"], ["#c084fc", "Zombies · night"], ["#1d2a4a", "Police stn"],
   ["#ffb020", "Vote runner (bright = carrying)"],
+  ["#e2e8f0", "Crew survivors (each their color)"], ["#7f1d1d", "Fallen crew ✕"],
+  ["#facc15", "Dropped arms"], ["#92400e", "Barricade"], ["#fb923c", "Campfire"],
 ];
 function BigMap({ engine, onClose }: { engine: GameEngine; onClose: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
@@ -245,25 +265,63 @@ function Bar({ v, color, icon, low = false }: { v: number; color: string; icon: 
   );
 }
 
-/* --------------------- carried-vote pips (3 slots) --------------------- */
-function VotePips({ carried }: { carried: number }) {
+/* ------- 🌙 night strip — 7-moon story tracker + phase countdown (top-center).
+   Replaces the old vote/police objective cards: the 7Nights story IS the objective. ------- */
+function NightStrip() {
+  const nightNo = useGame((s) => s.hud.nightNo);
+  const phase = useGame((s) => s.hud.phase);
+  const phaseLeft = useGame((s) => s.hud.phaseLeft);
+  const crewAlive = useGame((s) => s.hud.crewAlive);
+  const youPossessed = useGame((s) => s.hud.youPossessed);
+  const beast = youPossessed && phase === "night";
+  const secs = Math.max(0, Math.ceil(phaseLeft));
+  const mm = String(Math.floor(secs / 60)).padStart(2, "0");
+  const ss = String(secs % 60).padStart(2, "0");
+  const survived = Math.max(0, Math.min(NIGHTS_TOTAL, nightNo - 1));
+  const label = beast
+    ? "🔪 YOU ARE THE BEAST — F to claw"
+    : phase === "dusk" ? `⚠️ NIGHT FALLS IN ${secs}s`
+    : phase === "night" ? `🌑 NIGHT ${nightNo} — THE BEAST HUNTS`
+    : phase === "dawn" ? "🌅 DAWN — you made it"
+    : `☀️ DAY ${nightNo} — gather & build`;
+  const hot = phase === "dusk" || phase === "night";
   return (
     <div className="flex items-center gap-1.5">
-      <Vote size={16} className="text-yellow-300" />
-      <div className="flex gap-1" aria-label={`Carrying ${carried} of 3 votes`}>
-        {Array.from({ length: 3 }, (_, i) => (
-          <motion.div
-            key={i}
-            animate={i < carried ? { scale: [1, 1.35, 1] } : { scale: 1 }}
-            transition={i < carried ? { repeat: Infinity, duration: 1.3, delay: i * 0.15 } : { duration: 0.2 }}
-            className={`h-3.5 w-3.5 rounded-full border ${
-              i < carried
-                ? "border-yellow-100 bg-gradient-to-br from-yellow-200 to-amber-400 shadow-[0_0_7px_rgba(250,204,21,0.85)]"
-                : "border-white/30 bg-black/40"
-            }`}
-          />
-        ))}
-      </div>
+      <motion.div
+        role="status"
+        aria-label={`Night ${nightNo} of ${NIGHTS_TOTAL}, ${phase} phase, ${mm}:${ss} left, ${crewAlive + 1} of 8 souls alive`}
+        animate={phase === "dusk" ? { opacity: [1, 0.62, 1], scale: [1, 1.03, 1] } : { opacity: 1, scale: 1 }}
+        transition={phase === "dusk" ? { repeat: Infinity, duration: 1.05 } : { duration: 0.2 }}
+        className={`flex items-center gap-2 rounded-full border px-3 py-1 backdrop-blur-md ${
+          beast ? "border-rose-400/70 bg-rose-950/70 shadow-[0_0_16px_rgba(244,63,94,0.5)]"
+            : hot ? "border-rose-400/50 bg-black/60 shadow-[0_0_14px_rgba(190,18,60,0.35)]"
+            : "border-white/20 bg-black/45"
+        }`}
+      >
+        {/* 7 moon pips — dark moons = nights survived, the current one glows half-lit */}
+        <span className="flex items-center gap-0.5" aria-hidden>
+          {Array.from({ length: NIGHTS_TOTAL }, (_, i) => (
+            <span
+              key={i}
+              className={`text-[10px] leading-none sm:text-xs ${i === nightNo - 1 ? "drop-shadow-[0_0_4px_rgba(255,255,255,0.85)]" : ""} ${i < survived || i === nightNo - 1 ? "" : "opacity-25"}`}
+            >
+              {i < survived ? "🌑" : i === nightNo - 1 ? (phase === "night" ? "🌗" : "🌘") : "🌑"}
+            </span>
+          ))}
+        </span>
+        <span className={`whitespace-nowrap text-[10px] font-black uppercase tracking-wider sm:text-[11px] ${hot ? "text-rose-300" : "text-white/90"}`}>
+          {label}
+        </span>
+        {!beast && phase !== "dusk" && (
+          <span className="rounded bg-white/10 px-1 text-[10px] font-black tabular-nums text-white/80 sm:text-[11px]">{mm}:{ss}</span>
+        )}
+      </motion.div>
+      <span
+        title={`${crewAlive + 1} of 8 souls still breathing`}
+        className="rounded-full border border-white/20 bg-black/45 px-2 py-1 text-[10px] font-black tabular-nums text-white/90 backdrop-blur-md"
+      >
+        🧍 {crewAlive + 1}/8
+      </span>
     </div>
   );
 }
@@ -380,6 +438,61 @@ function ItemBar({ engine, vertical = false }: { engine: GameEngine; vertical?: 
   );
 }
 
+/* ------------- 🎒 tool belt: ✊ hands + every collected arm. Click equips
+   (engine.setHeld); the tiny G badge hints at the radial tool wheel. ------------- */
+function ToolBelt({ engine }: { engine: GameEngine }) {
+  const tools = useGame((s) => s.hud.tools);
+  const held = useGame((s) => s.hud.held);
+  const pick = (i: number) => engine.setHeld(i);
+  const slot = "relative flex h-10 w-10 items-center justify-center rounded-xl border-2 shadow-lg backdrop-blur-md transition-colors sm:h-12 sm:w-12";
+  return (
+    <div
+      data-ui
+      role="toolbar"
+      aria-label="Tool belt — click to equip an arm; G opens the radial tool wheel"
+      className="pointer-events-auto w-fit max-w-[11rem] rounded-2xl bg-black/35 p-1.5 backdrop-blur-md"
+    >
+      <div className="flex flex-wrap gap-1">
+        <button
+          type="button"
+          onPointerDown={(e) => { e.stopPropagation(); pick(-1); }}
+          title="Bare hands — find arms around town"
+          aria-label="Equip bare hands"
+          aria-pressed={held === -1}
+          className={`${slot} ${held === -1 ? "border-amber-300 bg-amber-400/25 shadow-[0_0_10px_rgba(252,211,77,0.55)]" : "border-white/30 bg-white/10 hover:border-amber-300/80"}`}
+        >
+          <span className="text-lg leading-none sm:text-2xl" aria-hidden>✊</span>
+          <span className="absolute -bottom-1 -left-1 flex h-3.5 w-3.5 items-center justify-center rounded bg-black/75 text-[8px] font-black text-white/90">G</span>
+        </button>
+        {tools.map((t, i) => {
+          const d = TOOLS.find((x) => x.kind === t.kind);
+          const on = held === i;
+          return (
+            <button
+              key={t.kind}
+              type="button"
+              onPointerDown={(e) => { e.stopPropagation(); pick(i); }}
+              title={`${d?.name ?? t.kind} — ${d?.tip ?? ""}`}
+              aria-label={`Equip ${d?.name ?? t.kind}`}
+              aria-pressed={on}
+              className={`${slot} ${on ? "" : "border-white/30 bg-white/10 hover:border-amber-300/80"}`}
+              style={on && d ? { borderColor: d.color, background: `${d.color}38`, boxShadow: `0 0 10px ${d.color}88` } : undefined}
+            >
+              <span className="text-lg leading-none sm:text-2xl" aria-hidden>{d?.emoji ?? "🪓"}</span>
+              {t.count > 1 && (
+                <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full border border-black/40 bg-amber-400 px-1 text-[10px] font-black text-amber-950">{t.count}</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-1 w-fit rounded-lg bg-black/60 px-2 py-0.5 text-[9px] font-black uppercase tracking-widest text-white/75">
+        G — tool wheel
+      </div>
+    </div>
+  );
+}
+
 /* ------------- active super-power badge (lives inside the vitals card) ------------- */
 function PowerBadge() {
   const power = useGame((s) => s.hud.power);
@@ -417,312 +530,179 @@ function PowerBadge() {
   );
 }
 
-/* ------------- pocketed power slots: the collected gems — tap any one (or hold G
-   and aim the power wheel) to unleash it. Each gem is a SINGLE use. ------------- */
+/* ------------- pocketed power slots: every collected gem shows here, each fires ONCE.
+   G unleashes the first; tapping a specific slot fires that one. ------------- */
 function PowerSlots({ engine }: { engine: GameEngine }) {
-  const pockets = useGame((s) => s.hud.pocketPowers);
-  if (pockets.length === 0) return null;
+  const pockets = useGame((s) => s.hud.pockets);
   return (
-    <div className="flex items-end gap-1.5">
-      <AnimatePresence initial={false}>
-        {pockets.map((pocket, i) => (
-          <motion.button
-            data-ui
-            key={`${pocket.def}-${i}-${pockets.length}`}
-            type="button"
-            layout
-            initial={{ opacity: 0, scale: 0.5, y: 10 }}
-            animate={{ opacity: 1, scale: 1, y: 0 }}
-            exit={{ opacity: 0, scale: 0.5, y: 6 }}
-            whileTap={{ scale: 0.88 }}
-            onClick={() => engine.usePower(i)}
-            title={`${pocket.name} — tap to unleash (or hold G & aim the power wheel) · 1 use`}
-            aria-label={`Unleash stored ${pocket.name}`}
-            className="pointer-events-auto relative flex h-12 w-12 items-center justify-center rounded-xl border-2 bg-black/45 shadow-lg backdrop-blur-md sm:h-14 sm:w-14"
-            style={{ borderColor: pocket.color, boxShadow: `0 0 12px ${pocket.color}66` }}
-          >
-            <motion.span
-              aria-hidden
-              animate={{ scale: [1, 1.14, 1], rotate: [0, -7, 7, 0] }}
-              transition={{ repeat: Infinity, duration: 1.6 }}
-              className="text-2xl leading-none sm:text-3xl"
-            >{pocket.emoji}</motion.span>
-            {i === 0 && (
-              <span
-                className="absolute -bottom-1 -left-1 flex h-4 w-4 items-center justify-center rounded text-[9px] font-black text-black"
-                style={{ background: pocket.color }}
-              >
-                G
-              </span>
-            )}
-          </motion.button>
-        ))}
-      </AnimatePresence>
-    </div>
-  );
-}
-
-/* ------------- ✨ radial power wheel: HOLD G → it pops at screen center, move the
-   mouse to aim at a pocketed gem, RELEASE G to unleash it. Selection reads mouse
-   MOVEMENT deltas, so it works even while the pointer is hard-locked. A quick tap
-   of G (no aim, <250ms) still fires the first gem — old muscle memory preserved. ------------- */
-function PowerWheel({ engine }: { engine: GameEngine }) {
-  const pockets = useGame((s) => s.hud.pocketPowers);
-  const sel = useGame((s) => s.powerWheelSel);
-  const setSel = useGame((s) => s.setPowerWheelSel);
-  const setOpen = useGame((s) => s.setPowerWheelOpen);
-  const vec = useRef({ x: 0, y: 0 });
-  const n = pockets.length;
-  const R = 118; // px from the hub where the gems sit
-
-  // mouse aim — accumulate movement deltas into a virtual stick from the hub
-  useEffect(() => {
-    vec.current = { x: 0, y: 0 };
-    const DEAD = 26, MAXR = 150;
-    const mm = (e: MouseEvent) => {
-      const v = vec.current;
-      v.x = Math.max(-MAXR, Math.min(MAXR, v.x + e.movementX));
-      v.y = Math.max(-MAXR, Math.min(MAXR, v.y + e.movementY));
-      const m = Math.hypot(v.x, v.y);
-      if (m < DEAD) { setSel(-1); return; }
-      const cur = (Math.atan2(v.y, v.x) * 180) / Math.PI;   // −180…180
-      let best = -1, bestDiff = 1e9;
-      for (let i = 0; i < n; i++) {
-        const a = -90 + (i * 360) / n;                      // segment 0 sits at 12 o'clock
-        const d = Math.abs(((cur - a + 540) % 360) - 180);  // 0…180
-        if (d < bestDiff) { bestDiff = d; best = i; }
-      }
-      setSel(bestDiff <= 180 / n ? best : -1);              // inside this segment's sector?
-    };
-    addEventListener("mousemove", mm);
-    return () => removeEventListener("mousemove", mm);
-  }, [n, setSel]);
-
-  const aimed = sel >= 0 && sel < n ? pockets[sel] : null;
-
-  return (
-    <div className="pointer-events-none absolute inset-0 z-30" role="dialog" aria-label="Power wheel — move the mouse to aim, release G to unleash">
-      {/* soft focus backdrop */}
-      <motion.div
-        initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full"
-        style={{ width: 400, height: 400, background: "radial-gradient(circle, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.28) 55%, transparent 72%)" }}
-      />
-      {/* pocketed gems around the hub — click one to fire it instantly */}
-      {pockets.map((pocket, i) => {
-        const a = ((-90 + (i * 360) / n) * Math.PI) / 180;
-        const on = i === sel;
-        return (
-          <div
-            key={`${pocket.def}-${i}`}
-            className="absolute left-1/2 top-1/2"
-            style={{ transform: `translate(calc(-50% + ${Math.cos(a) * R}px), calc(-50% + ${Math.sin(a) * R}px))` }}
-          >
-            <motion.button
-              data-ui type="button"
-              initial={{ opacity: 0, scale: 0.4 }} animate={{ opacity: 1, scale: on ? 1.22 : 1 }}
-              transition={{ type: "spring", stiffness: 320, damping: 20 }}
-              onClick={() => { engine.usePower(i); setOpen(false); }}
-              aria-label={`Unleash ${pocket.name}${on ? " (aimed)" : ""}`}
-              className={`pointer-events-auto flex h-16 w-16 items-center justify-center rounded-full border-[3px] text-3xl shadow-xl backdrop-blur-md transition-colors ${on ? "bg-white/25" : "bg-black/50"}`}
-              style={{
-                borderColor: pocket.color,
-                boxShadow: on ? `0 0 26px ${pocket.color}, 0 0 60px ${pocket.color}55` : `0 0 10px ${pocket.color}66`,
-              }}
+    <motion.div
+      initial={{ opacity: 0, scale: 0.5, y: 10 }}
+      animate={{ opacity: 1, scale: 1, y: 0 }}
+      exit={{ opacity: 0, scale: 0.5 }}
+      className="pointer-events-auto flex items-end gap-2"
+      role="group"
+      aria-label="Pocketed super powers — tap one to unleash it"
+    >
+      {pockets.map((pocket, i) => (
+        <motion.button
+          key={`${pocket.def}-${i}`}
+          data-ui
+          type="button"
+          whileTap={{ scale: 0.88 }}
+          onClick={() => engine.usePowerAt(i)}
+          title={`${pocket.name} — ${i === 0 ? "press G or tap" : "tap"} to unleash it now (one use!)`}
+          aria-label={`Unleash stored ${pocket.name}`}
+          className="relative flex h-12 w-12 items-center justify-center rounded-xl border-2 bg-black/45 shadow-lg backdrop-blur-md sm:h-14 sm:w-14"
+          style={{ borderColor: pocket.color, boxShadow: `0 0 12px ${pocket.color}66` }}
+        >
+          <motion.span
+            aria-hidden
+            animate={{ scale: [1, 1.14, 1], rotate: [0, -7, 7, 0] }}
+            transition={{ repeat: Infinity, duration: 1.6 }}
+            className="text-2xl leading-none sm:text-3xl"
+          >{pocket.emoji}</motion.span>
+          {i === 0 && (
+            <span
+              className="absolute -bottom-1 -left-1 flex h-4 w-4 items-center justify-center rounded text-[9px] font-black text-black"
+              style={{ background: pocket.color }}
             >
-              {pocket.emoji}
-            </motion.button>
-          </div>
-        );
-      })}
-      {/* hub — shows the aimed power's name & tip */}
-      <div className="absolute left-1/2 top-1/2 flex h-24 w-24 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border-2 border-white/25 bg-black/65 backdrop-blur-md">
-        {aimed ? (
-          <>
-            <span className="px-2 text-center text-[11px] font-black leading-tight text-white">{aimed.name}</span>
-            <span className="mt-0.5 px-2 text-center text-[9px] font-bold leading-tight text-white/65">{aimed.tip}</span>
-          </>
-        ) : (
-          <>
-            <span className="text-lg" aria-hidden>✨</span>
-            <span className="mt-0.5 px-2 text-center text-[9px] font-bold uppercase tracking-wider text-white/70">aim · release G</span>
-          </>
-        )}
-      </div>
-      {/* hint under the wheel */}
-      <div className="absolute left-1/2 top-1/2 mt-[172px] -translate-x-1/2 whitespace-nowrap rounded-full bg-black/55 px-3 py-1 text-[10px] font-bold text-white/85 backdrop-blur-md">
-        move the mouse to aim · release <b className="text-yellow-300">G</b> to unleash · <b className="text-yellow-300">Esc</b> cancels
-      </div>
-    </div>
-  );
-}
-
-/* ------------- 🔧 tool belt slots: collected tools — tap one (or hold B and aim
-   the tool wheel) to use it. Each tool copy is a SINGLE use; similar tools STACK. ------------- */
-function ToolSlots({ engine }: { engine: GameEngine }) {
-  const tools = useGame((s) => s.hud.tools);
-  const wood = useGame((s) => s.hud.wood);
-  const stone = useGame((s) => s.hud.stone);
-  if (tools.length === 0 && wood === 0 && stone === 0) return null;
-  return (
-    <div className="flex flex-col items-start gap-1.5">
-      {tools.length > 0 && (
-        <div className="flex items-end gap-1.5">
-          <AnimatePresence initial={false}>
-            {tools.map((tool, i) => (
-              <motion.button
-                data-ui
-                key={`${tool.def}-${tools.length}`}
-                type="button"
-                layout
-                initial={{ opacity: 0, scale: 0.5, y: 10 }}
-                animate={{ opacity: 1, scale: 1, y: 0 }}
-                exit={{ opacity: 0, scale: 0.5, y: 6 }}
-                whileTap={{ scale: 0.88 }}
-                onClick={() => engine.useTool(i)}
-                title={`${tool.name} ×${tool.count} — ${tool.tip} (hold B & aim the tool wheel)`}
-                aria-label={`Use ${tool.name}`}
-                className="pointer-events-auto relative flex h-12 w-12 items-center justify-center rounded-xl border-2 bg-black/45 shadow-lg backdrop-blur-md sm:h-14 sm:w-14"
-                style={{ borderColor: tool.color, boxShadow: `0 0 12px ${tool.color}55` }}
-              >
-                <span className="text-2xl leading-none sm:text-3xl" aria-hidden>{tool.emoji}</span>
-                <span
-                  className="absolute -bottom-1.5 -right-1.5 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-black text-black shadow"
-                  style={{ background: tool.color }}
-                >
-                  ×{tool.count}
-                </span>
-                {i === 0 && (
-                  <span
-                    className="absolute -bottom-1 -left-1 flex h-4 w-4 items-center justify-center rounded text-[9px] font-black text-black"
-                    style={{ background: tool.color }}
-                  >
-                    B
-                  </span>
-                )}
-              </motion.button>
-            ))}
-          </AnimatePresence>
-        </div>
-      )}
-      {(wood > 0 || stone > 0) && (
-        <div className="flex items-center gap-1.5" aria-label="Harvested resources">
-          {wood > 0 && (
-            <span className="flex items-center gap-1 rounded-full border border-amber-300/40 bg-black/50 px-2 py-0.5 text-[11px] font-black text-amber-200 backdrop-blur-md" title="Wood — the builder spends it to raise barricades">
-              🪵 {wood}
+              G
             </span>
           )}
-          {stone > 0 && (
-            <span className="flex items-center gap-1 rounded-full border border-slate-300/40 bg-black/50 px-2 py-0.5 text-[11px] font-black text-slate-200 backdrop-blur-md" title="Stone — the builder spends it to raise walls">
-              🪨 {stone}
-            </span>
-          )}
-        </div>
-      )}
-    </div>
+        </motion.button>
+      ))}
+    </motion.div>
   );
 }
 
-/* ------------- 🔧 radial tool wheel: HOLD B → it pops at screen center, move the
-   mouse to aim at a belted tool, RELEASE B to use it. Same mouse-movement aiming
-   as the power wheel, so it works while the pointer is hard-locked. Quick tap of
-   B (no aim, <250ms) uses the first tool — old muscle memory preserved. ------------- */
-function ToolWheel({ engine }: { engine: GameEngine }) {
+/* ------------- 🎯 tool wheel — radial picker at screen center (G). -------------
+   Opens with a FREE cursor (Scene exits pointer lock); the world keeps running.
+   Mouse angle + per-slice hover both drive the selection (up = slot 0, clockwise);
+   click / G / Enter arms the hovered slice, Esc or backdrop click cancels.      */
+interface WheelApi { confirm: () => void; cancel: () => void }
+type WheelSlice = { type: "hands" | "tool" | "power"; emoji: string; name: string; tip: string; color: string; index: number; badge?: string };
+
+function ToolWheel({ engine, apiRef }: { engine: GameEngine; apiRef: { current: WheelApi | null } }) {
   const tools = useGame((s) => s.hud.tools);
-  const wood = useGame((s) => s.hud.wood);
-  const stone = useGame((s) => s.hud.stone);
-  const sel = useGame((s) => s.toolWheelSel);
-  const setSel = useGame((s) => s.setToolWheelSel);
-  const setOpen = useGame((s) => s.setToolWheelOpen);
-  const vec = useRef({ x: 0, y: 0 });
-  const n = tools.length;
-  const R = 118; // px from the hub where the tools sit
+  const pockets = useGame((s) => s.hud.pockets);
+  const held = useGame((s) => s.hud.held);
+  const phase = useGame((s) => s.hud.phase);
+  const youPossessed = useGame((s) => s.hud.youPossessed);
+  const setWheelOpen = useGame((s) => s.setWheelOpen);
+  const [hover, setHover] = useState(-1);
+  const circleRef = useRef<HTMLDivElement>(null);
 
-  // mouse aim — accumulate movement deltas into a virtual stick from the hub
+  const beast = youPossessed && phase === "night";
+  const slices: WheelSlice[] = beast
+    ? [{ type: "hands", emoji: "🔪", name: "Claws", tip: "You ARE the beast — F to claw", color: "#ff4d5e", index: -1 }]
+    : [
+        { type: "hands", emoji: "✊", name: "Bare hands", tip: "Find arms around town", color: "#94a3b8", index: -1 },
+        ...tools.map((t, i) => {
+          const d = TOOLS.find((x) => x.kind === t.kind);
+          return { type: "tool" as const, emoji: d?.emoji ?? "🪓", name: d?.name ?? t.kind, tip: d?.tip ?? "", color: d?.color ?? "#e2e8f0", index: i, badge: `×${t.count}` };
+        }),
+        ...pockets.map((p, i) => ({ type: "power" as const, emoji: p.emoji, name: p.name, tip: `${p.tip} — SINGLE USE`, color: p.color, index: i, badge: "1×" })),
+      ];
+  const N = Math.max(1, slices.length);
+
+  const close = () => { setWheelOpen(false); requestGameLock(); };
+  const confirm = (i: number) => {
+    const s = slices[i];
+    if (s && !beast) {
+      if (s.type === "tool") engine.setHeld(s.index);
+      else if (s.type === "power") engine.usePowerAt(s.index);
+      else engine.setHeld(-1);
+    }
+    close(); // beast claws / empty picks just close
+  };
+
+  // keep Hud's global keydown armed with fresh closures (runs after every render)
   useEffect(() => {
-    vec.current = { x: 0, y: 0 };
-    const DEAD = 26, MAXR = 150;
-    const mm = (e: MouseEvent) => {
-      const v = vec.current;
-      v.x = Math.max(-MAXR, Math.min(MAXR, v.x + e.movementX));
-      v.y = Math.max(-MAXR, Math.min(MAXR, v.y + e.movementY));
-      const m = Math.hypot(v.x, v.y);
-      if (m < DEAD) { setSel(-1); return; }
-      const cur = (Math.atan2(v.y, v.x) * 180) / Math.PI;   // −180…180
-      let best = -1, bestDiff = 1e9;
-      for (let i = 0; i < n; i++) {
-        const a = -90 + (i * 360) / n;                      // segment 0 sits at 12 o'clock
-        const d = Math.abs(((cur - a + 540) % 360) - 180);  // 0…180
-        if (d < bestDiff) { bestDiff = d; best = i; }
-      }
-      setSel(bestDiff <= 180 / n ? best : -1);              // inside this segment's sector?
-    };
-    addEventListener("mousemove", mm);
-    return () => removeEventListener("mousemove", mm);
-  }, [n, setSel]);
+    apiRef.current = { confirm: () => confirm(hover), cancel: close };
+    return () => { apiRef.current = null; };
+  });
 
-  const aimed = sel >= 0 && sel < n ? tools[sel] : null;
+  // free-cursor aiming: mouse angle from the wheel center → slice (up = 0, clockwise)
+  const aim = (e: React.MouseEvent) => {
+    const el = circleRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const dx = e.clientX - (r.left + r.width / 2);
+    const dy = e.clientY - (r.top + r.height / 2);
+    const dist = Math.hypot(dx, dy);
+    if (dist < r.width * 0.16 || dist > r.width * 0.5) { setHover(-1); return; } // hub & backdrop = no pick
+    const deg = (Math.atan2(dy, dx) * 180) / Math.PI;                  // 0° = right, screen-y down
+    const fromUp = (((deg + 90) % 360) + 360) % 360;                   // rotate so up = 0°, clockwise
+    const idx = Math.floor(((fromUp + 180 / N) % 360) / (360 / N));    // center each slice on its sector
+    setHover(Math.max(0, Math.min(slices.length - 1, idx)));
+  };
+
+  const heldSlice = beast
+    ? slices[0]
+    : held >= 0 && held < tools.length ? slices[1 + held] : slices[0];
+  const bareBelt = !beast && tools.length === 0 && pockets.length === 0;
+  const center: WheelSlice | undefined = bareBelt
+    ? { type: "hands", emoji: "✊", name: "Bare hands", tip: "No arms yet — find 🪓🗡️🔨🔧 around town!", color: "#94a3b8", index: -1 }
+    : hover >= 0 ? slices[hover] : heldSlice;
 
   return (
-    <div className="pointer-events-none absolute inset-0 z-30" role="dialog" aria-label="Tool wheel — move the mouse to aim, release B to use">
-      {/* soft focus backdrop */}
+    <motion.div
+      data-ui
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: { duration: 0.12 } }}
+      role="dialog"
+      aria-label="Tool wheel — pick an arm or a pocketed power"
+      onClick={close} // backdrop click = cancel (the circle stops propagation)
+      onMouseMove={aim}
+      className="pointer-events-auto absolute inset-0 z-40 flex items-center justify-center"
+      style={{ background: "radial-gradient(circle at 50% 50%, rgba(2,6,23,0.42) 0%, rgba(2,6,23,0.72) 55%, rgba(2,6,23,0.9) 100%)" }}
+    >
       <motion.div
-        initial={{ opacity: 0 }} animate={{ opacity: 1 }}
-        className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 rounded-full"
-        style={{ width: 400, height: 400, background: "radial-gradient(circle, rgba(0,0,0,0.55) 0%, rgba(0,0,0,0.28) 55%, transparent 72%)" }}
-      />
-      {/* belted tools around the hub — click one to use it instantly */}
-      {tools.map((tool, i) => {
-        const a = ((-90 + (i * 360) / n) * Math.PI) / 180;
-        const on = i === sel;
-        return (
-          <div
-            key={`${tool.def}-${i}`}
-            className="absolute left-1/2 top-1/2"
-            style={{ transform: `translate(calc(-50% + ${Math.cos(a) * R}px), calc(-50% + ${Math.sin(a) * R}px))` }}
-          >
-            <motion.button
-              data-ui type="button"
-              initial={{ opacity: 0, scale: 0.4 }} animate={{ opacity: 1, scale: on ? 1.22 : 1 }}
-              transition={{ type: "spring", stiffness: 320, damping: 20 }}
-              onClick={() => { engine.useTool(i); setOpen(false); }}
-              aria-label={`Use ${tool.name}${on ? " (aimed)" : ""}`}
-              className={`pointer-events-auto flex h-16 w-16 items-center justify-center rounded-full border-[3px] text-3xl shadow-xl backdrop-blur-md transition-colors ${on ? "bg-white/25" : "bg-black/50"}`}
+        ref={circleRef}
+        initial={{ scale: 0.85, rotate: -8 }} animate={{ scale: 1, rotate: 0 }}
+        transition={{ type: "spring", stiffness: 320, damping: 24 }}
+        onClick={(e) => { e.stopPropagation(); confirm(hover); }}
+        className="relative h-[min(70vw,380px)] w-[min(70vw,380px)] cursor-pointer rounded-full border border-white/15"
+        style={{ background: "radial-gradient(circle, rgba(15,23,42,0.85) 0%, rgba(2,6,23,0.3) 100%)", boxShadow: "0 0 60px rgba(0,0,0,0.6)" }}
+      >
+        {slices.map((s, i) => {
+          const ang = (360 / N) * i;
+          const active = hover === i;
+          return (
+            <button
+              key={`${s.type}-${s.index}`}
+              type="button"
+              onMouseEnter={() => setHover(i)}
+              onFocus={() => setHover(i)}
+              onClick={(e) => { e.stopPropagation(); confirm(i); }}
+              aria-label={`${s.name}${s.badge ? ` (${s.badge})` : ""}`}
+              className="absolute left-1/2 top-1/2 flex h-16 w-20 flex-col items-center justify-center gap-0.5 rounded-2xl border-2 backdrop-blur-md transition-[border-color,background-color,box-shadow] duration-100 sm:h-[4.5rem] sm:w-24"
               style={{
-                borderColor: tool.color,
-                boxShadow: on ? `0 0 26px ${tool.color}, 0 0 60px ${tool.color}55` : `0 0 10px ${tool.color}66`,
+                transform: `translate(-50%, -50%) rotate(${ang}deg) translateY(calc(min(70vw, 380px) * -0.335)) rotate(${-ang}deg) scale(${active ? 1.12 : 1})`,
+                borderColor: active ? s.color : "rgba(255,255,255,0.25)",
+                background: active ? `${s.color}2e` : "rgba(2,6,23,0.72)",
+                boxShadow: active ? `0 0 20px ${s.color}99` : "0 2px 10px rgba(0,0,0,0.45)",
               }}
             >
-              {tool.emoji}
-              <span
-                className="absolute -bottom-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-black text-black shadow"
-                style={{ background: tool.color }}
-              >
-                ×{tool.count}
-              </span>
-            </motion.button>
+              <span className="text-2xl leading-none" aria-hidden>{s.emoji}</span>
+              <span className="max-w-full truncate px-1 text-[9px] font-black uppercase tracking-wider text-white/85">{s.name}</span>
+              {s.badge && (
+                <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full border border-black/40 bg-amber-400 px-1 text-[9px] font-black text-amber-950">{s.badge}</span>
+              )}
+            </button>
+          );
+        })}
+        {/* center hub — hovered slice, else what's currently held */}
+        {center && (
+          <div className="pointer-events-none absolute left-1/2 top-1/2 w-[38%] -translate-x-1/2 -translate-y-1/2 text-center">
+            <div className="text-sm font-black leading-tight" style={{ color: center.color }}>{center.emoji} {center.name}</div>
+            <div className="mt-0.5 text-[9px] font-semibold leading-snug text-white/70">{center.tip}</div>
           </div>
-        );
-      })}
-      {/* hub — shows the aimed tool's name & tip, plus the wood/stone purse */}
-      <div className="absolute left-1/2 top-1/2 flex h-24 w-24 -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center rounded-full border-2 border-white/25 bg-black/65 px-1 backdrop-blur-md">
-        {aimed ? (
-          <>
-            <span className="px-1 text-center text-[11px] font-black leading-tight text-white">{aimed.name} ×{aimed.count}</span>
-            <span className="mt-0.5 px-1 text-center text-[9px] font-bold leading-tight text-white/65">{aimed.tip}</span>
-          </>
-        ) : (
-          <>
-            <span className="text-base leading-none" aria-hidden>🪵{wood} 🪨{stone}</span>
-            <span className="mt-0.5 px-1 text-center text-[9px] font-bold uppercase tracking-wider text-white/70">aim · release B</span>
-          </>
         )}
-      </div>
-      {/* hint under the wheel */}
-      <div className="absolute left-1/2 top-1/2 mt-[172px] -translate-x-1/2 whitespace-nowrap rounded-full bg-black/55 px-3 py-1 text-[10px] font-bold text-white/85 backdrop-blur-md">
-        move the mouse to aim · release <b className="text-orange-300">B</b> to use · <b className="text-orange-300">Esc</b> cancels
-      </div>
-    </div>
+        <div className="pointer-events-none absolute left-1/2 top-[88%] -translate-x-1/2 whitespace-nowrap rounded-full bg-black/65 px-2 py-0.5 text-[8.5px] font-black uppercase tracking-widest text-white/55">
+          click / G pick · Esc close
+        </div>
+      </motion.div>
+    </motion.div>
   );
 }
 
@@ -841,8 +821,8 @@ function MobileButtons({ engine }: { engine: GameEngine }) {
   const [sprint, setSprint] = useState(false);
   const blinkActive = useGame((s) => s.hud.power?.kind === "blink");
   const blinkReady = useGame((s) => s.hud.blinkReady);
-  const pockets = useGame((s) => s.hud.pocketPowers);
-  const tools = useGame((s) => s.hud.tools);
+  const pockets = useGame((s) => s.hud.pockets);
+  const setWheelOpen = useGame((s) => s.setWheelOpen);
   return (
     <div data-ui className="flex flex-col items-end gap-3">
       <button
@@ -868,28 +848,21 @@ function MobileButtons({ engine }: { engine: GameEngine }) {
       )}
       {pockets.map((pocket, i) => (
         <button
-          key={`${pocket.def}-${i}-${pockets.length}`}
+          key={`${pocket.def}-${i}`}
           aria-label={`Unleash stored ${pocket.name}`}
-          className="h-14 w-14 rounded-full border-2 text-2xl shadow-lg active:scale-95"
+          className="h-16 w-16 rounded-full border-2 text-3xl shadow-lg active:scale-95"
           style={{ borderColor: pocket.color, background: "rgba(0,0,0,0.45)", boxShadow: `0 0 12px ${pocket.color}66` }}
-          onTouchStart={(e) => { e.preventDefault(); engine.usePower(i); }}
+          onTouchStart={(e) => { e.preventDefault(); engine.usePowerAt(i); }}
         >{pocket.emoji}</button>
       ))}
-      {tools.map((tool, i) => (
-        <button
-          key={`${tool.def}-${i}-${tools.length}`}
-          aria-label={`Use ${tool.name} (×${tool.count})`}
-          className="relative h-14 w-14 rounded-full border-2 text-2xl shadow-lg active:scale-95"
-          style={{ borderColor: tool.color, background: "rgba(0,0,0,0.45)", boxShadow: `0 0 12px ${tool.color}55` }}
-          onTouchStart={(e) => { e.preventDefault(); engine.useTool(i); }}
-        >
-          {tool.emoji}
-          <span
-            className="absolute -bottom-1 -right-1 flex h-5 min-w-5 items-center justify-center rounded-full px-1 text-[10px] font-black text-black shadow"
-            style={{ background: tool.color }}
-          >×{tool.count}</span>
-        </button>
-      ))}
+      {/* ⚔️ 7Nights verbs — attack, builds, accuse & the 🎒 tool wheel */}
+      <div className="flex max-w-[6.75rem] flex-wrap justify-end gap-2">
+        <button aria-label="Attack with held arm" className="h-14 w-14 rounded-full border-2 border-white/50 bg-rose-500/80 text-xl shadow-lg active:scale-95" onTouchStart={(e) => { e.preventDefault(); engine.attack(); }}>⚔️</button>
+        <button aria-label="Place barricade" className="h-14 w-14 rounded-full border-2 border-white/50 bg-amber-700/80 text-xl shadow-lg active:scale-95" onTouchStart={(e) => { e.preventDefault(); engine.placeBuild("barricade"); }}>🛡️</button>
+        <button aria-label="Light campfire" className="h-14 w-14 rounded-full border-2 border-white/50 bg-orange-500/80 text-xl shadow-lg active:scale-95" onTouchStart={(e) => { e.preventDefault(); engine.placeBuild("campfire"); }}>🔥</button>
+        <button aria-label="Accuse the suspect" className="h-14 w-14 rounded-full border-2 border-white/50 bg-violet-500/80 text-xl shadow-lg active:scale-95" onTouchStart={(e) => { e.preventDefault(); engine.accuse(); }}>⚖️</button>
+        <button aria-label="Open the tool wheel" className="h-14 w-14 rounded-full border-2 border-white/50 bg-slate-700/85 text-xl shadow-lg active:scale-95" onTouchStart={(e) => { e.preventDefault(); setWheelOpen(true); }}>🎒</button>
+      </div>
       <button
         aria-label="Toggle sprint"
         className={`h-14 w-14 rounded-full border-2 border-white/50 text-sm font-black shadow-lg active:scale-95 ${sprint ? "bg-rose-500/90 text-white" : "bg-white/25 text-white"}`}
@@ -930,7 +903,7 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
         className="w-[min(92vw,380px)] rounded-3xl border border-white/20 bg-slate-900/95 p-6 text-white shadow-2xl"
       >
         <div className="mb-1 text-center text-3xl font-black text-yellow-300">Paused ⏸</div>
-        <p className="mb-4 text-center text-xs text-white/60">Run time {mm}:{ss} · score {hud.points} · votes {hud.delivered}/{hud.total}</p>
+        <p className="mb-4 text-center text-xs text-white/60">Run time {mm}:{ss} · score {hud.points} · 🌙 night {hud.nightNo}</p>
         <div className="space-y-2">
           <Button onClick={resume} className="h-12 w-full rounded-2xl bg-gradient-to-r from-amber-400 to-yellow-300 text-lg font-black text-amber-950">
             <PlayIcon size={18} className="mr-2" fill="currentColor" /> Resume
@@ -967,6 +940,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
   const touch = useGame((s) => s.touch);
   const showHelp = useGame((s) => s.showHelp);
   const toggleHelp = useGame((s) => s.toggleHelp);
+  const setShowHelp = useGame((s) => s.setShowHelp);
   const showFps = useGame((s) => s.settings.showFps);
   const paused = useGame((s) => s.paused);
   const setPaused = useGame((s) => s.setPaused);
@@ -974,8 +948,9 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
   const mouseLocked = useGame((s) => s.mouseLocked);
   const bigMap = useGame((s) => s.bigMapOpen);
   const setBigMap = useGame((s) => s.setBigMapOpen);
-  const powerWheelOpen = useGame((s) => s.powerWheelOpen);
-  const toolWheelOpen = useGame((s) => s.toolWheelOpen);
+  const wheelOpen = useGame((s) => s.wheelOpen);
+  // the 🎯 wheel publishes its confirm/cancel so the global keydown can G-confirm / Esc-cancel
+  const wheelApi = useRef<WheelApi | null>(null);
   // after the cursor gets hard-bound, remind the player how to free it (4 s)
   const [lockTip, setLockTip] = useState(false);
   useEffect(() => {
@@ -1019,13 +994,12 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (useGame.getState().victoryOpen) return;
-      // the power/tool wheels swallow Esc / P / M — they always close first, never pause
-      const st0 = useGame.getState();
-      if (st0.powerWheelOpen && (e.code === "Escape" || e.code === "KeyP" || e.code === "KeyM")) {
-        e.preventDefault(); st0.setPowerWheelOpen(false); return;
-      }
-      if (st0.toolWheelOpen && (e.code === "Escape" || e.code === "KeyP" || e.code === "KeyM")) {
-        e.preventDefault(); st0.setToolWheelOpen(false); return;
+      // 🎯 the open tool wheel is keyboard-boss: G/Enter confirm the hovered slice,
+      // Esc cancels — and every other shortcut is swallowed while it's up
+      if (wheelOpen) {
+        if (e.code === "KeyG" || e.code === "Enter") { e.preventDefault(); wheelApi.current?.confirm(); }
+        else if (e.code === "Escape") { e.preventDefault(); wheelApi.current?.cancel(); }
+        return;
       }
       if (bigMap) {
         // the map swallows M / Esc so it always closes first
@@ -1033,7 +1007,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         return;
       }
       if (e.code === "KeyM") { e.preventDefault(); setBigMap(true); return; }
-      if (e.code === "KeyI") { e.preventDefault(); toggleHelp(); return; } // goal card show/hide
+      if (e.code === "KeyI") { e.preventDefault(); toggleHelp(); } // ⓘ goal card: show → auto-hide / toggle off
       if (e.code === "KeyP" || e.code === "Escape") { e.preventDefault(); togglePause(); }
       // top-row Digit keys AND keypad Numpad keys both eat pocketed food
       const dig = /^(?:Digit|Numpad)([1-8])$/.exec(e.code);
@@ -1044,7 +1018,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
-  }, [victoryOpen, engine, bigMap, togglePause, toggleHelp, setBigMap]);
+  }, [victoryOpen, engine, bigMap, togglePause, toggleHelp, wheelOpen]);
 
   useEffect(() => {
     if (!toasts.length) return;
@@ -1052,13 +1026,13 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
     return () => clearTimeout(t);
   }, [toasts, dropToast]);
 
-  // goal card auto-hides after 12 s on EVERY device so the view stays clear —
-  // press I (or tap the ⓘ button) to bring it back anytime
+  // goal card is a HINT: every time it opens it auto-hides after 12 s —
+  // press I (or tap the ⓘ button) to recall it for another round
   useEffect(() => {
     if (!showHelp) return;
-    const t = setTimeout(() => useGame.setState({ showHelp: false }), 12000);
+    const t = setTimeout(() => setShowHelp(false), 12000);
     return () => clearTimeout(t);
-  }, [showHelp]);
+  }, [showHelp, setShowHelp]);
 
   const toastIcon = (kind: string) =>
     kind === "good" ? <CheckCircle2 size={15} className="mt-0.5 shrink-0" /> :
@@ -1105,6 +1079,49 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         />
       )}
 
+      {/* 🌑 night ambience — nights should feel scary even without the beast */}
+      {hud.phase === "night" && (
+        <div aria-hidden className="pointer-events-none absolute inset-0 transition-opacity duration-700" style={{ boxShadow: "inset 0 0 170px 60px rgba(2,6,23,0.6)" }} />
+      )}
+
+      {/* 🩸 possession warnings — the dusk transform… */}
+      <AnimatePresence>
+        {hud.phase === "dusk" && hud.youPossessed && (
+          <motion.div key="possess-warn" aria-hidden className="pointer-events-none absolute inset-0 z-20 flex items-center justify-center">
+            <motion.div
+              animate={{ opacity: [0.45, 0.85, 0.45] }}
+              transition={{ repeat: Infinity, duration: 1.3, ease: "easeInOut" }}
+              className="absolute inset-0"
+              style={{ background: "radial-gradient(circle, transparent 26%, rgba(60,0,8,0.6) 100%)", boxShadow: "inset 0 0 200px 80px rgba(136,0,16,0.7)" }}
+            />
+            <motion.div
+              animate={{ x: [0, -4, 3, -2, 4, 0], y: [0, 2, -3, 1, -1, 0], skewX: [0, -1.5, 1, 0] }}
+              transition={{ repeat: Infinity, duration: 0.34, ease: "linear" }}
+              className="relative text-center"
+            >
+              <div className="text-2xl font-black tracking-widest text-red-400 sm:text-5xl" style={{ textShadow: "0 0 22px rgba(255,30,30,0.95), 0 0 4px rgba(255,255,255,0.4)" }}>
+                ⚠ YOU ARE BEING POSSESSED ⚠
+              </div>
+              <div className="mt-2 text-[10px] font-bold uppercase tracking-[0.35em] text-red-200/85 sm:text-xs">Fight it… or embrace it.</div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+      {/* …and the night you ARE the beast — persistent red haze + claw reminder */}
+      {hud.phase === "night" && hud.youPossessed && (
+        <>
+          <div aria-hidden className="pointer-events-none absolute inset-0" style={{ boxShadow: "inset 0 0 150px 55px rgba(136,0,16,0.35)" }} />
+          <motion.div
+            role="status"
+            animate={{ y: [0, -6, 0] }}
+            transition={{ repeat: Infinity, duration: 2.2, ease: "easeInOut" }}
+            className={`pointer-events-none absolute left-1/2 top-[58%] -translate-x-1/2 rounded-full border border-rose-400/60 bg-black/65 px-3 py-1 text-[11px] font-black tracking-wider text-rose-200 backdrop-blur-md ${hud.attackReady ? "" : "opacity-60"}`}
+          >
+            🔪 F — claw the survivors
+          </motion.div>
+        </>
+      )}
+
       {/* directional warning toward the closest chasing cop */}
       <AnimatePresence>{hud.policeNear && <DangerCompass engine={engine} />}</AnimatePresence>
 
@@ -1117,26 +1134,10 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
             😮‍💨 Exhausted — walking to recover…
           </div>
         )}
-        <div className="mt-1 flex items-center gap-2 text-sm text-white">
-          {hud.side === "police" ? (
-            <>
-              {hud.outfitLabel && (
-                <span className="rounded-full bg-sky-400/25 px-2 py-0.5 text-[10px] font-black text-sky-100 ring-1 ring-sky-300/40">
-                  {hud.outfitLabel}
-                </span>
-              )}
-              <span className="ml-1 rounded-full bg-sky-400/90 px-2 py-0.5 text-xs font-black text-sky-950">
-                🚓 {hud.busted}/{BUST_TARGET} busted
-              </span>
-            </>
-          ) : (
-            <>
-              <VotePips carried={hud.carried} />
-              <span className="ml-1 rounded-full bg-yellow-400/90 px-2 py-0.5 text-xs font-black text-yellow-950">
-                {hud.delivered}/{hud.total} delivered
-              </span>
-            </>
-          )}
+        {/* 🪵🪨 gathered resources — the 7Nights build economy (B barricade · V campfire) */}
+        <div className="mt-1 flex items-center gap-1.5">
+          <span className="rounded-full bg-amber-900/40 px-2 py-0.5 text-xs font-black tabular-nums text-amber-100 ring-1 ring-amber-200/30" title="Wood — chop trees with the axe (F)">🪵 {hud.wood}</span>
+          <span className="rounded-full bg-slate-700/50 px-2 py-0.5 text-xs font-black tabular-nums text-slate-100 ring-1 ring-slate-300/30" title="Rock — smash boulders with the hammer (F)">🪨 {hud.rock}</span>
         </div>
         <motion.div layout className="flex items-center gap-0.5" aria-label={`Wanted level ${hud.stars} of 5`}>
           {Array.from({ length: 5 }, (_, i) => (
@@ -1161,12 +1162,19 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
             </motion.div>
           )}
         </AnimatePresence>
+        {/* 🔎 last clue learned by inspecting a body (full text on hover) */}
+        {hud.clue && (
+          <div title={hud.clue} role="status" className="max-w-[13rem] rounded-lg bg-rose-950/45 px-2 py-0.5 text-[10px] font-semibold leading-snug text-rose-100/90 ring-1 ring-rose-300/30">
+            🔎 {hud.clue.length > 90 ? `${hud.clue.slice(0, 90)}…` : hud.clue}
+          </div>
+        )}
       </div>
       {/* floating +❤/+⚡ chip right after a snack is eaten */}
       <GainFlash />
 
-      {/* top-center: objective tracker + zone/clock */}
+      {/* top-center: 🌙 night strip (the 7Nights story tracker) + zone/clock */}
       <div className="absolute left-3 right-3 top-[172px] flex flex-col items-center gap-1.5 sm:left-1/2 sm:right-auto sm:top-3 sm:-translate-x-1/2">
+        <NightStrip />
         <div className="flex items-center gap-2">
           <div className="rounded-full bg-black/35 px-3 py-1 text-xs font-bold text-white backdrop-blur-md sm:px-4 sm:py-1.5 sm:text-sm">
             <MapPin size={14} className={`mr-1 inline ${ZONE_TINT[hud.zone] ?? "text-emerald-300"}`} />
@@ -1176,40 +1184,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
             <Timer size={14} className="mr-1 inline text-sky-200" />{runTime}
           </div>
         </div>
-        {/* objective progress — protester: deliver votes · police: bust runners */}
-        {hud.side === "police" ? (
-          <div className="flex w-52 flex-col gap-1 rounded-xl bg-black/35 px-3 py-1.5 backdrop-blur-md sm:w-64">
-            <div className="flex items-center justify-between text-[11px] font-black text-white/90">
-              <span className="flex items-center gap-1"><Flag size={11} className="text-sky-300" /> {hud.won ? "All runners busted!" : hud.lost ? "Runners won…" : "Bust the vote runners"}</span>
-              <span className="text-sky-300">{hud.busted}/{BUST_TARGET}</span>
-            </div>
-            <div className="h-2 overflow-hidden rounded-full bg-white/15">
-              <motion.div
-                className="h-full rounded-full bg-gradient-to-r from-sky-300 to-cyan-200"
-                animate={{ width: `${Math.min(100, (hud.busted / BUST_TARGET) * 100)}%` }}
-                transition={{ type: "spring", stiffness: 120, damping: 20 }}
-              />
-            </div>
-            <div className="flex items-center justify-between text-[10px] font-bold text-rose-200">
-              <span>Votes smuggled</span>
-              <span className={hud.runnerDelivered >= RUNNER_LOSE_DELIVERIES - 2 ? "animate-pulse font-black" : ""}>{hud.runnerDelivered}/{RUNNER_LOSE_DELIVERIES}</span>
-            </div>
-          </div>
-        ) : (
-          <div className="flex w-52 flex-col rounded-xl bg-black/35 px-3 py-1.5 backdrop-blur-md sm:w-64">
-            <div className="flex items-center justify-between text-[11px] font-black text-white/90">
-              <span className="flex items-center gap-1"><Flag size={11} className="text-emerald-300" /> {hud.won ? "Democracy saved!" : "Deliver votes to Parliament"}</span>
-              <span className="text-yellow-300">{hud.delivered}/{hud.total}</span>
-            </div>
-            <div className="mt-1 h-2 overflow-hidden rounded-full bg-white/15">
-              <motion.div
-                className="h-full rounded-full bg-gradient-to-r from-emerald-400 to-yellow-300"
-                animate={{ width: `${(hud.delivered / hud.total) * 100}%` }}
-                transition={{ type: "spring", stiffness: 120, damping: 20 }}
-              />
-            </div>
-          </div>
-        )}
+        {/* (old vote/police objective progress cards removed — the night strip IS the objective now) */}
         {/* spawn grace shield (protester only — the officer needs no sneak shield) */}
         <AnimatePresence>
           {graceT && hud.side !== "police" && (
@@ -1245,16 +1220,24 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
           >
             {muted ? <VolumeX size={16} /> : <Volume2 size={16} />}
           </Button>
-          <Button
-            size="icon" variant="ghost"
-            aria-label="Toggle goal card"
-            aria-expanded={showHelp}
-            title="Goal card (I)"
-            className={`h-9 w-9 rounded-xl bg-black/35 text-white backdrop-blur-md hover:bg-black/50 ${showHelp ? "ring-2 ring-yellow-300/70" : ""}`}
-            onClick={toggleHelp}
+          {/* ⓘ goal-card toggle — when the hint hides itself this little (i) is all that remains */}
+          <motion.div
+            key={showHelp ? "goal-open" : "goal-closed"}
+            initial={{ scale: 0.6, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            transition={{ type: "spring", stiffness: 420, damping: 20 }}
           >
-            <Info size={16} />
-          </Button>
+            <Button
+              size="icon" variant="ghost"
+              aria-label={showHelp ? "Hide goal card (I)" : "Show goal card (I)"}
+              aria-expanded={showHelp}
+              title="Goal & tips (I)"
+              className={`h-9 w-9 rounded-xl bg-black/35 backdrop-blur-md hover:bg-black/50 ${showHelp ? "text-yellow-300 ring-1 ring-yellow-300/60" : "text-white"}`}
+              onClick={toggleHelp}
+            >
+              <Info size={16} />
+            </Button>
+          </motion.div>
           <Button
             size="icon" variant="ghost" aria-label="Pause game"
             className="h-9 w-9 rounded-xl bg-black/35 text-white backdrop-blur-md hover:bg-black/50"
@@ -1263,39 +1246,39 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
             <Pause size={16} />
           </Button>
         </div>
-        {/* compact goal card — auto-hides after 12 s, I / ⓘ brings it back */}
+        {/* goal card — a compact hint that auto-hides; press I or tap ⓘ to recall it */}
         <AnimatePresence>
           {showHelp && (
             <motion.div
-              initial={{ opacity: 0, y: -8, scale: 0.96 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: -8, scale: 0.96 }}
-              transition={{ type: "spring", stiffness: 300, damping: 24 }}
-              role="note" aria-label="Goal and quick tips"
-              className="pointer-events-auto w-[228px] rounded-2xl border border-white/15 bg-black/55 p-3 text-white shadow-xl backdrop-blur-md sm:w-[248px]"
+              initial={{ opacity: 0, x: 22, scale: 0.96 }}
+              animate={{ opacity: 1, x: 0, scale: 1 }}
+              exit={{ opacity: 0, x: 22, scale: 0.96, transition: { duration: 0.16 } }}
+              transition={{ type: "spring", stiffness: 380, damping: 26 }}
+              role="note"
+              aria-label="Goal and quick tips — press I to hide"
+              className="pointer-events-auto w-[248px] rounded-2xl bg-black/55 p-3 text-white shadow-2xl ring-1 ring-white/15 backdrop-blur-md sm:w-[268px]"
             >
-              <div className="flex items-center justify-between">
-                <span className="flex items-center gap-1 text-xs font-black text-yellow-300"><Flag size={12} /> Goal</span>
+              <div className="flex items-start justify-between gap-2">
+                <p className="text-[11px] font-semibold leading-snug">
+                  <b className="text-yellow-300">🎯 Goal:</b>{" "}
+                  Survive all <b className="text-rose-300">7 nights</b> of the beast. By day gather 🪵🪨, build &amp; eat; at dusk the sirens choose a host — at night it HUNTS. Slay it with arms (<b>F</b>) or inspect bodies (<b>E</b>) &amp; <b>accuse (R)</b> the suspect!
+                </p>
                 <button
-                  onClick={() => useGame.getState().setShowHelp(false)}
-                  aria-label="Close goal card"
-                  className="rounded-md p-0.5 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+                  onClick={() => setShowHelp(false)}
+                  aria-label="Hide goal card (I)"
+                  className="shrink-0 rounded-md p-0.5 text-white/55 transition-colors hover:bg-white/15 hover:text-white"
                 >
-                  <X size={14} />
+                  <X size={13} />
                 </button>
               </div>
-              <p className="mt-1 text-[11px] leading-snug text-white/90">
-                {hud.side === "police"
-                  ? <>Bust <b>12 vote runners</b> before 10 votes reach Parliament — walk or drive into them to arrest.</>
-                  : <>Snatch 🗳 votes, deliver them at the Parliament ballot box. Dodge police — <b>Shift</b> sprint!</>}
-              </p>
-              <div className="mt-1.5 space-y-0.5 text-[10.5px] leading-snug text-amber-200/90">
-                <div>🥭 Run over food → tap bag or press <b>1-8</b> to eat</div>
-                <div>✨ Gems: carry up to <b>3</b> · hold <b>G</b> → aim → release · <b>Q</b> blink · deep-jungle hoard</div>
-                <div>🔧 Tools: hold <b>B</b> → aim → release · 🪓 wood · 🔨 stone · 🗡️ zombies · 🧱 build</div>
-                <div>🪪 License + <b>E</b> at any car = drive · <b>E</b> rescues friends</div>
-                <div>⛰️ Climb the SCARY mountains past the deep jungle!</div>
+              <div className="mt-1.5 space-y-1 border-t border-white/15 pt-1.5 text-[10px] leading-snug text-white/75">
+                <p className="text-amber-200/90">🥭 Run over food to pocket it — eat with <b>1-8</b> (heals ❤ · refills ⚡)</p>
+                <p className="text-fuchsia-200/95">🎒 Arms &amp; ✨ gem powers sit on the belt — press <b>G</b> for the tool wheel · <b>Q</b> blink</p>
+                <p className="text-lime-200/95">🪓🪨 Axe fells trees, hammer smashes boulders — then <b>B</b> barricade · <b>V</b> campfire</p>
+                <p className="text-sky-200/95">🪪 License card + <b>E</b> beside a car = drive (W/S gas · A/D steer · <b>H</b> horn · E hop out)</p>
+                {!touch && <p className="text-white/55">WASD move · mouse camera · Space double-jump · M map · Esc pause</p>}
               </div>
-              {!touch && <div className="mt-1.5 text-[10px] leading-snug text-white/60">WASD move · mouse camera · Space jump ×2 · M map</div>}
-              <div className="mt-1.5 border-t border-white/10 pt-1 text-[9.5px] text-white/50">Press <b className="text-white/80">I</b> to toggle · auto-hides</div>
+              <p className="mt-1.5 text-[9px] font-bold uppercase tracking-widest text-white/40">Press <b className="text-white/70">I</b> to toggle · auto-hides</p>
             </motion.div>
           )}
         </AnimatePresence>
@@ -1344,10 +1327,6 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
           <span className="hidden whitespace-nowrap text-[10px] font-bold uppercase tracking-widest text-white/70 sm:inline">W/S gas · A/D steer · E hop out · H horn</span>
         </div>
       )}
-
-      {/* ✨ radial power wheel — hold G, aim with the mouse, release to unleash */}
-      <AnimatePresence>{powerWheelOpen && <PowerWheel engine={engine} />}</AnimatePresence>
-      <AnimatePresence>{toolWheelOpen && <ToolWheel engine={engine} />}</AnimatePresence>
 
       {/* toasts */}
       <div className="absolute bottom-24 left-1/2 z-10 flex w-[90%] max-w-md -translate-x-1/2 flex-col items-center gap-1.5 sm:bottom-24">
@@ -1436,12 +1415,12 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         )}
       </AnimatePresence>
 
-      {/* food pockets — desktop: bottom-left corner, with the ✨ power + 🔧 tool slots beside them */}
+      {/* food pockets + 🎒 tool belt — desktop: bottom-left corner, with the ✨ power slots beside them */}
       {!touch && (
         <div className="absolute bottom-3 left-3 z-10 flex items-end gap-2">
           <ItemBar engine={engine} />
-          <AnimatePresence>{hud.pocketPowers.length > 0 && <PowerSlots engine={engine} />}</AnimatePresence>
-          <AnimatePresence>{(hud.tools.length > 0 || hud.wood > 0 || hud.stone > 0) && <ToolSlots engine={engine} />}</AnimatePresence>
+          <ToolBelt engine={engine} />
+          <AnimatePresence>{hud.pockets.length > 0 && <PowerSlots engine={engine} />}</AnimatePresence>
         </div>
       )}
 
@@ -1457,7 +1436,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       {/* win flag hint */}
       {hud.won && (
         <div className="absolute left-1/2 top-16 -translate-x-1/2 rounded-full bg-yellow-400/90 px-4 py-1.5 text-sm font-black text-yellow-950 shadow-lg">
-          <Flag size={14} className="mr-1 inline" /> All votes delivered — free roam & keep rescuing!
+          <Flag size={14} className="mr-1 inline" /> Run complete — free roam & keep exploring!
         </div>
       )}
 
@@ -1487,11 +1466,16 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       {!touch && (
         <div className="absolute bottom-3 left-1/2 z-10 hidden -translate-x-1/2 flex-col items-center gap-1.5 md:flex">
           <div className="hidden whitespace-nowrap rounded-full bg-black/45 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/75 backdrop-blur-md lg:block">
-            WASD move · Shift sprint · Space jump ×2 · E rescue / drive · G power · B tools · Q blink · 1-8 eat
+            WASD move · Shift sprint · Space jump ×2 · F attack · G tools · B/V build · E inspect/drive · R accuse · Q blink · 1-8 eat · M map
           </div>
           <CoordsChip px={hud.px} pz={hud.pz} />
         </div>
       )}
+
+      {/* 🎯 tool wheel — G opens it with a free cursor; click/G arms, Esc cancels */}
+      <AnimatePresence>
+        {wheelOpen && <ToolWheel engine={engine} apiRef={wheelApi} />}
+      </AnimatePresence>
 
       {/* big world map overlay */}
       <AnimatePresence>

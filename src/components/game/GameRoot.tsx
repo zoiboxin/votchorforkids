@@ -6,21 +6,19 @@ import { WORLD } from "./WorldView";
 import { GameEngine } from "@/lib/game/engine";
 import { terrainHeight } from "@/lib/game/worldgen";
 import { useGame } from "./store";
-import { sfx, startMusic, stopMusic } from "@/lib/game/audio";
+import { sfx, startMusic, stopMusic, stopDrone } from "@/lib/game/audio";
 import { useGameInput, requestGameLock } from "./Scene";
 import { Hud } from "./Hud";
 import { Creator } from "./Creator";
 import { Landing } from "./Landing";
-import { SelectSide } from "./SelectSide";
-import { HeroOutfits } from "./HeroOutfits";
 import { VictoryModal } from "./VictoryModal";
 
 const Scene = dynamic(() => import("./Scene").then((m) => m.Scene), {
   ssr: false,
   loading: () => (
-    <div className="absolute inset-0 flex items-center justify-center bg-sky-300">
-      <div className="animate-bounce rounded-2xl bg-white/80 px-6 py-3 text-lg font-black text-slate-800 shadow-xl">
-        Building the city… 🏗️
+    <div className="absolute inset-0 flex items-center justify-center bg-slate-950">
+      <div className="animate-bounce rounded-2xl bg-white/10 px-6 py-3 text-lg font-black text-amber-200 shadow-xl">
+        Night is falling… 🌙
       </div>
     </div>
   ),
@@ -40,14 +38,12 @@ export function GameRoot() {
     useGame.getState().setPaused(false);
     useGame.getState().setVictoryOpen(false);
     useGame.getState().setShowHelp(true); // goal card re-shows every round, auto-hides after 12 s
-    useGame.getState().setPowerWheelOpen(false); // never carry a stale power wheel into a fresh run
-    useGame.getState().setToolWheelOpen(false);  // same for the 🔧 tool wheel
+    useGame.getState().setWheelOpen(false); // never carry a stale 🎒 tool wheel into a fresh run
     sfx.click();
     startMusic();
     setTimeout(() => {
-      // read the look FRESH from the store — the hero-flow screens (SelectSide /
-      // HeroOutfits) apply the side & squad uniform right before calling this, so
-      // a closure-captured look would be one step behind the player's pick
+      // read the look FRESH from the store — the join screen applies the final
+      // look right before calling this, so a closure-captured look would lag a beat
       const freshLook = useGame.getState().look;
       let eng = engineRef.current;
       if (!eng) {
@@ -60,7 +56,7 @@ export function GameRoot() {
         eng.reset(freshLook);
         eng.setToast((msg, kind) => pushToast(msg, kind));
       }
-      eng.playerName = useGame.getState().playerName || "You"; // officer/hero name for the start toast
+      eng.playerName = useGame.getState().playerName || "You"; // survivor name for the start toast
       useGame.getState().setScreen("play");
       eng.start();
       // weld the mouse to the camera as the world appears — the helper retries
@@ -72,10 +68,11 @@ export function GameRoot() {
 
   const backToMenu = useCallback(() => {
     stopMusic();
+    stopDrone();
     const eng = engineRef.current;
     if (eng) {
       eng.running = false;
-      // save unfinished runs too (quit mid-chase) — wins are recorded by the victory watcher
+      // save unfinished runs too (quit mid-story) — wins are recorded by the victory watcher
       if (!eng.won && eng.points > 0) {
         const timeMs = Math.round(eng.elapsed * 1000);
         useGame.getState().recordRun(eng.points, eng.delivered, eng.rescues, eng.caughtCount, false, timeMs);
@@ -101,7 +98,7 @@ export function GameRoot() {
 
   useGameInput(engineRef.current);
 
-  // watch for the win OR the police-shift loss → open the end screen once + save the record
+  // watch for the win OR the death → open the end screen once + save the record
   useEffect(() => {
     const eng = engineRef.current;
     if (!eng) return;
@@ -119,12 +116,13 @@ export function GameRoot() {
   }, [engine, runId]);
 
   return (
-    <div className="fixed inset-0 overflow-hidden bg-sky-300">
+    <div className="fixed inset-0 overflow-hidden bg-slate-950">
       {screen === "landing" && <Landing />}
 
-      {screen === "select" && <SelectSide onPlay={startGame} />}
+      {/* 7Nights: no side selection — everyone joins as a survivor (screen kept for legacy saves) */}
+      {screen === "select" && <Creator onStart={startGame} />}
 
-      {screen === "outfit" && <HeroOutfits onPlay={startGame} />}
+      {screen === "outfit" && <Creator onStart={startGame} />}
 
       {screen === "creator" && <Creator onStart={startGame} />}
 
@@ -141,9 +139,9 @@ export function GameRoot() {
       )}
 
       {screen === "connecting" && !engine && (
-        <div className="absolute inset-0 flex items-center justify-center bg-sky-300">
-          <div className="animate-bounce rounded-2xl bg-white/85 px-6 py-3 text-lg font-black text-slate-800 shadow-xl">
-            Warming up the city… 🏗️
+        <div className="absolute inset-0 flex items-center justify-center bg-slate-950">
+          <div className="animate-bounce rounded-2xl bg-white/10 px-6 py-3 text-lg font-black text-amber-200 shadow-xl">
+            The first night approaches… 🌑
           </div>
         </div>
       )}

@@ -3,6 +3,7 @@
 import { create } from "zustand";
 import { defaultAppearance, normalizeAppearance, type Appearance } from "@/lib/game/constants";
 import type { HudData } from "@/lib/game/engine";
+import { DAILY_TASK_POOL, ALL_DONE_BONUS, applyRunToDaily, ensureDaily, freshDaily, type DailyState, type DailyRunFacts } from "@/lib/game/daily";
 
 export type Screen = "landing" | "select" | "outfit" | "creator" | "connecting" | "play";
 export interface Toast { msg: string; kind: "info" | "good" | "bad"; id: number }
@@ -36,8 +37,10 @@ const HISTORY_CAP = 60;
 
 const freshStats = (): PlayerStats => ({ runs: 0, best: 0, votes: 0, rescues: 0, wins: 0, caught: 0, totalScore: 0, playtimeMs: 0 });
 
-function loadProfile(): { name: string; look: Appearance; stats: PlayerStats; history: RunRecord[] } {
-  const fresh = { name: "", look: defaultAppearance(), stats: freshStats(), history: [] as RunRecord[] };
+function loadProfile(): {
+  name: string; look: Appearance; stats: PlayerStats; history: RunRecord[]; bonusXp: number; daily: DailyState;
+} {
+  const fresh = { name: "", look: defaultAppearance(), stats: freshStats(), history: [] as RunRecord[], bonusXp: 0, daily: freshDaily() };
   if (typeof window === "undefined") return fresh;
   try {
     const raw = JSON.parse(localStorage.getItem(LS_PROFILE) ?? localStorage.getItem(LS_PROFILE_V2) ?? "null");
@@ -70,6 +73,8 @@ function loadProfile(): { name: string; look: Appearance; stats: PlayerStats; hi
             won: h.won === true,
             timeMs: Number(h.timeMs) || 0,
           })),
+        bonusXp: Number(raw.bonusXp) || 0,
+        daily: ensureDaily(raw.daily),
       };
     }
   } catch { /* ignore */ }
@@ -91,10 +96,10 @@ function loadSettings(): Settings {
   return { music: 0.7, sfx: 0.8, showFps: false };
 }
 
-function saveProfile(name: string, look: Appearance, stats: PlayerStats, history: RunRecord[]) {
+function saveProfile(name: string, look: Appearance, stats: PlayerStats, history: RunRecord[], bonusXp: number, daily: DailyState) {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(LS_PROFILE, JSON.stringify({ name, look, stats, history: history.slice(0, HISTORY_CAP) }));
+    localStorage.setItem(LS_PROFILE, JSON.stringify({ name, look, stats, history: history.slice(0, HISTORY_CAP), bonusXp, daily }));
     if (localStorage.getItem(LS_PROFILE_V2)) localStorage.removeItem(LS_PROFILE_V2);
   } catch { /* ignore */ }
 }
@@ -118,14 +123,8 @@ export interface GameStore {
   paused: boolean;
   /** true while the big world map overlay is open (M) */
   bigMapOpen: boolean;
-  /** ✨ radial power wheel — opens while G is held, aim with the mouse, release to fire */
-  powerWheelOpen: boolean;
-  /** which wheel segment is aimed at (−1 = none) */
-  powerWheelSel: number;
-  /** 🔧 radial tool wheel — opens while B is held, aim with the mouse, release to use */
-  toolWheelOpen: boolean;
-  /** which tool-wheel segment is aimed at (−1 = none) */
-  toolWheelSel: number;
+  /** true while the 🎒 tool wheel is open at screen center (G) — cursor is free, world keeps running */
+  wheelOpen: boolean;
   /** true while the browser pointer is hard-bound to the game (pointer lock) */
   mouseLocked: boolean;
   settings: Settings;
@@ -134,6 +133,10 @@ export interface GameStore {
   lifeVotes: number;
   lifeRescues: number;
   careerXp: number;
+  /** XP earned outside runs — daily tasks, streak & all-done bonuses (part of careerXp) */
+  bonusXp: number;
+  /** 📅 today's tasks, 🔥 streak & bookkeeping (rolls over at local midnight) */
+  daily: DailyState;
   wins: number;
   lifeCaught: number;
   playtimeMs: number;
@@ -153,13 +156,13 @@ export interface GameStore {
   setVictoryOpen: (v: boolean) => void;
   setPaused: (p: boolean) => void;
   setBigMapOpen: (v: boolean) => void;
-  setPowerWheelOpen: (v: boolean) => void;
-  setPowerWheelSel: (v: number) => void;
-  setToolWheelOpen: (v: boolean) => void;
-  setToolWheelSel: (v: number) => void;
+  setWheelOpen: (v: boolean) => void;
   setMouseLocked: (v: boolean) => void;
   patchSettings: (p: Partial<Settings>) => void;
-  recordRun: (score: number, votes?: number, rescues?: number, caught?: number, won?: boolean, timeMs?: number) => RunRecord;
+  recordRun: (score: number, votes?: number, rescues?: number, caught?: number, won?: boolean, timeMs?: number, extra?: Partial<DailyRunFacts>) => RunRecord;
+  addBonusXp: (n: number) => void;
+  /** roll the daily board if the local day changed (called by UI on a timer) */
+  ensureDailyToday: () => void;
   clearHistory: () => void;
   resetStats: () => void;
 }
@@ -173,10 +176,13 @@ export const emptyHud: HudData = {
   inv: [], hurt: false, sprinting: false, exhausted: false,
   px: 0, pz: 0,
   gain: { hp: 0, stamina: 0, at: 0 },
-  power: null, pocketPowers: [], morphKind: null, blinkReady: true,
-  tools: [], wood: 0, stone: 0,
+  power: null, pockets: [], morphKind: null, blinkReady: true,
   side: "protester", busted: 0, runnerDelivered: 0, lost: false, outfitLabel: "",
   hasLicense: false, driving: false, speed: 0,
+  /* --- 7 Nights --- */
+  nightNo: 1, phase: "day", phaseLeft: 0, wood: 0, rock: 0,
+  tools: [], held: -1, youPossessed: false, crewAlive: 7, crew: [],
+  attackReady: true, clue: null,
 };
 
 let toastId = 1;
@@ -184,7 +190,7 @@ let toastId = 1;
 /** Hydrate persisted player identity once at module load (client only). */
 const saved = typeof window !== "undefined"
   ? loadProfile()
-  : { name: "", look: defaultAppearance(), stats: freshStats(), history: [] as RunRecord[] };
+  : { name: "", look: defaultAppearance(), stats: freshStats(), history: [] as RunRecord[], bonusXp: 0, daily: freshDaily() };
 
 export const useGame = create<GameStore>()((set, get) => ({
   screen: "landing",
@@ -199,17 +205,16 @@ export const useGame = create<GameStore>()((set, get) => ({
   victoryOpen: false,
   paused: false,
   bigMapOpen: false,
-  powerWheelOpen: false,
-  powerWheelSel: -1,
-  toolWheelOpen: false,
-  toolWheelSel: -1,
+  wheelOpen: false,
   mouseLocked: false,
   settings: typeof window !== "undefined" ? loadSettings() : { music: 0.7, sfx: 0.8, showFps: false },
   runsPlayed: saved.stats.runs,
   bestScore: saved.stats.best,
   lifeVotes: saved.stats.votes,
   lifeRescues: saved.stats.rescues,
-  careerXp: saved.stats.totalScore,
+  careerXp: saved.stats.totalScore + saved.bonusXp,
+  bonusXp: saved.bonusXp,
+  daily: saved.daily,
   wins: saved.stats.wins,
   lifeCaught: saved.stats.caught,
   playtimeMs: saved.stats.playtimeMs,
@@ -219,8 +224,8 @@ export const useGame = create<GameStore>()((set, get) => ({
       const look = { ...s.look, ...p };
       saveProfile(s.playerName, look, {
         runs: s.runsPlayed, best: s.bestScore, votes: s.lifeVotes, rescues: s.lifeRescues,
-        wins: s.wins, caught: s.lifeCaught, totalScore: s.careerXp, playtimeMs: s.playtimeMs,
-      }, s.history);
+        wins: s.wins, caught: s.lifeCaught, totalScore: s.careerXp - s.bonusXp, playtimeMs: s.playtimeMs,
+      }, s.history, s.bonusXp, s.daily);
       return { look };
     });
   },
@@ -228,8 +233,8 @@ export const useGame = create<GameStore>()((set, get) => ({
     set((s) => {
       saveProfile(s.playerName, a, {
         runs: s.runsPlayed, best: s.bestScore, votes: s.lifeVotes, rescues: s.lifeRescues,
-        wins: s.wins, caught: s.lifeCaught, totalScore: s.careerXp, playtimeMs: s.playtimeMs,
-      }, s.history);
+        wins: s.wins, caught: s.lifeCaught, totalScore: s.careerXp - s.bonusXp, playtimeMs: s.playtimeMs,
+      }, s.history, s.bonusXp, s.daily);
       return { look: a };
     });
   },
@@ -237,8 +242,8 @@ export const useGame = create<GameStore>()((set, get) => ({
     set((s) => {
       saveProfile(n, s.look, {
         runs: s.runsPlayed, best: s.bestScore, votes: s.lifeVotes, rescues: s.lifeRescues,
-        wins: s.wins, caught: s.lifeCaught, totalScore: s.careerXp, playtimeMs: s.playtimeMs,
-      }, s.history);
+        wins: s.wins, caught: s.lifeCaught, totalScore: s.careerXp - s.bonusXp, playtimeMs: s.playtimeMs,
+      }, s.history, s.bonusXp, s.daily);
       return { playerName: n };
     });
   },
@@ -255,10 +260,7 @@ export const useGame = create<GameStore>()((set, get) => ({
   setPaused: (p) => set({ paused: p }),
   setMouseLocked: (v) => set({ mouseLocked: v }),
   setBigMapOpen: (v) => set({ bigMapOpen: v }),
-  setPowerWheelOpen: (v) => set({ powerWheelOpen: v, powerWheelSel: -1 }), // fresh aim every open
-  setPowerWheelSel: (v) => set({ powerWheelSel: v }),
-  setToolWheelOpen: (v) => set({ toolWheelOpen: v, toolWheelSel: -1 }), // fresh aim every open
-  setToolWheelSel: (v) => set({ toolWheelSel: v }),
+  setWheelOpen: (v) => set({ wheelOpen: v }),
   patchSettings: (p) => {
     set((s) => {
       const settings = { ...s.settings, ...p };
@@ -266,7 +268,7 @@ export const useGame = create<GameStore>()((set, get) => ({
       return { settings };
     });
   },
-  recordRun: (score, votes = 0, rescues = 0, caught = 0, won = false, timeMs = 0) => {
+  recordRun: (score, votes = 0, rescues = 0, caught = 0, won = false, timeMs = 0, extra?) => {
     const rec: RunRecord = {
       id: `run-${Date.now().toString(36)}-${Math.floor(Math.random() * 1e6).toString(36)}`,
       at: Date.now(),
@@ -277,7 +279,23 @@ export const useGame = create<GameStore>()((set, get) => ({
       won,
       timeMs: Math.max(0, Math.floor(timeMs)),
     };
+    const toasts: { msg: string; kind: "good" }[] = [];
     set((s) => {
+      // 📅 daily board: 🔥 streak + task progress + bonus-XP rewards (clone first —
+      // applyRunToDaily mutates its input and the store object must stay immutable)
+      const res = applyRunToDaily(
+        { ...s.daily, tasks: s.daily.tasks.map((t) => ({ ...t })) },
+        {
+          votes: extra?.votes ?? 0, busts: extra?.busts ?? 0, rescues: rec.rescues,
+          score: rec.score, won: rec.won, snacks: extra?.snacks ?? 0, powers: extra?.powers ?? 0,
+        },
+      );
+      let bonus = 0;
+      for (const t of res.completed) bonus += t.xp;
+      if (res.allJustDone) bonus += ALL_DONE_BONUS;
+      // totalScore keeps counting RUN points only — bonus XP lives in bonusXp so
+      // "average score" in career stats stays honest
+      const runScoreTotal = s.careerXp - s.bonusXp + rec.score;
       const stats: PlayerStats = {
         runs: s.runsPlayed + 1,
         best: Math.max(s.bestScore, rec.score),
@@ -285,31 +303,56 @@ export const useGame = create<GameStore>()((set, get) => ({
         rescues: s.lifeRescues + rec.rescues,
         wins: s.wins + (rec.won ? 1 : 0),
         caught: s.lifeCaught + rec.caught,
-        totalScore: s.careerXp + rec.score,
+        totalScore: runScoreTotal,
         playtimeMs: s.playtimeMs + rec.timeMs,
       };
       const history = [rec, ...s.history].slice(0, HISTORY_CAP);
-      saveProfile(s.playerName, s.look, stats, history);
+      const bonusXp = s.bonusXp + bonus;
+      const careerXp = runScoreTotal + bonusXp;
+      saveProfile(s.playerName, s.look, stats, history, bonusXp, res.daily);
+      if (res.streakJustGrew) toasts.push({ msg: `🔥 Day ${res.streak} streak! Play daily for bonus XP!`, kind: "good" });
+      for (const t of res.completed) toasts.push({ msg: `📅 Daily task done: ${t.emoji} +${t.xp} XP!`, kind: "good" });
+      if (res.allJustDone) toasts.push({ msg: `🌟 All 3 daily tasks complete! +${ALL_DONE_BONUS} XP bonus!`, kind: "good" });
       return {
         runsPlayed: stats.runs, bestScore: stats.best, lifeVotes: stats.votes, lifeRescues: stats.rescues,
-        careerXp: stats.totalScore, wins: stats.wins, lifeCaught: stats.caught, playtimeMs: stats.playtimeMs,
+        careerXp, bonusXp, daily: res.daily, wins: stats.wins, lifeCaught: stats.caught, playtimeMs: stats.playtimeMs,
         history,
       };
     });
+    for (const t of toasts) useGame.getState().pushToast(t.msg, t.kind);
     return rec;
   },
+  addBonusXp: (n) => set((s) => {
+    const bonusXp = s.bonusXp + Math.max(0, Math.floor(n));
+    const careerXp = s.careerXp - s.bonusXp + bonusXp;
+    saveProfile(s.playerName, s.look, {
+      runs: s.runsPlayed, best: s.bestScore, votes: s.lifeVotes, rescues: s.lifeRescues,
+      wins: s.wins, caught: s.lifeCaught, totalScore: careerXp - bonusXp, playtimeMs: s.playtimeMs,
+    }, s.history, bonusXp, s.daily);
+    return { bonusXp, careerXp };
+  }),
+  ensureDailyToday: () => set((s) => {
+    const daily = ensureDaily(s.daily);
+    if (daily === s.daily) return {};
+    saveProfile(s.playerName, s.look, {
+      runs: s.runsPlayed, best: s.bestScore, votes: s.lifeVotes, rescues: s.lifeRescues,
+      wins: s.wins, caught: s.lifeCaught, totalScore: s.careerXp - s.bonusXp, playtimeMs: s.playtimeMs,
+    }, s.history, s.bonusXp, daily);
+    return { daily };
+  }),
   clearHistory: () => set((s) => {
     saveProfile(s.playerName, s.look, {
       runs: s.runsPlayed, best: s.bestScore, votes: s.lifeVotes, rescues: s.lifeRescues,
-      wins: s.wins, caught: s.lifeCaught, totalScore: s.careerXp, playtimeMs: s.playtimeMs,
-    }, []);
+      wins: s.wins, caught: s.lifeCaught, totalScore: s.careerXp - s.bonusXp, playtimeMs: s.playtimeMs,
+    }, [], s.bonusXp, s.daily);
     return { history: [] };
   }),
   resetStats: () => set((s) => {
-    saveProfile(s.playerName, s.look, freshStats(), []);
+    const daily = freshDaily();
+    saveProfile(s.playerName, s.look, freshStats(), [], 0, daily);
     return {
       runsPlayed: 0, bestScore: 0, lifeVotes: 0, lifeRescues: 0,
-      careerXp: 0, wins: 0, lifeCaught: 0, playtimeMs: 0, history: [],
+      careerXp: 0, bonusXp: 0, daily, wins: 0, lifeCaught: 0, playtimeMs: 0, history: [],
     };
   }),
 }));

@@ -1,8 +1,8 @@
-import { AIRPORT, BUILD_POOL, BUILD_R, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, PARLIAMENT, POLICE_STATIONS, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_POOL, WALL_RADIUS, WORLD_SEED, pickVehicle, stationCage, stationGate } from "./constants";
+import { AIRPORT, BUILD_POOL, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, PARLIAMENT, POLICE_STATIONS, ROCK_COUNT, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_POOL, WALL_RADIUS, WORLD_SEED, pickVehicle, stationCage, stationGate } from "./constants";
 import { mulberry32, range } from "./rng";
 
 export interface BoxCollider { x: number; z: number; w: number; d: number; /** building height (top y) — lets the chase camera ignore roofs above it */ h?: number } // half extents
-export interface CircleCollider { x: number; z: number; r: number; /** set for the two axle circles of a parked car — lets a DRIVEN car skip its own colliders */ car?: number; /** index inside world.circles — lets a DRIVEN car refresh its grid cells on every move */ idx?: number; /** set on the 🔨 breakable boulder this circle belongs to (index into world.rocks) */ rock?: number; /** set on the 🧱 builder pool circles — they MOVE onto built spots via moveCircle */ build?: number }
+export interface CircleCollider { x: number; z: number; r: number; /** set for the two axle circles of a parked car — lets a DRIVEN car skip its own colliders */ car?: number; /** set on the ✈️ fuselage discs that follow a grounded plane (index into engine.planes) */ plane?: number; /** plane discs fold away once the plane climbs — false while grounded/taxiing */ air?: boolean; /** index inside world.circles — lets a DRIVEN car refresh its grid cells on every move */ idx?: number; /** set on the 🔨 breakable boulder this circle belongs to (index into world.rocks) */ rock?: number; /** set on the 🧱 builder pool circles — they MOVE onto built spots via moveCircle */ build?: number }
 
 /**
  * 🗺️ Spatial hash over every collider — the old resolve() scanned ALL ~1,424 boxes
@@ -63,13 +63,27 @@ function insertCircleGrid(g: ColliderGrid, c: CircleCollider, j: number): void {
   gridCellsFor(g, c.x, c.z, c.r, ids);
   const combined = g.nb + j;
   for (const id of ids) g.cells[id].push(combined);
-  // car circles AND builder pool circles are DYNAMIC — their cells are tracked so
-  // refreshCarCircle()/moveCircle() can unregister them before a fresh insert
-  if (c.car !== undefined || c.build !== undefined) {
+  // car axles, plane fuselage discs AND builder pool circles are DYNAMIC — their
+  // cells are tracked so refreshCarCircle()/moveCircle() can unregister them first
+  if (c.car !== undefined || c.plane !== undefined || c.build !== undefined) {
     let list = g.carCells.get(j);
     if (!list) { list = []; g.carCells.set(j, list); }
     list.push(...ids);
   }
+}
+
+/**
+ * Register a NEW dynamic circle (✈️ plane fuselage discs, 🛡️ 7Nights barricades
+ * & campfires) — appends it to the world AND slots it straight into the built
+ * spatial hash. Returns the circle's index inside world.circles so the engine
+ * can move it every frame via refreshCarCircle.
+ */
+export function addDynamicCircle(world: World, c: CircleCollider): number {
+  const i = world.circles.length;
+  c.idx = i;
+  world.circles.push(c);
+  if (world.grid) insertCircleGrid(world.grid, c, i);
+  return i;
 }
 
 /**
@@ -122,7 +136,10 @@ export interface Rock { x: number; z: number; s: number }
 export interface World {
   buildings: Building[];
   trees: Tree[];
+  /** 🪨 boulders — the hammer breaks these for stone. */
   rocks: Rock[];
+  /** circle-collider index of each rock (parallel to rocks) — shrinking it makes the boulder passable */
+  rockCi: number[];
   flowers: Flower[];
   boxes: BoxCollider[];
   circles: CircleCollider[];
@@ -594,6 +611,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   /* ---- 🔨 breakable boulders: scattered on the ⛰️ mountain slopes, through the
    * deep jungle and along its inner edge — hammer food for the wild explorer ---- */
   const rocks: Rock[] = [];
+  const rockCi: number[] = [];
   n = 0;
   while (n < 26) {
     const a = range(rnd, 0, Math.PI * 2), r = range(rnd, MOUNTAIN_INNER + 4, MOUNTAIN_OUTER - 4);
@@ -622,6 +640,25 @@ export function generateWorld(seed = WORLD_SEED): World {
     if (fields.some((f) => Math.abs(x - f.x) < f.w + 3 && Math.abs(z - f.z) < f.d + 3)) continue;
     if (buildings.some((b) => Math.abs(x - b.x) < b.w + 3 && Math.abs(z - b.z) < b.d + 3)) continue;
     addTree(x, z, range(rnd, 0.8, 1.3), rnd() < 0.5 ? 0 : 1);
+    n++;
+  }
+
+  /* ---- 🪨 boulders (7Nights): smashable rock nodes near the town & farm ----
+   * Easy early-game wood/stone access — clear of roads, buildings, the
+   * airport plot and the graveyard. Colliders recorded in rockCi.    */
+  n = 0;
+  while (n < ROCK_COUNT) {
+    const a = range(rnd, 0, Math.PI * 2), rr = range(rnd, 70, 532);
+    const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
+    if (inAirportPlot(x, z)) continue;
+    // keep the ring road, main road, avenues and the street grid drivable
+    if (Math.abs(rr - RING_R) < RING_W / 2 + 4) continue;
+    if (Math.abs(x) < ROAD_W / 2 + 4 && z > MAIN_ROAD.z0 - 4 && z < MAIN_ROAD.z1 + 4) continue;
+    if (ROADS.some((rd) => Math.abs(x - rd) < ROAD_W / 2 + 3 || Math.abs(z - rd) < ROAD_W / 2 + 3)) continue;
+    if (buildings.some((b) => Math.abs(x - b.x) < b.w + 4 && Math.abs(z - b.z) < b.d + 4)) continue;
+    if (trees.some((t) => Math.hypot(x - t.x, z - t.z) < 2.6)) continue;
+    rocks.push({ x, z, s: range(rnd, 0.85, 1.7) });
     n++;
   }
 
@@ -664,7 +701,10 @@ export function generateWorld(seed = WORLD_SEED): World {
   // windsock pole near the runway threshold (cloth drawn by <Airport>)
   push(AIRPORT.rx0 - 14, AIRPORT.rz - 12, 0.5, 0.5, 6.5, 0, 0xd8d5cc, AP_ROOF);
 
-  /* ---- colliders ---- */
+  /* ---- colliders ----
+   * NOTE: tree circles are pushed FIRST, in tree order — tree index i is
+   * ALWAYS circle index i, which is how the axe finds the collider to shrink
+   * when a tree falls. Rock circles come right after, recorded in rockCi. */
   const boxes: BoxCollider[] = buildings.map(({ x, z, w, d, h }) => ({ x, z, w, d, h }));
   const circles: CircleCollider[] = trees.map(({ x, z, r }) => ({ x, z, r }));
   circles.push({ x: PARK.x - 11, z: PARK.z + 11, r: 8.2 });               // park pond
@@ -684,15 +724,20 @@ export function generateWorld(seed = WORLD_SEED): World {
   });
   for (const s of silos) circles.push({ x: s.x, z: s.z, r: 3.3 });
   for (const w of windmills) circles.push({ x: w.x, z: w.z, r: 0.8 });
-  // 🔨 breakable boulders — each rock owns one solid collider tagged with its index
-  rocks.forEach((rk, i) => circles.push({ x: rk.x, z: rk.z, r: 0.8 * rk.s, rock: i }));
+  // 🔨 breakable boulders — each rock owns one solid collider tagged with its
+  // index (rock:i); its slot is ALSO recorded in rockCi so the hammer can
+  // shrink it to rubble when it finally cracks.
+  rocks.forEach((rk, i) => {
+    rockCi.push(circles.length);
+    circles.push({ x: rk.x, z: rk.z, r: 0.8 * rk.s, rock: i });
+  });
   // 🧱 builder pool — dormant circles parked under the parliament podium (r≈0 never
   // collides). moveCircle() teleports one onto a build spot; reset() brings it back.
   for (let i = 0; i < BUILD_POOL; i++) circles.push({ x: PARLIAMENT.x, z: PARLIAMENT.z, r: 0.001, build: i });
   // every circle remembers its array slot — the driven car refreshes its grid cells via this
   for (let i = 0; i < circles.length; i++) circles[i].idx = i;
 
-  return { buildings, trees, rocks, flowers, boxes, circles, cars, lamps, benches, fields, silos, umbrellas, signs, windmills, grid: buildColliderGrid(boxes, circles) };
+  return { buildings, trees, rocks, rockCi, flowers, boxes, circles, cars, lamps, benches, fields, silos, umbrellas, signs, windmills, grid: buildColliderGrid(boxes, circles) };
 }
 
 /**

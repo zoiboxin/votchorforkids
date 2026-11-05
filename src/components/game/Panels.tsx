@@ -8,35 +8,38 @@ import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-  Music, Volume2, Gauge, Gamepad2, Flag, ShieldAlert, Siren, Sunrise, HeartHandshake, Vote,
-  User, Pencil, BarChart3, History as HistoryIcon, Trash2, Trophy, Timer, Star, Shirt, Zap, Sparkles, Wrench,
+  Music, Volume2, Gauge, Gamepad2, ShieldAlert, Siren, Sunrise, HeartHandshake, Vote,
+  User, Pencil, BarChart3, History as HistoryIcon, Trash2, Trophy, Timer, Star, Shirt, Moon, MoonStar, Scale, Flame, Sparkles,
 } from "lucide-react";
 import { AGE_STATS, HAIR_STYLES } from "@/lib/game/constants";
-import { rankFor } from "@/lib/game/ranks";
 import { useGame, type RunRecord } from "./store";
 import { RankCard } from "./RankCard";
+import { DailyCard } from "./DailyCard";
 import { setVolumes, sfx } from "@/lib/game/audio";
 
 /* ----------------------------- How to play ----------------------------- */
 const CONTROLS: [string, string][] = [
-  ["W A S D / Arrows", "Run around the city"],
+  ["W A S D / Arrows", "Move around the town"],
   ["Mouse drag", "Look around"],
-  ["Shift", "Sprint — drains ⚡ energy fast"],
-  ["Space", "Jump — press again mid-air for a double-jump flip! 🤸"],
-  ["E", "Rescue a detained friend"],
-  ["G", "✨ Unleash a collected super power — YOU pick the moment!"],
-  ["B", "🔧 Use a belted tool — hold B, aim the wheel with the mouse, release to use"],
-  ["Q", "🌀 Blink Teleport — while the blink power is active, teleport where you look"],
+  ["Shift", "Sprint — drains ⚡ stamina fast"],
+  ["Space", "Jump — press again mid-air for a double-jump! 🤸"],
+  ["F", "Attack / swing — chop trees, smash rocks, fight the beast"],
+  ["G", "🎒 Tool wheel — move the mouse to pick axe / sword / hammer / builder"],
+  ["B", "Build a barricade — 4 🪓 wood"],
+  ["V", "Build a campfire — 2 🪓 wood + 2 🪨 stone"],
+  ["E", "Inspect a body at dawn / enter or drive a car"],
+  ["R", "Accuse a survivor — dawn only, and it's final!"],
+  ["Q", "🌀 Blink — a short teleport where you look"],
   ["1 – 8", "Eat pocketed food ❤⚡ — or tap the bag bottom-left"],
-  ["Right-click slot", "Drop food back on the ground"],
-  ["M", "Open the big world map"],
+  ["Z / X", "Camera — zoom / spin"],
+  ["M", "Open the big map"],
   ["P or Esc", "Pause the game"],
 ];
 
 export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto rounded-3xl border-emerald-300/30 bg-slate-900/95 text-white">
+      <DialogContent className="max-h-[85vh] max-w-lg overflow-y-auto rounded-3xl border-red-300/30 bg-slate-900/95 text-white">
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2 text-2xl font-black text-yellow-300">
             <Gamepad2 size={22} /> How to play
@@ -44,81 +47,49 @@ export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange:
         </DialogHeader>
 
         <div className="space-y-4 text-sm">
-          <section className="rounded-2xl border border-sky-300/30 bg-sky-400/10 p-3">
-            <div className="mb-1.5 flex items-center gap-2 font-black text-sky-300"><Siren size={15} /> Choose your side</div>
+          <section className="rounded-2xl border border-indigo-300/30 bg-indigo-500/10 p-3">
+            <div className="mb-1.5 flex items-center gap-2 font-black text-indigo-300"><Moon size={15} /> One town · 7 nights · 8 souls</div>
             <p className="leading-relaxed text-white/85">
-              In the creator you pick a side! <b className="text-yellow-200">🏃 Protester</b> steals votes for Parliament —
-              or <b className="text-sky-200">🚓 Police</b>: chase the <b>vote runners</b> and <b>walk into them</b> to bust them.
-              Bust <b>12 runners</b> before they smuggle <b>10 votes</b> through — vans haul the busted to the station cage. Same city, same chaos, opposite job!
-            </p>
-          </section>
-
-          <section className="rounded-2xl bg-white/5 p-3">
-            <div className="mb-1.5 flex items-center gap-2 font-black text-emerald-300"><Flag size={15} /> Mission</div>
-            <p className="leading-relaxed text-white/85">
-              Sneak through the city, snatch the <b className="text-yellow-300">16 missing votes</b> 🗳 and deliver them to the big
-              glowing ballot box by Parliament. Carry up to 3 at a time — carrying votes makes police spot you from further away!
-            </p>
-          </section>
-
-          <section className="rounded-2xl bg-white/5 p-3">
-            <div className="mb-1.5 flex items-center gap-2 font-black text-rose-300"><ShieldAlert size={15} /> The police</div>
-            <p className="leading-relaxed text-white/85">
-              Cops patrol and chase what they can see. Break line of sight behind buildings to lose them — get far enough away and they
-              give up, go back to patrol, and your <b>wanted stars</b> ⭐ are cleared! Getting caught drops your votes: sit out a
-              <b className="text-rose-200"> 20-second time-out</b>, then you <b className="text-emerald-300">respawn at a random city spot</b> with a clean slate. You start each run with a short <b className="text-emerald-300">sneak shield</b> — police can&apos;t spot you for the first few seconds.
+              You and 7 survivors — <b className="text-yellow-200">Mia, Ravi, Zoe, Kofi, Anya, Marco &amp; Luna</b> — must hold out
+              for <b className="text-red-200">7 nights</b>. Every dusk a warning plays and the dark spirit
+              <b className="text-rose-200"> possesses one of the group</b>; at night they become a zombie beast and
+              <b> hunt the others</b>. At dawn you inspect the bodies, follow the clues… and <b className="text-amber-200">accuse your suspect</b>.
+              Survive all 7 nights — or be the last one standing — to win.
             </p>
           </section>
 
           <section className="grid gap-2 sm:grid-cols-2">
             <div className="rounded-2xl bg-white/5 p-3">
-              <div className="mb-1.5 flex items-center gap-2 font-black text-yellow-300"><Vote size={15} /> Votes & points</div>
-              <p className="text-white/85">+10 pick up · +120 deliver · +60 rescue · +500 save democracy!</p>
+              <div className="mb-1.5 flex items-center gap-2 font-black text-amber-300"><Sunrise size={15} /> ☀️ Day — build</div>
+              <p className="text-white/85">Swing the 🪓 axe at trees and the 🔨 hammer at boulders for wood &amp; stone, then stack barricades and campfires. The beast can&apos;t touch you while the sun is up.</p>
             </div>
             <div className="rounded-2xl bg-white/5 p-3">
-              <div className="mb-1.5 flex items-center gap-2 font-black text-pink-300"><HeartHandshake size={15} /> Rescue friends</div>
-              <p className="text-white/85">Police chase &amp; arrest suspicious civilians too — caught bots wait in pink bubbles. Walk close and press <b>E</b> to free them (+60 support)!</p>
-              <p className="text-white/85">Cars on the ring road are solid — and they <b>bonk</b>! Get hit and you&apos;ll see stars, tumble, then hop back up and play on.</p>
+              <div className="mb-1.5 flex items-center gap-2 font-black text-orange-300"><Siren size={15} /> ⚠️ Dusk — the warning</div>
+              <p className="text-white/85">Sirens howl… the spirit has chosen its host. Watch the crew — black eyes, odd paths and missing faces are clues.</p>
             </div>
             <div className="rounded-2xl bg-white/5 p-3">
-              <div className="mb-1.5 flex items-center gap-2 font-black text-orange-300"><Sunrise size={15} /> Day & night</div>
-              <p className="text-white/85">When night falls… graveyard zombies wake up 🧟 Their touch hurts — run or eat to recover!</p>
+              <div className="mb-1.5 flex items-center gap-2 font-black text-indigo-300"><MoonStar size={15} /> 🌑 Night — survive</div>
+              <p className="text-white/85">The possessed becomes the beast and hunts. Hide behind barricades, circle the campfires — or pick your sharpest tool and fight (F). If YOU are chosen… claw away! 🩸</p>
             </div>
             <div className="rounded-2xl bg-white/5 p-3">
-              <div className="mb-1.5 flex items-center gap-2 font-black text-sky-300"><Gauge size={15} /> Energy & exhaustion</div>
-              <p className="text-white/85">Sprinting drains <b className="text-amber-300">⚡ energy</b> and jumping costs a splash. Hit empty and you&apos;ll crawl — walk to breathe, or eat!</p>
+              <div className="mb-1.5 flex items-center gap-2 font-black text-yellow-300"><Scale size={15} /> ⚖️ Dawn — accuse</div>
+              <p className="text-white/85">Inspect bodies with <b>E</b> for clues (torn cloth colors, wounds), then press <b>R</b> near your suspect. Right call: <b className="text-emerald-300">+200</b>. Wrong call: <b className="text-rose-300">−60</b>… and an innocent is gone forever.</p>
             </div>
-          </section>
-
-          <section className="rounded-2xl bg-white/5 p-3">
-            <div className="mb-1.5 flex items-center gap-2 font-black text-lime-300"><Zap size={15} /> Food pockets (bottom-left)</div>
-            <p className="leading-relaxed text-white/85">
-              Run over food to <b>pocket</b> it — up to 8 kinds (🥭 Mango · 🥟 Samosa · 🍩 Jalebi · 🍡 Laddu · 🩹 First-aid · ☕ Chai · 🥥 Coconut water).
-              Tap the bag or press <b className="text-yellow-200">1-8</b> to eat: fruits heal ❤ + refill ⚡, first-aid kits mend <b>45 ❤</b>, chai pumps <b>45 ⚡</b>. Right-click a slot to drop food back on the ground.
-              Police hits and zombie touches drain ❤ — snacking is surviving!
-            </p>
-          </section>
-
-          <section className="rounded-2xl border border-fuchsia-400/25 bg-fuchsia-500/10 p-3">
-            <div className="mb-1.5 flex items-center gap-2 font-black text-fuchsia-300"><Sparkles size={15} /> Rare super powers</div>
-            <p className="leading-relaxed text-white/85">
-              Only <b className="text-fuchsia-200">6 glowing gems</b> exist in the whole world — most hide deep in the <b>jungle</b>, the rest at mystery spots (coloured dots on the map!).
-              Collecting a gem <b className="text-fuchsia-200">stores it in your ✨ pocket</b> — nothing fires automatically! <b className="text-yellow-200">Hold G</b> to open the radial power wheel at screen center, <b className="text-yellow-200">move the mouse</b> to aim at the gem you want, then <b className="text-yellow-200">release G</b> to unleash it (or tap a ✨ slot) at the perfect moment:
-              <b>⚡ Sonic Dash</b> run speed ×1.9 with free sprinting · <b>🦘 Kangaroo Leap</b> jump ×1.65 with free jumps · <b>🌀 Blink</b> press Q to teleport 15m where you look ·
-              <b> 🐒 Animal Morph</b> become a random animal for 22s — police can&apos;t spot or catch you, and real animals accept you as family · <b>🧲 Food Magnet</b> nearby snacks fly into your pockets.
-              Gems reappear after a long rest — one stored power at a time!
-            </p>
           </section>
 
           <section className="rounded-2xl border border-orange-400/25 bg-orange-500/10 p-3">
-            <div className="mb-1.5 flex items-center gap-2 font-black text-orange-300"><Wrench size={15} /> Tool belt & the wild frontier</div>
+            <div className="mb-1.5 flex items-center gap-2 font-black text-orange-300"><Flame size={15} /> 🔥 Barricades &amp; campfires</div>
             <p className="leading-relaxed text-white/85">
-              🔧 <b className="text-orange-200">16 tools</b> lie hidden across the wild — city edge, farmland, jungle, deep jungle and up on the ⛰️ mountains (coloured specks on the map!).
-              Collect <b>multiple copies</b> of the same tool — they stack in your belt, and each copy is <b>one use</b>.
-              <b className="text-yellow-200"> Hold B</b> to open the radial tool wheel at screen center, <b className="text-yellow-200">move the mouse</b> to aim, then <b className="text-yellow-200">release B</b> to use the tool (or tap a belt slot):
-              <b> 🪓 Axe</b> chop trees → collect 🪵 wood · <b>🗡️ Sword</b> fight the graveyard zombies at night · <b>🔨 Hammer</b> smash boulders → collect 🪨 stone ·
-              <b> 🧱 Builder</b> spends 2 🪵 (or 3 🪨) to raise a solid barricade a step ahead of you — block zombies, build a fort! Climbing mountains is slow and scary — that&apos;s half the fun.
+              <b>Barricades</b> (B — 4 wood) block the beast&apos;s path and soak <b>100 HP</b> of hits.
+              <b> Campfires</b> (V — 2 wood + 2 stone) throw a ring of light that beasts &amp; zombies won&apos;t cross.
+              Build both — wood runs out, and the jungle is a long walk in the dark.
             </p>
+          </section>
+
+          <section className="rounded-2xl bg-white/5 p-3">
+            <div className="mb-1.5 flex items-center gap-2 font-black text-yellow-300"><Trophy size={15} /> Points &amp; tools</div>
+            <p className="text-white/85">+15 harvest · +30 build · +80 survive a night · +40 zombie kill · +200 beast kill · +200 right accuse · −60 wrong accuse.</p>
+            <p className="mt-1 text-white/85">Tools stack — carry them all: 🪓 axe chops wood · 🔨 hammer smashes stone · 🗡️ sword hits hardest · 🔧 builder builds everything. Press <b className="text-yellow-200">G</b> to open the tool wheel and mouse-pick one.</p>
           </section>
 
           <section className="rounded-2xl bg-white/5 p-3">
@@ -220,6 +191,7 @@ export function ProfileDialog({ open, onOpenChange }: { open: boolean; onOpenCha
   const pushToast = useGame((s) => s.pushToast);
   const runsPlayed = useGame((s) => s.runsPlayed);
   const careerXp = useGame((s) => s.careerXp);
+  const dailyStreak = useGame((s) => s.daily.streak);
   const [name, setLocalName] = useState(playerName);
   const [confirmReset, setConfirmReset] = useState(false);
   const [wasOpen, setWasOpen] = useState(false);
@@ -256,6 +228,8 @@ export function ProfileDialog({ open, onOpenChange }: { open: boolean; onOpenCha
         </DialogHeader>
 
         <RankCard />
+
+        <DailyCard />
 
         <div className="space-y-4">
           {/* name */}
@@ -301,7 +275,7 @@ export function ProfileDialog({ open, onOpenChange }: { open: boolean; onOpenCha
           <div className="grid grid-cols-3 gap-2 text-center">
             <MiniStat label="Runs" value={String(runsPlayed)} />
             <MiniStat label="Career XP" value={careerXp.toLocaleString()} />
-            <MiniStat label="Rank" value={`${rankFor(careerXp).rank.emoji} ${rankFor(careerXp).rank.name.split(" ")[0]}`} />
+            <MiniStat label="🔥 Streak" value={`${dailyStreak} day${dailyStreak === 1 ? "" : "s"}`} />
           </div>
 
           {/* danger zone */}
@@ -352,6 +326,7 @@ function MiniStat({ label, value }: { label: string; value: string }) {
 /* ----------------------------- Stats ----------------------------- */
 export function StatsDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
   const careerXp = useGame((s) => s.careerXp);
+  const bonusXp = useGame((s) => s.bonusXp);
   const runsPlayed = useGame((s) => s.runsPlayed);
   const bestScore = useGame((s) => s.bestScore);
   const wins = useGame((s) => s.wins);
@@ -360,9 +335,12 @@ export function StatsDialog({ open, onOpenChange }: { open: boolean; onOpenChang
   const lifeCaught = useGame((s) => s.lifeCaught);
   const playtimeMs = useGame((s) => s.playtimeMs);
   const history = useGame((s) => s.history);
+  const daily = useGame((s) => s.daily);
 
   const winRate = runsPlayed > 0 ? Math.round((wins / runsPlayed) * 100) : 0;
-  const avgScore = runsPlayed > 0 ? Math.round(careerXp / runsPlayed) : 0;
+  // average RUN score — bonus XP (daily tasks/streaks) is kept out on purpose
+  const runScoreTotal = Math.max(0, careerXp - bonusXp);
+  const avgScore = runsPlayed > 0 ? Math.round(runScoreTotal / runsPlayed) : 0;
   const playH = Math.floor(playtimeMs / 3_600_000);
   const playM = Math.floor((playtimeMs % 3_600_000) / 60_000);
   const last5 = history.slice(0, 5);
@@ -378,6 +356,8 @@ export function StatsDialog({ open, onOpenChange }: { open: boolean; onOpenChang
 
         <RankCard />
 
+        <DailyCard />
+
         <div className="grid grid-cols-3 gap-2">
           <StatCell icon={<BarChart3 size={14} />} label="Runs" value={String(runsPlayed)} />
           <StatCell icon={<Trophy size={14} />} label="Wins" value={String(wins)} />
@@ -388,6 +368,9 @@ export function StatsDialog({ open, onOpenChange }: { open: boolean; onOpenChang
           <StatCell icon={<ShieldAlert size={14} />} label="Times caught" value={String(lifeCaught)} />
           <StatCell icon={<Timer size={14} />} label="Playtime" value={playH > 0 ? `${playH}h ${playM}m` : `${playM}m`} />
           <StatCell icon={<BarChart3 size={14} />} label="Avg score" value={avgScore.toLocaleString()} />
+          <StatCell icon={<Flame size={14} />} label="🔥 Streak" value={`${daily.streak}d`} />
+          <StatCell icon={<Flame size={14} />} label="Best streak" value={`${daily.bestStreak}d`} />
+          <StatCell icon={<Sparkles size={14} />} label="Bonus XP" value={bonusXp.toLocaleString()} />
         </div>
 
         {last5.length > 0 && (
@@ -406,7 +389,7 @@ export function StatsDialog({ open, onOpenChange }: { open: boolean; onOpenChang
           </div>
         )}
 
-        <p className="text-center text-[11px] text-white/45">XP = every point you ever scored. Rank up by playing more runs! 🚀</p>
+        <p className="text-center text-[11px] text-white/45">XP = every point you ever scored <b>+</b> daily-task, streak &amp; all-done bonuses. Rank up by playing &amp; finishing daily tasks! 🚀</p>
       </DialogContent>
     </Dialog>
   );

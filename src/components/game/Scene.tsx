@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { GameLoop, Npcs, Zombies, Animals, Pickups, Powers, Licenses, Tools, Builds, Shadows, Confetti, type ClockRef } from "./Entities";
+import { GameLoop, Npcs, Zombies, Animals, Pickups, Powers, Licenses, Shadows, Confetti, CrewRig, ToolDrops, BuildsView, RocksView, Stumps, type ClockRef } from "./Entities";
 import { WorldView, WORLD } from "./WorldView";
 import { GameEngine } from "@/lib/game/engine";
 import type { Appearance } from "@/lib/game/constants";
@@ -56,8 +56,6 @@ export function useGameInput(engine: GameEngine | null) {
     if (!engine) return;
     const typing = (e: Event) => e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement;
     const keys = new Set<string>();
-    let gDownAt = 0; // for the quick-tap-G-fires-first-gem fallback
-    let bDownAt = 0; // for the quick-tap-B-uses-first-tool fallback
 
     const applyKey = () => {
       const k = keys;
@@ -82,46 +80,25 @@ export function useGameInput(engine: GameEngine | null) {
         setTimeout(() => { engine.input.jump = false; }, 120);
       }
       if (e.code === "KeyE" && !e.repeat) engine.interact();
+      // 🎒 G opens the tool wheel at screen center — move the mouse to a slice, click/G to ready it
       if (e.code === "KeyG" && !e.repeat) {
-        // ✨ hold G → radial power wheel opens; quick-tap still fires the first gem
         const s = useGame.getState();
-        gDownAt = performance.now();
-        if (s.hud.pocketPowers.length > 0 && !s.paused && !s.victoryOpen && !s.bigMapOpen) s.setPowerWheelOpen(true);
-        else engine.usePower(); // empty pockets → engine no-ops (keeps the silent path)
+        if (s.wheelOpen) { /* the Hud owns G while the wheel is open (confirm select) */ }
+        else if (s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen) {
+          s.setWheelOpen(true);
+          if (document.pointerLockElement) document.exitPointerLock();
+        }
       }
-      if (e.code === "KeyB" && !e.repeat) {
-        // 🔧 hold B → radial TOOL wheel opens (same mouse-aim as the power wheel);
-        // quick-tap still uses the first belt tool. Empty belt → friendly hint.
-        const s = useGame.getState();
-        bDownAt = performance.now();
-        if (s.hud.tools.length > 0 && !s.paused && !s.victoryOpen && !s.bigMapOpen) s.setToolWheelOpen(true);
-        else engine.hintToolBelt();
-      }
+      // ⚔️ F swing · 🔨 B barricade · 🔥 V campfire · ⚖️ R accuse — the 7Nights verbs
+      if (e.code === "KeyF" && !e.repeat) engine.attack();
+      if (e.code === "KeyB" && !e.repeat) engine.placeBuild("barricade");
+      if (e.code === "KeyV" && !e.repeat) engine.placeBuild("campfire");
+      if (e.code === "KeyR" && !e.repeat) engine.accuse();
       if (e.code === "KeyQ" && !e.repeat) engine.tryBlink(); // 🌀 Blink Teleport
       if (e.code === "KeyH" && !e.repeat) engine.horn();     // 🚗 car horn while driving
       applyKey();
     };
-    const up = (e: KeyboardEvent) => {
-      keys.delete(e.code); applyKey();
-      if (e.code === "KeyG") {
-        // release G → fire the AIMED gem (wheel selection), or slot 0 on a quick tap
-        const s = useGame.getState();
-        if (s.powerWheelOpen) {
-          if (s.powerWheelSel >= 0) engine.usePower(s.powerWheelSel);
-          else if (performance.now() - gDownAt < 250) engine.usePower(0);
-          s.setPowerWheelOpen(false);
-        }
-      }
-      if (e.code === "KeyB") {
-        // release B → USE the AIMED tool (wheel selection), or slot 0 on a quick tap
-        const s = useGame.getState();
-        if (s.toolWheelOpen) {
-          if (s.toolWheelSel >= 0) engine.useTool(s.toolWheelSel);
-          else if (performance.now() - bDownAt < 250) engine.useTool(0);
-          s.setToolWheelOpen(false);
-        }
-      }
-    };
+    const up = (e: KeyboardEvent) => { keys.delete(e.code); applyKey(); };
     const blur = () => { keys.clear(); applyKey(); };
 
     let dragging = false;
@@ -132,8 +109,7 @@ export function useGameInput(engine: GameEngine | null) {
     const mu = () => { dragging = false; };
     const mm = (e: MouseEvent) => {
       const s = useGame.getState();
-      if (s.screen !== "play" || s.paused || s.victoryOpen || s.bigMapOpen) return;
-      if (s.powerWheelOpen || s.toolWheelOpen) return; // a wheel eats mouse aim while it's open
+      if (s.screen !== "play" || s.paused || s.victoryOpen || s.bigMapOpen || s.wheelOpen) return; // the wheel owns the cursor
       // mouse is bound to the game: steer when the cursor is hard-locked (FPS
       // style), whenever it glides over the open world, or while drag-looking
       if (!document.pointerLockElement && !(e.target instanceof HTMLCanvasElement) && !dragging) return;
@@ -147,7 +123,7 @@ export function useGameInput(engine: GameEngine | null) {
     // (sandboxed iframes); free-look + Z/X keyboard turn keep working there.
     const grab = (e: MouseEvent) => {
       const s = useGame.getState();
-      if (s.screen !== "play" || s.paused || s.victoryOpen || s.bigMapOpen || s.touch) return;
+      if (s.screen !== "play" || s.paused || s.victoryOpen || s.bigMapOpen || s.wheelOpen || s.touch) return;
       const t = e.target;
       if (document.pointerLockElement || !(t instanceof Element) || t.closest("[data-ui]")) return;
       requestGameLock();
@@ -158,9 +134,9 @@ export function useGameInput(engine: GameEngine | null) {
       if (!locked) {
         // Esc while the cursor is hard-bound is swallowed by the browser to exit
         // pointer lock — the page never sees that keydown. So treat an unexpected
-        // unlock (no menu/modal/map already open) as "Esc pressed" → pause menu.
+        // unlock (no menu/modal/map/WHEEL already open) as "Esc pressed" → pause menu.
         const s = useGame.getState();
-        if (s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen) {
+        if (s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen && !s.wheelOpen) {
           engine.running = false; // match togglePause: freeze the simulation too
           s.setPaused(true);
         }
@@ -244,7 +220,7 @@ export function Scene({ engine }: { engine: GameEngine }) {
   // hides it natively; this covers browsers/iframes where the lock is blocked.
   // cursor is inherited, so it reaches the inner <canvas>; paused/menus/map
   // restore the cursor so buttons stay clickable.
-  const playing = useGame((s) => s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen);
+  const playing = useGame((s) => s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen && !s.wheelOpen);
   const touch = useGame((s) => s.touch);
   const dpr: [number, number] = useMemo(() => {
     if (typeof window === "undefined") return [1, 1.5];
@@ -267,13 +243,16 @@ export function Scene({ engine }: { engine: GameEngine }) {
       <WorldView clockRef={clockRef} engine={engine} />
       <GameLoop engine={engine} clockRef={clockRef} />
       <Npcs engine={engine} />
+      <CrewRig engine={engine} />
       <Zombies engine={engine} />
       <Animals engine={engine} />
       <Pickups engine={engine} />
       <Powers engine={engine} />
       <Licenses engine={engine} />
-      <Tools engine={engine} />
-      <Builds engine={engine} />
+      <ToolDrops engine={engine} />
+      <BuildsView engine={engine} />
+      <RocksView engine={engine} />
+      <Stumps engine={engine} />
       <Shadows engine={engine} />
       <Confetti engine={engine} />
     </Canvas>
@@ -293,7 +272,7 @@ export function requestGameLock(): void {
   if (typeof document === "undefined") return;
   const ok = () => {
     const s = useGame.getState();
-    return s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen && !s.touch && !document.pointerLockElement;
+    return s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen && !s.wheelOpen && !s.touch && !document.pointerLockElement;
   };
   if (!ok()) return;
   let tries = 0;

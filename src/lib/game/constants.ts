@@ -1,4 +1,4 @@
-/** VoteChor 2.0 — shared constants. Tuned for a fast, kid-friendly cartoon chase game. */
+/** 7Nights — shared constants. A spooky (but kid-friendly) survival story. */
 
 export const WORLD_SEED = 1337;
 /** The world grew! City → farmland → BIG jungle → DEEP jungle → climbable ⛰️ mountains → wall. */
@@ -424,6 +424,10 @@ export const POWER_RESPAWN_S = 80;   // a long absence keeps them feeling specia
 export const POWER_PICKUP_R = 2.2;
 /** How many power gems the player can carry at once — each fires ONCE (G / slot tap). */
 export const POWER_POCKETS = 3;
+/** Alias of POWER_POCKETS kept for the 7Nights engine imports. */
+export const POWER_CARRY = POWER_POCKETS;
+/** 🧱 dormant builder-pool circles parked under the parliament podium (moved onto build spots at runtime). */
+export const BUILD_POOL = 26;
 /** Power spawns: mostly deep-jungle treasures, the rest hidden at random mystery spots. */
 export const POWER_JUNGLE_SHARE = 0.7;
 
@@ -481,43 +485,90 @@ export function zoneOf(x: number, z: number): Zone {
 }
 
 export const ZONE_TOAST: Record<Zone, string> = {
-  City: "Welcome to the city! Grab those votes!",
-  Farmland: "Farmland — mind the cows!",
-  Jungle: "The big jungle… listen, the monkeys are watching.",
-  "Deep Jungle": "DEEP jungle — dark, dense, and full of secrets… gems & rocks hide here!",
-  Graveyard: "Graveyard! At night the zombies wake up… bring a 🗡️ sword!",
-  Mountains: "⛰️ The SCARY Mountains! Rough peaks & loose rocks — climb up, mine, build… if you dare!",
+  City: "The city — gather supplies before dark…",
+  Farmland: "Farmland — barns make good hiding spots.",
+  Jungle: "The big jungle… something in here is WATCHING.",
+  "Deep Jungle": "DEEP jungle — dark, dense… and it WATCHES BACK.",
+  Graveyard: "Graveyard! At night the zombies wake up…",
+  Mountains: "⛰️ The SCARY Mountains — high ground hides you from the beast… mostly.",
   "Mountain Wall": "The world ends here. Turn back!",
 };
 
-/* ---------- 🔧 Tool belt — collect tools, harvest the wild, build stuff ----------
- *  🪓 Axe chops trees → wood · 🗡️ Sword fights zombies · 🔨 Hammer breaks rocks → stone
- *  🧱 Builder spends wood/stone to raise barricades. Each tool copy = ONE use, and
- *  you can carry MULTIPLE copies of the same tool (they stack in the belt).      */
-export type ToolKind = "axe" | "sword" | "hammer" | "builder";
-export interface ToolDef { kind: ToolKind; name: string; emoji: string; color: string; tip: string }
-export const TOOLS: readonly ToolDef[] = [
-  { kind: "axe",     name: "Axe",     emoji: "🪓", color: "#f59e0b", tip: "Stand by a tree — chop it for wood" },
-  { kind: "sword",   name: "Sword",   emoji: "🗡️", color: "#e2e8f0", tip: "Swing at zombies to defeat them" },
-  { kind: "hammer",  name: "Hammer",  emoji: "🔨", color: "#94a3b8", tip: "Stand by a rock — smash it for stone" },
-  { kind: "builder", name: "Builder", emoji: "🧱", color: "#fb923c", tip: "Spend wood/stone to build a barricade" },
-];
-export const TOOL_COUNT = 16;       // tool pickups scattered across the wild
-export const TOOL_PICKUP_R = 2.1;
-export const TOOL_RESPAWN_S = 75;   // used tools eventually reappear in the world
-export const TOOL_STACK = 9;        // max copies of one tool kind in the belt
-export const TOOL_SLOTS = 4;        // one belt slot per tool kind
-export const WOOD_CAP = 30;         // 🪵 resource pocket cap
-export const STONE_CAP = 30;        // 🪨 resource pocket cap
-export const CHOP_WOOD = 2;         // wood per chopped tree
-export const MINE_STONE = 2;        // stone per smashed rock
-export const BUILD_WOOD_COST = 2;   // builder: wooden barricade cost
-export const BUILD_STONE_COST = 3;  // builder: stone wall cost
-export const BUILD_POOL = 26;       // max simultaneous player-built structures
-export const BUILD_R = 1.3;         // collider radius of a built structure
-export const ZOMBIE_DOWN_S = 40;    // a sworded zombie stays down this long, then rises again
+/* ================= 7 Nights — the survival-horror storyline =================
+ * You and 7 fellow survivors must last 7 nights. Days are for gathering wood
+ * & stone, building defenses and finding tools. At dusk a warning sounds —
+ * ONE of the players is chosen by the dark spirit. At night they transform
+ * into a beast and hunt everyone else. Survive until dawn, then decide:
+ * inspect the bodies, follow the clues… and ACCUSE the suspect. The last
+ * one standing — or anyone who sees the 7th dawn — wins.               */
+export const NIGHTS_TOTAL = 7;
+export const PHASE_DAY_S = 110;   // gather, build, accuse
+export const PHASE_DUSK_S = 16;   // warning sirens — the spirit chooses its host
+export const PHASE_NIGHT_S = 75;  // the beast hunts
+export const PHASE_DAWN_S = 9;    // recap, then a new day
+export type Phase = "day" | "dusk" | "night" | "dawn";
 
-export const POINTS_CHOP = 15;
-export const POINTS_MINE = 15;
-export const POINTS_FIGHT = 40;
+/* ---------- arms & tools (collect multiple of the same!) ---------- */
+export type ToolKind = "axe" | "sword" | "hammer" | "builder";
+export interface ToolDef {
+  kind: ToolKind; name: string; emoji: string; color: string;
+  dmg: number;   // damage per hit vs the possessed / zombies
+  tip: string;   // one-line HUD hint
+}
+export const TOOLS: readonly ToolDef[] = [
+  { kind: "axe",     name: "Axe",     emoji: "🪓", color: "#b06a3b", dmg: 22, tip: "Hold near a tree & swing (F) — wood for building" },
+  { kind: "sword",   name: "Sword",   emoji: "🗡️", color: "#aabccb", dmg: 40, tip: "Fight the beast! (F) — 2 hits slay it" },
+  { kind: "hammer",  name: "Hammer",  emoji: "🔨", color: "#9aa5b1", dmg: 18, tip: "Smash boulders (F) — stone for campfires" },
+  { kind: "builder", name: "Builder", emoji: "🔧", color: "#e0a458", dmg: 12, tip: "B = barricade (4🪓) · V = campfire (2🪓+2🪨)" },
+];
+export const TOOL_SPAWN: Record<ToolKind, number> = { axe: 5, sword: 5, hammer: 5, builder: 3 };
+export const WOOD_PER_TREE = 2;
+export const ROCK_PER_BOULDER = 2;
+export const TREE_HITS = 3;   // axe swings to fell a tree
+export const ROCK_HITS = 2;   // hammer swings to smash a boulder
+export const ROCK_COUNT = 54; // boulders scattered across farmland & jungle edge
+export const BARRICADE_COST = { wood: 4, rock: 0 } as const;
+export const CAMPFIRE_COST = { wood: 2, rock: 2 } as const;
+export const BARRICADE_HP = 100;
+export const CAMPFIRE_R = 8;        // beasts & zombies shy away from fire
+export const ATTACK_CD = 0.45;
+export const ATTACK_RANGE = 2.7;
+export const HANDS_DMG = 10;
+export const TOOL_PICKUP_R = 2.1;
+
+/* ---------- the crew — 7 fellow "players" who joined the 7 nights ---------- */
+export const CREW_COUNT = 7;
+export const CREW_NAMES: readonly string[] = ["Mia", "Ravi", "Zoe", "Kofi", "Anya", "Marco", "Luna"];
+export const CREW_COLORS: readonly string[] = ["#e91e8c", "#7bc043", "#00b4d8", "#f5a524", "#8a5aa8", "#ff6b35", "#2a9d8f"];
+/** Human-readable color words — body clues reference these ("torn PINK cloth…"). */
+export const CREW_COLOR_NAMES: readonly string[] = ["PINK", "GREEN", "BLUE", "ORANGE", "PURPLE", "RED", "TEAL"];
+export const CREW_SPEED = 4.4;
+export const CREW_HP = 60;
+export const HUNTER_SPEED = 6.1;    // the possessed is FAST — but barricades & fire help
+export const HUNTER_HP = 70;
+export const HUNTER_DMG = 24;       // hp torn from the player per hit
+export const HUNTER_TOUCH_CD = 1.15;
+export const CLAW_DMG = 34;         // player-as-beast hit on crew
+export const ZOMBIE_HP = 36;        // graveyard zombies can be slain too now
+export const POSSESS_PLAYER_CHANCE = 0.4; // per night — the spirit loves a good scare
+export const PLAYER_NIGHTS = [3, 6];      // …and NEVER misses these nights
+export const ACCUSE_RADIUS = 3.4;
+export const POINTS_NIGHT = 80;
+export const POINTS_KILL_BEAST = 200;
+export const POINTS_KILL_ZOMBIE = 40;
+export const POINTS_RIGHT_ACCUSE = 200;
+export const POINTS_WRONG_ACCUSE = -60;
 export const POINTS_BUILD = 30;
+export const POINTS_HARVEST = 15;
+
+/* ---------- horror-hint ticker lines (landing page) ---------- */
+export const NIGHT_TICKER: readonly string[] = [
+  "🌙 NIGHT 1 of 7 — the town sleeps with one eye open.",
+  "⚠️ Dusk sirens again… whose eyes went BLACK today?",
+  "🪓 lumber report: the jungle is losing trees — someone is building SOMETHING.",
+  "🩸 Dawn body count: 1. Clue says the killer wore PINK…",
+  "🔥 Campfires keep the beast away — the town approves.",
+  "🧟 graveyard quiet. TOO quiet.",
+  "🔪 'It was dark. I swung. I hope it was the beast.' — local survivor",
+  "🌑 3 nights left. 3 survivors. The math is not good.",
+];

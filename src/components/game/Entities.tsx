@@ -4,18 +4,17 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  ANIMAL_SET, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, SHIRT_COLORS, SKIN_TONES, TOOLS,
+  ANIMAL_SET, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, SHIRT_COLORS, SKIN_TONES,
   TOTAL_VOTES, type AnimalKind, type Appearance,
 } from "@/lib/game/constants";
 import type { GameEngine } from "@/lib/game/engine";
 import { nightFactor } from "@/lib/game/sim";
 import { mulberry32 } from "@/lib/game/rng";
-import { terrainHeight } from "@/lib/game/worldgen";
 import {
   buildAnimal, buildCharacter, nameTag, helpBubble, poseAnimal, poseCharacter,
   voteTokenGeometry, foodGeometry, shadowMaterial, basicVertexMaterial,
 } from "@/lib/game/character";
-import { camBlocked } from "@/lib/game/worldgen";
+import { camBlocked, terrainHeight } from "@/lib/game/worldgen";
 import { WORLD } from "./WorldView";
 import { useGame } from "./store";
 
@@ -35,6 +34,11 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     for (const k of MORPH_ANIMALS) map.set(k, buildAnimal(k));
     return map;
   }, []);
+  // 🩸 7Nights — the possessed YOU: same face, rotten green skin, dead black eyes
+  const beastMesh = useMemo(
+    () => buildCharacter({ ...look, shirt: "#7a8a5a" }, { zombie: true }),
+    [look],
+  );
   const lantern = useRef<THREE.PointLight>(null!);
   const introT = useRef(0);
   const hudT = useRef(0);
@@ -98,10 +102,25 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     engine.update(dt);
     clockRef.current = engine.clock;
     if (lantern.current) lantern.current.intensity = nightFactor(engine.clock) * 26;
+
     // player mesh (hidden while riding in the police van, wearing an animal disguise, or driving a car)
     const p = engine.player;
     const morphing = engine.morphKind != null;
-    mesh.visible = !engine.playerInVan && !morphing && !engine.drive;
+    const beast = engine.youPossessed && engine.phase === "night";
+    mesh.visible = !engine.playerInVan && !morphing && !engine.drive && !beast;
+    beastMesh.visible = beast && !engine.playerInVan && !engine.drive;
+    if (beastMesh.visible) {
+      beastMesh.position.set(p.x, p.y, p.z);
+      let bd = p.face - beastMesh.rotation.y;
+      bd = Math.atan2(Math.sin(bd), Math.cos(bd));
+      beastMesh.rotation.y += bd * Math.min(1, dt * 14);
+      poseCharacter(beastMesh, Math.hypot(p.vx, p.vz), performance.now() / 1000, {
+        airborne: p.y > 0.12,
+        vy: p.vy,
+        zombie: true,
+        squash: engine.squashT > 0 ? engine.squashT / LAND_SQUASH_S : 0,
+      });
+    }
     mesh.position.set(p.x, p.y, p.z);
     let d = p.face - mesh.rotation.y;
     d = Math.atan2(Math.sin(d), Math.cos(d));
@@ -226,13 +245,12 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       hudT.current = 0;
       setHud(engine.getHud());
     }
-  }, -1); // negative priority = the SIM steps before every visual useFrame
-  // (cars, traffic, NPCs…) reads engine state — no more one-frame-stale vehicle
-  // poses wobbling under a fresh camera, which read as driving jitter
+  });
 
   return (
     <>
       <primitive object={mesh} />
+      <primitive object={beastMesh} visible={false} />
       {[...morphMeshes.entries()].map(([kind, am]) => <primitive object={am} key={`morph-${kind}`} visible={false} />)}
       <primitive object={trail.grp} />
       <primitive object={magnetRing} />
@@ -354,7 +372,7 @@ export function Zombies({ engine }: { engine: GameEngine }) {
     const cam = s.camera.position;
     for (const z of engine.zombies) {
       const m = views.get(z.id)!;
-      const vis = night > 0.4 && z.downT <= 0; // 🗡️ sworded zombies stay hidden
+      const vis = night > 0.4;
       const dx = z.x - cam.x, dz = z.z - cam.z;
       m.visible = vis && dx * dx + dz * dz < CULL_SQ;
       if (!m.visible) continue;
@@ -724,98 +742,285 @@ function useLayoutEffectInit(mesh: React.RefObject<THREE.InstancedMesh | null>, 
 }
 
 /* ------------------------------------------------------------------ */
-/* 🔧 Tool pickups — floating emoji + glow + ring, one group per spawn  */
+/* 👥 7Nights — the crew: 7 fellow survivors (+ corpses + the beast)   */
 /* ------------------------------------------------------------------ */
-export function Tools({ engine }: { engine: GameEngine }) {
-  const views = useMemo(() => engine.tools.map((tl, i) => {
-    const d = TOOLS[tl.def];
-    const g = new THREE.Group();
-    const gem = new THREE.Mesh(new THREE.BoxGeometry(0.42, 0.42, 0.42), new THREE.MeshBasicMaterial({ color: d.color }));
-    gem.position.y = 0.95;
-    g.add(gem);
-    const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTexture(), color: d.color, transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending }));
-    glow.scale.setScalar(1.7);
-    glow.position.y = 0.95;
-    g.add(glow);
-    const em = emojiSprite(d.emoji, 0.52);
-    em.position.y = 1.6;
-    g.add(em);
-    const ring = new THREE.Mesh(
-      new THREE.TorusGeometry(0.64, 0.05, 6, 26),
-      new THREE.MeshBasicMaterial({ color: d.color, transparent: true, opacity: 0.85 }),
-    );
-    ring.rotation.x = -Math.PI / 2;
-    ring.position.y = 0.07;
-    g.add(ring);
-    g.visible = tl.active;
-    return { group: g, gem, glow, em, ring, i };
-  }), [engine]);
+const CREW_ZOMBIE_LOOK: Appearance = {
+  fac: "protester", outfit: "", skin: "#8fbf6f", shirt: "#7a8a5a", pants: "#4a5240",
+  shoe: "#3a3a2a", hair: "#3a4a2a", hairStyle: "bowl", cap: false, capColor: "#3a4a2a",
+  glasses: false, age: "young", girl: false,
+};
 
-  useFrame((s) => {
-    const t = s.clock.elapsedTime;
-    for (let idx = 0; idx < engine.tools.length; idx++) {
-      const tl = engine.tools[idx];
-      const v = views[idx];
-      v.group.visible = tl.active;
-      if (!tl.active) continue;
-      // tools on the ⛰️ slopes ride the terrain height
-      v.group.position.set(tl.x, terrainHeight(tl.x, tl.z), tl.z);
-      v.gem.rotation.y = t * 1.5 + idx;
-      v.gem.rotation.x = t * 1.1;
-      v.gem.position.y = 0.95 + Math.sin(t * 2.2 + idx * 1.7) * 0.12;
-      v.glow.position.y = v.gem.position.y;
-      (v.glow.material as THREE.SpriteMaterial).opacity = 0.4 + Math.sin(t * 3 + idx) * 0.15;
-      v.em.position.y = 1.6 + Math.sin(t * 2.6 + idx) * 0.08;
-      v.ring.scale.setScalar(1 + Math.sin(t * 2 + idx) * 0.1);
-    }
-  });
-
-  return <>{views.map((v) => <primitive object={v.group} key={v.i} />)}</>;
-}
-
-/* ------------------------------------------------------------------ */
-/* 🧱 Player-built structures — crate stacks (wood) / stone blocks      */
-/* ------------------------------------------------------------------ */
-export function Builds({ engine }: { engine: GameEngine }) {
+export function CrewRig({ engine }: { engine: GameEngine }) {
   const views = useMemo(() => {
-    // one group per builder-pool circle, keyed by its REAL circles-array index
-    const pool = engine.world.circles.filter((c) => c.build !== undefined);
-    return pool.map((c) => {
-      const gi = c.idx ?? -1;
-      const g = new THREE.Group();
-      const wood = new THREE.Group(); // wooden barricade: 3 stacked crates
-      const crateMat = new THREE.MeshLambertMaterial({ color: "#9a6b3f" });
-      for (let k = 0; k < 3; k++) {
-        const crate = new THREE.Mesh(new THREE.BoxGeometry(1.7 - k * 0.28, 0.62, 1.7 - k * 0.28), crateMat);
-        crate.position.y = 0.31 + k * 0.62;
-        crate.rotation.y = k * 0.28;
-        wood.add(crate);
-      }
-      const stone = new THREE.Group(); // stone wall: rough gray block pile
-      const stoneMat = new THREE.MeshLambertMaterial({ color: "#8b8f96", flatShading: true });
-      for (let k = 0; k < 3; k++) {
-        const blk = new THREE.Mesh(new THREE.BoxGeometry(1.8 - k * 0.2, 0.58, 1.1), stoneMat);
-        blk.position.set((k % 2 ? 0.16 : -0.16) * k, 0.29 + k * 0.58, (k % 2 ? -0.1 : 0.1) * (k - 1));
-        blk.rotation.y = k * 0.17 - 0.2;
-        stone.add(blk);
-      }
-      g.add(wood, stone);
-      g.visible = false;
-      return { group: g, wood, stone, gi };
+    return engine.crew.map((c) => {
+      const mesh = buildCharacter(c.look);
+      const tag = nameTag(c.name, hexToTagBg(c.color));
+      tag.position.y = 2.95;
+      mesh.add(tag);
+      // the possessed body — swapped in at night
+      const beast = buildCharacter({ ...CREW_ZOMBIE_LOOK, girl: c.look.girl }, { zombie: true });
+      const btag = nameTag(`${c.name}?!`, "rgba(120,10,10,0.9)");
+      btag.position.y = 2.95;
+      beast.add(btag);
+      beast.visible = false;
+      // blood pool under a corpse
+      const blood = new THREE.Mesh(
+        new THREE.CircleGeometry(0.85, 18),
+        new THREE.MeshBasicMaterial({ color: "#5c1212", transparent: true, opacity: 0.75, depthWrite: false }),
+      );
+      blood.rotation.x = -Math.PI / 2;
+      blood.position.y = 0.04;
+      blood.visible = false;
+      return { mesh, beast, blood, tag, btag };
     });
   }, [engine]);
 
+  useFrame((s) => {
+    const t = s.clock.elapsedTime;
+    const cam = s.camera.position;
+    engine.crew.forEach((c, i) => {
+      const v = views[i];
+      if (!v) return;
+      const dx = (c.alive ? c.x : c.deathX) - cam.x;
+      const dz = (c.alive ? c.z : c.deathZ) - cam.z;
+      const d2 = dx * dx + dz * dz;
+      const near = d2 < CULL_SQ;
+      const possessed = c.alive && c.mode === "possessed";
+      const body = possessed ? v.beast : v.mesh;
+      const idle = possessed ? v.mesh : v.beast;
+      if (idle.visible) idle.visible = false;
+      v.blood.visible = near && !c.alive;
+      if (v.blood.visible) v.blood.position.set(c.deathX, 0.04, c.deathZ);
+      if (!near) {
+        body.visible = false;
+        return;
+      }
+      body.visible = true;
+      if (c.alive) {
+        body.position.set(c.x, 0, c.z);
+        let dd = c.face - body.rotation.y;
+        dd = Math.atan2(Math.sin(dd), Math.cos(dd));
+        body.rotation.y += dd * 0.15;
+        body.rotation.x = 0;
+        body.rotation.z = 0;
+        const speed = Math.hypot(c.vx, c.vz);
+        poseCharacter(body, speed, t, { phase: c.phase, zombie: possessed });
+        const close = d2 < DETAIL_SQ;
+        const rig = body.userData.rig as { lids: THREE.Object3D[]; brows: THREE.Object3D[] } | undefined;
+        if (rig) {
+          for (const l of rig.lids) l.visible = close;
+          for (const b of rig.brows) b.visible = close;
+        }
+        const tag = possessed ? v.btag : v.tag;
+        const otherTag = possessed ? v.tag : v.btag;
+        if (otherTag) otherTag.visible = false;
+        if (tag) tag.visible = close;
+      } else {
+        // a body on the ground — lie still, tag says their name one last time
+        body.position.set(c.deathX, 0.34, c.deathZ);
+        body.rotation.y = c.face;
+        body.rotation.x = -Math.PI / 2.1;
+        body.rotation.z = 0;
+        const rig = body.userData.rig as { lids: THREE.Object3D[]; brows: THREE.Object3D[] } | undefined;
+        if (rig) {
+          for (const l of rig.lids) l.visible = false;
+          for (const b of rig.brows) b.visible = false;
+        }
+        if (v.tag) v.tag.visible = d2 < DETAIL_SQ;
+        if (v.btag) v.btag.visible = false;
+      }
+    });
+  });
+  return (
+    <>
+      {views.flatMap((v, i) => [
+        <primitive object={v.mesh} key={`c${i}`} />,
+        <primitive object={v.beast} key={`cb${i}`} visible={false} />,
+        <primitive object={v.blood} key={`cl${i}`} visible={false} />,
+      ])}
+    </>
+  );
+}
+
+function hexToTagBg(hex: string): string {
+  // opaque dark background tinted with the crew color so tags read at a glance
+  const n = parseInt(hex.slice(1), 16);
+  const r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+  return `rgba(${Math.round(r * 0.5)},${Math.round(g * 0.5)},${Math.round(b * 0.5)},0.92)`;
+}
+
+/* ------------------------------------------------------------------ */
+/* 🪓 7Nights — tool pickups lying around the world                    */
+/* ------------------------------------------------------------------ */
+const TOOL_EMOJI: Record<string, string> = { axe: "🪓", sword: "🗡️", hammer: "🔨", builder: "🔧" };
+
+export function ToolDrops({ engine }: { engine: GameEngine }) {
+  const views = useMemo(() => {
+    return engine.toolEnts.map((te) => {
+      const g = new THREE.Group();
+      const glow = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: glowTexture(), color: "#ffd166", transparent: true, opacity: 0.5, depthWrite: false, blending: THREE.AdditiveBlending,
+      }));
+      glow.scale.setScalar(2.6);
+      g.add(glow);
+      g.add(emojiSprite(TOOL_EMOJI[te.kind] ?? "🔧", 0.9));
+      g.visible = false;
+      return g;
+    });
+  }, [engine]);
+  useFrame((s) => {
+    const t = s.clock.elapsedTime;
+    engine.toolEnts.forEach((te, i) => {
+      const g = views[i];
+      if (!g) return;
+      g.visible = te.active;
+      if (!te.active) return;
+      g.position.set(te.x, terrainHeight(te.x, te.z) + 0.9 + Math.sin(t * 2.4 + i) * 0.16, te.z);
+      g.rotation.y = 0; // sprites always face the camera
+    });
+  });
+  return <>{views.map((g, i) => <primitive object={g} key={i} />)}</>;
+}
+
+/* ------------------------------------------------------------------ */
+/* 🛡️🔥 7Nights — player-built barricades & campfires                  */
+/* ------------------------------------------------------------------ */
+const MAX_BUILDS = 24;
+
+export function BuildsView({ engine }: { engine: GameEngine }) {
+  const slots = useMemo(() => {
+    const out: THREE.Group[] = [];
+    for (let i = 0; i < MAX_BUILDS; i++) {
+      const g = new THREE.Group();
+      // barricade — three sharpened logs
+      const wood = new THREE.MeshBasicMaterial({ color: "#8a5a2b" });
+      const woodDark = new THREE.MeshBasicMaterial({ color: "#5e3c1a" });
+      for (let k = 0; k < 3; k++) {
+        const log = new THREE.Mesh(new THREE.CylinderGeometry(0.16, 0.2, 1.7 + (k === 1 ? 0.35 : 0), 6), k === 1 ? woodDark : wood);
+        log.position.set((k - 1) * 0.55, 0.85, (k % 2) * 0.14);
+        log.rotation.z = (k - 1) * 0.1;
+        g.add(log);
+      }
+      const bar = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.22, 0.3), woodDark);
+      bar.position.y = 0.55;
+      g.add(bar);
+      // campfire — stone ring, logs, flame sprite + light
+      const stone = new THREE.MeshBasicMaterial({ color: "#8d8d95" });
+      for (let k = 0; k < 6; k++) {
+        const a = (k / 6) * Math.PI * 2;
+        const s = new THREE.Mesh(new THREE.DodecahedronGeometry(0.16), stone);
+        s.position.set(Math.cos(a) * 0.55, 0.12, Math.sin(a) * 0.55);
+        g.add(s);
+      }
+      const flame = new THREE.Sprite(new THREE.SpriteMaterial({
+        map: glowTexture(), color: "#ff8a2a", transparent: true, opacity: 0.95, depthWrite: false, blending: THREE.AdditiveBlending,
+      }));
+      flame.position.y = 0.7;
+      flame.scale.setScalar(1.5);
+      flame.name = "flame";
+      g.add(flame);
+      const light = new THREE.PointLight(0xff9040, 0, 14, 1.6);
+      light.position.y = 1.1;
+      light.name = "flameLight";
+      g.add(light);
+      g.visible = false;
+      out.push(g);
+    }
+    return out;
+  }, []);
+  useFrame((s, dt) => {
+    const night = nightFactor(engine.clock);
+    for (let i = 0; i < MAX_BUILDS; i++) {
+      const g = slots[i];
+      const b = engine.builds[i];
+      if (!g) continue;
+      if (!b) { if (g.visible) g.visible = false; continue; }
+      g.visible = true;
+      g.position.set(b.x, terrainHeight(b.x, b.z), b.z);
+      if (b.kind === "barricade") {
+        g.rotation.y = b.rot;
+        g.children.forEach((ch) => { if (ch.name === "flame" || ch.name === "flameLight") (ch as THREE.Object3D).visible = false; });
+        // chewed-down barricades sink
+        const hurt = Math.max(0, Math.min(1, b.hp / 100));
+        g.scale.y = 0.35 + 0.65 * hurt;
+      } else {
+        g.rotation.y = 0;
+        g.scale.y = 1;
+        const flame = g.getObjectByName("flame") as THREE.Sprite | undefined;
+        const light = g.getObjectByName("flameLight") as THREE.PointLight | undefined;
+        const t = s.clock.elapsedTime;
+        if (flame) {
+          flame.visible = true;
+          flame.scale.setScalar(1.3 + Math.sin(t * 9 + i) * 0.22);
+        }
+        if (light) {
+          light.visible = true;
+          light.intensity = 14 + Math.sin(t * 11 + i * 2) * 3;
+        }
+      }
+    }
+    void dt;
+  });
+  return <>{slots.map((g, i) => <primitive object={g} key={i} />)}</>;
+}
+
+/* ------------------------------------------------------------------ */
+/* 🪨 7Nights — boulders (smashable) & 🌳 stumps (felled trees)        */
+/* ------------------------------------------------------------------ */
+export function RocksView({ engine }: { engine: GameEngine }) {
+  const meshes = useMemo(() => {
+    return engine.world.rocks.map((rk, i) => {
+      const m = new THREE.Mesh(
+        new THREE.DodecahedronGeometry(1.05 * rk.s, 0),
+        new THREE.MeshBasicMaterial({ color: i % 3 === 0 ? "#8d8d95" : i % 3 === 1 ? "#7d7d86" : "#97948c" }),
+      );
+      m.position.set(rk.x, terrainHeight(rk.x, rk.z) + 0.5 * rk.s, rk.z);
+      m.rotation.set(i * 0.7, i * 1.3, i * 0.4);
+      m.scale.y = 0.72;
+      return m;
+    });
+  }, [engine]);
   useFrame(() => {
-    for (const v of views) {
-      const b = engine.builds.find((bb) => bb.gi === v.gi);
-      v.group.visible = !!b;
-      if (!b) continue;
-      v.group.position.set(b.x, terrainHeight(b.x, b.z), b.z);
-      v.wood.visible = b.mat === 0;
-      v.stone.visible = b.mat === 1;
-      v.group.rotation.y = (b.gi * 2.399) % Math.PI; // golden-angle variety
+    for (let i = 0; i < meshes.length; i++) {
+      const vis = !engine.brokenRocks.has(i);
+      if (meshes[i].visible !== vis) meshes[i].visible = vis;
     }
   });
+  return <>{meshes.map((m, i) => <primitive object={m} key={i} />)}</>;
+}
 
-  return <>{views.map((v) => <primitive object={v.group} key={v.gi} />)}</>;
+const MAX_STUMPS = 120;
+
+export function Stumps({ engine }: { engine: GameEngine }) {
+  const pool = useMemo(() => {
+    const out: THREE.Mesh[] = [];
+    const mat = new THREE.MeshBasicMaterial({ color: "#a97b4f" });
+    const top = new THREE.MeshBasicMaterial({ color: "#c79a6b" });
+    for (let i = 0; i < MAX_STUMPS; i++) {
+      const g = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.55, 0.6, 8), mat);
+      const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.36, 0.36, 0.06, 8), top);
+      cap.position.y = 0.32;
+      g.add(cap);
+      g.visible = false;
+      out.push(g);
+    }
+    return out;
+  }, []);
+  const ver = useRef(-1);
+  useFrame(() => {
+    if (ver.current === engine.fellVersion) return; // rebuild only when a tree falls
+    ver.current = engine.fellVersion;
+    let k = 0;
+    for (const i of engine.felled) {
+      if (k >= MAX_STUMPS) break;
+      const t = engine.world.trees[i];
+      const g = pool[k];
+      g.visible = true;
+      g.position.set(t.x, terrainHeight(t.x, t.z) + 0.3, t.z);
+      g.scale.setScalar(t.s * 0.9);
+      k++;
+    }
+    for (; k < MAX_STUMPS; k++) if (pool[k].visible) pool[k].visible = false;
+  });
+  return <>{pool.map((g, i) => <primitive object={g} key={i} />)}</>;
 }

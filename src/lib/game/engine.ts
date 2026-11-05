@@ -3,21 +3,25 @@ import {
   CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, CONFISCATE_FINE, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
   ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HAUL_CAMP_R, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
-  DEEP_JUNGLE_RADIUS,
+  DEEP_JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER,
   ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
-  POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_POCKETS, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
-  TOOL_COUNT, TOOL_PICKUP_R, TOOL_RESPAWN_S, TOOL_STACK, TOOL_SLOTS, TOOLS,
-  WOOD_CAP, STONE_CAP, CHOP_WOOD, MINE_STONE, BUILD_WOOD_COST, BUILD_STONE_COST, BUILD_POOL, BUILD_R, ZOMBIE_DOWN_S,
-  POINTS_CHOP, POINTS_MINE, POINTS_FIGHT, POINTS_BUILD, MOUNTAIN_INNER, MOUNTAIN_OUTER,
+  POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
   RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SCAVENGER_COUNT, SCAVENGER_SENSE_R, SPAWN, SONIC_MULT, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_LABELS, VEHICLE_POOL, VEHICLE_STEER, VEHICLE_TOP, VAN_AXLE, VAN_LOAD_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
-  AIRPORT, PLANE_COUNT, PARLIAMENT,
+  AIRPORT, PLANE_COUNT, POWER_CARRY,
   WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
-  ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, BOT_SPAWN_GAP, policeOutfitOf, stationCage, stationGate, type AnimalKind, type Appearance, type PolicePerk, type PowerKind, type Side, type Zone, zoneOf, ZONE_TOAST,
+  ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, BOT_SPAWN_GAP, policeOutfitOf, randomAppearance, stationCage, stationGate,
+  ACCUSE_RADIUS, ATTACK_CD, ATTACK_RANGE, BARRICADE_COST, BARRICADE_HP, CAMPFIRE_COST, CAMPFIRE_R, CLAW_DMG,
+  CREW_COLORS, CREW_COLOR_NAMES, CREW_COUNT, CREW_HP, CREW_NAMES, CREW_SPEED, HANDS_DMG, HUNTER_DMG, HUNTER_HP, HUNTER_SPEED,
+  HUNTER_TOUCH_CD, NIGHTS_TOTAL, PHASE_DAY_S, PHASE_DAWN_S, PHASE_DUSK_S, PHASE_NIGHT_S, PLAYER_NIGHTS,
+  POINTS_BUILD, POINTS_HARVEST, POINTS_KILL_BEAST, POINTS_KILL_ZOMBIE, POINTS_NIGHT, POINTS_RIGHT_ACCUSE,
+  POINTS_WRONG_ACCUSE, POSSESS_PLAYER_CHANCE, ROCK_HITS, ROCK_PER_BOULDER, TOOL_PICKUP_R, TOOL_SPAWN, TOOLS,
+  TREE_HITS, WOOD_PER_TREE, WIN_BONUS, ZOMBIE_HP,
+  type AnimalKind, type Appearance, type Phase, type PolicePerk, type PowerKind, type Side, type ToolKind, type Zone, zoneOf, ZONE_TOAST,
 } from "./constants";
 import { clamp, mulberry32, range } from "./rng";
-import { freeSpot, lineClear, moveCircle, refreshCarCircle, resolve, RING_R, ROADS, scatterSpots, spotNear, terrainHeight, PROTEST_CAMP, type CircleCollider, type World } from "./worldgen";
-import { advanceClock, nightFactor, newBody, stepBody, stepNpc, type Body } from "./sim";
-import { sfx } from "./audio";
+import { addDynamicCircle, freeSpot, lineClear, refreshCarCircle, resolve, RING_R, ROADS, scatterSpots, spotNear, terrainHeight, PROTEST_CAMP, type CircleCollider, type World } from "./worldgen";
+import { nightFactor, newBody, stepBody, stepNpc, type Body } from "./sim";
+import { sfx, startDrone, stopDrone } from "./audio";
 
 const TAU = Math.PI * 2; // full circle — used to keep the camera yaw wrapped
 
@@ -43,6 +47,17 @@ export interface PlaneState {
   arcR: number; arcDir: 1 | -1; arcA: number; arcLeft: number; // cruise arc
   propT: number;                // propeller spin phase (visual)
 }
+
+/** ✈️ fuselage collider discs per plane — [offset along the heading, radius].
+ *  Three overlapping circles approximate the ~11.5-long body (nose cone → tail
+ *  cone) as a capsule, so a grounded airliner is genuinely SOLID: kids, bots and
+ *  cars bounce off it instead of ghosting straight through. While airborne the
+ *  discs fold away (air = true) and the sky traffic stays harmless. */
+const PLANE_DISCS = [
+  { off: 3.4, r: 1.25 },   // nose / cockpit
+  { off: 0.2, r: 1.5 },    // wing root — the fattest part of the body
+  { off: -3.6, r: 1.25 },  // tail cone
+] as const;
 
 const PLANE_COLORS = [0xe0483a, 0x2a9d8f, 0xf0c040, 0x4aa3df, 0x8a5aa8];
 const PLANE_TAXI_SPD = 6, PLANE_VR = 40 /* rotation speed */, PLANE_CLIMB = 15, PLANE_CRUISE_SPD = 34;
@@ -79,11 +94,32 @@ export interface Npc {
   /** the dedicated "just joined" bot — spawns right beside the player's site on every game start */
   companion?: boolean;
 }
-export interface Zombie { id: number; x: number; z: number; vx: number; vz: number; face: number; phase: number; touchCd: number; /** 🗡️ sworded! lies down for this many seconds, then rises from the grave again */ downT: number }
-/** A 🔧 tool pickup lying somewhere in the wild (each copy = 1 use of the tool). */
-export interface ToolEnt { id: number; def: number; x: number; z: number; active: boolean; respawn: number }
-/** A 🧱 player-built structure (wooden barricade or stone wall) with its pool-circle slot. */
-export interface Build { gi: number; x: number; z: number; mat: 0 | 1 } // mat 0 wood · 1 stone
+export interface Zombie { id: number; x: number; z: number; vx: number; vz: number; face: number; phase: number; touchCd: number; hp?: number; dead?: boolean }
+
+/* ---------------- 7 Nights: survivors, tools & builds ---------------- */
+/** One of the 7 fellow "players" who joined the 7 nights. */
+export interface Crew {
+  id: number; name: string; color: string; colorName: string; look: Appearance;
+  x: number; z: number; vx: number; vz: number; face: number;
+  alive: boolean;
+  mode: "wander" | "hide" | "possessed" | "dead";
+  tx: number; tz: number; timer: number; phase: number;
+  hp: number; touchCd: number;
+  deathX: number; deathZ: number;
+  /** the mystery clue their body carries (filled when they die) */
+  clue: string;
+  /** true once the player inspected the body */
+  inspected: boolean;
+}
+export interface ToolSlot { kind: ToolKind; count: number }
+export interface ToolEnt { id: number; kind: ToolKind; x: number; z: number; active: boolean; respawn: number }
+export interface Build {
+  id: number; kind: "barricade" | "campfire";
+  x: number; z: number; rot: number;
+  hp: number;
+  /** index of its circle collider in world.circles */
+  ci: number;
+}
 export interface Animal { id: number; kind: AnimalKind; x: number; z: number; vx: number; vz: number; face: number; tx: number; tz: number; timer: number; phase: number; resting: boolean }
 export interface ItemEnt { id: number; def: number; x: number; z: number; active: boolean; respawn: number }
 export interface VoteEnt { id: number; x: number; z: number; state: "world" | "carried" | "delivered"; /** runner only: which runner holds this vote */ carrierId?: number; /** police side: a runner-delivered vote sneaks back into the city after this timer */ respawnT?: number; /** AI vote-claim ticket: the bot currently walking to grab it (spread bots across the map) */ claimBy?: number }
@@ -138,13 +174,9 @@ export interface HudData {
   arrest: ArrestState; station: string;
   /** active rare super power — HUD shows a countdown badge (null = none) */
   power: { kind: PowerKind; name: string; emoji: string; color: string; left: number; max: number; tip: string } | null;
-  /** collected-but-not-yet-used power gems waiting in the ✨ pockets — each fires
-   *  once (hold G → aim the wheel, or tap a slot) and is consumed while its effect runs */
-  pocketPowers: { def: number; name: string; emoji: string; color: string; tip: string }[];
-  /** 🔧 tool belt — collected tools, stacked by kind; each copy is ONE use (hold B → tool wheel) */
-  tools: { def: number; name: string; emoji: string; color: string; count: number; tip: string }[];
-  /** 🪵 wood & 🪨 stone harvested with the axe/hammer — the builder spends these */
-  wood: number; stone: number;
+  /** collected-but-not-yet-used power gems waiting in the ✨ pockets — each fires ONCE,
+   *  G unleashes the first, tapping a specific slot fires that one (max POWER_CARRY) */
+  pockets: { def: number; name: string; emoji: string; color: string; tip: string }[];
   /** animal the player currently looks like (morph power) */
   morphKind: AnimalKind | null;
   /** true when Blink is charged and Q will teleport right now */
@@ -165,19 +197,31 @@ export interface HudData {
   driving: boolean;
   /** current car speed in u/s while driving (0 on foot) — HUD speedometer */
   speed: number;
+  /* --- 7 Nights --- */
+  /** which night (1..7) is coming / currently dark */
+  nightNo: number;
+  /** story phase: day → dusk (warning) → night (the beast hunts) → dawn */
+  phase: Phase;
+  /** seconds left in the current phase — HUD countdown */
+  phaseLeft: number;
+  /** gathered resources */
+  wood: number; rock: number;
+  /** collected tools (stacking counts!) + which belt slot is equipped (−1 = hands) */
+  tools: { kind: ToolKind; count: number }[];
+  held: number;
+  /** true while YOU are the possessed beast */
+  youPossessed: boolean;
+  /** survivors still breathing (crew only — you make crewAlive + 1) */
+  crewAlive: number;
+  /** the roster — names, colors & who's still alive (accuse board + map) */
+  crew: { name: string; color: string; alive: boolean; mode: string }[];
+  /** attack cooldown ready */
+  attackReady: boolean;
+  /** last clue discovered by inspecting a body (null = none yet) */
+  clue: string | null;
 }
 
 export type ToastFn = (msg: string, kind?: "info" | "good" | "bad") => void;
-
-/** Push direction out of a plane fuselage disc — handles the dead-centre case
- *  (dx=dz=0, where a radial direction is undefined) by shoving along the plane's
- *  RIGHT vector, so nothing can ever sit inside a disc. */
-function discDir(dx: number, dz: number, fx: number, fz: number): { x: number; z: number } {
-  const d = Math.hypot(dx, dz);
-  if (d > 1e-4) return { x: dx / d, z: dz / d };
-  const len = Math.hypot(fx, fz) || 1;
-  return { x: -fz / len, z: fx / len }; // plane's right-hand vector
-}
 
 const dist2 = (ax: number, az: number, bx: number, bz: number) => (ax - bx) * (ax - bx) + (az - bz) * (az - bz);
 
@@ -224,9 +268,6 @@ export class GameEngine {
 
   player: Body = newBody(SPAWN.x, SPAWN.z);
   input = { f: 0, r: 0, sprint: false, jump: false, turn: 0, yaw: Math.PI, pitch: 0.32, mouseAt: 0 };
-  /** 1 = driving auto-camera fully in charge · eases toward 0 while the player
-   *  looks with mouse/touch and recovers after — no hard on/off snapping. */
-  driveCamBlend = 1;
   touchMove = { active: false, sprint: false };
   hp = 100; stamina = 100;
   inv: { def: number; count: number }[] = []; // pocketed food, used from the HUD item bar
@@ -252,19 +293,7 @@ export class GameEngine {
   vans: PoliceVan[] = [];
   powers: PowerEnt[] = [];
   licenses: LicenseEnt[] = [];
-  tools: ToolEnt[] = [];
-  builds: Build[] = [];
   fxQueue: Fx[] = [];
-
-  /* --- 🔧 tool belt — collect tools, harvest the wild, build stuff --- */
-  /** stacked tools waiting in the belt: one entry per kind, count = copies (1 use each) */
-  toolBelt: { def: number; count: number }[] = [];
-  wood = 0; stone = 0;            // 🪵 / 🪨 harvested resources (the builder spends them)
-  /** bumped whenever the world is edited (chop/smash/build) — renderers re-sync on change */
-  worldV = 0;
-  private toolHintT = 0;          // throttles the "belt is empty" toast
-  /** rock index → its collider circle index (built once — rocks never move) */
-  private rockCircle = new Map<number, number>();
 
   /* --- GTA-style driving (license-gated) --- */
   /** collected 🪪 card — without it the driver's seat stays locked */
@@ -280,11 +309,16 @@ export class GameEngine {
   /* --- rare super powers --- */
   activePower: PowerKind | null = null;
   powerT = 0; powerMax = 1;      // seconds left / total of the active power
-  /** Pocketed-but-not-yet-used power gems — the player can carry SEVERAL at once
-   *  (each is 1 use: firing it consumes the gem while the effect runs its timer). */
+  /** collected gems wait in the ✨ pockets until the player unleashes them —
+   *  G fires the FIRST gem, tapping a HUD slot fires that one. Each is single-use
+   *  and up to POWER_CARRY fit at once, so kids can stock a little arsenal. */
   powerPockets: number[] = [];
   morphKind: AnimalKind | null = null; // current animal look while morph lasts
   blinkCd = 0;                   // blink teleport cooldown
+
+  /** ✈️ per plane: the 3 world.circles indices of its fuselage discs — grounded
+   *  planes are SOLID, and the discs glide across the collider grid every frame */
+  private planeCols: number[][] = [];
 
   faintT = 0;   // >0 while the world spins after a car bonk — input is ignored, stars orbit
   carHitCd = 0; // old-game hitCd — no double-bonks from the same bumper
@@ -297,10 +331,14 @@ export class GameEngine {
 
   points = 0; rescues = 0; caughtCount = 0;
   delivered = 0;
+  // daily-task counters: snacks munched & gems unleashed this run
+  snacksEaten = 0; powersUsed = 0;
   detainedT = 0; invulnT = 8; elapsed = 0; // 8s spawn grace — cops can't spot or catch you
   won = false; wonAt = 0;
   /** which side the player picked — police flips the whole objective around */
   side: Side = "protester";
+  /** 7Nights mode flag — the story loop replaces the vote-chase (cops never chase, votes never score) */
+  readonly horror = true;
   /** police side: squad perks from the hero-page outfit (bust reach, cuffs, sprint…) */
   policePerk: PolicePerk = policeOutfitOf("").stats;
   /** police side: votes the AI runners smuggled through (lose at RUNNER_LOSE_DELIVERIES) */
@@ -317,12 +355,65 @@ export class GameEngine {
   private hud: HudData;
   private groanT = 0;
 
+  /* --- 7 Nights: the survival-horror storyline --- */
+  /** 1..7 — which night is approaching / dark */
+  nightNo = 1;
+  /** day → dusk (warning) → night (the beast hunts) → dawn */
+  phase: Phase = "day";
+  phaseT = PHASE_DAY_S;
+  /** the crew — 7 fellow "players" who joined the 7 nights */
+  crew: Crew[] = [];
+  /** collected tools (stacking: {kind, count}) — the belt */
+  tools: ToolSlot[] = [];
+  /** equipped belt slot (index into tools, −1 = bare hands) */
+  held = -1;
+  /** gathered resources */
+  res = { wood: 0, rock: 0 };
+  /** tool pickups lying around the world */
+  toolEnts: ToolEnt[] = [];
+  /** built barricades & campfires */
+  builds: Build[] = [];
+  /** axe swings taken per tree (parallel to world.trees) */
+  treeHits: number[] = [];
+  /** hammer hits left per boulder (parallel to world.rocks) */
+  rockHp: number[] = [];
+  /** felled tree indices → render as stumps (renderer reads this) */
+  felled = new Set<number>();
+  /** smashed boulder indices → hidden in the renderer */
+  brokenRocks = new Set<number>();
+  /** bump whenever felled/brokenRocks change — lets renderers invalidate cheaply */
+  fellVersion = 0;
+  attackCd = 0;
+  accuseCd = 0;
+  /** who the spirit possessed THIS night (crew index, null = YOU) */
+  possessed: number | null = null;
+  youPossessed = false;
+  /** who was possessed LAST night — the accusation target (null = it was you) */
+  lastPossessed: number | null = null;
+  /** last clue learned from a body — HUD chip */
+  lastClue: string | null = null;
+  kills = 0; accusesRight = 0; accusesWrong = 0; buildsMade = 0; nightsSurvived = 0;
+  /** safe hiding spots the crew runs to at dusk (camp + station gates) */
+  hideSpots: { x: number; z: number }[] = [];
+  /** original static-circle radii — reset() un-fells trees & un-smashes rocks with this */
+  private circleR0: number[] = [];
+  private heartT = 0;
+
   constructor(world: World, look: Appearance, toast: ToastFn) {
     this.world = world;
     this.look = look;
     this.toast = toast;
     this.side = look.fac;
     this.policePerk = policeOutfitOf(look.fac === "police" ? look.outfit : "").stats;
+    // snapshot every static collider radius so reset() can un-fell trees & un-smash rocks
+    this.circleR0 = world.circles.map((c) => c.r);
+    this.treeHits = new Array(world.trees.length).fill(0);
+    this.rockHp = new Array(world.rocks.length).fill(ROCK_HITS);
+    this.hideSpots = [
+      { x: PROTEST_CAMP.x, z: PROTEST_CAMP.z },
+      ...POLICE_STATIONS.map((s) => stationGate(s)),
+      { x: SPAWN.x + 42, z: SPAWN.z + 18 },
+    ];
     this.hud = this.buildHud();
     this.spawnAll();
     // remember where every car is parked (driving scatters them — reset brings them home)
@@ -462,11 +553,36 @@ export class GameEngine {
     // beside the officer (set up in assignScavengers/assignRunners below)
     const jx = spotNear(r, this.world, SPAWN.x, SPAWN.z, 14, 26);
     this.civs.push({ id: this.nid(), kind: "civilian", x: jx.x, z: jx.z, vx: 0, vz: 0, face: 0, mode: "wander", tx: jx.x, tz: jx.z, timer: range(r, 1, 3), phase: Math.random() * 6, name: "Bijli", speed: 3.15, alertT: 0, companion: true });
-    // zombies (graveyard)
+    // zombies (graveyard) — they rise every night, and NOW they can be slain
     for (let i = 0; i < ZOMBIE_COUNT; i++) {
       const a = range(r, 0, Math.PI * 2), d = range(r, 4, 36);
-      this.zombies.push({ id: this.nid(), x: GRAVEYARD.x + Math.cos(a) * d, z: GRAVEYARD.z + Math.sin(a) * d, vx: 0, vz: 0, face: 0, phase: Math.random() * 6, touchCd: 0, downT: 0 });
+      this.zombies.push({ id: this.nid(), x: GRAVEYARD.x + Math.cos(a) * d, z: GRAVEYARD.z + Math.sin(a) * d, vx: 0, vz: 0, face: 0, phase: Math.random() * 6, touchCd: 0, hp: ZOMBIE_HP, dead: false });
     }
+    // 👥 the crew — 7 fellow "players" join you for the 7 nights
+    this.spawnCrew();
+    // 🪓 arms & tools — spread across the wild: city edge, farmland, jungle,
+    // deep jungle and the ⛰️ mountain slopes (find them before nightfall!)
+    const kinds: ToolKind[] = [];
+    for (const t of TOOLS) for (let i = 0; i < TOOL_SPAWN[t.kind]; i++) kinds.push(t.kind);
+    const toolZone: [number, number][] = [
+      [300, 398],                                   // city outskirts
+      [CITY_RADIUS + 10, FARM_RADIUS - 10],         // farmland
+      [FARM_RADIUS + 8, DEEP_JUNGLE_RADIUS - 6],    // jungle
+      [DEEP_JUNGLE_RADIUS + 4, JUNGLE_RADIUS - 6],  // deep jungle
+      [MOUNTAIN_INNER + 4, MOUNTAIN_OUTER - 8],     // ⛰️ mountain slopes
+    ];
+    kinds.forEach((kind, i) => {
+      const [r0, r1] = toolZone[i % toolZone.length];
+      let p = freeSpot(r, this.world, r0, r1);
+      if (r0 >= MOUNTAIN_INNER) {
+        // mountain tools must sit on a walkable slope — retry until the ground is gentle
+        for (let k = 0; k < 14; k++) {
+          if (terrainHeight(p.x, p.z) < 12) break;
+          p = freeSpot(r, this.world, r0, r1);
+        }
+      }
+      this.toolEnts.push({ id: this.nid(), kind, x: p.x, z: p.z, active: true, respawn: 0 });
+    });
     // animals
     let ai = 0;
     for (const set of ANIMAL_SET)
@@ -480,17 +596,10 @@ export class GameEngine {
       const p = freeSpot(r, this.world, 10, 430);
       this.items.push({ id: this.nid(), def: Math.floor(r() * ITEMS.length), x: p.x, z: p.z, active: true, respawn: 0 });
     }
-    // rare super powers — half deep in the DEEP jungle (the dark treasure band),
-    // the rest scattered through the regular jungle + a couple of mystery spots anywhere
+    // rare super powers — mostly deep-jungle treasures, a couple of mystery spots anywhere
     for (let i = 0; i < POWER_COUNT; i++) {
-      const roll = r();
-      const deep = roll < POWER_JUNGLE_SHARE * 0.55;
-      const jungle = roll < POWER_JUNGLE_SHARE;
-      const p = deep
-        ? freeSpot(r, this.world, DEEP_JUNGLE_RADIUS + 4, JUNGLE_RADIUS - 4)
-        : jungle
-          ? freeSpot(r, this.world, FARM_RADIUS + 12, DEEP_JUNGLE_RADIUS - 4)
-          : freeSpot(r, this.world, 10, 430);
+      const jungle = r() < POWER_JUNGLE_SHARE;
+      const p = freeSpot(r, this.world, jungle ? FARM_RADIUS + 12 : 10, jungle ? JUNGLE_RADIUS - 14 : 430);
       this.powers.push({ id: this.nid(), def: i % POWERS.length, x: p.x, z: p.z, active: true, respawn: 0 });
     }
     // driving-license cards — most around town streets, two out in the farmland
@@ -499,29 +608,6 @@ export class GameEngine {
       const p = freeSpot(r, this.world, far ? CITY_RADIUS + 8 : 14, far ? FARM_RADIUS - 14 : 240);
       this.licenses.push({ id: this.nid(), x: p.x, z: p.z, active: true });
     }
-    // 🔧 tools — spread across the wild: city edge, farmland, jungle, deep jungle, mountains
-    const toolZone: [number, number][] = [
-      [300, 398], [300, 398],           // city outskirts
-      [CITY_RADIUS + 10, FARM_RADIUS - 10], [CITY_RADIUS + 12, FARM_RADIUS - 12], // farmland
-      [FARM_RADIUS + 8, DEEP_JUNGLE_RADIUS - 6], [FARM_RADIUS + 10, DEEP_JUNGLE_RADIUS - 8], // jungle
-      [DEEP_JUNGLE_RADIUS + 4, JUNGLE_RADIUS - 6], [DEEP_JUNGLE_RADIUS + 4, JUNGLE_RADIUS - 6], // deep jungle
-      [MOUNTAIN_INNER + 4, MOUNTAIN_OUTER - 8], // ⛰️ mountain slopes
-      [MOUNTAIN_INNER + 4, MOUNTAIN_OUTER - 8],
-    ];
-    for (let i = 0; i < TOOL_COUNT; i++) {
-      const [r0, r1] = toolZone[i % toolZone.length];
-      let p = freeSpot(r, this.world, r0, r1);
-      if (r0 >= MOUNTAIN_INNER) {
-        // tools must sit on a walkable slope — retry until the ground is gentle
-        for (let k = 0; k < 14; k++) {
-          if (terrainHeight(p.x, p.z) < 12) break;
-          p = freeSpot(r, this.world, r0, r1);
-        }
-      }
-      this.tools.push({ id: this.nid(), def: i % TOOLS.length, x: p.x, z: p.z, active: true, respawn: 0 });
-    }
-    // index every rock's collider circle once — the hammer needs it to switch the rock off
-    this.world.circles.forEach((c, gi) => { if (c.rock !== undefined) this.rockCircle.set(c.rock, gi); });
     // police van fleet — one van per station, parked at its gate
     for (let i = 0; i < POLICE_STATIONS.length; i++) {
       const st = POLICE_STATIONS[i];
@@ -544,9 +630,7 @@ export class GameEngine {
       });
       const t = this.traffic[this.traffic.length - 1];
       t.x = Math.cos(t.a) * t.r; t.z = Math.sin(t.a) * t.r;
-      // heading must MATCH the direction of travel — the old π+a value pointed
-      // clockwise cars backwards (nose-first slides!) around half the ring
-      t.rot = t.dir > 0 ? -t.a : Math.PI - t.a;
+      t.rot = t.dir > 0 ? -t.a : Math.PI + t.a;
     }
     // police side: a slice of the civilians become vote-runners (the player hunts THEM)
     this.assignRunners();
@@ -566,6 +650,16 @@ export class GameEngine {
         propT: 0,
       });
     }
+    // ✈️ grounded planes are SOLID — three fuselage discs follow each airliner so
+    // kids, bots and cars bounce off parked / taxiing / rolling planes instead of
+    // ghosting straight through them. Discs fold away while the plane is airborne.
+    this.planeCols = this.planes.map((pl, pi) =>
+      PLANE_DISCS.map((d) => addDynamicCircle(this.world, {
+        x: pl.x + Math.cos(pl.hdg) * d.off,
+        z: pl.z + Math.sin(pl.hdg) * d.off,
+        r: d.r, plane: pi, air: false,
+      })),
+    );
   }
 
   /* ---------------- bot planes ---------------- */
@@ -578,7 +672,8 @@ export class GameEngine {
   }
 
   private updatePlanes(dt: number) {
-    for (const pl of this.planes) {
+    for (let pi = 0; pi < this.planes.length; pi++) {
+      const pl = this.planes[pi];
       pl.propT += dt * (pl.mode === "parked" ? 0.6 : 9 + pl.spd * 0.35);
       switch (pl.mode) {
         case "parked": {
@@ -728,125 +823,25 @@ export class GameEngine {
       // visual pitch: nose up while climbing, down on approach, level elsewhere
       const wantPitch = pl.mode === "climb" ? 0.16 : pl.mode === "final" && pl.alt > 2 ? -0.1 : pl.mode === "roll" ? 0.05 : 0;
       pl.pitch += clamp(wantPitch - pl.pitch, -0.4 * dt, 0.4 * dt);
+
+      // ✈️ drag the fuselage discs along the body — airborne planes fold their
+      // colliders away so kids can play right underneath a cruising airliner.
+      // Parked planes never move but the refresh is near-free, so it runs always
+      // (keeps the discs glued even across the taxiBack → parked snap).
+      const cols = this.planeCols[pi];
+      if (cols) {
+        const solid = pl.alt < 2.5;
+        const fx = Math.cos(pl.hdg), fz = Math.sin(pl.hdg);
+        for (let k = 0; k < cols.length; k++) {
+          const c = this.world.circles[cols[k]];
+          if (!c) continue;
+          c.x = pl.x + fx * PLANE_DISCS[k].off;
+          c.z = pl.z + fz * PLANE_DISCS[k].off;
+          c.air = !solid;
+          refreshCarCircle(this.world, cols[k]); // discs hop grid cells like a driven car's axles
+        }
+      }
     }
-  }
-
-  /* ---------------- planes are SOLID while on the ground ---------------- */
-
-  /** A grounded plane owns four solid discs along the fuselage — nothing can bypass
-   *  straight through it. The on-foot player gets shoved (a ROLLING plane gives the
-   *  classic cartoon bonk), the driven car bounces off like it does off traffic,
-   *  parked cars are nudged clear of the taxi path, and bots slide around it. */
-  private planeSolidStep() {
-    const p = this.player;
-    // four overlapping solid discs along the fuselage (plane is ~11.5 long, r 0.92):
-    // +2.7 nose / 0 mid / −2.6 rear / −4.6 tail — no gap in the middle to slip through
-    const DISCS = [
-      { off: 2.7, r: 1.5 }, { off: 0, r: 1.6 }, { off: -2.6, r: 1.5 }, { off: -4.6, r: 1.1 },
-    ];
-    for (const pl of this.planes) {
-      if (pl.alt > 3) continue; // airborne — nothing down here can reach it
-      const fx = Math.cos(pl.hdg), fz = Math.sin(pl.hdg);
-      const discs = DISCS.map((dd) => ({ x: pl.x + fx * dd.off, z: pl.z + fz * dd.off, r: dd.r }));
-      // --- parked fleet: a taxiing/lined-up plane shoves straying cars off its path
-      for (let ci = 0; ci < this.world.cars.length; ci++) {
-        if (this.drive?.ci === ci) continue; // the driven car is handled below
-        const car = this.world.cars[ci];
-        const axR = VEHICLE_AXLE_R[car.t % VEHICLE_AXLE_R.length];
-        const cdx = car.x - pl.x, cdz = car.z - pl.z;
-        if (cdx * cdx + cdz * cdz > 144) continue; // broad phase (discs reach ±5.7)
-        for (const disc of discs) {
-          const rr = disc.r + axR;
-          const d2 = (car.x - disc.x) ** 2 + (car.z - disc.z) ** 2;
-          if (d2 >= rr * rr) continue;
-          const dir = discDir(car.x - disc.x, car.z - disc.z, fx, fz);
-          const chk = { x: disc.x + dir.x * rr, z: disc.z + dir.z * rr };
-          resolve(chk, axR + 0.2, this.world); // don't shove it INTO a building
-          this.shoveParkedCar(ci, chk.x, chk.z);
-          break;
-        }
-      }
-      // --- the player's vehicle: bounce off like it does off ring traffic
-      if (this.drive) {
-        const d = this.drive;
-        const ti = d.t % VEHICLE_AXLE_R.length;
-        for (const disc of discs) {
-          const rr = disc.r + VEHICLE_AXLE_R[ti] + 0.12;
-          const d2 = (d.x - disc.x) ** 2 + (d.z - disc.z) ** 2;
-          if (d2 < rr * rr) {
-            const dir = discDir(d.x - disc.x, d.z - disc.z, fx, fz);
-            d.x = disc.x + dir.x * rr; d.z = disc.z + dir.z * rr;
-            if (d2 > 0.0001) d.v *= 1 - Math.min(0.5, (rr - Math.sqrt(d2)) * 0.4);
-            this.syncCarColliders(d);
-          }
-        }
-      }
-      // --- the on-foot player: solid shove + a cartoon bonk if the plane is rolling
-      else if (this.detainedT <= 0) {
-        let hit = false;
-        for (const disc of discs) {
-          const rr = disc.r + 0.55;
-          const d2 = (p.x - disc.x) ** 2 + (p.z - disc.z) ** 2;
-          if (d2 < rr * rr) {
-            const dir = discDir(p.x - disc.x, p.z - disc.z, fx, fz);
-            p.x = disc.x + dir.x * rr; p.z = disc.z + dir.z * rr;
-            hit = true;
-          }
-        }
-        if (hit && pl.spd > 6 && this.carHitCd <= 0 && this.faintT <= 0) {
-          this.carHitCd = CAR_HIT_CD;
-          this.faintT = FAINT_S;
-          const push = Math.min(10, pl.spd * 0.65);
-          p.vx = fx * push + (p.x - pl.x) * 0.6;
-          p.vz = fz * push + (p.z - pl.z) * 0.6;
-          p.vy = 4.6;
-          this.hp = Math.max(1, this.hp - CAR_HIT_DMG);
-          this.stamina = Math.max(0, this.stamina - 8);
-          this.hurtT = HURT_FLASH_S;
-          sfx.bonk();
-          const PLANE_BONKS = [
-            "✈️ BONK! A plane taxied right into you — stay OFF the runway!",
-            "🛬 Wham! That plane didn't see you — everything is spinning…",
-            "✈️ Ouch! Runway 1 — planes 1, you: 0. Shake it off!",
-          ];
-          this.toast(PLANE_BONKS[Math.floor(this.rnd() * PLANE_BONKS.length)], "bad");
-        }
-        if (hit) {
-          resolve(p, 0.45, this.world);
-          const rr2 = Math.hypot(p.x, p.z);
-          if (rr2 > WALL_RADIUS) { p.x *= WALL_RADIUS / rr2; p.z *= WALL_RADIUS / rr2; }
-        }
-      }
-      // --- bots: cops, civilians & zombies slide around the fuselage too
-      const pushBots = (list: { x: number; z: number }[]) => {
-        for (const b of list) {
-          const dx = b.x - pl.x, dz = b.z - pl.z, d2 = dx * dx + dz * dz;
-          const rr = 4.2; // cheap single probe — under the wing tips is fine, they're up high
-          if (d2 >= rr * rr || d2 < 0.0001) continue;
-          const d = Math.sqrt(d2);
-          b.x = pl.x + (dx / d) * rr; b.z = pl.z + (dz / d) * rr;
-        }
-      };
-      pushBots(this.civs);
-      pushBots(this.cops);
-      pushBots(this.zombies.filter((z) => z.downT <= 0)); // sworded zombies stay down
-    }
-  }
-
-  /** Teleport-free way to move a parked car (plane shove): glue the body + its two
-   *  axle colliders to the new spot, exactly like syncCarColliders does for driving. */
-  private shoveParkedCar(ci: number, x: number, z: number) {
-    const car = this.world.cars[ci];
-    if (!car) return;
-    car.x = x; car.z = z;
-    const pair = this.carAxles.get(ci);
-    if (!pair) return;
-    const ax = VEHICLE_AXLE[car.t % VEHICLE_AXLE.length];
-    const fx = Math.sin(car.rot), fz = Math.cos(car.rot);
-    pair[0].x = car.x - fx * ax; pair[0].z = car.z - fz * ax;
-    pair[1].x = car.x + fx * ax; pair[1].z = car.z + fz * ax;
-    if (pair[0].idx !== undefined) refreshCarCircle(this.world, pair[0].idx);
-    if (pair[1].idx !== undefined) refreshCarCircle(this.world, pair[1].idx);
   }
 
   /* ---------------- lifecycle ---------------- */
@@ -897,20 +892,9 @@ export class GameEngine {
 
   start() {
     this.running = true;
-    // 🤖 the join-bot intro — a dedicated bot drops at the player's site on every join
-    const comp = this.civs.find((c) => c.companion);
-    if (comp && this.side === "police") {
-      this.toast(`🤖 ${comp.name} the vote-runner just joined right beside YOUR site — bust them to warm up!`, "info");
-    } else if (comp) {
-      this.toast(`🤖 ${comp.name} joined the protest right beside you — they're hauling votes to the camp too!`, "info");
-    }
-    if (this.side === "police") {
-      const squad = policeOutfitOf(this.look.outfit);
-      this.toast(`🚓 Shift start, Officer ${this.playerName} (${squad.emoji} ${squad.label})! Bust ${BUST_TARGET} vote runners before they smuggle ${RUNNER_LOSE_DELIVERIES} votes through — walk into them to arrest!`, "info");
-      this.toast("🪪 Officer perks: snacks & power gems work for you too — and find a driving license to patrol by car!", "info");
-    } else {
-      this.toast("🏃 Snatch those votes! Tip: glowing 🪪 license cards unlock parked cars — press E beside one!", "info");
-    }
+    this.toast(`🌙 Welcome, ${this.playerName}. You and ${CREW_COUNT} strangers must survive SEVEN nights.`, "info");
+    this.toast("☀️ DAY: chop trees (🪓 + F), smash rocks (🔨 + F), build defenses (🔧 + B). Find arms around town — press G to open your pack!", "info");
+    this.toast("⚠️ DUSK: sirens howl… one of us is chosen. NIGHT: the beast walks. Hide, run… or FIGHT (🗡️ + F).", "info");
   }
   setToast(fn: ToastFn) { this.toast = fn; }
 
@@ -923,14 +907,9 @@ export class GameEngine {
     this.inv = []; this.hurtT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0; this.powerFullT = 0;
     this.flipT = 0; this.squashT = 0; this.faintT = 0; this.carHitCd = 0;
     this.activePower = null; this.powerT = 0; this.powerPockets = []; this.morphKind = null; this.blinkCd = 0;
-    // 🔧 tool belt reset — tools return to the wild, builds vanish, zombies rise again
-    this.toolBelt = []; this.wood = 0; this.stone = 0; this.toolHintT = 0;
-    for (const tl of this.tools) { tl.active = true; tl.respawn = 0; }
-    for (const b of this.builds) moveCircle(this.world, b.gi, PARLIAMENT.x, PARLIAMENT.z, 0.001); // pool back to sleep
-    this.builds = [];
-    for (const zb of this.zombies) { zb.downT = 0; }
     for (const pw of this.powers) { pw.active = true; pw.respawn = 0; }
     this.carriedVotes = []; this.delivered = 0; this.points = 0; this.rescues = 0; this.caughtCount = 0;
+    this.snacksEaten = 0; this.powersUsed = 0;
     this.runnerDelivered = 0; this.lost = false; this.catchCd = 0;
     // driving: hop out, re-hide the licenses, bring every car back to its parking spot
     this.hasLicense = false; this.drive = null; this.exitCd = 0; this.driveMsgT = 0;
@@ -946,8 +925,30 @@ export class GameEngine {
         pair[1].x = h.x + fx * ax; pair[1].z = h.z + fz * ax;
       }
     });
-    this.detainedT = 0; this.invulnT = 8; this.elapsed = 0; this.won = false; this.clock = 0.3;
+    this.detainedT = 0; this.invulnT = 8; this.elapsed = 0; this.won = false; this.lost = false; this.clock = 0.3;
     this.arrest = "free"; this.arrestStation = -1; this.playerInVan = false; this.vanNeeded = false;
+    /* --- 7 Nights: rewind the story --- */
+    this.nightNo = 1; this.phase = "day"; this.phaseT = PHASE_DAY_S;
+    this.possessed = null; this.youPossessed = false; this.lastPossessed = null; this.lastClue = null;
+    this.tools = []; this.held = -1; this.res = { wood: 0, rock: 0 };
+    this.attackCd = 0; this.accuseCd = 0; this.heartT = 0;
+    this.kills = 0; this.accusesRight = 0; this.accusesWrong = 0; this.buildsMade = 0; this.nightsSurvived = 0;
+    // fold away build colliders, then restore every static circle to its born radius
+    for (const b of this.builds) { const c = this.world.circles[b.ci]; if (c) c.r = 0.02; }
+    this.builds = [];
+    this.world.circles.forEach((c, gi) => {
+      if (c.car !== undefined || c.plane !== undefined) return; // cars/planes manage their own
+      c.r = gi < this.circleR0.length ? this.circleR0[gi] : 0.02;
+    });
+    this.treeHits = new Array(this.world.trees.length).fill(0);
+    this.rockHp = new Array(this.world.rocks.length).fill(ROCK_HITS);
+    this.felled.clear(); this.brokenRocks.clear(); this.fellVersion++;
+    for (const te of this.toolEnts) { te.active = true; te.respawn = 0; }
+    this.crew = [];
+    this.spawnCrew();
+    for (const zb of this.zombies) { zb.dead = false; zb.hp = ZOMBIE_HP; }
+    stopDrone();
+    this.hasLicense = true; // every survivor can drive in 7Nights — escape routes matter
     for (const v of this.votes) { v.state = "world"; v.carrierId = undefined; v.respawnT = undefined; v.claimBy = undefined; const p = freeSpot(this.rnd, this.world, 16, 420); v.x = p.x; v.z = p.z; }
     for (const it of this.items) { it.active = true; it.respawn = 0; }
     for (const c of this.civs) { c.mode = "wander"; c.vanId = undefined; c.runner = false; c.voteId = undefined; c.pauseT = 0; }
@@ -978,6 +979,16 @@ export class GameEngine {
     if (!this.running) return;
     // in a car? E hops out first — everything else waits
     if (this.drive) { this.exitCar(); return; }
+    // 🩸 7Nights: inspect a fallen survivor's body — learn the killer's clue
+    const dead = this.nearestDeadCrew(3.2);
+    if (dead && !dead.inspected) {
+      dead.inspected = true;
+      this.lastClue = `🔎 ${dead.name}: ${dead.clue}`;
+      this.points += 10;
+      sfx.click();
+      this.toast(this.lastClue, "info");
+      return;
+    }
     // protester priority: rescue a detained civilian standing nearby
     if (this.side === "protester") {
       let best: Npc | null = null, bd = RESCUE_RADIUS * RESCUE_RADIUS;
@@ -1148,38 +1159,17 @@ export class GameEngine {
       d.z += Math.cos(d.rot) * d.v * sdt;
       scrape += this.resolveCarBody(d);
     }
-    // cartoon scrape — walls eat speed. The loss is exactly the INTO-wall velocity
-    // component the wall absorbs (scrape/dt ≈ v·sinθ): a head-on bonk kills the
-    // speed stone dead, while a shallow graze keeps almost everything — the car
-    // SLIDES along the wall smoothly instead of the old flat ×0.82-per-frame chop
-    // that made even light brushes read as a jerk. Frame-rate independent.
-    if (scrape > 0.001) {
-      const sinIn = Math.min(1, scrape / (Math.abs(d.v) * dt + 1e-5));
-      const loss = Math.abs(d.v) * (1 - Math.sqrt(Math.max(0, 1 - sinIn * sinIn)));
-      d.v -= Math.sign(d.v) * Math.min(Math.abs(d.v), loss);
-    }
+    if (scrape > 0.004) d.v *= 0.82; // cartoon scrape — walls eat speed
     const rr = Math.hypot(d.x, d.z);
     if (rr > WALL_RADIUS) { d.x *= WALL_RADIUS / rr; d.z *= WALL_RADIUS / rr; d.v = Math.min(d.v, 4); }
-    // ⛰️ cars can't climb the rough mountain band — park & explore on foot
-    if (rr > MOUNTAIN_INNER - 7) {
-      const f = (MOUNTAIN_INNER - 7) / rr;
-      d.x *= f; d.z *= f;
-      d.v = Math.min(d.v, 3);
-      if (this.driveMsgT <= 0) {
-        this.driveMsgT = 4;
-        this.toast("⛰️ The car refuses to climb these rough mountains — park it and hike!", "info");
-      }
-    }
-    // ring-road traffic & police vans are solid — the vehicle bonks off, nobody
-    // gets hurt. The speed loss follows the actual overlap depth, so a continuous
-    // nudge can't compound into the old per-frame ×0.75 speed cliff.
+    // ring-road traffic & police vans are solid — the vehicle bonks off, nobody gets hurt
     for (const t of this.traffic) {
       const tr = VEHICLE_AXLE_R[t.t % VEHICLE_AXLE_R.length] + VEHICLE_AXLE_R[ti] + 0.12;
       const tdx = d.x - t.x, tdz = d.z - t.z, td2 = tdx * tdx + tdz * tdz;
       if (td2 < tr * tr && td2 > 0.0001) {
         const td = Math.sqrt(td2);
         d.x = t.x + (tdx / td) * tr; d.z = t.z + (tdz / td) * tr;
-        d.v *= 1 - Math.min(0.5, (tr - td) * 0.4);
+        d.v *= 0.75;
       }
     }
     for (const van of this.vans) {
@@ -1187,7 +1177,7 @@ export class GameEngine {
       if (vd2 < 3.2 * 3.2 && vd2 > 0.0001) {
         const vd = Math.sqrt(vd2);
         d.x = van.x + (vdx / vd) * 3.2; d.z = van.z + (vdz / vd) * 3.2;
-        d.v *= 1 - Math.min(0.5, (3.2 - vd) * 0.4);
+        d.v *= 0.75;
       }
     }
     this.syncCarColliders(d);
@@ -1196,23 +1186,18 @@ export class GameEngine {
     p.x = d.x; p.z = d.z; p.y = 0.32;
     p.vx = Math.sin(d.rot) * d.v; p.vz = Math.cos(d.rot) * d.v; p.vy = 0;
     p.face = d.rot;
-    // camera trails behind the car while it rolls. Mouse/touch look no longer
-    // hard-switches the auto-follow off — a blend eases down while you look
-    // around and recovers smoothly after, so resuming never yanks the camera
-    // (that on/off tug-of-war read as jerky driving), and the follow strength
-    // also fades in with speed so take-off has no kick either.
-    const looking = performance.now() - this.input.mouseAt < 650;
-    this.driveCamBlend = clamp(this.driveCamBlend + (looking ? -dt * 3.5 : dt * 1.1), 0, 1);
-    const spdBlend = Math.min(1, Math.max(0, (Math.abs(d.v) - 1.5) / 2.5));
-    const follow = this.driveCamBlend * spdBlend;
-    if (follow > 0.001) {
+    // camera trails behind the car while it rolls (mouse look still nudges it)
+    // the auto-follow pauses for a beat after any mouse/touch look so the two
+    // never fight over the camera — that tug-of-war read as jerky driving
+    const mouseIdle = performance.now() - this.input.mouseAt > 650;
+    if (Math.abs(d.v) > 2.5 && mouseIdle) {
       const want = d.v < 0 ? d.rot : d.rot + Math.PI; // reversing: look the way the car backs
       let dd = want - this.input.yaw;
       dd = Math.atan2(Math.sin(dd), Math.cos(dd));
-      this.input.yaw += dd * Math.min(1, dt * 2.6) * follow;
+      this.input.yaw += dd * Math.min(1, dt * 2.6);
       this.input.yaw = ((this.input.yaw + Math.PI) % TAU + TAU) % TAU - Math.PI;
     }
-    this.input.pitch += (0.34 - this.input.pitch) * Math.min(1, dt * 1.6) * this.driveCamBlend;
+    if (mouseIdle) this.input.pitch += (0.34 - this.input.pitch) * Math.min(1, dt * 1.6);
     // driving is restful — stamina recovers at walking rate
     this.stamina = Math.min(100, this.stamina + 12 * AGE_STATS[this.look.age].regen * dt);
   }
@@ -1730,6 +1715,7 @@ export class GameEngine {
     }
     this.inv[idx].count--;
     if (this.inv[idx].count <= 0) this.inv.splice(idx, 1);
+    this.snacksEaten++; // 📅 daily-task counter
     this.hp = clamp(this.hp + d.hp, 0, 100);
     this.stamina = clamp(this.stamina + d.stamina, 0, 100);
     this.player.stamina = this.stamina; // keep the movement body in sync
@@ -1758,10 +1744,10 @@ export class GameEngine {
       return;
     }
     if (this.activePower !== "blink") {
-      // helpful nudge when a blink gem is still sitting in a pocket
-      if (this.powerPockets.some((def) => POWERS[def].kind === "blink") && this.powerFullT <= 0) {
+      // helpful nudge when a blink gem is still sitting in the pockets
+      if (this.powerPockets.some((d) => POWERS[d].kind === "blink") && this.powerFullT <= 0) {
         this.powerFullT = 2.5;
-        this.toast("🌀 Blink is pocketed — hold G & aim the wheel (or tap the ✨ slot) to unleash it first!", "info");
+        this.toast("🌀 Blink is pocketed — press G (or tap the ✨ slot) to unleash it first!", "info");
       }
       return;
     }
@@ -1792,30 +1778,40 @@ export class GameEngine {
     this.toast("🌀 Poof! Teleported!", "good");
   }
 
-  /** Unleash a pocketed power gem — the player chooses the moment (HOLD G to open
-   *  the radial wheel, aim with the mouse, release to fire — or tap any ✨ slot).
-   *  The gem is CONSUMED: one use each. */
-  usePower(slot = 0) {
+  /** Unleash the FIRST pocketed power gem — press G or tap the ✨ slot.
+   *  Each gem is SINGLE-USE: firing consumes it. */
+  usePower() {
     if (!this.running || this.powerPockets.length === 0) return;
+    this.usePowerAt(0);
+  }
+
+  /** Unleash a SPECIFIC pocketed gem (HUD slot tap, 0 = first). Consumes it — one shot per gem. */
+  usePowerAt(slot: number) {
+    if (!this.running) return;
+    if (slot < 0 || slot >= this.powerPockets.length) return;
     if (this.detainedT > 0 || this.faintT > 0) return;
-    const i = Math.max(0, Math.min(slot, this.powerPockets.length - 1));
-    const def = this.powerPockets.splice(i, 1)[0];
+    const def = this.powerPockets.splice(slot, 1)[0]; // the gem is spent — no refunds!
+    this.powersUsed++; // 📅 daily-task counter
     this.activatePower(def, this.player.x, this.player.z);
   }
 
-  /** Pocket a collected gem WITHOUT activating it — up to POWER_POCKETS ride
-   *  along; the player fires each one (single use) with G or a ✨ slot tap. */
+  /** Pocket a collected gem WITHOUT activating it — the player fires it with G
+   *  (or by tapping its ✨ slot) when the moment is right. Up to POWER_CARRY fit. */
   private storePower(def: number, x: number, z: number) {
-    this.powerPockets.push(def);
+    this.powerPockets.push(def); // the gem waits here until usePower() unleashes it
     const d = POWERS[def];
     sfx.power();
     this.fxQueue.push({ type: "confetti", x, y: 1.3, z, hue: Math.random() });
-    this.toast(`${d.emoji} ${d.name} collected (${this.powerPockets.length}/${POWER_POCKETS} pocketed) — hold G & aim the wheel (or tap a ✨ slot) to unleash it!`, "good");
+    this.toast(`${d.emoji} ${d.name} collected! (${this.powerPockets.length}/${POWER_CARRY} pocketed) — press G to unleash the first, or tap its ✨ slot.`, "good");
   }
 
-  /** Activate a collected gem — called by usePower() when the PLAYER picks the moment. */
+  /** Activate a collected gem — called by usePowerAt() when the PLAYER picks the moment. */
   private activatePower(def: number, x: number, z: number) {
     const d = POWERS[def];
+    // one effect at a time — firing a second gem while one runs cuts the first short
+    const replaced = this.activePower && this.activePower !== d.kind
+      ? POWERS.find((pd) => pd.kind === this.activePower)
+      : null;
     this.activePower = d.kind;
     this.powerT = d.duration;
     this.powerMax = d.duration;
@@ -1827,6 +1823,7 @@ export class GameEngine {
     if (d.kind === "morph") sfx.morph();
     this.fxQueue.push({ type: "confetti", x, y: 1.3, z, hue: Math.random() });
     this.toast(d.msg, "good");
+    if (replaced) this.toast(`${replaced.emoji} ${replaced.name} cut short — one power runs at a time!`, "info");
     // fresh animal scent confuses the police — any hunt on us instantly breaks off
     if (d.kind === "morph" && this.chased) {
       for (const cop of this.cops) {
@@ -1834,138 +1831,6 @@ export class GameEngine {
       }
       this.clearWanted("🐾 The police sniffed around and lost you — you smell animal now!");
     }
-  }
-
-  /* ---------------- 🔧 tool belt: axe · sword · hammer · builder ---------------- */
-
-  /** Friendly hint when B is pressed with nothing in the belt (throttled). */
-  hintToolBelt() {
-    if (this.toolHintT > 0) return;
-    this.toolHintT = 5;
-    this.toast("🔧 Your tool belt is empty! Hunt the wild for 🪓 axe, 🗡️ sword, 🔨 hammer & 🧱 builder — the jungle & mountains hide them.", "info");
-  }
-
-  /** Nearest choppable tree (index into world.trees / its circle) within maxD, else −1. */
-  private nearestTree(maxD: number): number {
-    let best = -1, bd = maxD * maxD;
-    const trees = this.world.trees, p = this.player;
-    for (let i = 0; i < trees.length; i++) {
-      const t = trees[i];
-      if (t.s <= 0) continue; // already chopped
-      const d = dist2(p.x, p.z, t.x, t.z);
-      if (d < bd) { bd = d; best = i; }
-    }
-    return best;
-  }
-
-  /** Nearest breakable rock (index into world.rocks) within maxD, else −1. */
-  private nearestRock(maxD: number): number {
-    let best = -1, bd = maxD * maxD;
-    const rocks = this.world.rocks, p = this.player;
-    for (let i = 0; i < rocks.length; i++) {
-      const rk = rocks[i];
-      if (rk.s <= 0) continue; // already smashed
-      const d = dist2(p.x, p.z, rk.x, rk.z);
-      if (d < bd) { bd = d; best = i; }
-    }
-    return best;
-  }
-
-  /** Consume one copy of the belt tool at `slot` and DO the tool's thing:
-   *  🪓 chop tree → wood · 🗡️ fight zombie · 🔨 smash rock → stone · 🧱 build barricade.
-   *  If the tool's target isn't in reach, nothing is consumed — a hint explains why. */
-  useTool(slot = 0) {
-    if (!this.running || this.detainedT > 0 || this.faintT > 0) return;
-    const b = this.toolBelt[slot];
-    if (!b || b.count <= 0) return;
-    if (this.drive) {
-      if (this.driveMsgT <= 0) { this.driveMsgT = 3; this.toast("Hop out of the car (E) to use your tools!", "info"); }
-      return;
-    }
-    const d = TOOLS[b.def];
-    const p = this.player;
-    const consume = () => {
-      b.count--;
-      if (b.count <= 0) this.toolBelt.splice(slot, 1);
-    };
-    const fwd = { x: -Math.sin(this.input.yaw), z: -Math.cos(this.input.yaw) }; // camera forward
-    if (d.kind === "axe") {
-      const ti = this.nearestTree(3.4);
-      if (ti < 0) { this.toast("🪓 No tree close enough — stand right next to one and try again!", "info"); return; }
-      consume();
-      const t = this.world.trees[ti];
-      t.s = 0; // felled — Forest hides it, collider circle goes r=0
-      if (this.world.circles[ti]) this.world.circles[ti].r = 0;
-      this.wood = Math.min(WOOD_CAP, this.wood + CHOP_WOOD);
-      this.points += POINTS_CHOP;
-      this.worldV++;
-      sfx.chop();
-      this.fxQueue.push({ type: "confetti", x: t.x, y: 1.4, z: t.z, hue: 0.29 });
-      this.toast(`🪓 TIMBER! +${CHOP_WOOD} 🪵 wood (${this.wood}/${WOOD_CAP}) — the builder can raise barricades!`, "good");
-      return;
-    }
-    if (d.kind === "sword") {
-      let best: Zombie | null = null, bd = 3.6 * 3.6;
-      for (const zb of this.zombies) {
-        if (zb.downT > 0) continue;
-        const dd = dist2(p.x, p.z, zb.x, zb.z);
-        if (dd < bd) { bd = dd; best = zb; }
-      }
-      if (!best) { this.toast("🗡️ Swing and a miss! Zombies wake at night in the graveyard — get closer!", "info"); return; }
-      consume();
-      best.downT = ZOMBIE_DOWN_S;
-      best.vx = 0; best.vz = 0;
-      this.points += POINTS_FIGHT;
-      sfx.swipe();
-      sfx.zombie();
-      this.fxQueue.push({ type: "confetti", x: best.x, y: 1.3, z: best.z, hue: 0.36 });
-      this.toast(`⚔️ ZOMBIE DEFEATED! +${POINTS_FIGHT} points — it rises again in ${ZOMBIE_DOWN_S}s!`, "good");
-      return;
-    }
-    if (d.kind === "hammer") {
-      const ri = this.nearestRock(3.2);
-      if (ri < 0) { this.toast("🔨 No rock close enough — boulders litter the ⛰️ mountains & deep jungle!", "info"); return; }
-      consume();
-      const rk = this.world.rocks[ri];
-      rk.s = 0; // smashed — renderer hides it, collider goes r=0
-      const gi = this.rockCircle.get(ri);
-      if (gi !== undefined && this.world.circles[gi]) this.world.circles[gi].r = 0;
-      this.stone = Math.min(STONE_CAP, this.stone + MINE_STONE);
-      this.points += POINTS_MINE;
-      this.worldV++;
-      sfx.smash();
-      this.fxQueue.push({ type: "confetti", x: rk.x, y: 1.2, z: rk.z, hue: 0.62 });
-      this.toast(`💥 CRUNCH! +${MINE_STONE} 🪨 stone (${this.stone}/${STONE_CAP}) — solid building material!`, "good");
-      return;
-    }
-    // 🧱 builder — spend resources, raise a solid barricade a step ahead of the player
-    let mat: 0 | 1 = 0;
-    if (this.wood >= BUILD_WOOD_COST) mat = 0;
-    else if (this.stone >= BUILD_STONE_COST) mat = 1;
-    else {
-      this.toast(`🧱 You need ${BUILD_WOOD_COST} 🪵 wood (axe) or ${BUILD_STONE_COST} 🪨 stone (hammer) to build!`, "info");
-      return;
-    }
-    const bx = p.x + fwd.x * 2.7, bz = p.z + fwd.z * 2.7;
-    if (terrainHeight(bx, bz) > 10) { this.toast("🧱 Too steep to build here — find flatter ground!", "info"); return; }
-    // find a free pool circle
-    let gi = -1;
-    for (let i = 0; i < this.world.circles.length; i++) {
-      const c = this.world.circles[i];
-      if (c.build !== undefined && c.r < 0.01) { gi = i; break; }
-    }
-    if (gi < 0) { this.toast("🧱 Build limit reached — the wild is getting crowded!", "info"); return; }
-    consume();
-    if (mat === 0) this.wood -= BUILD_WOOD_COST; else this.stone -= BUILD_STONE_COST;
-    moveCircle(this.world, gi, bx, bz, BUILD_R);
-    this.builds.push({ gi, x: bx, z: bz, mat });
-    this.points += POINTS_BUILD;
-    this.worldV++;
-    sfx.build();
-    this.fxQueue.push({ type: "confetti", x: bx, y: 1.4, z: bz, hue: 0.08 });
-    this.toast(mat === 0
-      ? `🏗️ Wooden barricade BUILT! (+${POINTS_BUILD}) Zombies hate it. (${this.wood} 🪵 left)`
-      : `🏰 Stone wall BUILT! (+${POINTS_BUILD}) Rock solid. (${this.stone} 🪨 left)`, "good");
   }
 
   private grazeSpot(an: Animal, farm: boolean): { x: number; z: number } | null {
@@ -1984,12 +1849,575 @@ export class GameEngine {
     return null;
   }
 
+  /* ================= 7 Nights: the survival-horror storyline ================= */
+
+  /** (Re)spawn the 7-person crew around the player's spawn — same names & colors
+   *  every run, so the accusation mystery stays learnable. Shirt color = identity. */
+  private spawnCrew() {
+    for (let i = 0; i < CREW_COUNT; i++) {
+      const a = (i / CREW_COUNT) * Math.PI * 2;
+      const spot = { x: SPAWN.x + Math.cos(a) * (13 + (i % 3) * 6), z: SPAWN.z + Math.sin(a) * (13 + (i % 3) * 6) };
+      resolve(spot, 0.5, this.world);
+      const look = randomAppearance(this.rnd);
+      look.shirt = CREW_COLORS[i]; // the color IS the identity — clues depend on it
+      this.crew.push({
+        id: this.nid(), name: CREW_NAMES[i], color: CREW_COLORS[i], colorName: CREW_COLOR_NAMES[i], look,
+        x: spot.x, z: spot.z, vx: 0, vz: 0, face: a + Math.PI,
+        alive: true, mode: "wander", tx: spot.x, tz: spot.z,
+        timer: range(this.rnd, 2, 6), phase: Math.random() * 6,
+        hp: CREW_HP, touchCd: 0, deathX: 0, deathZ: 0, clue: "", inspected: false,
+      });
+    }
+  }
+
+  /* ---------------- phase machine: day → dusk → night → dawn ---------------- */
+
+  /** Advance the 7-Nights story clock. The visual day/night `clock` is SYNTHESIZED
+   *  from the phase so sky, fog, lamps, windows & fireflies all follow the story. */
+  private stepPhase(dt: number) {
+    this.phaseT -= dt;
+    if (this.phaseT <= 0) {
+      switch (this.phase) {
+        case "day":
+          this.phase = "dusk";
+          this.phaseT = PHASE_DUSK_S;
+          this.choosePossessed();
+          break;
+        case "dusk":
+          this.phase = "night";
+          this.phaseT = PHASE_NIGHT_S;
+          this.beginNight();
+          break;
+        case "night":
+          this.phase = "dawn";
+          this.phaseT = PHASE_DAWN_S;
+          this.endNight(false);
+          break;
+        case "dawn":
+          if (this.nightNo >= NIGHTS_TOTAL) this.winGame("dawn");
+          else {
+            this.nightNo++;
+            this.phase = "day";
+            this.phaseT = PHASE_DAY_S;
+            this.toast(`☀️ DAY ${this.nightNo} of ${NIGHTS_TOTAL} — gather, build… and find the suspect.`, "info");
+          }
+          break;
+      }
+    }
+    let target = 0.30; // high noon
+    if (this.phase === "dusk") target = 0.46 + (1 - Math.max(0, this.phaseT) / PHASE_DUSK_S) * 0.28; // sunset slide
+    else if (this.phase === "night") target = 0.80; // deep night
+    else if (this.phase === "dawn") target = 0.30 + (Math.max(0, this.phaseT) / PHASE_DAWN_S) * 0.44; // sunrise slide
+    this.clock += (target - this.clock) * Math.min(1, dt * 2.4);
+  }
+
+  /** Dusk: the spirit chooses its host — a random survivor, or YOU. */
+  private choosePossessed() {
+    const aliveIdx = this.crew.map((c, i) => (c.alive ? i : -1)).filter((i) => i >= 0);
+    const forcePlayer = PLAYER_NIGHTS.includes(this.nightNo);
+    const anyCrew = aliveIdx.length > 0;
+    if (anyCrew && !forcePlayer && this.rnd() > POSSESS_PLAYER_CHANCE) {
+      this.possessed = aliveIdx[Math.floor(this.rnd() * aliveIdx.length)];
+      this.youPossessed = false;
+    } else {
+      this.possessed = null;
+      this.youPossessed = true;
+    }
+    this.lastPossessed = this.possessed;
+    sfx.howl();
+    sfx.possess();
+    if (this.youPossessed) {
+      this.toast("⚠ YOUR SKIN GOES COLD. YOUR EYES GO BLACK. The spirit has chosen YOU…", "bad");
+    } else if (anyCrew) {
+      this.toast(`⚠ DUSK SIRENS — one of the ${aliveIdx.length + 1} survivors is being possessed… watch them.`, "info");
+    }
+  }
+
+  /** Night falls: the host transforms into the beast. */
+  private beginNight() {
+    for (const zb of this.zombies) { zb.dead = false; zb.hp = ZOMBIE_HP; } // the graveyard rises fresh
+    startDrone();
+    if (this.youPossessed) {
+      this.held = -1;
+      this.toast(`🌑 NIGHT ${this.nightNo} — YOU ARE THE BEAST. Hunt the survivors! (F = claw)`, "bad");
+    } else if (this.possessed != null) {
+      const c = this.crew[this.possessed];
+      c.mode = "possessed";
+      c.hp = HUNTER_HP;
+      sfx.scream();
+      this.toast(`🌑 NIGHT ${this.nightNo} — a SCREAM tears the sky… the beast walks. Survive!`, "bad");
+    }
+  }
+
+  /** Dawn: the spirit lets go. Nights survived, points, and a recap. */
+  private endNight(early: boolean) {
+    if (this.possessed != null) {
+      const c = this.crew[this.possessed];
+      if (c.alive) { c.mode = "hide"; c.timer = 0; } // they wake up… remembering nothing
+    }
+    this.possessed = null;
+    this.youPossessed = false;
+    this.nightsSurvived = Math.min(NIGHTS_TOTAL, this.nightNo);
+    if (!early) this.points += POINTS_NIGHT;
+    stopDrone();
+    sfx.bell();
+    const alive = this.crew.filter((c) => c.alive).length;
+    this.toast(`🌅 DAWN — you survived night ${this.nightNo}! ${alive + 1} souls remain. Inspect bodies (E)… then accuse (R).`, "good");
+  }
+
+  private winGame(reason: "dawn" | "solo" | "beast") {
+    if (this.won || this.lost) return;
+    this.won = true;
+    this.wonAt = this.elapsed;
+    if (reason === "dawn") this.nightsSurvived = NIGHTS_TOTAL;
+    this.points += WIN_BONUS;
+    stopDrone();
+    sfx.win();
+    if (reason === "dawn") this.toast("🌅 DAWN AFTER NIGHT 7 — you survived ALL SEVEN NIGHTS! The town is saved!", "good");
+    else if (reason === "solo") this.toast("🔪 Everyone is gone… you are the SOLE SURVIVOR.", "good");
+    else this.toast("🩸 The pack is complete. None remain… but YOU.", "good");
+  }
+
+  /** The player died — in 7Nights there is no dizzy respawn. The dark takes you. */
+  private die() {
+    if (this.won || this.lost) return;
+    this.lost = true;
+    stopDrone();
+    sfx.lose();
+    this.toast(`🩸 The darkness took you on night ${this.nightNo}…`, "bad");
+  }
+
+  /* ---------------- crew AI: wander by day, hide by night, hunt when possessed ---------------- */
+
+  private stepCrew(dt: number) {
+    const p = this.player;
+    for (let i = 0; i < this.crew.length; i++) {
+      const c = this.crew[i];
+      if (!c.alive) continue;
+      c.phase += dt;
+      c.touchCd = Math.max(0, c.touchCd - dt);
+      const d2p = dist2(c.x, c.z, p.x, p.z);
+
+      if (c.mode === "possessed") {
+        // 🩸 THE BEAST — hunts the nearest living soul, fears fire, chews barricades
+        let tx = p.x, tz = p.z, td = d2p, victim = -1;
+        for (let j = 0; j < this.crew.length; j++) {
+          const o = this.crew[j];
+          if (j === i || !o.alive) continue;
+          const d = dist2(c.x, c.z, o.x, o.z);
+          if (d < td) { td = d; tx = o.x; tz = o.z; victim = j; }
+        }
+        const fire = this.nearestBuildOf("campfire", c.x, c.z);
+        if (fire && dist2(fire.x, fire.z, c.x, c.z) < CAMPFIRE_R * CAMPFIRE_R) {
+          const dx = c.x - fire.x, dz = c.z - fire.z, dl = Math.hypot(dx, dz) || 1;
+          tx = c.x + (dx / dl) * 12; tz = c.z + (dz / dl) * 12; victim = -1;
+        }
+        stepNpc(c, tx, tz, HUNTER_SPEED, dt, this.world);
+        // maul barricades that block the path
+        const bar = this.nearestBuildOf("barricade", c.x, c.z);
+        if (bar && dist2(bar.x, bar.z, c.x, c.z) < 2.5 * 2.5) {
+          bar.hp -= 26 * dt;
+          if (Math.random() < dt * 2.5) {
+            sfx.smash();
+            this.fxQueue.push({ type: "confetti", x: bar.x, y: 1.1, z: bar.z, hue: 0.08 });
+          }
+          if (bar.hp <= 0) this.destroyBuild(bar, "The beast smashed a barricade apart!");
+        }
+        // caught someone?
+        if (c.touchCd <= 0) {
+          if (victim < 0 && td < 1.8 * 1.8 && this.detainedT <= 0 && !this.drive) {
+            c.touchCd = HUNTER_TOUCH_CD;
+            this.hp = Math.max(0, this.hp - HUNTER_DMG);
+            this.hurtT = HURT_FLASH_S;
+            const dx = p.x - c.x, dz = p.z - c.z, dl = Math.hypot(dx, dz) || 1;
+            p.vx = (dx / dl) * 11; p.vz = (dz / dl) * 11; p.vy = 5; // knockback — escapes are possible
+            sfx.scream();
+            this.toast("🩸 THE BEAST TORE INTO YOU! RUN!", "bad");
+          } else if (victim >= 0 && td < 1.7 * 1.7) {
+            c.touchCd = HUNTER_TOUCH_CD;
+            this.killCrew(victim, false);
+          }
+        }
+        if (this.groanT <= 0 && d2p < 24 * 24) { this.groanT = range(this.rnd, 2.5, 5); sfx.groan(); }
+        continue;
+      }
+
+      if (this.phase === "day" || this.phase === "dawn") {
+        // ☀️ daylight — loiter around town, sometimes tag along with you
+        c.mode = "wander";
+        if (c.timer <= 0 || dist2(c.x, c.z, c.tx, c.tz) < 2.2) {
+          if (this.rnd() < 0.22 && d2p < 60 * 60) {
+            c.tx = p.x + range(this.rnd, -7, 7); c.tz = p.z + range(this.rnd, -7, 7);
+          } else {
+            const t = spotNear(this.rnd, this.world, c.x, c.z, 12, 70);
+            c.tx = t.x; c.tz = t.z;
+          }
+          c.timer = range(this.rnd, 5, 11);
+        }
+        stepNpc(c, c.tx, c.tz, CREW_SPEED, dt, this.world);
+        continue;
+      }
+
+      // 🌆 dusk & 🌑 night — run to the nearest hideout and shiver there
+      if (c.mode !== "hide") { c.mode = "hide"; c.timer = 0; }
+      const h = this.nearestHideout(c.x, c.z);
+      if (dist2(c.x, c.z, h.x, h.z) > 2.4 * 2.4) {
+        stepNpc(c, h.x, h.z, CREW_SPEED * 1.3, dt, this.world);
+      } else {
+        c.vx *= 0.8; c.vz *= 0.8;
+      }
+      // beast nearby → blind panic away from it
+      const beast = this.possessed != null ? this.crew[this.possessed] : null;
+      const bx = this.youPossessed ? p.x : beast ? beast.x : 0;
+      const bz = this.youPossessed ? p.z : beast ? beast.z : 0;
+      const bd2 = this.youPossessed ? d2p : beast ? dist2(c.x, c.z, beast.x, beast.z) : Infinity;
+      if (this.phase === "night" && bd2 < 12 * 12) {
+        const dx = c.x - bx, dz = c.z - bz, dl = Math.hypot(dx, dz) || 1;
+        stepNpc(c, c.x + (dx / dl) * 14, c.z + (dz / dl) * 14, CREW_SPEED * 1.7, dt, this.world);
+      }
+    }
+  }
+
+  /** A crew member dies — corpse stays, a clue appears, the town shrinks. */
+  private killCrew(idx: number, slain: boolean) {
+    const c = this.crew[idx];
+    if (!c.alive) return;
+    c.alive = false;
+    c.hp = 0;
+    c.mode = "dead";
+    c.deathX = c.x; c.deathZ = c.z;
+    c.inspected = false;
+    if (slain) {
+      c.clue = "no fibers, no footprints… the beast fell right where it stood.";
+    } else if (this.youPossessed) {
+      c.clue = "huge bare footprints… no cloth, no colors. The killer is NOT from the camp.";
+    } else {
+      const k = this.possessed != null ? this.crew[this.possessed] : null;
+      c.clue = k ? `torn ${k.colorName} cloth under the claws… that color belongs to someone in the camp.` : "claw marks in the dirt.";
+    }
+    sfx.scream();
+    this.fxQueue.push({ type: "confetti", x: c.x, y: 1.2, z: c.z, hue: 0.98 });
+    const alive = this.crew.filter((x) => x.alive).length;
+    if (slain) this.toast(`🗡️ The beast is DOWN! That was ${c.name}…`, "good");
+    else this.toast(`💀 ${c.name} was slain by the beast! (${alive} strangers left)`, "bad");
+    if (alive === 0) {
+      if (this.youPossessed && this.phase === "night") this.winGame("beast");
+      else if (!this.youPossessed) this.winGame("solo");
+    }
+  }
+
+  /** The player slew the possessed one — the spell breaks, dawn comes early. */
+  private slayBeast(idx: number) {
+    this.kills++;
+    this.points += POINTS_KILL_BEAST;
+    this.killCrew(idx, true);
+    if (this.phase === "night") {
+      this.phase = "dawn";
+      this.phaseT = PHASE_DAWN_S;
+      this.endNight(true);
+      this.toast("🗝️ The spell is BROKEN — dawn comes early. +200", "good");
+    }
+  }
+
+  /* ---------------- combat & harvesting (F) ---------------- */
+
+  /** Swing the held arm — claws, blade, axe, hammer… or sad bare fists. */
+  attack() {
+    if (!this.running || this.attackCd > 0 || this.faintT > 0 || this.detainedT > 0 || this.drive) return;
+    const p = this.player;
+    this.attackCd = ATTACK_CD;
+    // 🩸 possessed player = the beast: claws tear the crew
+    if (this.youPossessed && this.phase === "night") {
+      let bi = -1, bd = 2.2 * 2.2;
+      for (let i = 0; i < this.crew.length; i++) {
+        const c = this.crew[i];
+        if (!c.alive) continue;
+        const d = dist2(p.x, p.z, c.x, c.z);
+        if (d < bd) { bd = d; bi = i; }
+      }
+      if (bi >= 0) {
+        const c = this.crew[bi];
+        c.hp -= CLAW_DMG;
+        sfx.stab();
+        this.fxQueue.push({ type: "confetti", x: c.x, y: 1.2, z: c.z, hue: 0.98 });
+        if (c.hp <= 0) this.killCrew(bi, false);
+      } else {
+        sfx.swing();
+      }
+      return;
+    }
+    const tool = this.held >= 0 && this.held < this.tools.length ? this.tools[this.held] : null;
+    const kind = tool?.kind ?? null;
+    const dmg = kind ? (TOOLS.find((t) => t.kind === kind)?.dmg ?? HANDS_DMG) : HANDS_DMG;
+    // 1) the possessed beast — slay it to end the night early!
+    const hi = this.crew.findIndex((c) => c.alive && c.mode === "possessed" && dist2(p.x, p.z, c.x, c.z) < ATTACK_RANGE * ATTACK_RANGE);
+    if (hi >= 0) {
+      const c = this.crew[hi];
+      c.hp -= dmg;
+      sfx.stab();
+      this.fxQueue.push({ type: "confetti", x: c.x, y: 1.2, z: c.z, hue: 0.98 });
+      if (c.hp <= 0) this.slayBeast(hi);
+      return;
+    }
+    // 2) graveyard zombies
+    for (const zb of this.zombies) {
+      if (zb.dead) continue;
+      if (dist2(p.x, p.z, zb.x, zb.z) < 2.4 * 2.4) {
+        zb.hp = (zb.hp ?? ZOMBIE_HP) - dmg;
+        sfx.stab();
+        this.fxQueue.push({ type: "confetti", x: zb.x, y: 1.1, z: zb.z, hue: 0.35 });
+        if (zb.hp <= 0) {
+          zb.dead = true;
+          this.kills++;
+          this.points += POINTS_KILL_ZOMBIE;
+          sfx.scream();
+          this.toast("🧟 The zombie crumbles! +40", "good");
+        }
+        return;
+      }
+    }
+    // 3) harvest — axe fells trees, hammer cracks boulders
+    const fx = -Math.sin(this.input.yaw), fz = -Math.cos(this.input.yaw);
+    if (kind === "axe") {
+      const ti = this.nearestTree(fx, fz);
+      if (ti >= 0) { this.chopTree(ti); return; }
+    }
+    if (kind === "hammer") {
+      const ri = this.nearestRock(fx, fz);
+      if (ri >= 0) { this.smashRock(ri); return; }
+    }
+    sfx.swing();
+  }
+
+  /** Nearest standing tree in the swing arc (camera-forward). */
+  private nearestTree(fx: number, fz: number): number {
+    const p = this.player;
+    let best = -1, bd = (ATTACK_RANGE + 1.1) * (ATTACK_RANGE + 1.1);
+    for (let i = 0; i < this.world.trees.length; i++) {
+      if (this.felled.has(i)) continue;
+      const t = this.world.trees[i];
+      const d = dist2(p.x, p.z, t.x, t.z);
+      if (d >= bd) continue;
+      const dx = t.x - p.x, dz = t.z - p.z, dl = Math.hypot(dx, dz) || 1;
+      if ((dx / dl) * fx + (dz / dl) * fz < 0.2) continue; // swing toward it
+      bd = d; best = i;
+    }
+    return best;
+  }
+
+  /** Nearest intact boulder in the swing arc. */
+  private nearestRock(fx: number, fz: number): number {
+    const p = this.player;
+    let best = -1, bd = (ATTACK_RANGE + 1.2) * (ATTACK_RANGE + 1.2);
+    for (let i = 0; i < this.world.rocks.length; i++) {
+      if (this.brokenRocks.has(i)) continue;
+      const rk = this.world.rocks[i];
+      const d = dist2(p.x, p.z, rk.x, rk.z);
+      if (d >= bd) continue;
+      const dx = rk.x - p.x, dz = rk.z - p.z, dl = Math.hypot(dx, dz) || 1;
+      if ((dx / dl) * fx + (dz / dl) * fz < 0.15) continue;
+      bd = d; best = i;
+    }
+    return best;
+  }
+
+  private chopTree(i: number) {
+    const t = this.world.trees[i];
+    this.treeHits[i] = (this.treeHits[i] ?? 0) + 1;
+    sfx.chop();
+    this.fxQueue.push({ type: "confetti", x: t.x, y: 1.6, z: t.z, hue: 0.09 });
+    if (this.treeHits[i] >= TREE_HITS) {
+      this.felled.add(i);
+      this.fellVersion++;
+      this.world.circles[i].r = 0.24; // only the stump blocks now
+      this.res.wood += WOOD_PER_TREE;
+      this.points += POINTS_HARVEST;
+      sfx.smash();
+      this.toast(`🪓 TIMBER! +${WOOD_PER_TREE} wood (🪵 ${this.res.wood})`, "good");
+    }
+  }
+
+  private smashRock(i: number) {
+    const rk = this.world.rocks[i];
+    this.rockHp[i] = (this.rockHp[i] ?? ROCK_HITS) - 1;
+    sfx.smash();
+    this.fxQueue.push({ type: "confetti", x: rk.x, y: 1.1, z: rk.z, hue: 0.62 });
+    if (this.rockHp[i] <= 0) {
+      this.brokenRocks.add(i);
+      this.fellVersion++;
+      this.world.circles[this.world.rockCi[i]].r = 0.06; // rubble
+      this.res.rock += ROCK_PER_BOULDER;
+      this.points += POINTS_HARVEST;
+      this.toast(`🔨 CRACK! +${ROCK_PER_BOULDER} stone (🪨 ${this.res.rock})`, "good");
+    }
+  }
+
+  /* ---------------- tools & building ---------------- */
+
+  /** Pocket a tool — same kinds stack (players can collect multiple!). */
+  private addTool(kind: ToolKind, x: number, z: number) {
+    const def = TOOLS.find((t) => t.kind === kind)!;
+    let slot = this.tools.find((s) => s.kind === kind);
+    if (slot) slot.count = Math.min(9, slot.count + 1);
+    else {
+      this.tools.push({ kind, count: 1 });
+      slot = this.tools[this.tools.length - 1];
+    }
+    if (this.held < 0) this.held = this.tools.indexOf(slot); // first tool auto-equips
+    sfx.pickup();
+    this.fxQueue.push({ type: "confetti", x, y: 1.2, z, hue: 0.08 });
+    this.toast(`${def.emoji} ${def.name} picked up (x${slot.count}) — ${def.tip}`, "good");
+  }
+
+  /** Equip a belt slot (−1 = bare hands). Called by the HUD belt & the G wheel. */
+  setHeld(i: number) {
+    if (i < -1 || i >= this.tools.length) return;
+    this.held = i;
+    if (i >= 0) {
+      const d = TOOLS.find((t) => t.kind === this.tools[i].kind);
+      if (d) this.toast(`${d.emoji} ${d.name} ready — ${d.tip}`, "info");
+    } else if (this.tools.length > 0) {
+      this.toast("✊ Bare hands — tap a belt slot or press G to pick a tool.", "info");
+    }
+  }
+
+  /** Build a barricade (B) or a campfire (V) a few units ahead of the camera. */
+  placeBuild(kind: "barricade" | "campfire") {
+    if (!this.running) return;
+    if (this.youPossessed && this.phase === "night") {
+      if (this.driveMsgT <= 0) { this.driveMsgT = 2; this.toast("The beast doesn't build. It HUNTS.", "info"); }
+      return;
+    }
+    if (this.phase === "night") { this.toast("🌙 Too dangerous to build at night! Wait for daylight.", "bad"); return; }
+    if (!this.tools.some((s) => s.kind === "builder")) {
+      if (this.driveMsgT <= 0) {
+        this.driveMsgT = 3;
+        this.toast("🔧 You need a Builder tool — they're lying around town (glowing wrench)!", "info");
+      }
+      return;
+    }
+    const cost = kind === "barricade" ? BARRICADE_COST : CAMPFIRE_COST;
+    if (this.res.wood < cost.wood || this.res.rock < cost.rock) {
+      this.toast(kind === "barricade"
+        ? `🪵 Need ${BARRICADE_COST.wood} wood (have ${this.res.wood}) — chop trees with the 🪓!`
+        : `Need ${CAMPFIRE_COST.wood}🪓 + ${CAMPFIRE_COST.rock}🪨 (have ${this.res.wood}/${this.res.rock}) — chop & smash!`, "bad");
+      return;
+    }
+    const fx = -Math.sin(this.input.yaw), fz = -Math.cos(this.input.yaw);
+    const spot = { x: this.player.x + fx * 3.4, z: this.player.z + fz * 3.4 };
+    if (terrainHeight(spot.x, spot.z) > 12) {
+      this.toast("🧱 Too steep to build here — find flatter ground!", "info");
+      return;
+    }
+    resolve(spot, kind === "barricade" ? 1.2 : 0.7, this.world);
+    const rr = Math.hypot(spot.x, spot.z);
+    if (rr > WALL_RADIUS - 2) { spot.x *= (WALL_RADIUS - 2) / rr; spot.z *= (WALL_RADIUS - 2) / rr; }
+    if (this.builds.some((b) => dist2(b.x, b.z, spot.x, spot.z) < 2.6 * 2.6)) {
+      this.toast("Too close to another building — step aside a little.", "info");
+      return;
+    }
+    this.res.wood -= cost.wood;
+    this.res.rock -= cost.rock;
+    const ci = addDynamicCircle(this.world, { x: spot.x, z: spot.z, r: kind === "barricade" ? 1.15 : 0.6 });
+    this.builds.push({ id: this.nid(), kind, x: spot.x, z: spot.z, rot: Math.atan2(fx, fz), hp: kind === "barricade" ? BARRICADE_HP : 999, ci });
+    this.buildsMade++;
+    this.points = Math.max(0, this.points + POINTS_BUILD);
+    sfx.build();
+    this.toast(kind === "barricade"
+      ? "🛡️ Barricade built — the beast will have to chew through it!"
+      : "🔥 Campfire built — beasts & zombies keep away from the flames (and it mends you by day)!", "good");
+  }
+
+  private destroyBuild(b: Build, msg: string) {
+    const i = this.builds.indexOf(b);
+    if (i >= 0) this.builds.splice(i, 1);
+    const c = this.world.circles[b.ci];
+    if (c) c.r = 0.02; // fold the collider away
+    this.toast(`💥 ${msg}`, "bad");
+  }
+
+  /* ---------------- the morning after: inspect & accuse ---------------- */
+
+  /** R — accuse the survivor next to you. Right call banishes the possessed;
+   *  wrong call kills an innocent. The town never forgives. */
+  accuse() {
+    if (!this.running) return;
+    if (this.phase === "night" || this.phase === "dusk") { this.toast("Not now — SURVIVE the night first!", "info"); return; }
+    const c = this.nearestCrewAlive(ACCUSE_RADIUS);
+    if (!c) { this.toast("Stand next to a survivor to accuse them (R).", "info"); return; }
+    if (this.accuseCd > 0) return;
+    this.accuseCd = 2.5;
+    const idx = this.crew.indexOf(c);
+    if (this.lastPossessed === idx) {
+      c.alive = false; c.mode = "dead";
+      c.deathX = c.x; c.deathZ = c.z;
+      c.clue = "they were dragged away screaming… the spirit left their body.";
+      c.inspected = true;
+      this.accusesRight++;
+      this.points += POINTS_RIGHT_ACCUSE;
+      sfx.mob();
+      this.fxQueue.push({ type: "confetti", x: c.x, y: 1.3, z: c.z, hue: 0.55 });
+      this.toast(`⚖️ ${c.name} WAS the possessed! The mob drags them away. +${POINTS_RIGHT_ACCUSE}`, "good");
+    } else {
+      c.alive = false; c.mode = "dead";
+      c.deathX = c.x; c.deathZ = c.z;
+      c.clue = "innocent… the mob fled in shame.";
+      c.inspected = true;
+      this.accusesWrong++;
+      this.points = Math.max(0, this.points + POINTS_WRONG_ACCUSE);
+      sfx.scream();
+      this.toast(`😰 ${c.name} was INNOCENT… the mob flees in shame. (${POINTS_WRONG_ACCUSE})`, "bad");
+    }
+    if (this.crew.every((x) => !x.alive)) this.winGame("solo");
+  }
+
+  /* ---------------- small helpers ---------------- */
+
+  private nearestCrewAlive(maxD: number): Crew | null {
+    let best: Crew | null = null, bd = maxD * maxD;
+    for (const c of this.crew) {
+      if (!c.alive) continue;
+      const d = dist2(this.player.x, this.player.z, c.x, c.z);
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best;
+  }
+
+  private nearestDeadCrew(maxD: number): Crew | null {
+    let best: Crew | null = null, bd = maxD * maxD;
+    for (const c of this.crew) {
+      if (c.alive) continue;
+      const d = dist2(this.player.x, this.player.z, c.deathX, c.deathZ);
+      if (d < bd) { bd = d; best = c; }
+    }
+    return best;
+  }
+
+  private nearestHideout(x: number, z: number): { x: number; z: number } {
+    let best = this.hideSpots[0], bd = Infinity;
+    for (const h of this.hideSpots) {
+      const d = dist2(x, z, h.x, h.z);
+      if (d < bd) { bd = d; best = h; }
+    }
+    return best;
+  }
+
+  private nearestBuildOf(kind: "barricade" | "campfire", x: number, z: number): Build | null {
+    let best: Build | null = null, bd = Infinity;
+    for (const b of this.builds) {
+      if (b.kind !== kind) continue;
+      const d = dist2(x, z, b.x, b.z);
+      if (d < bd) { bd = d; best = b; }
+    }
+    return best;
+  }
+
   /* ---------------- main update ---------------- */
   update(dt0: number) {
     if (!this.running) return;
     const dt = Math.min(0.05, dt0);
     this.elapsed += dt;
-    this.clock = advanceClock(this.clock, dt);
+    this.stepPhase(dt); // 🌙 7Nights — the story drives the sky clock now
     const night = nightFactor(this.clock);
     const p = this.player;
 
@@ -2014,6 +2442,8 @@ export class GameEngine {
     this.carHitCd = Math.max(0, this.carHitCd - dt);
     this.exitCd = Math.max(0, this.exitCd - dt);
     this.driveMsgT = Math.max(0, this.driveMsgT - dt);
+    this.attackCd = Math.max(0, this.attackCd - dt);
+    this.accuseCd = Math.max(0, this.accuseCd - dt);
     if (this.detainedT > 0) {
       // the clock only runs once the player is locked up at the station (or dizzy-stunned) —
       // while the van is being called or riding, time itself is frozen
@@ -2067,8 +2497,8 @@ export class GameEngine {
         : { f: this.input.f, r: this.input.r, sprint: this.input.sprint, jump: this.input.jump },
         dt, this.look.age, this.world, {
           yaw: this.input.yaw,
-          // ⚡ Sonic Dash — legs become a blur · 🦘 Kangaroo Leap — superhero jumps
-          speedScale: this.activePower === "sonic" ? SONIC_MULT : 1,
+          // 🩸 the beast inside you runs FASTER than any kid · ⚡ Sonic Dash blurs
+          speedScale: this.youPossessed && this.phase === "night" ? 1.28 : this.activePower === "sonic" ? SONIC_MULT : 1,
           jumpScale: this.activePower === "jump" ? JUMP_MULT : 1,
           // 🎖️ hero-page squad perks (police side only): SWAT sprint, city fitness, army endurance
           sprintMult: this.side === "police" ? this.policePerk.sprintMult : 1,
@@ -2076,6 +2506,8 @@ export class GameEngine {
           drainMult: this.side === "police" ? this.policePerk.drainMult : 1,
         });
       this.stamina = p.stamina; // sprinting drains / walking regenerates (see stepBody)
+      // 🩸 the beast never tires — sprinting costs nothing while you are possessed
+      if (this.youPossessed && this.phase === "night" && this.stamina < staminaBefore) this.stamina = staminaBefore;
       // ⚡ Sonic legs don't tire — sprint costs nothing while Sonic Dash lasts
       if (this.activePower === "sonic" && this.stamina < staminaBefore) this.stamina = staminaBefore;
       if (p.jumps === 1 && prevJumps === 0) {
@@ -2100,7 +2532,7 @@ export class GameEngine {
       t.a += t.sp * t.dir * dt;
       t.x = Math.cos(t.a) * t.r;
       t.z = Math.sin(t.a) * t.r;
-      t.rot = t.dir > 0 ? -t.a : Math.PI - t.a; // nose leads the motion (see spawn note)
+      t.rot = t.dir > 0 ? -t.a : Math.PI + t.a;
       if (this.detainedT > 0 || this.drive) continue; // sitting out detention / safe inside a vehicle — traffic can't touch you
       const fx = Math.sin(t.rot), fz = Math.cos(t.rot);
       const tax = VEHICLE_AXLE[t.t % VEHICLE_AXLE.length];
@@ -2143,9 +2575,6 @@ export class GameEngine {
 
     /* --- bot planes: taxi → take off → cruise the city → land (pure spectacle) --- */
     this.updatePlanes(dt);
-    // grounded planes are solid — shove players, cars & bots out of the fuselage
-    // (a rolling plane bonks the same way traffic does) — no more bypass-through
-    this.planeSolidStep();
     // vans are solid — shove the player out of their footprint (no bonk, police don't ram kids)
     // (while driving, stepDrive already bounces the CAR off vans instead)
     if (this.detainedT <= 0 && !this.drive) {
@@ -2169,8 +2598,8 @@ export class GameEngine {
       if (this.starTimer <= 0) { this.stars--; this.starTimer = STAR_DECAY_S; if (this.stars === 0) this.toast("Wanted level cleared. Nice and sneaky!", "info"); }
     }
 
-    /* --- votes (protester side only — the officer doesn't steal votes) --- */
-    if (this.side === "protester" && this.detainedT <= 0 && !this.won) {
+    /* --- votes (7Nights: the vote chase is retired — the story scores instead) --- */
+    if (!this.horror && this.side === "protester" && this.detainedT <= 0 && !this.won) {
       if (this.carriedVotes.length < MAX_CARRY) {
         for (const v of this.votes) {
           if (v.state !== "world") continue;
@@ -2228,6 +2657,22 @@ export class GameEngine {
       }
     }
 
+    /* --- 🪓 7Nights arms: walk over a glowing tool to pocket it (stacks!) --- */
+    if (this.detainedT <= 0 && !(this.youPossessed && this.phase === "night")) {
+      for (const te of this.toolEnts) {
+        if (!te.active) {
+          te.respawn -= dt;
+          if (te.respawn <= 0) te.active = true;
+          continue;
+        }
+        if (dist2(p.x, p.z, te.x, te.z) < TOOL_PICKUP_R * TOOL_PICKUP_R) {
+          te.active = false;
+          te.respawn = 45;
+          this.addTool(te.kind, te.x, te.z);
+        }
+      }
+    }
+
     /* --- rare super powers: pickup + active-power ticks --- */
     this.blinkCd = Math.max(0, this.blinkCd - dt);
     if (this.activePower) {
@@ -2247,15 +2692,15 @@ export class GameEngine {
           continue;
         }
         if (dist2(p.x, p.z, pw.x, pw.z) < POWER_PICKUP_R * POWER_PICKUP_R) {
-          // gems are POCKETED, never auto-fired — the player unleashes each with G when ready
-          if (this.powerPockets.length < POWER_POCKETS) {
+          // gems are POCKETED, never auto-fired — the player unleashes them when ready
+          if (this.powerPockets.length < POWER_CARRY) {
             pw.active = false;
             pw.respawn = POWER_RESPAWN_S;
             this.storePower(pw.def, pw.x, pw.z);
           } else if (this.powerFullT <= 0) {
             this.powerFullT = 6;
-            const held = POWERS[this.powerPockets[0]];
-            this.toast(`✨ All ${POWER_POCKETS} power pockets full (${held.emoji} ${held.name} +${this.powerPockets.length - 1} more) — hold G & aim the wheel to unleash one first!`, "info");
+            const held = this.powerPockets.map((d) => POWERS[d].emoji).join("");
+            this.toast(`✨ Power pockets full (${held}) — press G to unleash one first!`, "info");
           }
         }
       }
@@ -2273,39 +2718,6 @@ export class GameEngine {
           this.toast("🪪 DRIVING LICENSE collected! Walk up to any parked car and press E to drive it!", "good");
           break;
         }
-      }
-    }
-
-    /* --- 🔧 tools: walk over a tool to belt it — collect MULTIPLE copies of a kind --- */
-    this.toolHintT = Math.max(0, this.toolHintT - dt);
-    for (const tl of this.tools) {
-      if (!tl.active) {
-        tl.respawn -= dt;
-        if (tl.respawn <= 0) tl.active = true; // wild tools eventually reappear
-        continue;
-      }
-      if (this.detainedT > 0) continue; // locked up — no scavenging from the cell
-      if (dist2(p.x, p.z, tl.x, tl.z) < TOOL_PICKUP_R * TOOL_PICKUP_R) {
-        const d = TOOLS[tl.def];
-        let slot = this.toolBelt.find((s) => s.def === tl.def);
-        if (slot) {
-          if (slot.count >= TOOL_STACK) continue; // belt stack full — leave it on the ground
-          slot.count++;
-        } else {
-          if (this.toolBelt.length >= TOOL_SLOTS) {
-            if (this.toolHintT <= 0) {
-              this.toolHintT = 6;
-              this.toast("🔧 Tool belt full! Hold B & aim the wheel to use one first.", "info");
-            }
-            continue;
-          }
-          this.toolBelt.push({ def: tl.def, count: 1 });
-          slot = this.toolBelt[this.toolBelt.length - 1];
-        }
-        tl.active = false; tl.respawn = TOOL_RESPAWN_S;
-        sfx.pickup();
-        this.fxQueue.push({ type: "confetti", x: tl.x, y: 1.2, z: tl.z, hue: 0.1 });
-        this.toast(`${d.emoji} ${d.name} collected (×${slot.count}) — hold B & aim the tool wheel, or tap the belt slot!`, "good");
       }
     }
 
@@ -2331,7 +2743,8 @@ export class GameEngine {
           }
           stepNpc(cop, cop.tx, cop.tz, POLICE_SPEED * 0.6, dt, this.world);
           // 🐒 Animal Morph — a cow loitering with stolen votes is somehow not suspicious
-          if (this.side === "protester" && this.morphKind == null && this.invulnT <= 0 && this.detainedT <= 0 && d2p < detect * detect && lineClear(cop.x, cop.z, p.x, p.z, this.world)) {
+          // (7Nights: the police are peaceful townsfolk — the BEAST is the hunter now)
+          if (!this.horror && this.side === "protester" && this.morphKind == null && this.invulnT <= 0 && this.detainedT <= 0 && d2p < detect * detect && lineClear(cop.x, cop.z, p.x, p.z, this.world)) {
             cop.mode = "chase"; cop.alertT = ESCAPE_LOST_S; cop.timer = 0;
             this.chased = true;
             sfx.alert();
@@ -2412,7 +2825,7 @@ export class GameEngine {
         case "return": {
           if (dist2(cop.x, cop.z, cop.tx, cop.tz) < 4) cop.mode = "patrol";
           else stepNpc(cop, cop.tx, cop.tz, POLICE_SPEED * 0.7, dt, this.world);
-          if (this.side === "protester" && this.morphKind == null && this.invulnT <= 0 && this.detainedT <= 0 && d2p < detect * 0.8 * (detect * 0.8) && lineClear(cop.x, cop.z, p.x, p.z, this.world)) {
+          if (!this.horror && this.side === "protester" && this.morphKind == null && this.invulnT <= 0 && this.detainedT <= 0 && d2p < detect * 0.8 * (detect * 0.8) && lineClear(cop.x, cop.z, p.x, p.z, this.world)) {
             cop.mode = "chase"; cop.alertT = ESCAPE_LOST_S; this.chased = true; sfx.alert();
           }
           break;
@@ -2488,34 +2901,54 @@ export class GameEngine {
       }
     }
 
-    /* --- zombies --- */
+    /* --- 👥 7Nights: the crew — wander by day, hide at dusk, hunt when possessed --- */
+    this.stepCrew(dt);
+
+    // 💓 the beast (or a zombie) is close — your heart pounds
+    this.heartT -= dt;
+    if (this.phase === "night" && !this.youPossessed && this.heartT <= 0) {
+      let near = Infinity;
+      const beast = this.possessed != null ? this.crew[this.possessed] : null;
+      if (beast && beast.alive) near = dist2(p.x, p.z, beast.x, beast.z);
+      for (const zb of this.zombies) if (!zb.dead) near = Math.min(near, dist2(p.x, p.z, zb.x, zb.z));
+      if (near < 18 * 18) { this.heartT = near < 8 * 8 ? 0.55 : 0.95; sfx.heart(); }
+    }
+
+    // 🔥 campfires mend survivors by day (and keep the dark things away by night)
+    if (this.phase === "day" || this.phase === "dawn") {
+      for (const b of this.builds) {
+        if (b.kind !== "campfire") continue;
+        if (dist2(p.x, p.z, b.x, b.z) < 5 * 5) { this.hp = Math.min(100, this.hp + 2.5 * dt); break; }
+      }
+    }
+
+    /* --- zombies (graveyard) — they rise at night, fear fire, and can be SLAIN --- */
     this.groanT -= dt;
     for (const zb of this.zombies) {
+      if (zb.dead) continue; // slain — stays down until the next night rises
       zb.touchCd = Math.max(0, zb.touchCd - dt);
-      // 🗡️ sworded zombies lie down for a while, then claw out of the grave again
-      if (zb.downT > 0) {
-        zb.downT -= dt;
-        if (zb.downT <= 0) {
-          const a = Math.random() * TAU, d = 4 + Math.random() * 32;
-          zb.x = GRAVEYARD.x + Math.cos(a) * d; zb.z = GRAVEYARD.z + Math.sin(a) * d;
-          zb.vx = 0; zb.vz = 0; zb.touchCd = 2;
-        }
-        continue;
-      }
       const d2p = dist2(zb.x, zb.z, p.x, p.z);
       if (night > 0.55) {
+        const fire = this.nearestBuildOf("campfire", zb.x, zb.z);
+        const scared = !!fire && dist2(fire.x, fire.z, zb.x, zb.z) < CAMPFIRE_R * CAMPFIRE_R;
         const inGrave = dist2(zb.x, zb.z, GRAVEYARD.x, GRAVEYARD.z) < 55 * 55;
-        if (inGrave && d2p < 26 * 26) stepNpc(zb, p.x, p.z, ZOMBIE_NIGHT_SPEED, dt, this.world);
-        else {
+        const beastYou = this.youPossessed && this.phase === "night"; // monsters don't fight monsters
+        if (scared) {
+          // fire wins — the zombie stumbles away from the flames
+          const dx = zb.x - fire!.x, dz = zb.z - fire!.z, dl = Math.hypot(dx, dz) || 1;
+          stepNpc(zb, zb.x + (dx / dl) * 9, zb.z + (dz / dl) * 9, ZOMBIE_SPEED, dt, this.world);
+        } else if (inGrave && d2p < 26 * 26 && !beastYou) {
+          stepNpc(zb, p.x, p.z, ZOMBIE_NIGHT_SPEED, dt, this.world);
+        } else {
           zb.vx *= 0.95; zb.vz *= 0.95;
           if (Math.random() < dt * 0.2) { const t = freeSpot(this.rnd, this.world, 4, 34); stepNpc(zb, GRAVEYARD.x + t.x * 0.2, GRAVEYARD.z + t.z * 0.2, ZOMBIE_SPEED * 0.4, dt, this.world); }
         }
-        if (d2p < 1.6 * 1.6 && zb.touchCd <= 0 && this.detainedT <= 0 && !this.drive) { // the car shell keeps zombies out
+        if (d2p < 1.6 * 1.6 && zb.touchCd <= 0 && this.detainedT <= 0 && !this.drive && !beastYou) { // the car shell keeps zombies out
           zb.touchCd = ZOMBIE_TOUCH_CD;
           this.hp = Math.max(0, this.hp - ZOMBIE_DMG);
           this.hurtT = HURT_FLASH_S;
           sfx.zombie();
-          if (this.hp <= 0) this.dizzyRespawn();
+          if (this.hp <= 0) this.die();
         }
         if (this.groanT <= 0 && d2p < 20 * 20) { this.groanT = range(this.rnd, 2, 6); sfx.zombie(); }
       }
@@ -2554,8 +2987,8 @@ export class GameEngine {
       }
     }
 
-    // dizzy check (zombies can't be the only source)
-    if (this.hp <= 0 && this.detainedT <= 0) this.dizzyRespawn();
+    // 🩸 7Nights: at 0 hp the dark takes you — no dizzy respawn, the story ends
+    if (this.hp <= 0 && this.detainedT <= 0) this.die();
 
     /* --- HUD snapshot --- */
     this.hudT += dt;
@@ -2578,7 +3011,22 @@ export class GameEngine {
     } else {
       for (const c of this.civs)
         if (c.mode === "detained" && dist2(p.x, p.z, c.x, c.z) < RESCUE_RADIUS * RESCUE_RADIUS) { prompt = `Press E to rescue ${c.name}!`; break; }
-      if (!prompt && this.carriedVotes.length > 0 && dist2(p.x, p.z, BALLOT.x, BALLOT.z) < DELIVER_RADIUS * DELIVER_RADIUS * 1.8) prompt = "Walk closer to the ballot box to deliver!";
+    }
+    /* --- 7Nights story prompts --- */
+    if (!prompt && !this.drive) {
+      if (this.phase === "day" || this.phase === "dawn") {
+        const c = this.nearestCrewAlive(ACCUSE_RADIUS);
+        if (c) prompt = `Press R to ACCUSE ${c.name} — are they the possessed one?`;
+      }
+      if (!prompt) {
+        const d = this.nearestDeadCrew(3.2);
+        if (d && !d.inspected) prompt = `Press E to inspect ${d.name}'s body…`;
+      }
+      if (!prompt && this.phase !== "night" && this.tools.some((s) => s.kind === "builder")) {
+        prompt = this.res.wood >= BARRICADE_COST.wood
+          ? "B — build barricade · V — build campfire"
+          : "Chop trees with the 🪓 to earn wood for building (B)";
+      }
     }
     // 🚗 car prompts — driving clears everything (the speedo chip shows controls);
     // on foot, a parked car nearby hints how driving works (lowest priority)
@@ -2618,17 +3066,24 @@ export class GameEngine {
             return { kind: d.kind, name: d.name, emoji: d.emoji, color: d.color, left: Math.max(0, this.powerT), max: this.powerMax, tip: d.tip };
           })()
         : null,
-      pocketPowers: this.powerPockets.map((def) => {
-        const d = POWERS[def];
-        return { def, name: d.name, emoji: d.emoji, color: d.color, tip: d.tip };
-      }),
-      tools: this.toolBelt.map((s) => {
-        const d = TOOLS[s.def];
-        return { def: s.def, name: d.name, emoji: d.emoji, color: d.color, count: s.count, tip: d.tip };
-      }),
-      wood: this.wood, stone: this.stone,
+      pockets: this.powerPockets.map((def) => ({
+        def, name: POWERS[def].name, emoji: POWERS[def].emoji, color: POWERS[def].color, tip: POWERS[def].tip,
+      })),
       morphKind: this.morphKind,
       blinkReady: this.blinkCd <= 0,
+      /* --- 7 Nights --- */
+      nightNo: this.nightNo,
+      phase: this.phase,
+      phaseLeft: Math.max(0, this.phaseT),
+      wood: this.res.wood,
+      rock: this.res.rock,
+      tools: this.tools.map((s) => ({ kind: s.kind, count: s.count })),
+      held: this.held,
+      youPossessed: this.youPossessed,
+      crewAlive: this.crew.filter((c) => c.alive).length,
+      crew: this.crew.map((c) => ({ name: c.name, color: c.color, alive: c.alive, mode: c.mode })),
+      attackReady: this.attackCd <= 0,
+      clue: this.lastClue,
     };
   }
 
