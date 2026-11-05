@@ -563,7 +563,7 @@ const CAR_TYPES: CarType[] = [
  * `spin` rolls the wheels around their own axle (radians) — moving vehicles pass
  * the distance they covered so the ride never looks like it's skating on ice.
  */
-function placeCar(P: CarParts, i: number, x: number, y: number, z: number, rot: number, c: number, t: number, beams = true, spin = 0) {
+function placeCar(P: CarParts, i: number, x: number, y: number, z: number, rot: number, c: number, t: number, beams = true, spin = 0, steer = 0) {
   const T = CAR_TYPES[t % CAR_TYPES.length];
   const cs = Math.cos(rot), sn = Math.sin(rot);
   const put = (m: THREE.InstancedMesh, idx: number, s: number, f: number, yy: number, sx: number, sy: number, sz: number, tilt = 0) => {
@@ -688,8 +688,9 @@ function placeCar(P: CarParts, i: number, x: number, y: number, z: number, rot: 
     }
     for (const [m, geo] of [[P.wheels, 0], [P.hubs, 1]] as const) {
       // Euler order is YXZ (module top): Rx(spin) rotates each tire around its own
-      // axle BEFORE the body yaw is applied — actual rolling, not sliding
-      tmp.rotation.set(spin, rot, Math.PI / 2);
+      // axle BEFORE the body yaw is applied — actual rolling, not sliding.
+      // Front wheels (k<2) add the steer yaw so turns read as steering, not drifting.
+      tmp.rotation.set(spin, k < 2 ? rot + steer : rot, Math.PI / 2);
       tmp.position.set(x + s * cs + f * sn, y + T.wheelR, z - s * sn + f * cs);
       tmp.scale.setScalar(geo === 1 ? T.wheelR * 2.18 : T.wheelR * 2.14);
       tmp.updateMatrix();
@@ -876,11 +877,6 @@ function VehicleParts({ R, N, lampsInstance }: { R: VehicleRefs; N: number; lamp
 function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.MutableRefObject<number> }) {
   const R = useVehicleRefs();
   const lit = useRef(-1); // the parked car currently running (its lamps + beams are live)
-  // 🛞 the driven car's VISUAL pose eases toward the sim pose (fast exponential
-  // follow): collision push-outs & heading rebuilds can jitter the sim a little,
-  // and rendering them raw read as micro-stutters. Wheels accumulate the distance
-  // actually rolled, so the ride rolls instead of skating.
-  const vis = useRef({ ci: -1, x: 0, z: 0, rot: 0, spin: 0 });
   useLayoutEffect(() => {
     const P = partsOf(R);
     // parked fleet: engine OFF — beams folded, lamps at day glass (per-instance, so
@@ -890,7 +886,10 @@ function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutabl
     stampDone(P);
   }, []);
   // 🚗 the player-driven vehicle moves — re-stamp just that one instance every frame,
-  // beams out + lamps lit; the moment you hop out, its lights fold back down
+  // beams out + lamps lit; the moment you hop out, its lights fold back down.
+  // The pose comes from the engine's SMOOTHED visual state (d.vx/vz/vrot/spin/steerVis):
+  // the same jitter-free pose the camera follows, with wheels that roll the exact
+  // distance covered and front tires that steer — no skating, no stutter.
   useFrame((_, dtRaw) => {
     const dt = Math.min(0.05, Math.max(0.001, dtRaw));
     beamFade(R, nightFactor(clockRef.current));
@@ -899,20 +898,7 @@ function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutabl
     let dirty = false;
     if (d) {
       const c = WORLD.cars[d.ci];
-      const v = vis.current;
-      if (v.ci !== d.ci) { // fresh ride — snap to the parked pose first
-        v.ci = d.ci; v.x = c.x; v.z = c.z; v.rot = c.rot; v.spin = 0;
-      }
-      const kp = 1 - Math.exp(-dt * 24);
-      const kr = 1 - Math.exp(-dt * 19);
-      v.x += (c.x - v.x) * kp;
-      v.z += (c.z - v.z) * kp;
-      let dr = c.rot - v.rot;
-      dr = Math.atan2(Math.sin(dr), Math.cos(dr));
-      v.rot += dr * kr;
-      const T = CAR_TYPES[c.t % CAR_TYPES.length];
-      v.spin -= (d.v * dt) / T.wheelR; // rolling distance → wheel angle (signed by reverse)
-      placeCar(P, d.ci, v.x, 0, v.z, v.rot, c.c, c.t, true, v.spin);
+      placeCar(P, d.ci, d.vx, 0, d.vz, d.vrot, c.c, c.t, true, d.spin, d.steerVis);
       setLampGlow(P, d.ci, nightFactor(clockRef.current));
       dirty = true;
     }

@@ -139,6 +139,13 @@ export interface DriveState {
   rot: number;              // heading — forward is (sin rot, cos rot), matching parked cars
   v: number;                // signed speed along the heading (u/s; negative = reversing)
   c: number; t: number;     // colour + body style copied for the renderer
+  /* --- smoothed VISUAL pose (render + camera both follow this) ---
+   * Collision push-outs & heading rebuilds can jitter the sim a frame; easing the
+   * pose the world SEES kills the micro-stutter, and after a bump we keep easing
+   * for a beat (hitT) while clean driving snaps tight — no cornering lag, so the
+   * car never reads as skating sideways. spin = wheel angle, steerVis = front wheels. */
+  vx: number; vz: number; vrot: number;
+  spin: number; hitT: number; steerVis: number;
 }
 
 export interface Fx { type: "confetti"; x: number; y: number; z: number; hue: number }
@@ -635,7 +642,7 @@ export class GameEngine {
       });
       const t = this.traffic[this.traffic.length - 1];
       t.x = Math.cos(t.a) * t.r; t.z = Math.sin(t.a) * t.r;
-      t.rot = t.dir > 0 ? -t.a : Math.PI + t.a;
+      t.rot = t.dir > 0 ? -t.a : Math.PI - t.a; // clockwise lane: heading = velocity (was π+a — cars drove sideways!)
     }
     // police side: a slice of the civilians become vote-runners (the player hunts THEM)
     this.assignRunners();
@@ -1057,7 +1064,7 @@ export class GameEngine {
       return;
     }
     const car = this.world.cars[ci];
-    this.drive = { ci, x: car.x, z: car.z, rot: car.rot, v: 0, c: car.c, t: car.t };
+    this.drive = { ci, x: car.x, z: car.z, rot: car.rot, v: 0, c: car.c, t: car.t, vx: car.x, vz: car.z, vrot: car.rot, spin: 0, hitT: 0, steerVis: 0 };
     const p = this.player;
     p.vx = p.vz = p.vy = 0;
     sfx.engine();
@@ -1164,7 +1171,7 @@ export class GameEngine {
       d.z += Math.cos(d.rot) * d.v * sdt;
       scrape += this.resolveCarBody(d);
     }
-    if (scrape > 0.004) d.v *= 0.82; // cartoon scrape — walls eat speed
+    if (scrape > 0.004) { d.v *= 0.82; d.hitT = 0.35; } // cartoon scrape — walls eat speed
     const rr = Math.hypot(d.x, d.z);
     if (rr > WALL_RADIUS) { d.x *= WALL_RADIUS / rr; d.z *= WALL_RADIUS / rr; d.v = Math.min(d.v, 4); }
     // ring-road traffic & police vans are solid — the vehicle bonks off, nobody gets hurt
@@ -1174,7 +1181,7 @@ export class GameEngine {
       if (td2 < tr * tr && td2 > 0.0001) {
         const td = Math.sqrt(td2);
         d.x = t.x + (tdx / td) * tr; d.z = t.z + (tdz / td) * tr;
-        d.v *= 0.75;
+        d.v *= 0.75; d.hitT = 0.35;
       }
     }
     for (const van of this.vans) {
@@ -1182,9 +1189,28 @@ export class GameEngine {
       if (vd2 < 3.2 * 3.2 && vd2 > 0.0001) {
         const vd = Math.sqrt(vd2);
         d.x = van.x + (vdx / vd) * 3.2; d.z = van.z + (vdz / vd) * 3.2;
-        d.v *= 0.75;
+        d.v *= 0.75; d.hitT = 0.35;
       }
     }
+    /* --- smoothed visual pose: what the camera & renderer SEE ---
+     * Clean driving eases almost 1:1 (no cornering lag → no skating look); a
+     * bump keeps the soft follow alive for a beat so push-outs read as squash,
+     * not teleporting. */
+    d.hitT = Math.max(0, d.hitT - dt);
+    const soft = d.hitT > 0;
+    const kp = 1 - Math.exp(-dt * (soft ? 26 : 90));
+    const kr = 1 - Math.exp(-dt * (soft ? 20 : 90));
+    const pvx = d.vx, pvz = d.vz;
+    d.vx += (d.x - d.vx) * kp;
+    d.vz += (d.z - d.vz) * kp;
+    let vdr = d.rot - d.vrot;
+    vdr = Math.atan2(Math.sin(vdr), Math.cos(vdr));
+    d.vrot += vdr * kr;
+    // wheels roll by the distance the VISUAL body actually covered (±reverse)
+    d.spin -= (Math.hypot(d.vx - pvx, d.vz - pvz) * Math.sign(d.v || 1)) / 0.46;
+    // front wheels visibly turn into the steer (and flip with reverse, like the body)
+    const wantSteer = -steer * Math.min(1, Math.abs(d.v) / 5) * 0.42 * Math.sign(d.v || 1);
+    d.steerVis += (wantSteer - d.steerVis) * Math.min(1, dt * 10);
     this.syncCarColliders(d);
     // the driver rides inside — glue the body to the car so the camera, HUD and
     // every pickup (votes, snacks, gems, licenses) keep working off the player pos
@@ -2564,7 +2590,7 @@ export class GameEngine {
       t.a += t.sp * t.dir * dt;
       t.x = Math.cos(t.a) * t.r;
       t.z = Math.sin(t.a) * t.r;
-      t.rot = t.dir > 0 ? -t.a : Math.PI + t.a;
+      t.rot = t.dir > 0 ? -t.a : Math.PI - t.a; // clockwise lane: heading = velocity (was π+a — cars drove sideways!)
       if (this.detainedT > 0 || this.drive) continue; // sitting out detention / safe inside a vehicle — traffic can't touch you
       const fx = Math.sin(t.rot), fz = Math.cos(t.rot);
       const tax = VEHICLE_AXLE[t.t % VEHICLE_AXLE.length];

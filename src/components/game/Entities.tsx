@@ -195,17 +195,23 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     } else if (stars.visible) stars.visible = false;
 
     // camera — intro swoop then smooth follow (plus a dizzy wobble after a car bonk);
-    // while driving, pull back a little for that GTA chase-camera feel
-    const cd = engine.drive ? 11 : 8.6;
+    // while driving, pull back a little for that GTA chase-camera feel.
+    // The camera rides the SMOOTHED visual pose while driving (the same pose the
+    // car mesh renders at) — following the raw sim pose instead made the world
+    // shake against the gliding body after every collision push-out.
+    const drv = engine.drive;
+    const camX = drv ? drv.vx : p.x;
+    const camZ = drv ? drv.vz : p.z;
+    const cd = drv ? 11 : 8.6;
     const iy = engine.input.yaw, ip = engine.input.pitch;
-    let tx = p.x + Math.sin(iy) * cd * Math.cos(ip);
+    let tx = camX + Math.sin(iy) * cd * Math.cos(ip);
     let ty = Math.max(1.2, p.y + 2.1 + Math.sin(ip) * cd);
-    let tz = p.z + Math.cos(iy) * cd * Math.cos(ip);
+    let tz = camZ + Math.cos(iy) * cd * Math.cos(ip);
     // 🎥 chase camera vs the world — sample the focus→camera line; if a building,
     // tree canopy or lamp post stands in the way, slide the camera closer so the
     // hero (and their ride!) can never be hidden behind a dark blob
     if (introT.current >= 1) {
-      const fx = p.x, fy = p.y + 1.9, fz = p.z;
+      const fx = camX, fy = p.y + 1.9, fz = camZ;
       let keep = 1;
       for (let s = 1; s <= 7; s++) {
         const f = s / 7;
@@ -237,17 +243,17 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       // 🚗 behind the wheel: glide to the chase pose (exponential, frame-rate safe).
       // Pull-in from camBlocked still applies — it feeds the glide TARGET.
       const sm = camSm.current;
-      if (!sm.on) { sm.on = true; sm.pos.copy(camera.position); sm.tgt.set(p.x, p.y + 1.7, p.z); }
+      if (!sm.on) { sm.on = true; sm.pos.copy(camera.position); sm.tgt.set(camX, p.y + 1.7, camZ); }
       const k = 1 - Math.exp(-dt * 9);
       sm.pos.lerp(camV1.set(tx, ty, tz), k);
-      sm.tgt.lerp(camV2.set(p.x, p.y + 1.7, p.z), k);
+      sm.tgt.lerp(camV2.set(camX, p.y + 1.7, camZ), k);
       camera.position.copy(sm.pos);
     } else {
       camSm.current.on = false;
       camera.position.set(tx, ty, tz);
     }
     if (engine.drive && camSm.current.on) camera.lookAt(camSm.current.tgt);
-    else camera.lookAt(p.x, p.y + 1.7, p.z);
+    else camera.lookAt(camX, p.y + 1.7, camZ);
 
     // HUD @ ~8 Hz
     hudT.current += dt;
