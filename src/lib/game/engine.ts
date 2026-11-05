@@ -13,6 +13,7 @@ import {
   ACCUSE_RADIUS, ATTACK_CD, ATTACK_RANGE, BARRICADE_COST, BARRICADE_HP, CAMPFIRE_COST, CAMPFIRE_R, CLAW_DMG,
   CREW_COLORS, CREW_COLOR_NAMES, CREW_COUNT, CREW_HP, CREW_NAMES, CREW_SPEED, HANDS_DMG, HUNTER_DMG, HUNTER_HP, HUNTER_SPEED,
   HUNTER_TOUCH_CD, NIGHTS_TOTAL, PHASE_DAY_S, PHASE_DAWN_S, PHASE_DUSK_S, PHASE_NIGHT_S, PLAYER_NIGHTS,
+  beastsForNight,
   POINTS_BUILD, POINTS_HARVEST, POINTS_KILL_BEAST, POINTS_KILL_ZOMBIE, POINTS_NIGHT, POINTS_RIGHT_ACCUSE,
   POINTS_WRONG_ACCUSE, POSSESS_PLAYER_CHANCE, ROCK_HITS, ROCK_PER_BOULDER, TOOL_PICKUP_R, TOOL_SPAWN, TOOLS,
   TREE_HITS, WOOD_PER_TREE, WIN_BONUS, ZOMBIE_HP,
@@ -105,6 +106,8 @@ export interface Crew {
   mode: "wander" | "hide" | "possessed" | "dead";
   tx: number; tz: number; timer: number; phase: number;
   hp: number; touchCd: number;
+  /** 0.45s animation timer — the beast's claw swipe when it mauls someone */
+  attackAnimT: number;
   deathX: number; deathZ: number;
   /** the mystery clue their body carries (filled when they die) */
   clue: string;
@@ -211,6 +214,8 @@ export interface HudData {
   held: number;
   /** true while YOU are the possessed beast */
   youPossessed: boolean;
+  /** how many beasts stalk the night — possessed crew (alive) + you if possessed */
+  beastCount: number;
   /** survivors still breathing (crew only — you make crewAlive + 1) */
   crewAlive: number;
   /** the roster — names, colors & who's still alive (accuse board + map) */
@@ -385,11 +390,11 @@ export class GameEngine {
   fellVersion = 0;
   attackCd = 0;
   accuseCd = 0;
-  /** who the spirit possessed THIS night (crew index, null = YOU) */
-  possessed: number | null = null;
+  /** who the spirit possessed THIS night (crew indices — a PACK hunts at night) */
+  possessed: number[] = [];
   youPossessed = false;
-  /** who was possessed LAST night — the accusation target (null = it was you) */
-  lastPossessed: number | null = null;
+  /** who was possessed LAST night — the accusation pool (empty = you were one) */
+  lastPossessed: number[] = [];
   /** last clue learned from a body — HUD chip */
   lastClue: string | null = null;
   kills = 0; accusesRight = 0; accusesWrong = 0; buildsMade = 0; nightsSurvived = 0;
@@ -894,7 +899,7 @@ export class GameEngine {
     this.running = true;
     this.toast(`🌙 Welcome, ${this.playerName}. You and ${CREW_COUNT} strangers must survive SEVEN nights.`, "info");
     this.toast("☀️ DAY: chop trees (🪓 + F), smash rocks (🔨 + F), build defenses (🔧 + B). Find arms around town — press G to open your pack!", "info");
-    this.toast("⚠️ DUSK: sirens howl… one of us is chosen. NIGHT: the beast walks. Hide, run… or FIGHT (🗡️ + F).", "info");
+    this.toast("⚠️ DUSK: sirens howl… SEVERAL of us turn. NIGHT: the pack hunts. Hide, run… or FIGHT (🗡️ + F).", "info");
   }
   setToast(fn: ToastFn) { this.toast = fn; }
 
@@ -929,7 +934,7 @@ export class GameEngine {
     this.arrest = "free"; this.arrestStation = -1; this.playerInVan = false; this.vanNeeded = false;
     /* --- 7 Nights: rewind the story --- */
     this.nightNo = 1; this.phase = "day"; this.phaseT = PHASE_DAY_S;
-    this.possessed = null; this.youPossessed = false; this.lastPossessed = null; this.lastClue = null;
+    this.possessed = []; this.youPossessed = false; this.lastPossessed = []; this.lastClue = null;
     this.tools = []; this.held = -1; this.res = { wood: 0, rock: 0 };
     this.attackCd = 0; this.accuseCd = 0; this.heartT = 0;
     this.kills = 0; this.accusesRight = 0; this.accusesWrong = 0; this.buildsMade = 0; this.nightsSurvived = 0;
@@ -1865,7 +1870,7 @@ export class GameEngine {
         x: spot.x, z: spot.z, vx: 0, vz: 0, face: a + Math.PI,
         alive: true, mode: "wander", tx: spot.x, tz: spot.z,
         timer: range(this.rnd, 2, 6), phase: Math.random() * 6,
-        hp: CREW_HP, touchCd: 0, deathX: 0, deathZ: 0, clue: "", inspected: false,
+        hp: CREW_HP, touchCd: 0, attackAnimT: 0, deathX: 0, deathZ: 0, clue: "", inspected: false,
       });
     }
   }
@@ -1911,51 +1916,59 @@ export class GameEngine {
     this.clock += (target - this.clock) * Math.min(1, dt * 2.4);
   }
 
-  /** Dusk: the spirit chooses its host — a random survivor, or YOU. */
+  /** Dusk: the spirit chooses its hosts — a random PACK of survivors, maybe YOU. */
   private choosePossessed() {
     const aliveIdx = this.crew.map((c, i) => (c.alive ? i : -1)).filter((i) => i >= 0);
     const forcePlayer = PLAYER_NIGHTS.includes(this.nightNo);
     const anyCrew = aliveIdx.length > 0;
-    if (anyCrew && !forcePlayer && this.rnd() > POSSESS_PLAYER_CHANCE) {
-      this.possessed = aliveIdx[Math.floor(this.rnd() * aliveIdx.length)];
-      this.youPossessed = false;
-    } else {
-      this.possessed = null;
-      this.youPossessed = true;
-    }
-    this.lastPossessed = this.possessed;
+    // how many turn tonight — the pack grows as the week wears on
+    const want = Math.max(1, Math.min(beastsForNight(this.nightNo), aliveIdx.length + 1));
+    // are YOU one of them?
+    this.youPossessed = forcePlayer || (anyCrew && this.rnd() < POSSESS_PLAYER_CHANCE && want >= 2);
+    // pick the crew hosts — shuffled take, never duplicates
+    const pool = [...aliveIdx];
+    for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(this.rnd() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+    const crewWanted = Math.max(0, Math.min(want - (this.youPossessed ? 1 : 0), pool.length));
+    this.possessed = pool.slice(0, crewWanted);
+    this.lastPossessed = [...this.possessed];
     sfx.howl();
     sfx.possess();
+    const total = this.possessed.length + (this.youPossessed ? 1 : 0);
     if (this.youPossessed) {
-      this.toast("⚠ YOUR SKIN GOES COLD. YOUR EYES GO BLACK. The spirit has chosen YOU…", "bad");
+      this.toast(total > 1
+        ? `⚠ YOUR SKIN GOES COLD. YOUR EYES GO BLACK. The spirit chose YOU and ${this.possessed.length} other${this.possessed.length > 1 ? "s" : ""}…`
+        : "⚠ YOUR SKIN GOES COLD. YOUR EYES GO BLACK. The spirit has chosen YOU…", "bad");
     } else if (anyCrew) {
-      this.toast(`⚠ DUSK SIRENS — one of the ${aliveIdx.length + 1} survivors is being possessed… watch them.`, "info");
+      this.toast(`⚠ DUSK SIRENS — ${total} of the ${aliveIdx.length + 1} survivors will turn tonight… watch them all.`, "info");
     }
   }
 
-  /** Night falls: the host transforms into the beast. */
+  /** Night falls: the hosts transform into a pack of beasts. */
   private beginNight() {
     for (const zb of this.zombies) { zb.dead = false; zb.hp = ZOMBIE_HP; } // the graveyard rises fresh
     startDrone();
+    for (const idx of this.possessed) {
+      const c = this.crew[idx];
+      if (c && c.alive) { c.mode = "possessed"; c.hp = HUNTER_HP; }
+    }
     if (this.youPossessed) {
       this.held = -1;
-      this.toast(`🌑 NIGHT ${this.nightNo} — YOU ARE THE BEAST. Hunt the survivors! (F = claw)`, "bad");
-    } else if (this.possessed != null) {
-      const c = this.crew[this.possessed];
-      c.mode = "possessed";
-      c.hp = HUNTER_HP;
+      this.toast(this.possessed.length > 0
+        ? `🌑 NIGHT ${this.nightNo} — YOU ARE A BEAST, and ${this.possessed.length} more walk beside you. HUNT! (F = claw)`
+        : `🌑 NIGHT ${this.nightNo} — YOU ARE THE BEAST. Hunt the survivors! (F = claw)`, "bad");
+    } else if (this.possessed.length > 0) {
       sfx.scream();
-      this.toast(`🌑 NIGHT ${this.nightNo} — a SCREAM tears the sky… the beast walks. Survive!`, "bad");
+      this.toast(`🌑 NIGHT ${this.nightNo} — SCREAMS tear the sky… ${this.possessed.length > 1 ? this.possessed.length + " beasts" : "a beast"} walk${this.possessed.length > 1 ? "" : "s"}. Survive!`, "bad");
     }
   }
 
   /** Dawn: the spirit lets go. Nights survived, points, and a recap. */
   private endNight(early: boolean) {
-    if (this.possessed != null) {
-      const c = this.crew[this.possessed];
-      if (c.alive) { c.mode = "hide"; c.timer = 0; } // they wake up… remembering nothing
+    for (const idx of this.possessed) {
+      const c = this.crew[idx];
+      if (c && c.alive) { c.mode = "hide"; c.timer = 0; } // they wake up… remembering nothing
     }
-    this.possessed = null;
+    this.possessed = [];
     this.youPossessed = false;
     this.nightsSurvived = Math.min(NIGHTS_TOTAL, this.nightNo);
     if (!early) this.points += POINTS_NIGHT;
@@ -1999,11 +2012,12 @@ export class GameEngine {
       const d2p = dist2(c.x, c.z, p.x, p.z);
 
       if (c.mode === "possessed") {
-        // 🩸 THE BEAST — hunts the nearest living soul, fears fire, chews barricades
+        // 🩸 THE PACK — each beast hunts the nearest living soul, fears fire, chews barricades
+        c.attackAnimT = Math.max(0, c.attackAnimT - dt);
         let tx = p.x, tz = p.z, td = d2p, victim = -1;
         for (let j = 0; j < this.crew.length; j++) {
           const o = this.crew[j];
-          if (j === i || !o.alive) continue;
+          if (j === i || !o.alive || o.mode === "possessed") continue; // the pack never turns on itself
           const d = dist2(c.x, c.z, o.x, o.z);
           if (d < td) { td = d; tx = o.x; tz = o.z; victim = j; }
         }
@@ -2027,15 +2041,17 @@ export class GameEngine {
         if (c.touchCd <= 0) {
           if (victim < 0 && td < 1.8 * 1.8 && this.detainedT <= 0 && !this.drive) {
             c.touchCd = HUNTER_TOUCH_CD;
+            c.attackAnimT = 0.45; // claw swipe animation
             this.hp = Math.max(0, this.hp - HUNTER_DMG);
             this.hurtT = HURT_FLASH_S;
             const dx = p.x - c.x, dz = p.z - c.z, dl = Math.hypot(dx, dz) || 1;
             p.vx = (dx / dl) * 11; p.vz = (dz / dl) * 11; p.vy = 5; // knockback — escapes are possible
             sfx.scream();
-            this.toast("🩸 THE BEAST TORE INTO YOU! RUN!", "bad");
+            this.toast("🩸 A BEAST TORE INTO YOU! RUN!", "bad");
           } else if (victim >= 0 && td < 1.7 * 1.7) {
             c.touchCd = HUNTER_TOUCH_CD;
-            this.killCrew(victim, false);
+            c.attackAnimT = 0.45;
+            this.killCrew(victim, false, i);
           }
         }
         if (this.groanT <= 0 && d2p < 24 * 24) { this.groanT = range(this.rnd, 2.5, 5); sfx.groan(); }
@@ -2066,11 +2082,15 @@ export class GameEngine {
       } else {
         c.vx *= 0.8; c.vz *= 0.8;
       }
-      // beast nearby → blind panic away from it
-      const beast = this.possessed != null ? this.crew[this.possessed] : null;
-      const bx = this.youPossessed ? p.x : beast ? beast.x : 0;
-      const bz = this.youPossessed ? p.z : beast ? beast.z : 0;
-      const bd2 = this.youPossessed ? d2p : beast ? dist2(c.x, c.z, beast.x, beast.z) : Infinity;
+      // a beast of the pack nearby → blind panic away from the CLOSEST one
+      let bx = 0, bz = 0, bd2 = Infinity;
+      if (this.youPossessed) { bx = p.x; bz = p.z; bd2 = d2p; }
+      for (const bi of this.possessed) {
+        const b = this.crew[bi];
+        if (!b || !b.alive) continue;
+        const d = dist2(c.x, c.z, b.x, b.z);
+        if (d < bd2) { bd2 = d; bx = b.x; bz = b.z; }
+      }
       if (this.phase === "night" && bd2 < 12 * 12) {
         const dx = c.x - bx, dz = c.z - bz, dl = Math.hypot(dx, dz) || 1;
         stepNpc(c, c.x + (dx / dl) * 14, c.z + (dz / dl) * 14, CREW_SPEED * 1.7, dt, this.world);
@@ -2078,8 +2098,9 @@ export class GameEngine {
     }
   }
 
-  /** A crew member dies — corpse stays, a clue appears, the town shrinks. */
-  private killCrew(idx: number, slain: boolean) {
+  /** A crew member dies — corpse stays, a clue appears, the town shrinks.
+   *  `killerIdx` = which beast of the pack did it (−1 = unknown/you). */
+  private killCrew(idx: number, slain: boolean, killerIdx = -1) {
     const c = this.crew[idx];
     if (!c.alive) return;
     c.alive = false;
@@ -2092,13 +2113,16 @@ export class GameEngine {
     } else if (this.youPossessed) {
       c.clue = "huge bare footprints… no cloth, no colors. The killer is NOT from the camp.";
     } else {
-      const k = this.possessed != null ? this.crew[this.possessed] : null;
+      const k = killerIdx >= 0 && this.crew[killerIdx] ? this.crew[killerIdx] : null;
       c.clue = k ? `torn ${k.colorName} cloth under the claws… that color belongs to someone in the camp.` : "claw marks in the dirt.";
     }
     sfx.scream();
     this.fxQueue.push({ type: "confetti", x: c.x, y: 1.2, z: c.z, hue: 0.98 });
     const alive = this.crew.filter((x) => x.alive).length;
-    if (slain) this.toast(`🗡️ The beast is DOWN! That was ${c.name}…`, "good");
+    if (slain) {
+      const left = this.possessed.filter((i) => this.crew[i].alive).length;
+      this.toast(left > 0 ? `🗡️ A beast is DOWN — that was ${c.name}! ${left} still prowl…` : `🗡️ The last beast is DOWN! That was ${c.name}…`, "good");
+    }
     else this.toast(`💀 ${c.name} was slain by the beast! (${alive} strangers left)`, "bad");
     if (alive === 0) {
       if (this.youPossessed && this.phase === "night") this.winGame("beast");
@@ -2106,12 +2130,14 @@ export class GameEngine {
     }
   }
 
-  /** The player slew the possessed one — the spell breaks, dawn comes early. */
+  /** The player slew one of the possessed — the pack thins. Slay them ALL and
+   *  the spell breaks: dawn comes early. */
   private slayBeast(idx: number) {
     this.kills++;
     this.points += POINTS_KILL_BEAST;
     this.killCrew(idx, true);
-    if (this.phase === "night") {
+    const packLeft = this.possessed.filter((i) => this.crew[i].alive).length;
+    if (this.phase === "night" && packLeft === 0 && !this.youPossessed) {
       this.phase = "dawn";
       this.phaseT = PHASE_DAWN_S;
       this.endNight(true);
@@ -2149,8 +2175,14 @@ export class GameEngine {
     const tool = this.held >= 0 && this.held < this.tools.length ? this.tools[this.held] : null;
     const kind = tool?.kind ?? null;
     const dmg = kind ? (TOOLS.find((t) => t.kind === kind)?.dmg ?? HANDS_DMG) : HANDS_DMG;
-    // 1) the possessed beast — slay it to end the night early!
-    const hi = this.crew.findIndex((c) => c.alive && c.mode === "possessed" && dist2(p.x, p.z, c.x, c.z) < ATTACK_RANGE * ATTACK_RANGE);
+    // 1) the possessed pack — slay them ALL to end the night early!
+    let hi = -1, hd = ATTACK_RANGE * ATTACK_RANGE;
+    for (let i = 0; i < this.crew.length; i++) {
+      const c = this.crew[i];
+      if (!c.alive || c.mode !== "possessed") continue;
+      const d = dist2(p.x, p.z, c.x, c.z);
+      if (d < hd) { hd = d; hi = i; }
+    }
     if (hi >= 0) {
       const c = this.crew[hi];
       c.hp -= dmg;
@@ -2348,7 +2380,7 @@ export class GameEngine {
     if (this.accuseCd > 0) return;
     this.accuseCd = 2.5;
     const idx = this.crew.indexOf(c);
-    if (this.lastPossessed === idx) {
+    if (this.lastPossessed.includes(idx)) {
       c.alive = false; c.mode = "dead";
       c.deathX = c.x; c.deathZ = c.z;
       c.clue = "they were dragged away screaming… the spirit left their body.";
@@ -2904,12 +2936,14 @@ export class GameEngine {
     /* --- 👥 7Nights: the crew — wander by day, hide at dusk, hunt when possessed --- */
     this.stepCrew(dt);
 
-    // 💓 the beast (or a zombie) is close — your heart pounds
+    // 💓 the nearest beast of the pack (or a zombie) is close — your heart pounds
     this.heartT -= dt;
     if (this.phase === "night" && !this.youPossessed && this.heartT <= 0) {
       let near = Infinity;
-      const beast = this.possessed != null ? this.crew[this.possessed] : null;
-      if (beast && beast.alive) near = dist2(p.x, p.z, beast.x, beast.z);
+      for (const bi of this.possessed) {
+        const b = this.crew[bi];
+        if (b && b.alive) near = Math.min(near, dist2(p.x, p.z, b.x, b.z));
+      }
       for (const zb of this.zombies) if (!zb.dead) near = Math.min(near, dist2(p.x, p.z, zb.x, zb.z));
       if (near < 18 * 18) { this.heartT = near < 8 * 8 ? 0.55 : 0.95; sfx.heart(); }
     }
@@ -3080,6 +3114,7 @@ export class GameEngine {
       tools: this.tools.map((s) => ({ kind: s.kind, count: s.count })),
       held: this.held,
       youPossessed: this.youPossessed,
+      beastCount: this.possessed.filter((i) => this.crew[i]?.alive).length + (this.youPossessed ? 1 : 0),
       crewAlive: this.crew.filter((c) => c.alive).length,
       crew: this.crew.map((c) => ({ name: c.name, color: c.color, alive: c.alive, mode: c.mode })),
       attackReady: this.attackCd <= 0,

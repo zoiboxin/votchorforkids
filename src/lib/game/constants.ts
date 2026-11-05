@@ -552,6 +552,9 @@ export const CLAW_DMG = 34;         // player-as-beast hit on crew
 export const ZOMBIE_HP = 36;        // graveyard zombies can be slain too now
 export const POSSESS_PLAYER_CHANCE = 0.4; // per night — the spirit loves a good scare
 export const PLAYER_NIGHTS = [3, 6];      // …and NEVER misses these nights
+/** How MANY survivors the spirit possesses each night — the pack grows as the
+ *  week wears on: night 1-3 → 2 beasts · 4-5 → 3 · 6-7 → 4 (you can be one!). */
+export const beastsForNight = (n: number): number => Math.min(4, 2 + (n >= 4 ? 1 : 0) + (n >= 6 ? 1 : 0));
 export const ACCUSE_RADIUS = 3.4;
 export const POINTS_NIGHT = 80;
 export const POINTS_KILL_BEAST = 200;

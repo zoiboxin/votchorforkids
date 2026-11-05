@@ -457,9 +457,71 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
 export const rigOf = (g: THREE.Object3D): CharRig => g.userData.rig as CharRig;
 
 /* ------------------------------------------------------------------ */
+/* 🪓 Arms in hand — low-poly tool meshes gripped by the right arm      */
+/* Built from the same merged vertex-colour buckets as the characters   */
+/* so they share the cel-shaded look (and draw in one call).            */
+/* ------------------------------------------------------------------ */
+export type HeldToolKind = "axe" | "sword" | "hammer" | "builder";
+
+/** A tool mesh in "grip space": the origin is where the fist closes,
+ *  the handle runs UP (+Y) so the head sits above the hand at rest. */
+export function buildToolMesh(kind: HeldToolKind): THREE.Group {
+  const b = new Bucket();
+  const wood = "#8a5a33", woodDk = "#6e4526", steel = "#b8c4d0", steelHi = "#e4ebf3";
+  if (kind === "axe") {
+    b.add(cyl(0.032, 0.042, 0.6, 8), wood, false, 0, 0.24, 0);
+    b.add(cyl(0.045, 0.045, 0.05, 8), woodDk, false, 0, 0.03, 0); // grip wrap
+    b.add(box(0.055, 0.2, 0.1), steel, false, 0, 0.58, 0.05);     // head block
+    b.add(box(0.048, 0.24, 0.06), steelHi, false, 0, 0.58, 0.115); // blade edge
+    b.add(box(0.05, 0.12, 0.06), steel, false, 0, 0.47, -0.01);    // neck
+  } else if (kind === "sword") {
+    b.add(cyl(0.03, 0.036, 0.16, 8), "#4a2f1d", false, 0, 0.02, 0);
+    b.add(cyl(0.052, 0.052, 0.03, 8), GOLD, true, 0, 0.05, 0);     // pommel
+    b.add(box(0.2, 0.035, 0.055), GOLD, true, 0, 0.13, 0);         // cross-guard
+    b.add(box(0.06, 0.6, 0.022), steel, false, 0, 0.45, 0);        // blade
+    b.add(box(0.028, 0.5, 0.03), steelHi, true, 0, 0.45, 0.008);   // fuller shine
+    b.add(box(0.032, 0.09, 0.016), steelHi, false, 0, 0.79, 0, 0, 0, 0, 1, 1, 1); // tip
+  } else if (kind === "hammer") {
+    b.add(cyl(0.034, 0.042, 0.5, 8), wood, false, 0, 0.19, 0);
+    b.add(box(0.34, 0.15, 0.15), "#6b7280", false, 0, 0.46, 0);    // mallet head
+    b.add(box(0.36, 0.05, 0.16), "#9aa5b1", false, 0, 0.46, 0);    // face bands
+  } else { // builder — a chunky wrench
+    b.add(box(0.07, 0.44, 0.035), "#c0c8d4", false, 0, 0.16, 0);   // shaft
+    b.add(cyl(0.085, 0.085, 0.04, 10), "#d5dce6", false, 0, 0.4, 0, 0, 0, Math.PI / 2); // head ring
+    b.add(box(0.05, 0.09, 0.04), "#c0c8d4", false, 0, 0.465, 0.045); // open jaw
+    b.add(box(0.05, 0.09, 0.04), "#c0c8d4", false, 0, 0.465, -0.045);
+  }
+  const g = new THREE.Group();
+  const m = b.mesh("toon");
+  if (m) g.add(m);
+  g.traverse((o) => { if (o instanceof THREE.Mesh) { o.castShadow = false; o.receiveShadow = false; } });
+  return g;
+}
+
+/** Attach a tool mesh to a character's right hand (removes the previous one).
+ *  Returns the attached group or null when kind is null. */
+export function setHeldTool(character: THREE.Object3D, kind: HeldToolKind | null): THREE.Group | null {
+  const rig = rigOf(character);
+  if (!rig) return null;
+  const prev = character.userData.heldTool as THREE.Group | undefined;
+  if (prev) {
+    prev.removeFromParent();
+    character.userData.heldTool = undefined;
+  }
+  if (!kind) return null;
+  const tool = buildToolMesh(kind);
+  tool.position.set(0, -0.5, 0.03); // in the fist
+  tool.rotation.set(-0.5, 0, 0);    // head tilted forward, ready stance
+  rig.arms[1].add(tool);
+  character.userData.heldTool = tool;
+  return tool;
+}
+
+
+/* ------------------------------------------------------------------ */
 /* Posing — walk / run / jump / idle / sit + auto-blink & expressions  */
 /* ------------------------------------------------------------------ */
-export interface PoseOpts { phase?: number; airborne?: boolean; detained?: boolean; zombie?: boolean; vy?: number; flip?: number; squash?: number; faint?: number }
+export interface PoseOpts { phase?: number; airborne?: boolean; detained?: boolean; zombie?: boolean; vy?: number; flip?: number; squash?: number; faint?: number; /** 0..1 progress of an arm swing (axe chop / sword slash / beast claw) — 0 = none */ swing?: number }
 
 /** All channels poseCharacter drives — computed as targets, blended, then applied. */
 interface PoseCh {
@@ -649,6 +711,35 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
   legs[0].rotation.x = _ground.l0; legs[1].rotation.x = _ground.l1;
   arms[0].rotation.x = _ground.a0x; arms[1].rotation.x = _ground.a1x;
   arms[0].rotation.z = _ground.a0z; arms[1].rotation.z = _ground.a1z;
+
+  /* ---- ⚔️ arm swing — wind up → SLAM → recover, overriding the right arm ----
+   * Drives axe chops, sword slashes, hammer smashes and beast claws alike.
+   * The tool mesh rides the arm (setHeldTool), so it whistles through the arc. */
+  if (o.swing != null && o.swing > 0) {
+    const sw = Math.min(1, o.swing);
+    let ax: number, az: number;
+    if (sw < 0.12) {
+      // snap up-behind the head — fast anticipation
+      const k = sw / 0.12;
+      ax = _ground.a1x + (-2.55 - _ground.a1x) * k;
+      az = _ground.a1z + (-0.55 - _ground.a1z) * k;
+    } else if (sw < 0.35) {
+      // the strike — fast, accelerating chop down/forward (damage lands here)
+      const k = (sw - 0.12) / 0.23;
+      ax = -2.55 + (1.1 + 2.55) * k * k;
+      az = -0.55 + 0.72 * k;
+    } else {
+      // settle back into the stride pose
+      const k = sstep(0, 1, (sw - 0.35) / 0.65);
+      ax = 1.1 + (_ground.a1x - 1.1) * k;
+      az = 0.17 + (_ground.a1z - 0.17) * k;
+    }
+    arms[1].rotation.x = ax;
+    arms[1].rotation.z = az;
+    // torso twists into the blow, left arm swings for balance
+    body.rotation.y += Math.sin(sw * Math.PI) * -0.3;
+    arms[0].rotation.x = _ground.a0x + Math.sin(sw * Math.PI) * 0.55;
+  }
 }
 
 /* ------------------------------------------------------------------ */

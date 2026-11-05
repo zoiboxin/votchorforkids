@@ -23,7 +23,7 @@ const CONTROLS: [string, string][] = [
   ["Mouse drag", "Look around"],
   ["Shift", "Sprint — drains ⚡ stamina fast"],
   ["Space", "Jump — press again mid-air for a double-jump! 🤸"],
-  ["F", "Attack / swing — chop trees, smash rocks, fight the beast"],
+  ["F", "Attack / swing — chop trees, smash rocks, fight the beasts"],
   ["G", "🎒 Tool wheel — move the mouse to pick axe / sword / hammer / builder"],
   ["B", "Build a barricade — 4 🪓 wood"],
   ["V", "Build a campfire — 2 🪓 wood + 2 🪨 stone"],
@@ -65,11 +65,11 @@ export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange:
             </div>
             <div className="rounded-2xl bg-white/5 p-3">
               <div className="mb-1.5 flex items-center gap-2 font-black text-orange-300"><Siren size={15} /> ⚠️ Dusk — the warning</div>
-              <p className="text-white/85">Sirens howl… the spirit has chosen its host. Watch the crew — black eyes, odd paths and missing faces are clues.</p>
+              <p className="text-white/85">Sirens howl… the spirit has chosen its hosts — <b>more than one of you</b> may turn, and it could be YOU. Watch the crew — black eyes, odd paths and missing faces are clues.</p>
             </div>
             <div className="rounded-2xl bg-white/5 p-3">
               <div className="mb-1.5 flex items-center gap-2 font-black text-indigo-300"><MoonStar size={15} /> 🌑 Night — survive</div>
-              <p className="text-white/85">The possessed becomes the beast and hunts. Hide behind barricades, circle the campfires — or pick your sharpest tool and fight (F). If YOU are chosen… claw away! 🩸</p>
+              <p className="text-white/85">The possessed become a PACK of beasts and hunt everyone else. Hide behind barricades, circle the campfires — or pick your sharpest tool and fight (F). If YOU are chosen… claw away! 🩸</p>
             </div>
             <div className="rounded-2xl bg-white/5 p-3">
               <div className="mb-1.5 flex items-center gap-2 font-black text-yellow-300"><Scale size={15} /> ⚖️ Dawn — accuse</div>

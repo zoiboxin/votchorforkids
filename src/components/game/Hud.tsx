@@ -273,15 +273,16 @@ function NightStrip() {
   const phaseLeft = useGame((s) => s.hud.phaseLeft);
   const crewAlive = useGame((s) => s.hud.crewAlive);
   const youPossessed = useGame((s) => s.hud.youPossessed);
+  const beastCount = useGame((s) => s.hud.beastCount);
   const beast = youPossessed && phase === "night";
   const secs = Math.max(0, Math.ceil(phaseLeft));
   const mm = String(Math.floor(secs / 60)).padStart(2, "0");
   const ss = String(secs % 60).padStart(2, "0");
   const survived = Math.max(0, Math.min(NIGHTS_TOTAL, nightNo - 1));
   const label = beast
-    ? "🔪 YOU ARE THE BEAST — F to claw"
+    ? "🔪 YOU ARE A BEAST — F to claw"
     : phase === "dusk" ? `⚠️ NIGHT FALLS IN ${secs}s`
-    : phase === "night" ? `🌑 NIGHT ${nightNo} — THE BEAST HUNTS`
+    : phase === "night" ? `🌑 NIGHT ${nightNo} — ${beastCount > 1 ? `${beastCount} BEASTS HUNT YOU` : "THE BEAST HUNTS"}`
     : phase === "dawn" ? "🌅 DAWN — you made it"
     : `☀️ DAY ${nightNo} — gather & build`;
   const hot = phase === "dusk" || phase === "night";
@@ -1106,6 +1107,21 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
             </motion.div>
           </motion.div>
         )}
+        {hud.phase === "dusk" && !hud.youPossessed && hud.beastCount > 0 && (
+          <motion.div key="pack-warn" aria-hidden className="pointer-events-none absolute inset-x-0 top-[22%] z-20 flex justify-center">
+            <motion.div
+              animate={{ opacity: [0.55, 1, 0.55], scale: [0.97, 1.03, 0.97] }}
+              transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
+              className="rounded-2xl border border-amber-400/60 bg-black/70 px-5 py-2.5 text-center backdrop-blur-md"
+              style={{ boxShadow: "0 0 34px rgba(251,191,36,0.35)" }}
+            >
+              <div className="text-lg font-black tracking-widest text-amber-300 sm:text-3xl" style={{ textShadow: "0 0 18px rgba(251,191,36,0.8)" }}>
+                ⚠ {hud.beastCount > 1 ? `${hud.beastCount} SURVIVORS WILL TURN` : "ONE OF US WILL TURN"}
+              </div>
+              <div className="mt-1 text-[10px] font-bold uppercase tracking-[0.3em] text-amber-200/85 sm:text-xs">Watch them. Remember them. Barricade NOW.</div>
+            </motion.div>
+          </motion.div>
+        )}
       </AnimatePresence>
       {/* …and the night you ARE the beast — persistent red haze + claw reminder */}
       {hud.phase === "night" && hud.youPossessed && (
@@ -1117,7 +1133,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
             transition={{ repeat: Infinity, duration: 2.2, ease: "easeInOut" }}
             className={`pointer-events-none absolute left-1/2 top-[58%] -translate-x-1/2 rounded-full border border-rose-400/60 bg-black/65 px-3 py-1 text-[11px] font-black tracking-wider text-rose-200 backdrop-blur-md ${hud.attackReady ? "" : "opacity-60"}`}
           >
-            🔪 F — claw the survivors
+            🔪 F — claw them all
           </motion.div>
         </>
       )}
@@ -1261,7 +1277,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
               <div className="flex items-start justify-between gap-2">
                 <p className="text-[11px] font-semibold leading-snug">
                   <b className="text-yellow-300">🎯 Goal:</b>{" "}
-                  Survive all <b className="text-rose-300">7 nights</b> of the beast. By day gather 🪵🪨, build &amp; eat; at dusk the sirens choose a host — at night it HUNTS. Slay it with arms (<b>F</b>) or inspect bodies (<b>E</b>) &amp; <b>accuse (R)</b> the suspect!
+                  Survive all <b className="text-rose-300">7 nights</b> of the pack. By day gather 🪵🪨, build &amp; eat; at dusk the sirens choose their hosts — several of you may turn — at night the beasts HUNT. Slay them with arms (<b>F</b>), or inspect bodies (<b>E</b>) &amp; <b>accuse (R)</b> the suspects! Have YOU noticed who's been acting strange?
                 </p>
                 <button
                   onClick={() => setShowHelp(false)}

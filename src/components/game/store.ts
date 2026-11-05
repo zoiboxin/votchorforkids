@@ -181,7 +181,7 @@ export const emptyHud: HudData = {
   hasLicense: false, driving: false, speed: 0,
   /* --- 7 Nights --- */
   nightNo: 1, phase: "day", phaseLeft: 0, wood: 0, rock: 0,
-  tools: [], held: -1, youPossessed: false, crewAlive: 7, crew: [],
+  tools: [], held: -1, youPossessed: false, beastCount: 0, crewAlive: 7, crew: [],
   attackReady: true, clue: null,
 };
 

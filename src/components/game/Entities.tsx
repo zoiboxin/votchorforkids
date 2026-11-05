@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  ANIMAL_SET, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, SHIRT_COLORS, SKIN_TONES,
+  ANIMAL_SET, ATTACK_CD, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, SHIRT_COLORS, SKIN_TONES,
   TOTAL_VOTES, type AnimalKind, type Appearance,
 } from "@/lib/game/constants";
 import type { GameEngine } from "@/lib/game/engine";
@@ -12,7 +12,8 @@ import { nightFactor } from "@/lib/game/sim";
 import { mulberry32 } from "@/lib/game/rng";
 import {
   buildAnimal, buildCharacter, nameTag, helpBubble, poseAnimal, poseCharacter,
-  voteTokenGeometry, foodGeometry, shadowMaterial, basicVertexMaterial,
+  setHeldTool, voteTokenGeometry, foodGeometry, shadowMaterial, basicVertexMaterial,
+  type HeldToolKind,
 } from "@/lib/game/character";
 import { camBlocked, terrainHeight } from "@/lib/game/worldgen";
 import { WORLD } from "./WorldView";
@@ -42,6 +43,7 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
   const lantern = useRef<THREE.PointLight>(null!);
   const introT = useRef(0);
   const hudT = useRef(0);
+  const heldRef = useRef<HeldToolKind | null>(null); // tool currently in the hero's hand
   const camKeep = useRef(1); // smoothed chase-camera pull-in factor (1 = full distance)
   // 🚗 driving glide state — the chase camera eases toward its pose instead of
   // snapping every frame, so frame-time hiccups at car speed read as smooth sweeps
@@ -107,6 +109,12 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     const p = engine.player;
     const morphing = engine.morphKind != null;
     const beast = engine.youPossessed && engine.phase === "night";
+    // ⚔️ swing progress (0→1 through the attack cooldown) drives the arm/tool animation
+    const swing = engine.attackCd > 0 ? 1 - engine.attackCd / ATTACK_CD : 0;
+    // 🪓 the held arm rides the right hand — swap the tool mesh when the belt changes
+    const heldKind = !beast && !morphing && !engine.drive && engine.held >= 0 && engine.tools[engine.held]
+      ? engine.tools[engine.held].kind as HeldToolKind : null;
+    if (heldRef.current !== heldKind) { setHeldTool(mesh, heldKind); heldRef.current = heldKind; }
     mesh.visible = !engine.playerInVan && !morphing && !engine.drive && !beast;
     beastMesh.visible = beast && !engine.playerInVan && !engine.drive;
     if (beastMesh.visible) {
@@ -118,6 +126,7 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
         airborne: p.y > 0.12,
         vy: p.vy,
         zombie: true,
+        swing,
         squash: engine.squashT > 0 ? engine.squashT / LAND_SQUASH_S : 0,
       });
     }
@@ -132,6 +141,7 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       flip: engine.flipT > 0 ? engine.flipT / FLIP_S : 0,
       squash: engine.squashT > 0 ? engine.squashT / LAND_SQUASH_S : 0,
       faint: engine.faintT > 0 ? engine.faintT / FAINT_S : 0,
+      swing,
     });
 
     // 🐒 animal disguise body mirrors the player's motion (walk, jump and all)
@@ -804,7 +814,12 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
         body.rotation.x = 0;
         body.rotation.z = 0;
         const speed = Math.hypot(c.vx, c.vz);
-        poseCharacter(body, speed, t, { phase: c.phase, zombie: possessed });
+        poseCharacter(body, speed, t, {
+          phase: c.phase,
+          zombie: possessed,
+          // 🩸 the beast's claw swipe — plays through the 0.45s maul animation
+          swing: possessed && c.attackAnimT > 0 ? 1 - c.attackAnimT / 0.45 : 0,
+        });
         const close = d2 < DETAIL_SQ;
         const rig = body.userData.rig as { lids: THREE.Object3D[]; brows: THREE.Object3D[] } | undefined;
         if (rig) {
