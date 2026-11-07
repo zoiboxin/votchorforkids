@@ -258,6 +258,18 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       camSm.current.on = false;
       camera.position.set(tx, ty, tz);
     }
+    // 💥 trauma screen shake — rides ON TOP of the settled follow pose (game-feel
+    // skill: shake the CAMERA, never the simulated body; smooth sinusoidal noise ×
+    // trauma² so small hits barely move, big hits punch; engine decays the trauma).
+    // Applied AFTER the pose branches so shake never feeds back into the smoothing
+    // state (next frame's lerp starts from the un-shaken position).
+    if (engine.shakeT > 0.002 && introT.current >= 1) {
+      const sh = engine.shakeT * engine.shakeT; // quadratic curve — gentle low, sharp high
+      const st = performance.now() / 1000;
+      camera.position.x += Math.sin(st * 23.7) * 0.62 * sh;
+      camera.position.y += Math.sin(st * 31.3 + 1.7) * 0.34 * sh;
+      camera.position.z += Math.cos(st * 19.1 + 0.9) * 0.62 * sh;
+    }
     if (engine.drive && camSm.current.on) camera.lookAt(camSm.current.tgt);
     else camera.lookAt(camX, p.y + 1.7, camZ);
 

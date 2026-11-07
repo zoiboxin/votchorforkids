@@ -35,13 +35,18 @@ export const primeAudio = () => void ac();
 function tone(freq: number, dur: number, type: OscillatorType, vol = 0.5, slideTo?: number, delay = 0, isMusic = false) {
   const c = ac();
   if (!c || !master || muted) return;
+  // 🎲 SFX variation (audio-design: kill the "machine gun" repeat) — every sound
+  // EFFECT is detuned ±3% per hit so rapid-fire repeats (claws, zombies, pickups)
+  // never buzz identically. Music tones stay pinned to their pitch grid.
+  const det = isMusic ? 1 : 1 + (Math.random() - 0.5) * 0.06;
+  const f = freq * det;
   const v = vol * (isMusic ? musicVol : sfxVol) * 2.2; // scale 0..1 sliders into tone range
   if (v <= 0.001) return;
   const t0 = c.currentTime + delay;
   const o = c.createOscillator(), g = c.createGain();
   o.type = type;
-  o.frequency.setValueAtTime(freq, t0);
-  if (slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(30, slideTo), t0 + dur);
+  o.frequency.setValueAtTime(f, t0);
+  if (slideTo) o.frequency.exponentialRampToValueAtTime(Math.max(30, slideTo * det), t0 + dur);
   g.gain.setValueAtTime(0, t0);
   g.gain.linearRampToValueAtTime(v, t0 + 0.012);
   g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);

@@ -400,6 +400,17 @@ export class GameEngine {
   faintT = 0;   // >0 while the world spins after a car bonk — input is ignored, stars orbit
   carHitCd = 0; // old-game hitCd — no double-bonks from the same bumper
 
+  /* --- 💥 game-feel: trauma screen shake --- */
+  /** screen-shake trauma 0..1 — hits ADD, the value decays every frame, and the
+   *  CAMERA (never the simulated body) reads shakeT² as a smooth sinusoidal
+   *  offset. Juice must return to rest; the sim stays untouched. */
+  shakeT = 0;
+
+  /** 💥 Add screen-shake trauma — clamped 0..1, impacts ACCUMULATE. Tiers (from
+   *  the game-feel skill, scaled to importance so routine actions never shake):
+   *  small ≈0.15 wall scrape · medium ≈0.4 damage taken · large ≈0.7 car bonk. */
+  addShake(amount: number) { this.shakeT = Math.min(1, this.shakeT + amount); }
+
   /** Arrest pipeline: called (van coming) → riding (in the van) → locked (at the station) → free. */
   arrest: ArrestState = "free";
   arrestStation = -1;
@@ -1378,7 +1389,7 @@ export class GameEngine {
     }
     // cartoon scrape — walls eat speed (exp form: identical feel at 30 or 144 fps,
     // the old per-frame 0.82 multiplier braked ~4× harder on a 144 Hz screen)
-    if (scrape > 0.004) { d.v *= Math.exp(-dt * 12); d.hitT = 0.35; }
+    if (scrape > 0.004) { d.v *= Math.exp(-dt * 12); if (d.hitT <= 0) this.addShake(0.16); d.hitT = 0.35; }
     const rr = Math.hypot(d.x, d.z);
     if (rr > WALL_RADIUS) {
       d.x *= WALL_RADIUS / rr; d.z *= WALL_RADIUS / rr;
@@ -1391,7 +1402,7 @@ export class GameEngine {
       if (td2 < tr * tr && td2 > 0.0001) {
         const td = Math.sqrt(td2);
         d.x = t.x + (tdx / td) * tr; d.z = t.z + (tdz / td) * tr;
-        d.v *= Math.exp(-dt * 17); d.hitT = 0.35; // dt-based: same bonk at any fps
+        d.v *= Math.exp(-dt * 17); if (d.hitT <= 0) this.addShake(0.3); d.hitT = 0.35; // dt-based: same bonk at any fps
       }
     }
     for (const van of this.vans) {
@@ -1399,7 +1410,7 @@ export class GameEngine {
       if (vd2 < 3.2 * 3.2 && vd2 > 0.0001) {
         const vd = Math.sqrt(vd2);
         d.x = van.x + (vdx / vd) * 3.2; d.z = van.z + (vdz / vd) * 3.2;
-        d.v *= Math.exp(-dt * 17); d.hitT = 0.35;
+        d.v *= Math.exp(-dt * 17); if (d.hitT <= 0) this.addShake(0.3); d.hitT = 0.35;
       }
     }
     /* --- smoothed visual pose: what the camera & renderer SEE ---
@@ -2851,6 +2862,7 @@ export class GameEngine {
     this.flipT = Math.max(0, this.flipT - dt);
     this.squashT = Math.max(0, this.squashT - dt);
     this.faintT = Math.max(0, this.faintT - dt);
+    this.shakeT = Math.max(0, this.shakeT - dt * 1.5); // 💥 trauma decays — juice returns to rest
     this.carHitCd = Math.max(0, this.carHitCd - dt);
     this.exitCd = Math.max(0, this.exitCd - dt);
     this.driveMsgT = Math.max(0, this.driveMsgT - dt);
@@ -2969,6 +2981,7 @@ export class GameEngine {
           this.hp = Math.max(1, this.hp - CAR_HIT_DMG); // cars never detain — floored at 1
           this.stamina = Math.max(0, this.stamina - 8);
           this.hurtT = HURT_FLASH_S;
+          this.addShake(0.7); // 💥 LARGE — the whole world should reel from a bumper strike
           sfx.bonk();
           const BONKS = [
             "🚕 BONK! A car sent you flying — everything is spinning…",
@@ -3443,6 +3456,7 @@ export class GameEngine {
           zb.touchCd = ZOMBIE_TOUCH_CD;
           this.hp = Math.max(0, this.hp - ZOMBIE_DMG);
           this.hurtT = HURT_FLASH_S;
+          this.addShake(0.4); // 💥 MEDIUM — rotting hands on you
           sfx.zombie();
           if (this.hp <= 0) this.die();
         }
@@ -3667,6 +3681,7 @@ export class GameEngine {
     if (d2 > 2.4 * 2.4) return;
     this.hp = Math.max(0, this.hp - CLAW_DMG);
     this.hurtT = HURT_FLASH_S;
+    this.addShake(0.5); // 💥 MEDIUM-LARGE — a beast just tore into you
     const dx = this.player.x - x, dz = this.player.z - z, dl = Math.hypot(dx, dz) || 1;
     this.player.vx = (dx / dl) * 10; this.player.vz = (dz / dl) * 10; this.player.vy = 4.5;
     sfx.scream();
@@ -3679,6 +3694,7 @@ export class GameEngine {
     if (this.detainedT > 0 || this.drive || this.invulnT > 0) return;
     this.hp = Math.max(0, this.hp - amount);
     this.hurtT = HURT_FLASH_S;
+    this.addShake(0.45); // 💥 MEDIUM
     sfx.scream();
     this.toast("🩸 A BEAST TORE INTO YOU! RUN!", "bad");
   }
