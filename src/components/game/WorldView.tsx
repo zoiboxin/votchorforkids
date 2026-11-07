@@ -906,7 +906,9 @@ function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutabl
       const c = WORLD.cars[d.ci];
       if (d.ci !== drvCi.current) { drvCi.current = d.ci; drvY.current = terrainHeight(d.vx, d.vz); } // new ride — snap
       const gy = terrainHeight(d.vx, d.vz);
-      drvY.current += (gy - drvY.current) * Math.min(1, dt * 9); // eased — bumpy ground never jitters the body
+      // tracked tighter (14/s, was 9): a lazy ease lagged below fast climbs over
+      // the rolling valley bumps and the car visibly sank into the mud/rock
+      drvY.current += (gy - drvY.current) * Math.min(1, dt * 14); // eased — bumpy ground never jitters the body
       placeCar(P, d.ci, d.vx, drvY.current, d.vz, d.vrot, c.c, c.t, true, d.spin, d.steerVis);
       setLampGlow(P, d.ci, nightFactor(clockRef.current));
       dirty = true;
@@ -1643,7 +1645,13 @@ function Mountains() {
 function MountainTerrain() {
   const geo = useMemo(() => {
     const R0 = MOUNTAIN_INNER - 8, R1 = MOUNTAIN_OUTER + 18;
-    const rg = new THREE.RingGeometry(R0, R1, 150, 48);
+    // 🏔️ 560×72 (was 150×48): at r≈650 the old ring had ~27u between angular
+    // vertices — coarser than the mud-valley bump field (sin(x·0.11)·sin(z·0.13),
+    // ~50u wavelength) and the fluted peak flutes, so the RENDERED surface bulged
+    // ABOVE the exact terrainHeight() the sim walks on and players/cars sank into
+    // the mesh. Denser tessellation hugs the true field — what you see is what
+    // you climb, no more clipping into the "mud". Static geometry, baked once.
+    const rg = new THREE.RingGeometry(R0, R1, 560, 72);
     rg.rotateX(-Math.PI / 2); // lie flat on the x/z plane
     const pos = rg.attributes.position as THREE.BufferAttribute;
     const colors = new Float32Array(pos.count * 3);

@@ -532,6 +532,10 @@ export function Powers({ engine }: { engine: GameEngine }) {
 /* Driving-license cards — glowing 🪪 pickups that unlock every car     */
 /* ------------------------------------------------------------------ */
 export function Licenses({ engine }: { engine: GameEngine }) {
+  // 📦 dropped cards can APPEND a brand-new license entity at runtime (gifted
+  // license + no spent card to reuse) — licRev ticks, we rebuild the views.
+  const [rev, setRev] = useState(engine.licRev);
+  const revRef = useRef(engine.licRev);
   const views = useMemo(() => engine.licenses.map((lc, i) => {
     const g = new THREE.Group();
     // the card itself: a little white ID card with a photo stripe
@@ -560,13 +564,18 @@ export function Licenses({ engine }: { engine: GameEngine }) {
     g.add(ring);
     g.visible = lc.active;
     return { group: g, card, em, glow, ring, i };
-  }), [engine]);
+  }), [engine, rev]);
 
   useFrame((s) => {
     const t = s.clock.elapsedTime;
+    if (engine.licRev !== revRef.current) { // a dropped card spawned a new entity
+      revRef.current = engine.licRev;
+      setRev(engine.licRev);
+    }
     for (let idx = 0; idx < engine.licenses.length; idx++) {
       const lc = engine.licenses[idx];
       const v = views[idx];
+      if (!v) continue;
       v.group.visible = lc.active;
       if (!lc.active) continue;
       v.group.position.set(lc.x, 0, lc.z);

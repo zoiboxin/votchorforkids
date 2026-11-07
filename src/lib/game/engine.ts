@@ -364,6 +364,9 @@ export class GameEngine {
   vans: PoliceVan[] = [];
   powers: PowerEnt[] = [];
   licenses: LicenseEnt[] = [];
+  /** bumped whenever a license ENTITY is appended at runtime (dropped cards) —
+   *  the Licenses renderer rebuilds its 3D views when this ticks up */
+  licRev = 0;
   fxQueue: Fx[] = [];
 
   /* --- GTA-style driving (license-gated) --- */
@@ -1192,8 +1195,9 @@ export class GameEngine {
 
   /** 🤝 Hand the driving license to the closest other survivor — a REAL teammate
    *  in multiplayer (they get it over the wire), else the nearest fellow
-   *  survivor bot standing next to you. The giver is free to hunt a fresh 🪪
-   *  card afterwards — uncollected cards stay on the streets. */
+   *  survivor bot standing next to you. Nobody within arm's reach? The card
+   *  slips out of your hands and DROPS at your feet (see dropLicense). The
+   *  giver is free to hunt a fresh 🪪 card afterwards. */
   giveLicense() {
     if (!this.hasLicense) {
       this.toast("🪪 You don't have a driving license to give — hunt a glowing card first!", "info");
@@ -1216,7 +1220,9 @@ export class GameEngine {
       }
     }
     if (!best) {
-      this.toast("🤝 Nobody is close enough — stand next to a survivor to hand over the license!", "info");
+      // 📦 F-fallback UX: nobody in reach → the card drops on the ground so
+      // anyone (even us, after a walk back) can scoop it up again
+      this.dropLicense();
       return;
     }
     this.hasLicense = false;
@@ -1228,6 +1234,41 @@ export class GameEngine {
     } else {
       this.toast(`🤝 ${best.name} promised to keep the license safe — find another 🪪 card to drive again!`, "good");
     }
+  }
+
+  /** 📦 Drop the driving license on the ground just ahead of us — fired from
+   *  the license card (F key / Drop button) when NO survivor is close enough
+   *  to hand it to, or on purpose. The card lands OUTSIDE the walk-over pickup
+   *  radius (2.4u) so the dropper doesn't instantly re-collect it: anyone who
+   *  strolls over it — a teammate, a bot, or us after a step back — pockets it. */
+  dropLicense() {
+    if (!this.hasLicense) {
+      this.toast("🪪 You don't have a driving license to drop — hunt a glowing card first!", "info");
+      return;
+    }
+    this.hasLicense = false;
+    const p = this.player;
+    const x = p.x + Math.sin(p.face) * 3.4, z = p.z + Math.cos(p.face) * 3.4; // past pickup radius
+    this.placeDroppedLicense(x, z);
+    sfx.click();
+    this.toast("📦 Driving license dropped — walk over the card to scoop it back up!", "info");
+    if (this.mp) this.netEmit?.({ t: "dropLicense", x, z, from: this.playerName });
+  }
+
+  /** Put a dropped 🪪 card into the world at (x,z): reuse a spent card entity
+   *  when one exists (the 3D views bind per-card), else spawn a fresh one and
+   *  bump licRev so the renderer rebuilds its view list. */
+  private placeDroppedLicense(x: number, z: number) {
+    const spent = this.licenses.find((lc) => !lc.active);
+    if (spent) { spent.active = true; spent.x = x; spent.z = z; }
+    else { this.licenses.push({ id: this.nid(), x, z, active: true }); this.licRev++; }
+  }
+
+  /** 🌐 a teammate dropped THEIR driving license on the ground — spawn the card
+   *  here too so we can race over and snatch it for ourselves. */
+  spawnDroppedLicense(x: number, z: number, fromName: string) {
+    this.placeDroppedLicense(x, z);
+    this.toast(`📦 ${fromName} dropped a driving license nearby — race over and grab it!`, "info");
   }
 
   /** 🌐 a teammate's client handed US their driving license over the wire. */
@@ -1392,7 +1433,9 @@ export class GameEngine {
     // camera (and every look-at) into the hillside while the car climbed.
     p.x = d.x; p.z = d.z;
     const gy = terrainHeight(d.x, d.z) + 0.32;
-    p.y += (gy - p.y) * Math.min(1, dt * 9); // eased so bumpy ground never jolts the camera
+    // ⛰️ tracked a touch tighter (12/s): on the rolling mud-valley bumps a lazy
+    // ease let the body lag below fast climbs and read as sinking into the hill
+    p.y += (gy - p.y) * Math.min(1, dt * 12); // eased so bumpy ground never jolts the camera
     p.vx = Math.sin(d.rot) * d.v; p.vz = Math.cos(d.rot) * d.v; p.vy = 0;
     p.face = d.rot;
     // camera trails behind the car while it rolls (mouse look still nudges it)

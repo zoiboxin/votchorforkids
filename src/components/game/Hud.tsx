@@ -627,7 +627,7 @@ function ToolWheel({ engine, apiRef }: { engine: GameEngine; apiRef: { current: 
         ...pockets.map((p, i) => ({ type: "power" as const, emoji: p.emoji, name: p.name, tip: `${p.tip} — SINGLE USE`, color: p.color, index: i, badge: "1×" })),
         // 🪪 the driving license rides in the wheel too — pick it to show the card
         // (and hand it to the survivor next to you)
-        ...(hasLicense ? [{ type: "license" as const, emoji: "🪪", name: "License", tip: "Show your driving license · 🤝 give it to a survivor", color: "#38bdf8", index: -1 }] : []),
+        ...(hasLicense ? [{ type: "license" as const, emoji: "🪪", name: "License", tip: "Show your driving license · F 🤝 give to a survivor / 📦 drop it", color: "#38bdf8", index: -1 }] : []),
       ];
   const N = Math.max(1, slices.length);
 
@@ -734,9 +734,10 @@ function ToolWheel({ engine, apiRef }: { engine: GameEngine; apiRef: { current: 
 }
 
 /* ------------- 🪪 driving-license card — shown from the G wheel. -------------
-   A proper ID card: photo, name, issuing night, and a 🤝 GIVE button that
-   hands the license to the closest survivor (real teammate over the wire in
-   multiplayer, else the fellow survivor standing next to you).             */
+   A proper ID card: photo, name, issuing night, plus 🤝 GIVE (F) and 📦 DROP
+   actions — give hands the license to the closest survivor (real teammate over
+   the wire in multiplayer, else the fellow survivor next to you); with nobody
+   in reach the card drops on the ground for anyone to scoop up.             */
 function LicenseCard({ engine }: { engine: GameEngine }) {
   const hasLicense = useGame((s) => s.hud.hasLicense);
   const name = useGame((s) => s.playerName);
@@ -792,25 +793,36 @@ function LicenseCard({ engine }: { engine: GameEngine }) {
         </div>
         <div className="border-t border-white/10 bg-black/25 px-5 py-3">
           {hasLicense ? (
-            <div className="flex items-center justify-between gap-3">
-              <div className="min-w-0 text-[10px] font-semibold leading-snug text-white/60">
-                Stand next to a survivor and hand the license over — they can drive, you hunt a fresh 🪪 card.
+            <>
+              <div className="mb-2 text-center text-[10px] font-semibold leading-snug text-white/60">
+                Press <b className="text-sky-300">F</b> to hand the license to the survivor next to you —
+                nobody around? The card drops at your feet for anyone to grab.
               </div>
-              <Button
-                size="sm"
-                onClick={() => { engine.giveLicense(); close(); }}
-                className="shrink-0 rounded-xl bg-sky-400 text-xs font-black text-sky-950 hover:bg-sky-300"
-              >
-                🤝 Give
-              </Button>
-            </div>
+              <div className="flex items-center justify-center gap-2">
+                <Button
+                  size="sm"
+                  onClick={() => { engine.giveLicense(); close(); }}
+                  className="shrink-0 rounded-xl bg-sky-400 text-xs font-black text-sky-950 hover:bg-sky-300"
+                >
+                  🤝 Give (F)
+                </Button>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  onClick={() => { engine.dropLicense(); close(); }}
+                  className="shrink-0 rounded-xl border-sky-300/40 bg-white/5 text-xs font-black text-sky-100 hover:bg-white/10"
+                >
+                  📦 Drop
+                </Button>
+              </div>
+            </>
           ) : (
             <div className="text-center text-[10px] font-black uppercase tracking-wider text-amber-300">
               🤝 Handed away — hunt a glowing 🪪 card to drive again
             </div>
           )}
           <div className="pointer-events-none mt-2 text-center text-[8.5px] font-black uppercase tracking-widest text-white/35">
-            Esc / G close
+            F give / drop · Esc / G close
           </div>
         </div>
       </motion.div>
@@ -1113,10 +1125,16 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (useGame.getState().victoryOpen) return;
       // 🪪 the license card is keyboard-boss while open: Esc/G/Enter put it away,
-      // every other shortcut is swallowed so the world keys never fire unseen
+      // F hands the license to the closest survivor (nobody in reach? it drops
+      // at your feet) — every other shortcut is swallowed so world keys never fire
       if (licenseOpen) {
         if (e.code === "Escape" || e.code === "KeyG" || e.code === "Enter") {
           e.preventDefault();
+          setLicenseOpen(false);
+          requestGameLock();
+        } else if (e.code === "KeyF" && useGame.getState().hud.hasLicense) {
+          e.preventDefault();
+          engine.giveLicense(); // give if a survivor is close, else drop the card
           setLicenseOpen(false);
           requestGameLock();
         }

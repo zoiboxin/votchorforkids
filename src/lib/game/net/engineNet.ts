@@ -165,6 +165,10 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
     if (ev.kind === "license" && ev.toSlot === slot) engine.receiveLicense(ev.from);
   });
 
+  // 📦🪪 a teammate DROPPED their license on the ground — spawn the card here
+  // so everyone can race over and snatch it
+  on("dropLicense", (ev) => engine.spawnDroppedLicense(ev.x, ev.z, ev.from));
+
   on("hello", (_ev, from) => {
     const r = engine.remotes.find((x) => x.slot === from);
     if (r) engine.toast(`🌐 ${r.name} is back in town!`, "good");
