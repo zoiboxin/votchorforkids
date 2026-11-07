@@ -78,6 +78,8 @@ export interface Npc {
   x: number; z: number; vx: number; vz: number; face: number;
   mode: CopMode | CivilMode;
   tx: number; tz: number; timer: number; phase: number;
+  /** >0 while fleeing a horror in blind panic — drives the 😱 flail pose (decays) */
+  panicT?: number;
   name: string; speed: number; alertT: number;
   /** cop only: id of the civilian being chased (unset = hunting the player) */
   targetCiv?: number;
@@ -104,7 +106,12 @@ export interface Npc {
   /** true while this bot's death has already dropped its loot */
   looted?: boolean;
 }
-export interface Zombie { id: number; x: number; z: number; vx: number; vz: number; face: number; phase: number; touchCd: number; hp?: number; dead?: boolean }
+export interface Zombie {
+  id: number; x: number; z: number; vx: number; vz: number; face: number; phase: number; touchCd: number; hp?: number; dead?: boolean;
+  /* game-ai skill: stuck probe + sidestep detour — chasers must never grind into walls */
+  chkT?: number; chkX?: number; chkZ?: number;   // periodic displacement probe
+  sideT?: number; sideDx?: number; sideDz?: number; // active detour waypoint
+}
 
 /* ---------------- 7 Nights: survivors, tools & builds ---------------- */
 /** One of the 7 fellow "players" who joined the 7 nights. */
@@ -670,7 +677,7 @@ export class GameEngine {
     // zombies (graveyard) — they rise every night, and NOW they can be slain
     for (let i = 0; i < ZOMBIE_COUNT; i++) {
       const a = range(r, 0, Math.PI * 2), d = range(r, 4, 36);
-      this.zombies.push({ id: this.nid(), x: GRAVEYARD.x + Math.cos(a) * d, z: GRAVEYARD.z + Math.sin(a) * d, vx: 0, vz: 0, face: 0, phase: Math.random() * 6, touchCd: 0, hp: ZOMBIE_HP, dead: false });
+      this.zombies.push({ id: this.nid(), x: GRAVEYARD.x + Math.cos(a) * d, z: GRAVEYARD.z + Math.sin(a) * d, vx: 0, vz: 0, face: 0, phase: Math.random() * 6, touchCd: 0, hp: ZOMBIE_HP, dead: false, chkT: 0, chkX: 0, chkZ: 0, sideT: 0, sideDx: 0, sideDz: 0 });
     }
     // 👥 the crew — 7 fellow "players" join you for the 7 nights
     this.spawnCrew();
@@ -3305,6 +3312,7 @@ export class GameEngine {
       c.phase += dt;
       // 🧟💀 a fallen townsfolk lies still until dawn refills the town
       if (c.dead) continue;
+      if ((c.panicT ?? 0) > 0) c.panicT = (c.panicT ?? 0) - dt;
       // 🏃 SAVE YOURSELF! zombies or beasts anywhere close → blind panic away from
       // the closest horror (dusk & night). Survival instinct beats every other job.
       if (this.phase === "dusk" || this.phase === "night") {
@@ -3322,6 +3330,7 @@ export class GameEngine {
           if (d < hd2) { hd2 = d; hx = zb.x; hz = zb.z; horror = "zombie"; }
         }
         if (horror && hd2 < CIV_PANIC_R * CIV_PANIC_R) {
+          c.panicT = 0.45; // 😱 refreshed while fleeing — drives the flail pose in render
           const dx = c.x - hx, dz = c.z - hz, dl = Math.hypot(dx, dz) || 1;
           // sprint for the nearest campfire if one is roughly on the run direction — fire = safety
           const fire = this.nearestBuildOf("campfire", c.x, c.z);
@@ -3441,7 +3450,32 @@ export class GameEngine {
             if (d < td) { td = d; tx = c.x; tz = c.z; victimCiv = c; }
           }
           if (td < ZOMBIE_HUNT_R * ZOMBIE_HUNT_R) {
-            stepNpc(zb, tx, tz, ZOMBIE_NIGHT_SPEED, dt, this.world);
+            if ((zb.sideT ?? 0) > 0) {
+              // 🧱 game-ai stuck fix: sidestep around the wall/corner first, then resume
+              zb.sideT = (zb.sideT ?? 0) - dt;
+              stepNpc(zb, zb.x + (zb.sideDx ?? 0) * 6, zb.z + (zb.sideDz ?? 0) * 6, ZOMBIE_NIGHT_SPEED, dt, this.world);
+            } else {
+              /* 🎯 pack surround (game-ai group movement): far out, each zombie
+               * aims for its own golden-angle ring slot around the prey so the
+               * pack encircles instead of all seeking one point; inside 4u the
+               * offset fades to 0 and it's a straight lunge so kills connect. */
+              const td1 = Math.sqrt(td);
+              const offR = Math.max(0, Math.min(1.7, (td1 - 4) * 0.4));
+              const oa = (zb.id % 97) * 2.399;
+              stepNpc(zb, tx + Math.cos(oa) * offR, tz + Math.sin(oa) * offR, ZOMBIE_NIGHT_SPEED, dt, this.world);
+              // every 0.5 s compare actual displacement vs intent — grinding = stuck
+              zb.chkT = (zb.chkT ?? 0) - dt;
+              if ((zb.chkT ?? 0) <= 0) {
+                const moved = Math.hypot(zb.x - (zb.chkX ?? zb.x), zb.z - (zb.chkZ ?? zb.z));
+                if (moved < 0.8 && Math.hypot(zb.vx, zb.vz) > 1.2) {
+                  const cdx = tx - zb.x, cdz = tz - zb.z, cl = Math.hypot(cdx, cdz) || 1;
+                  const s = Math.random() < 0.5 ? 1 : -1;
+                  zb.sideDx = (cdz / cl) * s; zb.sideDz = (-cdx / cl) * s;
+                  zb.sideT = 0.7;
+                }
+                zb.chkT = 0.5; zb.chkX = zb.x; zb.chkZ = zb.z;
+              }
+            }
             // caught a townsfolk — they fall, their purse scatters (respawned at dawn)
             if (victimCiv && zb.touchCd <= 0 && td < 1.5 * 1.5) {
               zb.touchCd = ZOMBIE_TOUCH_CD;
@@ -3464,7 +3498,21 @@ export class GameEngine {
       }
     }
 
-    /* --- animals (a morphed player smells like family — nobody runs away) --- */
+    // 🧟 game-ai separation steering — the pack fans out around prey instead of
+    // stacking into one overlapping blob all seeking the exact same point
+    if (night > 0.55) {
+      for (let i = 0; i < this.zombies.length; i++) {
+        const a = this.zombies[i]; if (a.dead) continue;
+        for (let j = i + 1; j < this.zombies.length; j++) {
+          const b = this.zombies[j]; if (b.dead) continue;
+          const dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz);
+          if (d > 1.35 || d < 1e-4) continue;
+          const push = (1.35 - d) * 3.2 * dt;
+          a.x -= (dx / d) * push; a.z -= (dz / d) * push;
+          b.x += (dx / d) * push; b.z += (dz / d) * push;
+        }
+      }
+    }
     for (const an of this.animals) {
       an.timer -= dt;
       const d2p = dist2(an.x, an.z, p.x, p.z);

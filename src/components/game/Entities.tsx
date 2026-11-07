@@ -392,7 +392,7 @@ export function Npcs({ engine }: { engine: GameEngine }) {
         dd = Math.atan2(Math.sin(dd), Math.cos(dd));
         v.mesh.rotation.y += dd * 0.15;
         const speed = Math.hypot(n.vx, n.vz);
-        poseCharacter(v.mesh, speed, t, { phase: n.phase, detained: n.mode === "detained" });
+        poseCharacter(v.mesh, speed, t, { phase: n.phase, detained: n.mode === "detained", panic: (n.panicT ?? 0) > 0 });
         if (v.bubble) v.bubble.visible = close && n.mode === "detained";
         if (v.tag) v.tag.visible = close && n.mode !== "detained" && !namesHidden;
       }
@@ -404,12 +404,26 @@ export function Npcs({ engine }: { engine: GameEngine }) {
 /* ------------------------------------------------------------------ */
 /* Zombies                                                             */
 /* ------------------------------------------------------------------ */
+/* 🎨 create-game-assets: variety within the family — three sickly tints, three
+ * hair styles, ages and deterministic height jitter so the graveyard pack reads
+ * as individuals instead of nine identical clones. */
+const ZOMBIE_VARIANTS = [
+  { skin: "#8fbf6f", shirt: "#7a8a5a", pants: "#4a5240", hair: "#3a4a2a", hairStyle: "bowl" as const, age: "young" as const },
+  { skin: "#a8c98a", shirt: "#6b7a4e", pants: "#3f4a38", hair: "#2a3a22", hairStyle: "spiky" as const, age: "old" as const },
+  { skin: "#7da860", shirt: "#8a8a6a", pants: "#54503a", hair: "#4a3a2a", hairStyle: "bald" as const, age: "old" as const },
+];
+
 export function Zombies({ engine }: { engine: GameEngine }) {
   const views = useMemo(
-    () => new Map(engine.zombies.map((z) => [z.id, buildCharacter(
-      { fac: "protester", outfit: "", skin: "#8fbf6f", shirt: "#7a8a5a", pants: "#4a5240", shoe: "#3a3a2a", hair: "#3a4a2a", hairStyle: "bowl", cap: false, capColor: "#3a4a2a", glasses: false, age: "young", girl: false },
-      { zombie: true },
-    )])),
+    () => new Map(engine.zombies.map((z, i) => {
+      const v = ZOMBIE_VARIANTS[i % ZOMBIE_VARIANTS.length];
+      const g = buildCharacter(
+        { fac: "protester", outfit: "", skin: v.skin, shirt: v.shirt, pants: v.pants, shoe: "#3a3a2a", hair: v.hair, hairStyle: v.hairStyle, cap: false, capColor: "#3a4a2a", glasses: false, age: v.age, girl: false },
+        { zombie: true },
+      );
+      g.scale.setScalar(0.92 + ((i * 37) % 5) * 0.04); // 0.92–1.08, deterministic per index
+      return [z.id, g] as const;
+    })),
     [engine],
   );
   useFrame((s) => {

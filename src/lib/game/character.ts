@@ -521,7 +521,7 @@ export function setHeldTool(character: THREE.Object3D, kind: HeldToolKind | null
 /* ------------------------------------------------------------------ */
 /* Posing — walk / run / jump / idle / sit + auto-blink & expressions  */
 /* ------------------------------------------------------------------ */
-export interface PoseOpts { phase?: number; airborne?: boolean; detained?: boolean; zombie?: boolean; vy?: number; flip?: number; squash?: number; faint?: number; /** 0..1 progress of an arm swing (axe chop / sword slash / beast claw) — 0 = none */ swing?: number }
+export interface PoseOpts { phase?: number; airborne?: boolean; detained?: boolean; zombie?: boolean; /** 😱 fleeing a horror — arms thrown up, flailing, glancing over the shoulder */ panic?: boolean; vy?: number; flip?: number; squash?: number; faint?: number; /** 0..1 progress of an arm swing (axe chop / sword slash / beast claw) — 0 = none */ swing?: number }
 
 /** All channels poseCharacter drives — computed as targets, blended, then applied. */
 interface PoseCh {
@@ -693,11 +693,31 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
   mixCh(_ground, _air, airB, _ground);        // ground ⇄ air crossfade
 
   if (o.zombie) {
-    _ground.a0x = -1.4 + Math.sin(t * 3 + phase) * 0.14;
-    _ground.a1x = -1.4 + Math.sin(t * 3 + phase + 1) * 0.14;
-    _ground.a0z = 0.1; _ground.a1z = -0.1;
-    _ground.brz = Math.sin(t * 2.4 + phase) * 0.07;
-    _ground.hrx = 0.12;
+    /* 🧟 shambling gait — game-feel character pass: hunched questing arms, one
+     * stiffer than the other; head lolls side to side; the bad leg drags at
+     * half swing so the lurch reads at any distance (rides the stride phase
+     * so the drag stays synced with the feet). */
+    _ground.a0x = -1.45 + Math.sin(t * 3 + phase) * 0.16;
+    _ground.a1x = -1.35 + Math.sin(t * 3 + phase + 1.1) * 0.16;
+    _ground.a0z = 0.14; _ground.a1z = -0.22;
+    _ground.brz = Math.sin(t * 2.4 + phase) * 0.09;
+    _ground.brx = Math.max(_ground.brx, 0.1) + 0.08; // hunched forward
+    _ground.hrx = 0.14;
+    _ground.hrz = Math.sin(t * 1.7 + phase) * 0.15;
+    _ground.l0 = _ground.l0 * 0.95;
+    _ground.l1 = _ground.l1 * 0.4 - 0.14; // the drag leg trails below the hip
+  }
+
+  // 😱 blind panic: arms thrown overhead flailing fast, head snapping back and
+  // forth, hunched sprint — reads instantly even in the player's periphery
+  if (o.panic && !o.detained) {
+    const fl = Math.sin(t * 12 + phase);
+    _ground.a0x = -2.5 + fl * 0.35;
+    _ground.a1x = -2.5 - fl * 0.35;
+    _ground.a0z = 0.55 + fl * 0.1; _ground.a1z = -0.55 - fl * 0.1;
+    _ground.hry = Math.sin(t * 5 + phase) * 0.5; // glances back over the shoulder
+    _ground.hrz = Math.sin(t * 10 + phase) * 0.06;
+    _ground.brx = Math.max(_ground.brx, 0.22);   // hunched sprint
   }
 
   // landing squash-and-stretch: peaks mid-way, eases back to 1
