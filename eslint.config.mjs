@@ -19,7 +19,11 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     // React rules
     "react-hooks/exhaustive-deps": "off",
     "react-hooks/purity": "off",
+    // Three.js objects (mesh.position.set, material refs…) are MUTATED every frame
+    // inside useFrame — that's the standard react-three-fiber pattern, not a bug.
     "react-hooks/immutability": "off",
+    // r3f collects refs via inline ref callbacks (rigs[i].prop.current = o) during
+    // commit — the rule can't tell that apart from render-time ref reads.
     "react-hooks/refs": "off",
     "react/no-unescaped-entities": "off",
     "react/display-name": "off",
@@ -46,7 +50,7 @@ const eslintConfig = [...nextCoreWebVitals, ...nextTypescript, {
     "no-useless-escape": "off",
   },
 }, {
-  ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "next-env.d.ts", "examples/**", "skills", "upload/**", "mini-services/**", "db/**"]
+  ignores: ["node_modules/**", ".next/**", "out/**", "build/**", "next-env.d.ts", "examples/**", "skills/**", "7night-extracted/**", "mini-services/**", "tests/**", "scripts/**", "download/**", "upload/**", "tool-results/**"]
 }];
 
 export default eslintConfig;

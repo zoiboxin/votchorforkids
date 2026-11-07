@@ -60,6 +60,11 @@ export function GameRoot() {
         setEngine(eng);
         (window as unknown as { __vc?: unknown }).__vc = { engine: eng, world: WORLD, terrainH: terrainHeight };
         (window as unknown as { __vcStore?: unknown }).__vcStore = useGame; // debug/test hook
+        // FIRST RUN init: the constructor spawns the town, but only reset() grants
+        // the driving license, scatters the votes, homes the vans & calms the cops.
+        // The reuse path (below) always reset — a fresh page never did, so E-to-
+        // enter-car silently failed ("need a license") until a second run. 🐛
+        eng.reset(freshLook);
       } else {
         eng.reset(freshLook);
         eng.setToast((msg, kind) => pushToast(msg, kind));

@@ -37,6 +37,12 @@
     ".next/dev/types/**/*.ts"
   ],
   "exclude": [
-    "node_modules"
+    "node_modules",
+    "7night-extracted",
+    "mini-services",
+    "examples",
+    "skills",
+    "tests",
+    "scripts"
   ]
 }

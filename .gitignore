@@ -52,11 +52,10 @@ prompt
 server.log
 # Skills directory
 /skills/
-# local artifacts — never publish
-tool-results/
+# local archives / runtime artifacts
 upload/
-db/custom.db
-db/*.db-journal
-
-# git push helper token (never commit)
-.github-token
+7night-extracted/
+db/*.db
+tool-results/
+dev.log
+server.log

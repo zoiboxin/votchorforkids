@@ -1,0 +1,14 @@
+{
+  "name": "7nights-relay",
+  "version": "1.0.0",
+  "description": "7Nights multiplayer relay — rooms, presence, state streams & gameplay events",
+  "scripts": {
+    "dev": "bun --hot index.ts"
+  },
+  "dependencies": {
+    "socket.io": "^4.8.3"
+  },
+  "devDependencies": {
+    "socket.io-client": "^4.8.4"
+  }
+}

@@ -182,6 +182,16 @@ export interface DriveState {
    *  front-wheel ANGLE the renderer shows) then follows THIS, not the raw input,
    *  so the tyres always match how hard the car is actually turning. */
   steer: number;
+  /** eased PEDAL (−1..1) — keyboard W/S is binary: the old code slammed full
+   *  CAR_ACCEL the frame the key landed and full CAR_BRAKE the frame S did. That
+   *  acceleration STEP is the launch/brake jerk. The pedal now glides to the key
+   *  (like the steering does), so thrust loads up smoothly and coasting fades in
+   *  instead of snapping. Analog touch joysticks just glide a tiny bit more. */
+  pedal: number;
+  /** last rolling direction (±1) with hysteresis — Math.sign(v) flips the turn
+   *  side the instant speed crosses zero (a brake-to-reverse nose twitch). We
+   *  keep the old side until the car is genuinely rolling the other way. */
+  lastDir: 1 | -1;
 }
 
 export interface Fx { type: "confetti"; x: number; y: number; z: number; hue: number }
@@ -361,6 +371,9 @@ export class GameEngine {
   hasLicense = false;
   /** the car currently being driven (null = on foot) */
   drive: DriveState | null = null;
+  /** chase-cam auto-follow LATCH (hysteresis, see stepDrive) — a single speed
+   *  threshold made the follow toggle on/off around it, tugging the camera. */
+  private followOn = false;
   /** hop-out cooldown — stops an E press from instantly re-entering the car */
   exitCd = 0;
   private carHome: { x: number; z: number; rot: number }[] = [];            // parked spots — reset() restores them
@@ -1144,7 +1157,7 @@ export class GameEngine {
       return;
     }
     const car = this.world.cars[ci];
-    this.drive = { ci, x: car.x, z: car.z, rot: car.rot, v: 0, c: car.c, t: car.t, vx: car.x, vz: car.z, vrot: car.rot, spin: 0, hitT: 0, steerVis: 0, steer: 0 };
+    this.drive = { ci, x: car.x, z: car.z, rot: car.rot, v: 0, c: car.c, t: car.t, vx: car.x, vz: car.z, vrot: car.rot, spin: 0, hitT: 0, steerVis: 0, steer: 0, pedal: 0, lastDir: 1 };
     const p = this.player;
     p.vx = p.vz = p.vy = 0;
     sfx.engine();
@@ -1228,9 +1241,14 @@ export class GameEngine {
     const d = this.drive!;
     const p = this.player;
     const ti = d.t % VEHICLE_TOP.length;
-    // throttle comes straight from the shared input (touch joystick works too);
-    // steering is EASED toward the raw key/joystick value — see DriveState.steer.
-    const f = this.input.f;
+    // pedal & steering both EASE toward the raw key/joystick value (see
+    // DriveState.pedal / DriveState.steer) — digital keys glide, never snap.
+    // EASED PEDAL — see DriveState.pedal. Pressing glides to the key in ~0.25 s
+    // (responsive but never a slam); releasing fades a touch faster into coast.
+    const pedalT = this.input.f;
+    d.pedal += (pedalT - d.pedal) * (1 - Math.exp(-dt * (pedalT !== 0 ? 10 : 16)));
+    if (pedalT === 0 && Math.abs(d.pedal) < 0.004) d.pedal = 0; // settle, don't creep
+    const f = d.pedal;
     const steerT = this.input.r;
     d.steer += (steerT - d.steer) * (1 - Math.exp(-dt * (steerT !== 0 ? 14 : 18)));
     if (steerT === 0 && Math.abs(d.steer) < 0.004) d.steer = 0; // settle, don't creep
@@ -1238,7 +1256,11 @@ export class GameEngine {
     if (f > 0.01) d.v += CAR_ACCEL * dt * f;
     else if (f < -0.01) d.v -= (d.v > 0.5 ? CAR_BRAKE : CAR_ACCEL * 0.55) * dt * -f;
     else d.v -= Math.sign(d.v) * Math.min(Math.abs(d.v), CAR_COAST * dt);
-    d.v = clamp(d.v, -CAR_REV_SPEED, maxF);
+    // Top speed is a SOFT ceiling now: when the ceiling drops (sonic wearing off)
+    // the old hard clamp cut up to ~8 u/s in a single frame — a yank. Over-speed
+    // bleeds off like drag instead; the clamp only hard-guards the reverse floor.
+    if (d.v > maxF) d.v = maxF + (d.v - maxF) * Math.exp(-dt * 4);
+    if (d.v < -CAR_REV_SPEED) d.v = -CAR_REV_SPEED;
     // Speed→grip curve: never dead at a standstill (half lock so you can always
     // wiggle out of a parking squeeze), full bite by ~5 u/s, then a gentle taper
     // toward top speed so a 26 u/s car doesn't twitch at the first touch of A/D.
@@ -1251,9 +1273,11 @@ export class GameEngine {
     // and boot hang deep inside houses, or pop clean through at speed.
     const slices = Math.max(1, Math.ceil((Math.abs(d.v) * dt) / 0.35));
     const sdt = dt / slices;
+    // rolling-direction hysteresis — see DriveState.lastDir
+    if (Math.abs(d.v) > 0.35) d.lastDir = d.v > 0 ? 1 : -1;
     let scrape = 0;
     for (let s = 0; s < slices; s++) {
-      d.rot -= d.steer * CAR_STEER * grip * sdt * Math.sign(d.v || 1);
+      d.rot -= d.steer * CAR_STEER * grip * sdt * d.lastDir;
       d.x += Math.sin(d.rot) * d.v * sdt;
       d.z += Math.cos(d.rot) * d.v * sdt;
       scrape += this.resolveCarBody(d);
@@ -1262,7 +1286,10 @@ export class GameEngine {
     // the old per-frame 0.82 multiplier braked ~4× harder on a 144 Hz screen)
     if (scrape > 0.004) { d.v *= Math.exp(-dt * 12); d.hitT = 0.35; }
     const rr = Math.hypot(d.x, d.z);
-    if (rr > WALL_RADIUS) { d.x *= WALL_RADIUS / rr; d.z *= WALL_RADIUS / rr; d.v = Math.min(d.v, 4); }
+    if (rr > WALL_RADIUS) {
+      d.x *= WALL_RADIUS / rr; d.z *= WALL_RADIUS / rr;
+      if (d.v > 4) d.v = 4 + (d.v - 4) * Math.exp(-dt * 6); // bleed to wall speed — don't snap 26→4 in one frame
+    }
     // ring-road traffic & police vans are solid — the vehicle bonks off, nobody gets hurt
     for (const t of this.traffic) {
       const tr = VEHICLE_AXLE_R[t.t % VEHICLE_AXLE_R.length] + VEHICLE_AXLE_R[ti] + 0.12;
@@ -1286,9 +1313,11 @@ export class GameEngine {
      * bump keeps the soft follow alive for a beat so push-outs read as squash,
      * not teleporting. */
     d.hitT = Math.max(0, d.hitT - dt);
-    const soft = d.hitT > 0;
-    const kp = 1 - Math.exp(-dt * (soft ? 26 : 90));
-    const kr = 1 - Math.exp(-dt * (soft ? 20 : 90));
+    // pose stiffness BLENDS back as the hit window drains (was binary: the frame
+    // the soft flag expired, easing jumped 26→90 and tugged the body)
+    const softW = Math.min(1, d.hitT / 0.15);
+    const kp = 1 - Math.exp(-dt * (90 - 64 * softW));
+    const kr = 1 - Math.exp(-dt * (90 - 70 * softW));
     const pvx = d.vx, pvz = d.vz;
     d.vx += (d.x - d.vx) * kp;
     d.vz += (d.z - d.vz) * kp;
@@ -1312,11 +1341,15 @@ export class GameEngine {
     // the auto-follow pauses for a beat after any mouse/touch look so the two
     // never fight over the camera — that tug-of-war read as jerky driving
     const mouseIdle = performance.now() - this.input.mouseAt > 650;
-    if (Math.abs(d.v) > 2.5 && mouseIdle) {
+    // engage/disengage LATCH: one 2.5 u/s threshold made the chase toggle on/off
+    // around it (slow roll-over → repeated camera tugs). On above 2.5, off below 1.7.
+    if (Math.abs(d.v) > 2.5) this.followOn = true;
+    else if (Math.abs(d.v) < 1.7) this.followOn = false;
+    if (this.followOn && mouseIdle) {
       const want = d.v < 0 ? d.rot : d.rot + Math.PI; // reversing: look the way the car backs
       let dd = want - this.input.yaw;
       dd = Math.atan2(Math.sin(dd), Math.cos(dd));
-      this.input.yaw += dd * Math.min(1, dt * 2.6);
+      this.input.yaw += dd * (1 - Math.exp(-dt * 2.6)); // exp ease — identical at any fps
       this.input.yaw = ((this.input.yaw + Math.PI) % TAU + TAU) % TAU - Math.PI;
     }
     if (mouseIdle) this.input.pitch += (0.34 - this.input.pitch) * Math.min(1, dt * 1.6);
