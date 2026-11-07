@@ -3,15 +3,13 @@
 import { useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
 import { Slider } from "@/components/ui/slider";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import {
-  Music, Volume2, Gauge, Gamepad2, ShieldAlert, Siren, Sunrise, HeartHandshake, Vote,
-  User, Pencil, BarChart3, History as HistoryIcon, Trash2, Trophy, Timer, Star, Shirt, Moon, MoonStar, Scale, Flame, Sparkles,
+  Music, Volume2, Gauge, Gamepad2, ShieldAlert, Siren, Sunrise, HeartHandshake,
+  BarChart3, History as HistoryIcon, Trash2, Trophy, Timer, Star, Moon, MoonStar, Scale, Flame, Sparkles,
 } from "lucide-react";
-import { AGE_STATS, HAIR_STYLES } from "@/lib/game/constants";
 import { useGame, type RunRecord } from "./store";
 import { RankCard } from "./RankCard";
 import { DailyCard } from "./DailyCard";
@@ -55,6 +53,17 @@ export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange:
               <b className="text-rose-200"> possesses one of the group</b>; at night they become a zombie beast and
               <b> hunt the others</b>. At dawn you inspect the bodies, follow the clues… and <b className="text-amber-200">accuse your suspect</b>.
               Survive all 7 nights — or be the last one standing — to win.
+            </p>
+          </section>
+
+          <section className="rounded-2xl border border-teal-300/25 bg-teal-400/5 p-3">
+            <div className="mb-1.5 flex items-center gap-2 font-black text-teal-300">🌐 Playing with friends</div>
+            <p className="text-sm text-white/85">
+              Hit <b className="text-teal-200">🌐 Multiplayer</b> on the home screen → <b>Host a night</b> and share the
+              4-letter code, or <b>join</b> a friend&apos;s room. Up to 8 real souls share one town: the host&apos;s clock
+              drives the week, everyone gathers &amp; builds together, loot &amp; barricades sync instantly, and a
+              player-beast&apos;s claws reach across the wire. Died? Your run ends — the night goes on, and the host
+              can restart the week for everyone.
             </p>
           </section>
 
@@ -179,148 +188,6 @@ function fmtClock(ms: number) {
 function fmtWhen(at: number) {
   const d = new Date(at);
   return `${d.toLocaleDateString(undefined, { month: "short", day: "numeric" })} · ${d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" })}`;
-}
-
-/* ----------------------------- Profile ----------------------------- */
-export function ProfileDialog({ open, onOpenChange }: { open: boolean; onOpenChange: (v: boolean) => void }) {
-  const playerName = useGame((s) => s.playerName);
-  const setName = useGame((s) => s.setName);
-  const look = useGame((s) => s.look);
-  const setScreen = useGame((s) => s.setScreen);
-  const resetStats = useGame((s) => s.resetStats);
-  const pushToast = useGame((s) => s.pushToast);
-  const runsPlayed = useGame((s) => s.runsPlayed);
-  const careerXp = useGame((s) => s.careerXp);
-  const dailyStreak = useGame((s) => s.daily.streak);
-  const [name, setLocalName] = useState(playerName);
-  const [confirmReset, setConfirmReset] = useState(false);
-  const [wasOpen, setWasOpen] = useState(false);
-
-  // reset local state whenever the dialog opens (adjust-during-render pattern)
-  if (open !== wasOpen) {
-    setWasOpen(open);
-    if (open) { setLocalName(playerName); setConfirmReset(false); }
-  }
-
-  const saveName = () => {
-    const n = name.trim().slice(0, 16);
-    if (!n || n === playerName) return;
-    setName(n);
-    sfx.pickup();
-    pushToast(`Nice to meet you, ${n}! 🎉`, "good");
-  };
-
-  const lookBits = [
-    look.girl ? "👧 Girl" : "👦 Boy",
-    AGE_STATS[look.age].label.split("—")[0].trim(),
-    HAIR_STYLES.find((h) => h.id === look.hairStyle)?.label ?? "",
-    look.cap ? "🧢 Cap" : "",
-    look.glasses ? "👓 Glasses" : "",
-  ].filter(Boolean);
-
-  return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] max-w-md overflow-y-auto rounded-3xl border-emerald-300/30 bg-slate-900/95 text-white">
-        <DialogHeader>
-          <DialogTitle className="flex items-center gap-2 text-2xl font-black text-yellow-300">
-            <User size={22} /> My profile
-          </DialogTitle>
-        </DialogHeader>
-
-        <RankCard />
-
-        <DailyCard />
-
-        <div className="space-y-4">
-          {/* name */}
-          <div>
-            <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-white/70">Hero name</div>
-            <div className="flex gap-2">
-              <Input
-                value={name}
-                onChange={(e) => setLocalName(e.target.value.slice(0, 16))}
-                maxLength={16}
-                aria-label="Hero name"
-                placeholder="e.g. Chintu"
-                className="border-white/25 bg-white/10 text-white placeholder:text-white/40"
-              />
-              <Button
-                size="sm" onClick={saveName} disabled={!name.trim() || name.trim() === playerName}
-                className="rounded-xl bg-gradient-to-r from-amber-400 to-yellow-300 font-black text-amber-950 disabled:opacity-50"
-              >
-                <Pencil size={14} className="mr-1" /> Save
-              </Button>
-            </div>
-          </div>
-
-          {/* look summary */}
-          <div className="rounded-2xl bg-white/5 p-3">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-white/70"><Shirt size={13} /> Current look</span>
-              <Button
-                size="sm" onClick={() => { sfx.click(); onOpenChange(false); setScreen("creator"); }}
-                className="h-7 rounded-full border-white/25 bg-white/10 px-3 text-xs font-black text-white hover:bg-white/20"
-              >
-                <Pencil size={12} className="mr-1" /> Edit hero
-              </Button>
-            </div>
-            <div className="flex flex-wrap gap-1.5">
-              {lookBits.map((b) => (
-                <span key={b} className="rounded-full border border-white/20 bg-black/30 px-2.5 py-0.5 text-xs font-bold text-white/85">{b}</span>
-              ))}
-            </div>
-          </div>
-
-          {/* mini stats strip */}
-          <div className="grid grid-cols-3 gap-2 text-center">
-            <MiniStat label="Runs" value={String(runsPlayed)} />
-            <MiniStat label="Career XP" value={careerXp.toLocaleString()} />
-            <MiniStat label="🔥 Streak" value={`${dailyStreak} day${dailyStreak === 1 ? "" : "s"}`} />
-          </div>
-
-          {/* danger zone */}
-          <div className="rounded-2xl border border-rose-400/30 bg-rose-500/10 p-3">
-            <div className="mb-2 text-xs font-black uppercase tracking-wide text-rose-300">Danger zone</div>
-            {!confirmReset ? (
-              <Button
-                variant="outline" onClick={() => setConfirmReset(true)}
-                className="w-full rounded-xl border-rose-300/40 bg-transparent font-black text-rose-200 hover:bg-rose-500/20"
-              >
-                <Trash2 size={14} className="mr-1" /> Reset stats & history
-              </Button>
-            ) : (
-              <div className="space-y-2">
-                <p className="text-xs font-bold text-rose-100">This wipes ALL runs, XP and rank progress on this device. Your hero look stays. Sure?</p>
-                <div className="flex gap-2">
-                  <Button
-                    onClick={() => { resetStats(); setConfirmReset(false); pushToast("Profile stats & history cleared.", "info"); }}
-                    className="flex-1 rounded-xl bg-rose-500 font-black text-white hover:bg-rose-400"
-                  >
-                    Yes, wipe it
-                  </Button>
-                  <Button
-                    variant="outline" onClick={() => setConfirmReset(false)}
-                    className="flex-1 rounded-xl border-white/25 bg-transparent font-black text-white hover:bg-white/10"
-                  >
-                    Keep it
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </DialogContent>
-    </Dialog>
-  );
-}
-
-function MiniStat({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl bg-white/5 px-2 py-2">
-      <div className="truncate text-sm font-black text-white">{value}</div>
-      <div className="text-[10px] font-bold uppercase tracking-wide text-white/55">{label}</div>
-    </div>
-  );
 }
 
 /* ----------------------------- Stats ----------------------------- */

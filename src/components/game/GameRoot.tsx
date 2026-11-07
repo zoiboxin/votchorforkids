@@ -8,10 +8,15 @@ import { terrainHeight } from "@/lib/game/worldgen";
 import { useGame } from "./store";
 import { sfx, startMusic, stopMusic, stopDrone } from "@/lib/game/audio";
 import { useGameInput, requestGameLock } from "./Scene";
+import { net } from "@/lib/game/net/client";
+import { attachNet, type NetHandle } from "@/lib/game/net/engineNet";
+import type { Appearance } from "@/lib/game/constants";
 import { Hud } from "./Hud";
 import { Creator } from "./Creator";
 import { Landing } from "./Landing";
+import { Profile } from "./Profile";
 import { VictoryModal } from "./VictoryModal";
+import { Multiplayer } from "./Multiplayer";
 
 const Scene = dynamic(() => import("./Scene").then((m) => m.Scene), {
   ssr: false,
@@ -31,7 +36,10 @@ export function GameRoot() {
   const pushToast = useGame((s) => s.pushToast);
   const [engine, setEngine] = useState<GameEngine | null>(null);
   const engineRef = useRef<GameEngine | null>(null);
+  const netRef = useRef<NetHandle | null>(null);
   const [runId, setRunId] = useState(0);
+  /** true while this run is a networked co-op session */
+  const mpRef = useRef(false);
 
   const startGame = useCallback(() => {
     useGame.getState().setScreen("connecting");
@@ -57,6 +65,32 @@ export function GameRoot() {
         eng.setToast((msg, kind) => pushToast(msg, kind));
       }
       eng.playerName = useGame.getState().playerName || "You"; // survivor name for the start toast
+
+      /* ---------- 🌐 wire the co-op relay if we're in a room ---------- */
+      if (mpRef.current && net.code && net.slot >= 0) {
+        netRef.current?.detach();
+        const me = net.lobby?.players.find((p) => p.sid === net.mySid);
+        netRef.current = attachNet({
+          engine: eng,
+          code: net.code,
+          slot: net.slot,
+          isHost: net.isHost,
+          name: useGame.getState().playerName || me?.name || "Survivor",
+          look: freshLook as Appearance,
+          onReset: () => {
+            // the host restarted the week — everyone rewinds together
+            useGame.getState().pushToast("👑 The host restarted the 7 nights — back to DAY 1!", "info");
+            if (engineRef.current) {
+              engineRef.current.reset(useGame.getState().look);
+              useGame.getState().setVictoryOpen(false);
+            }
+          },
+        });
+      } else {
+        netRef.current?.detach();
+        netRef.current = null;
+      }
+
       useGame.getState().setScreen("play");
       eng.start();
       // weld the mouse to the camera as the world appears — the helper retries
@@ -65,6 +99,17 @@ export function GameRoot() {
       requestGameLock();
     }, 650);
   }, [pushToast]);
+
+  /* ---------- 🌐 host presses START in the lobby → everyone boots a net run ---------- */
+  useEffect(() => {
+    useGame.getState().setMpStartRun(() => {
+      mpRef.current = true;
+      if (net.isHost) net.send({ t: "start" }); // guests auto-launch on this
+      net.send({ t: "hello" }); // a friendly wave that also verifies the wire
+      startGame();
+    });
+    return () => useGame.getState().setMpStartRun(null);
+  }, [startGame]);
 
   const backToMenu = useCallback(() => {
     stopMusic();
@@ -93,10 +138,19 @@ export function GameRoot() {
       }
     }
     useGame.getState().setPaused(false);
-    setScreen("landing");
+    // leaving a net run: drop the relay wiring but STAY in the lobby room
+    netRef.current?.detach();
+    netRef.current = null;
+    mpRef.current = false;
+    if (net.code) {
+      useGame.getState().setScreen("lobby");
+      useGame.getState().setMpOpen(true);
+    } else {
+      setScreen("landing");
+    }
   }, [setScreen]);
 
-  useGameInput(engineRef.current);
+  useGameInput(engine);
 
   // watch for the win OR the death → open the end screen once + save the record
   useEffect(() => {
@@ -119,6 +173,9 @@ export function GameRoot() {
     <div className="fixed inset-0 overflow-hidden bg-slate-950">
       {screen === "landing" && <Landing />}
 
+      {/* 👤 full-page profile hub (rank, daily tasks, hall of fame, account, features) */}
+      {screen === "profile" && <Profile />}
+
       {/* 7Nights: no side selection — everyone joins as a survivor (screen kept for legacy saves) */}
       {screen === "select" && <Creator onStart={startGame} />}
 
@@ -126,13 +183,20 @@ export function GameRoot() {
 
       {screen === "creator" && <Creator onStart={startGame} />}
 
+      {screen === "lobby" && <Multiplayer />}
+
       {(screen === "connecting" || screen === "play") && engine && (
         <>
           <Scene engine={engine} key={`scene-${runId}`} />
           <Hud engine={engine} onQuit={backToMenu} />
           <VictoryModal
             engine={engine}
-            onReplay={() => { setRunId((r) => r + 1); startGame(); }}
+            onReplay={() => {
+              // 🌐 the host's "Play again" rewinds the WHOLE room to day 1
+              if (mpRef.current && net.isHost) net.send({ t: "reset" });
+              setRunId((r) => r + 1);
+              startGame();
+            }}
             onMenu={backToMenu}
           />
         </>

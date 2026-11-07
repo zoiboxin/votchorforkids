@@ -25,6 +25,7 @@ import { clamp, mulberry32, range } from "./rng";
 import { addDynamicCircle, freeSpot, lineClear, refreshCarCircle, resolve, RING_R, ROADS, scatterSpots, spotNear, terrainHeight, PROTEST_CAMP, type CircleCollider, type World } from "./worldgen";
 import { nightFactor, newBody, stepBody, stepNpc, type Body } from "./sim";
 import { sfx, startDrone, stopDrone } from "./audio";
+import type { MpEvent } from "@/lib/game/net/client";
 
 const TAU = Math.PI * 2; // full circle — used to keep the camera yaw wrapped
 
@@ -127,6 +128,21 @@ export interface Crew {
 
 /** 💰 a dropped stash of money — purses of the fallen, zombie hoards… walk over it! */
 export interface LootPile { id: number; x: number; z: number; amt: number; label: string; bob: number }
+
+/** 🌐 a REAL player joining the 7 nights over the network (co-op soul).
+ *  Positions stream in over the wire @12 Hz (see lib/game/net) and are eased
+ *  into these fields — the sim treats them as prey for the pack & renders
+ *  them as full survivors. Each client is authoritative over its own soul:
+ *  damage crosses the wire as events, never as simulated HP here. */
+export interface RemotePlayer {
+  slot: number; name: string; look: Appearance;
+  x: number; z: number; y: number; vx: number; vz: number; face: number;
+  hp: number; alive: boolean;
+  beast: boolean; drive: boolean; sprint: boolean; air: boolean; attackT: number;
+  /** points reported by their client (HUD scoreboard) */
+  points: number; kills: number; money: number;
+  lastSeen: number;
+}
 export interface ToolSlot { kind: ToolKind; count: number }
 export interface ToolEnt { id: number; kind: ToolKind; x: number; z: number; active: boolean; respawn: number }
 export interface Build {
@@ -159,6 +175,13 @@ export interface DriveState {
    * car never reads as skating sideways. spin = wheel angle, steerVis = front wheels. */
   vx: number; vz: number; vrot: number;
   spin: number; hitT: number; steerVis: number;
+  /** eased PHYSICS steering (−1..1) — keyboard A/D is digital, and feeding the
+   *  raw ±1 straight into the heading snapped the body to full lock in one frame
+   *  (and back on release): a jerky zig-zag. The eased value glides to the key's
+   *  target (~80 ms) so the turn rate ramps like a real wheel. steerVis (the
+   *  front-wheel ANGLE the renderer shows) then follows THIS, not the raw input,
+   *  so the tyres always match how hard the car is actually turning. */
+  steer: number;
 }
 
 export interface Fx { type: "confetti"; x: number; y: number; z: number; hue: number }
@@ -246,6 +269,17 @@ export interface HudData {
   attackReady: boolean;
   /** last clue discovered by inspecting a body (null = none yet) */
   clue: string | null;
+  /* --- 🌐 multiplayer --- */
+  /** true while this run is a co-op session */
+  mp: boolean;
+  /** room code ("ABCD") when in a session */
+  mpCode: string;
+  /** true when we own the story clock (host crown) */
+  mpHost: boolean;
+  /** relay round-trip estimate (ms) */
+  mpPing: number;
+  /** the real souls in town — scoreboard & presence */
+  netPlayers: { slot: number; name: string; points: number; kills: number; money: number; hp: number; alive: boolean; beast: boolean; drive: boolean; self: boolean }[];
 }
 
 export type ToastFn = (msg: string, kind?: "info" | "good" | "bad") => void;
@@ -382,7 +416,7 @@ export class GameEngine {
   catchCd = 0;
   running = false;
   private nextId = 1;
-  private toast: ToastFn;
+  toast: ToastFn;
   private zone: Zone = "City";
   private hudT = 0;
   private hud: HudData;
@@ -431,6 +465,26 @@ export class GameEngine {
   /** original static-circle radii — reset() un-fells trees & un-smashes rocks with this */
   private circleR0: number[] = [];
   private heartT = 0;
+
+  /* ---------------- 🌐 multiplayer (co-op over the relay) ---------------- */
+  /** true while this engine is part of a network session */
+  mp = false;
+  /** host owns the story clock & the possession roster */
+  mpHost = false;
+  /** our slot in the room (0..7) */
+  mpSlot = -1;
+  mpCode = "";
+  mpPing = 0;
+  /** the other REAL souls — fed by the net glue (lib/game/net/engineNet.ts) */
+  remotes: RemotePlayer[] = [];
+  /** remote slots currently possessed this night (roster sync) */
+  mpBeastSlots: number[] = [];
+  /** scoreboard for remote souls (slot → last reported) */
+  netScores = new Map<number, { points: number; kills: number; money: number }>();
+  /** wired by the net glue: emit a gameplay event to the room */
+  netEmit: ((ev: MpEvent) => void) | null = null;
+  /** wired by the net glue: called at the end of every update() tick */
+  netTick: ((dt: number) => void) | null = null;
 
   constructor(world: World, look: Appearance, toast: ToastFn) {
     this.world = world;
@@ -980,6 +1034,10 @@ export class GameEngine {
     for (const te of this.toolEnts) { te.active = true; te.respawn = 0; }
     this.crew = [];
     this.spawnCrew();
+    // 🌐 net bookkeeping starts clean — the PEOPLE (remotes) stay across resets
+    this.mpBeastSlots = [];
+    this.netScores.clear();
+    for (const r of this.remotes) { r.beast = false; r.alive = true; r.hp = 100; }
     for (const zb of this.zombies) { zb.dead = false; zb.hp = ZOMBIE_HP; }
     stopDrone();
     this.hasLicense = true; // every survivor can drive in 7Nights — escape routes matter
@@ -1086,7 +1144,7 @@ export class GameEngine {
       return;
     }
     const car = this.world.cars[ci];
-    this.drive = { ci, x: car.x, z: car.z, rot: car.rot, v: 0, c: car.c, t: car.t, vx: car.x, vz: car.z, vrot: car.rot, spin: 0, hitT: 0, steerVis: 0 };
+    this.drive = { ci, x: car.x, z: car.z, rot: car.rot, v: 0, c: car.c, t: car.t, vx: car.x, vz: car.z, vrot: car.rot, spin: 0, hitT: 0, steerVis: 0, steer: 0 };
     const p = this.player;
     p.vx = p.vz = p.vy = 0;
     sfx.engine();
@@ -1170,16 +1228,23 @@ export class GameEngine {
     const d = this.drive!;
     const p = this.player;
     const ti = d.t % VEHICLE_TOP.length;
-    // throttle & steering come straight from the shared input (touch joystick works too)
+    // throttle comes straight from the shared input (touch joystick works too);
+    // steering is EASED toward the raw key/joystick value — see DriveState.steer.
     const f = this.input.f;
-    const steer = this.input.r;
+    const steerT = this.input.r;
+    d.steer += (steerT - d.steer) * (1 - Math.exp(-dt * (steerT !== 0 ? 14 : 18)));
+    if (steerT === 0 && Math.abs(d.steer) < 0.004) d.steer = 0; // settle, don't creep
     const maxF = VEHICLE_TOP[ti] * (this.activePower === "sonic" ? 1.3 : 1);
     if (f > 0.01) d.v += CAR_ACCEL * dt * f;
     else if (f < -0.01) d.v -= (d.v > 0.5 ? CAR_BRAKE : CAR_ACCEL * 0.55) * dt * -f;
     else d.v -= Math.sign(d.v) * Math.min(Math.abs(d.v), CAR_COAST * dt);
     d.v = clamp(d.v, -CAR_REV_SPEED, maxF);
-    // steering only bites while rolling (like a real vehicle) and flips while reversing
-    const grip = Math.min(1, Math.abs(d.v) / 9) * VEHICLE_STEER[ti];
+    // Speed→grip curve: never dead at a standstill (half lock so you can always
+    // wiggle out of a parking squeeze), full bite by ~5 u/s, then a gentle taper
+    // toward top speed so a 26 u/s car doesn't twitch at the first touch of A/D.
+    // Buses taper harder via their VEHICLE_STEER multiplier. Flips while reversing.
+    const sp = Math.abs(d.v);
+    const grip = (0.5 + 0.5 * Math.min(1, sp / 5)) * (1 - 0.28 * Math.min(1, sp / VEHICLE_TOP[ti])) * VEHICLE_STEER[ti];
     // integrate in small slices (a 26 u/s car covers 0.43/frame — slices make sure
     // it can never LEAP a thin wall in one step), then push the WHOLE body out of
     // buildings, trees and other cars: the old single centre probe let the nose
@@ -1188,12 +1253,14 @@ export class GameEngine {
     const sdt = dt / slices;
     let scrape = 0;
     for (let s = 0; s < slices; s++) {
-      d.rot -= steer * CAR_STEER * grip * sdt * Math.sign(d.v || 1);
+      d.rot -= d.steer * CAR_STEER * grip * sdt * Math.sign(d.v || 1);
       d.x += Math.sin(d.rot) * d.v * sdt;
       d.z += Math.cos(d.rot) * d.v * sdt;
       scrape += this.resolveCarBody(d);
     }
-    if (scrape > 0.004) { d.v *= 0.82; d.hitT = 0.35; } // cartoon scrape — walls eat speed
+    // cartoon scrape — walls eat speed (exp form: identical feel at 30 or 144 fps,
+    // the old per-frame 0.82 multiplier braked ~4× harder on a 144 Hz screen)
+    if (scrape > 0.004) { d.v *= Math.exp(-dt * 12); d.hitT = 0.35; }
     const rr = Math.hypot(d.x, d.z);
     if (rr > WALL_RADIUS) { d.x *= WALL_RADIUS / rr; d.z *= WALL_RADIUS / rr; d.v = Math.min(d.v, 4); }
     // ring-road traffic & police vans are solid — the vehicle bonks off, nobody gets hurt
@@ -1203,7 +1270,7 @@ export class GameEngine {
       if (td2 < tr * tr && td2 > 0.0001) {
         const td = Math.sqrt(td2);
         d.x = t.x + (tdx / td) * tr; d.z = t.z + (tdz / td) * tr;
-        d.v *= 0.75; d.hitT = 0.35;
+        d.v *= Math.exp(-dt * 17); d.hitT = 0.35; // dt-based: same bonk at any fps
       }
     }
     for (const van of this.vans) {
@@ -1211,7 +1278,7 @@ export class GameEngine {
       if (vd2 < 3.2 * 3.2 && vd2 > 0.0001) {
         const vd = Math.sqrt(vd2);
         d.x = van.x + (vdx / vd) * 3.2; d.z = van.z + (vdz / vd) * 3.2;
-        d.v *= 0.75; d.hitT = 0.35;
+        d.v *= Math.exp(-dt * 17); d.hitT = 0.35;
       }
     }
     /* --- smoothed visual pose: what the camera & renderer SEE ---
@@ -1230,9 +1297,11 @@ export class GameEngine {
     d.vrot += vdr * kr;
     // wheels roll by the distance the VISUAL body actually covered (±reverse)
     d.spin -= (Math.hypot(d.vx - pvx, d.vz - pvz) * Math.sign(d.v || 1)) / 0.46;
-    // front wheels visibly turn into the steer (and flip with reverse, like the body)
-    const wantSteer = -steer * Math.min(1, Math.abs(d.v) / 5) * 0.42 * Math.sign(d.v || 1);
-    d.steerVis += (wantSteer - d.steerVis) * Math.min(1, dt * 10);
+    // front wheels visibly turn into the EASED steer (they now match the real
+    // turn rate — before they led it on keyboard, teleporting to full lock) and
+    // flip with reverse, like the body. Exp easing: identical at any framerate.
+    const wantSteer = -d.steer * Math.min(1, Math.abs(d.v) / 5) * 0.42 * Math.sign(d.v || 1);
+    d.steerVis += (wantSteer - d.steerVis) * (1 - Math.exp(-dt * 10));
     this.syncCarColliders(d);
     // the driver rides inside — glue the body to the car so the camera, HUD and
     // every pickup (votes, snacks, gems, licenses) keep working off the player pos
@@ -1759,6 +1828,7 @@ export class GameEngine {
 
   /** Eat/use a pocketed item: restores ❤ health and/or ⚡ energy. */
   useItem(def: number) {
+    if (!this.running) return; // hotkeys 1-8 must not eat snacks while paused
     const idx = this.inv.findIndex((s) => s.def === def);
     if (idx < 0 || this.inv[idx].count <= 0) return;
     const d = ITEMS[def];
@@ -1965,13 +2035,16 @@ export class GameEngine {
     this.clock += (target - this.clock) * Math.min(1, dt * 2.4);
   }
 
-  /** Dusk: the spirit chooses its hosts — a random PACK of survivors, maybe YOU. */
+  /** Dusk: the spirit chooses its hosts — a random PACK of survivors, maybe YOU.
+   *  🌐 In multiplayer the host alone rolls the dice and broadcasts the roster;
+   *  guests receive it via `applyRoster` (no local dice — one spirit, one will). */
   private choosePossessed() {
+    if (this.mp && !this.mpHost) return; // guests: the host's roster event rules
     const aliveIdx = this.crew.map((c, i) => (c.alive ? i : -1)).filter((i) => i >= 0);
     const forcePlayer = PLAYER_NIGHTS.includes(this.nightNo);
     const anyCrew = aliveIdx.length > 0;
     // how many turn tonight — the pack grows as the week wears on
-    const want = Math.max(1, Math.min(beastsForNight(this.nightNo), aliveIdx.length + 1));
+    const want = Math.max(1, Math.min(beastsForNight(this.nightNo), aliveIdx.length + 1 + this.remotes.filter((r) => r.alive).length));
     // are YOU one of them?
     this.youPossessed = forcePlayer || (anyCrew && this.rnd() < POSSESS_PLAYER_CHANCE && want >= 2);
     // pick the crew hosts — shuffled take, never duplicates
@@ -1980,6 +2053,15 @@ export class GameEngine {
     const crewWanted = Math.max(0, Math.min(want - (this.youPossessed ? 1 : 0), pool.length));
     this.possessed = pool.slice(0, crewWanted);
     this.lastPossessed = [...this.possessed];
+    // 🌐 host: hand some of the pack to REAL players (never the host's own slot — youPossessed already covers it)
+    this.mpBeastSlots = [];
+    if (this.mp) {
+      const liveSlots = this.remotes.filter((r) => r.alive).map((r) => r.slot);
+      for (let i = liveSlots.length - 1; i > 0; i--) { const j = Math.floor(this.rnd() * (i + 1)); [liveSlots[i], liveSlots[j]] = [liveSlots[j], liveSlots[i]]; }
+      const slotsWanted = Math.max(0, Math.min(want - this.possessed.length - (this.youPossessed ? 1 : 0), liveSlots.length));
+      this.mpBeastSlots = liveSlots.slice(0, slotsWanted);
+      this.netEmit?.({ t: "roster", possessed: [...this.possessed], beastSlots: [...this.mpBeastSlots], nightNo: this.nightNo });
+    }
     sfx.howl();
     sfx.possess();
     const total = this.possessed.length + (this.youPossessed ? 1 : 0);
@@ -2000,6 +2082,8 @@ export class GameEngine {
       const c = this.crew[idx];
       if (c && c.alive) { c.mode = "possessed"; c.hp = HUNTER_HP; }
     }
+    // 🌐 remote souls in the pack — their own client tells THEM they're the beast
+    for (const r of this.remotes) r.beast = this.mpBeastSlots.includes(r.slot);
     if (!this.youPossessed) this.toast("🌑 Names vanish in the dark — watch CLOTHES, not name tags!", "info");
     if (this.youPossessed) {
       this.held = -1;
@@ -2020,6 +2104,8 @@ export class GameEngine {
     }
     this.possessed = [];
     this.youPossessed = false;
+    this.mpBeastSlots = [];
+    for (const r of this.remotes) r.beast = false;
     this.nightsSurvived = Math.min(NIGHTS_TOTAL, this.nightNo);
     if (!early) this.points += POINTS_NIGHT;
     // 🌤️ the living city refills: everyone the night took is replaced by fresh faces
@@ -2091,6 +2177,15 @@ export class GameEngine {
           const d = dist2(c.x, c.z, cv.x, cv.z);
           if (d < td) { td = d; tx = cv.x; tz = cv.z; victim = -1; victimCiv = cv; }
         }
+        // 🌐 real players are prey too — the pack SWOOPS on their avatars (the
+        // drama is shared; the actual HP hit lands from the hunter inside THEIR
+        // own client, so nobody takes double damage from mirrored packs)
+        let remoteVictim: RemotePlayer | null = null;
+        for (const r of this.remotes) {
+          if (!r.alive) continue;
+          const d = dist2(c.x, c.z, r.x, r.z);
+          if (d < td) { td = d; tx = r.x; tz = r.z; victim = -1; victimCiv = null; remoteVictim = r; }
+        }
         const fire = this.nearestBuildOf("campfire", c.x, c.z);
         if (fire && dist2(fire.x, fire.z, c.x, c.z) < CAMPFIRE_R * CAMPFIRE_R) {
           const dx = c.x - fire.x, dz = c.z - fire.z, dl = Math.hypot(dx, dz) || 1;
@@ -2118,6 +2213,12 @@ export class GameEngine {
             p.vx = (dx / dl) * 11; p.vz = (dz / dl) * 11; p.vy = 5; // knockback — escapes are possible
             sfx.scream();
             this.toast("🩸 A BEAST TORE INTO YOU! RUN!", "bad");
+          } else if (remoteVictim && td < 1.8 * 1.8) {
+            // 🌐 maul the REAL player's avatar — their own client bleeds for it
+            c.touchCd = HUNTER_TOUCH_CD;
+            c.attackAnimT = 0.45;
+            sfx.scream();
+            this.netEmit?.({ t: "dmg", target: remoteVictim.slot, amount: HUNTER_DMG });
           } else if (victim >= 0 && td < 1.7 * 1.7) {
             c.touchCd = HUNTER_TOUCH_CD;
             c.attackAnimT = 0.45;
@@ -2183,6 +2284,8 @@ export class GameEngine {
     const s = { x: x + range(this.rnd, -1, 1), z: z + range(this.rnd, -1, 1) };
     resolve(s, 0.4, this.world);
     this.loot.push({ id: this.nid(), x: s.x, z: s.z, amt: Math.round(amt), label, bob: Math.random() * 6 });
+    // 🌐 the same stash materializes in every co-op world
+    if (this.mp) this.netEmit?.({ t: "loot", x: s.x, z: s.z, amt: Math.round(amt), label });
   }
 
   /** 🧟 a townsfolk is caught by the dark — they fall, their purse drops,
@@ -2226,26 +2329,34 @@ export class GameEngine {
     }
     sfx.scream();
     this.fxQueue.push({ type: "confetti", x: c.x, y: 1.2, z: c.z, hue: 0.98 });
+    // 🌐 every client must see the same body & the same clue — the killer's client speaks
+    if (this.mp) {
+      this.netEmit?.({
+        t: "crewDeath", idx, clue: c.clue, slain,
+        loot: c.purse > 0 ? { x: c.deathX, z: c.deathZ, amt: c.purse, label: slain ? `${c.name}'s dropped pouch` : `${c.name}'s purse` } : undefined,
+      });
+    }
     const alive = this.crew.filter((x) => x.alive).length;
     if (slain) {
       const left = this.possessed.filter((i) => this.crew[i].alive).length;
       this.toast(left > 0 ? `🗡️ A beast is DOWN — that was ${c.name}! ${left} still prowl…` : `🗡️ The last beast is DOWN! That was ${c.name}…`, "good");
     }
     else this.toast(`💀 ${c.name} was slain by the beast! (${alive} strangers left)`, "bad");
-    if (alive === 0) {
+    // 🌐 real souls still breathing? Then nobody is the last survivor yet
+    if (alive === 0 && !this.mpOthersAlive()) {
       if (this.youPossessed && this.phase === "night") this.winGame("beast");
       else if (!this.youPossessed) this.winGame("solo");
     }
   }
 
   /** The player slew one of the possessed — the pack thins. Slay them ALL and
-   *  the spell breaks: dawn comes early. */
+   *  the spell breaks: dawn comes early. (🌐 unless a REAL beast still prowls) */
   private slayBeast(idx: number) {
     this.kills++;
     this.points += POINTS_KILL_BEAST;
     this.killCrew(idx, true);
     const packLeft = this.possessed.filter((i) => this.crew[i].alive).length;
-    if (this.phase === "night" && packLeft === 0 && !this.youPossessed) {
+    if (this.phase === "night" && packLeft === 0 && !this.youPossessed && this.mpBeastSlots.length === 0) {
       this.phase = "dawn";
       this.phaseT = PHASE_DAWN_S;
       this.endNight(true);
@@ -2262,6 +2373,8 @@ export class GameEngine {
     this.attackCd = ATTACK_CD;
     // 🩸 possessed player = the beast: claws tear the crew
     if (this.youPossessed && this.phase === "night") {
+      // 🌐 the claw crosses the wire — anyone within reach on THEIR screen bleeds
+      if (this.mp) this.netEmit?.({ t: "claw", x: p.x, z: p.z });
       let bi = -1, bd = 2.2 * 2.2;
       for (let i = 0; i < this.crew.length; i++) {
         const c = this.crew[i];
@@ -2425,6 +2538,15 @@ export class GameEngine {
   /** Build a barricade (B) or a campfire (V) a few units ahead of the camera. */
   placeBuild(kind: "barricade" | "campfire") {
     if (!this.running) return;
+    if (this.drive) {
+      // building from the driver's seat drops walls in the road ahead of the
+      // moving car — park first, same rule as Blink
+      if (this.driveMsgT <= 0) {
+        this.driveMsgT = 2.5;
+        this.toast("Park the car first — no building from the driver's seat!", "info");
+      }
+      return;
+    }
     if (this.youPossessed && this.phase === "night") {
       if (this.driveMsgT <= 0) { this.driveMsgT = 2; this.toast("The beast doesn't build. It HUNTS.", "info"); }
       return;
@@ -2464,6 +2586,8 @@ export class GameEngine {
     this.buildsMade++;
     this.points = Math.max(0, this.points + POINTS_BUILD);
     sfx.build();
+    // 🌐 co-op construction — everyone's world grows the same wall
+    if (this.mp) this.netEmit?.({ t: "build", kind, x: spot.x, z: spot.z, rot: Math.atan2(fx, fz) });
     this.toast(kind === "barricade"
       ? "🛡️ Barricade built — the beast will have to chew through it!"
       : "🔥 Campfire built — beasts & zombies keep away from the flames (and it mends you by day)!", "good");
@@ -2483,6 +2607,13 @@ export class GameEngine {
    *  wrong call kills an innocent. The town never forgives. */
   accuse() {
     if (!this.running) return;
+    if (this.drive) {
+      if (this.driveMsgT <= 0) {
+        this.driveMsgT = 2.5;
+        this.toast("Step out of the car to accuse someone face-to-face!", "info");
+      }
+      return;
+    }
     if (this.phase === "night" || this.phase === "dusk") { this.toast("Not now — SURVIVE the night first!", "info"); return; }
     const c = this.nearestCrewAlive(ACCUSE_RADIUS);
     if (!c) { this.toast("Stand next to a survivor to accuse them (R).", "info"); return; }
@@ -2511,7 +2642,11 @@ export class GameEngine {
       sfx.scream();
       this.toast(`😰 ${c.name} was INNOCENT… the mob flees in shame. (${POINTS_WRONG_ACCUSE})`, "bad");
     }
-    if (this.crew.every((x) => !x.alive)) this.winGame("solo");
+    // 🌐 the mob's verdict is public record — same body & clue everywhere
+    if (this.mp) {
+      this.netEmit?.({ t: "crewDeath", idx, clue: c.clue, slain: false, loot: c.purse > 0 ? { x: c.deathX, z: c.deathZ, amt: c.purse, label: `${c.name}'s purse` } : undefined });
+    }
+    if (this.crew.every((x) => !x.alive) && !this.mpOthersAlive()) this.winGame("solo");
   }
 
   /* ---------------- small helpers ---------------- */
@@ -2762,6 +2897,8 @@ export class GameEngine {
           this.money += MONEY_PER_PILE;
           this.points += POINTS_PICKUP;
           sfx.pickup();
+          // 🌐 someone else's world shouldn't still show this pile
+          if (this.mp) this.netEmit?.({ t: "pickup", kind: "vote", id: v.id });
           this.toast(`💰 +₹${MONEY_PER_PILE} — you have ₹${this.money}!`, "good");
         }
       }
@@ -2774,6 +2911,8 @@ export class GameEngine {
           this.points += POINTS_LOOT;
           sfx.pickup();
           this.fxQueue.push({ type: "confetti", x: l.x, y: 1.1, z: l.z, hue: 0.13 });
+          // 🌐 loot ids are per-world — the spot identifies it everywhere
+          if (this.mp) this.netEmit?.({ t: "pickup", kind: "loot", id: -1, x: l.x, z: l.z });
           this.toast(`💰 Looted ${l.label}: +₹${l.amt} (₹${this.money} total)!`, "good");
         }
       }
@@ -2816,6 +2955,7 @@ export class GameEngine {
         it.active = false; it.respawn = ITEM_RESPAWN_S;
         const n = this.inv.findIndex((s) => s.def === it.def) + 1;
         sfx.pickup();
+        if (this.mp) this.netEmit?.({ t: "pickup", kind: "item", id: it.id });
         this.toast(`${d.emoji} ${d.name} pocketed (x${slot.count}) — tap the bag or press ${n} to use!`, "good");
       }
     }
@@ -2831,6 +2971,7 @@ export class GameEngine {
         if (dist2(p.x, p.z, te.x, te.z) < TOOL_PICKUP_R * TOOL_PICKUP_R) {
           te.active = false;
           te.respawn = 45;
+          if (this.mp) this.netEmit?.({ t: "pickup", kind: "tool", id: te.id });
           this.addTool(te.kind, te.x, te.z);
         }
       }
@@ -2859,6 +3000,7 @@ export class GameEngine {
           if (this.powerPockets.length < POWER_CARRY) {
             pw.active = false;
             pw.respawn = POWER_RESPAWN_S;
+            if (this.mp) this.netEmit?.({ t: "pickup", kind: "power", id: pw.id });
             this.storePower(pw.def, pw.x, pw.z);
           } else if (this.powerFullT <= 0) {
             this.powerFullT = 6;
@@ -3213,6 +3355,8 @@ export class GameEngine {
     /* --- HUD snapshot --- */
     this.hudT += dt;
     if (this.hudT > 0.1) { this.hudT = 0; this.hud = this.buildHud(); }
+    // 🌐 net glue: publish our survivor stream, sync the story clock, tick scores
+    if (this.netTick) this.netTick(dt);
   }
 
   private buildHud(): HudData {
@@ -3306,10 +3450,166 @@ export class GameEngine {
       crew: this.crew.map((c) => ({ name: c.name, color: c.color, alive: c.alive, mode: c.mode })),
       attackReady: this.attackCd <= 0,
       clue: this.lastClue,
+      /* --- 🌐 multiplayer --- */
+      mp: this.mp,
+      mpCode: this.mpCode,
+      mpHost: this.mpHost,
+      mpPing: this.mpPing,
+      netPlayers: [
+        ...(this.mp
+          ? [{
+              slot: this.mpSlot, name: this.playerName + (this.youPossessed && this.phase === "night" ? " 🐾" : ""),
+              points: this.points, kills: this.kills, money: this.money,
+              hp: Math.round(this.hp), alive: !this.lost, beast: this.youPossessed && this.phase === "night",
+              drive: !!this.drive, self: true,
+            }]
+          : []),
+        ...this.remotes.map((r) => ({
+          slot: r.slot, name: r.name + (r.beast ? " 🐾" : ""),
+          points: r.points, kills: r.kills, money: r.money,
+          hp: Math.round(r.hp), alive: r.alive, beast: r.beast, drive: r.drive, self: false,
+        })),
+      ].sort((a, b) => b.points - a.points),
     };
   }
 
   getHud(): HudData { return this.hud; }
+
+  /* ================= 🌐 multiplayer API (driven by lib/game/net/engineNet.ts) ================= */
+
+  /** Any REAL teammate still breathing? (blocks solo-win / all-beast wins) */
+  mpOthersAlive(): boolean {
+    return this.mp && this.remotes.some((r) => r.alive);
+  }
+
+  /** Apply the host's possession roster: which crew bots turn + which REAL
+   *  players are beasts. Also seeds lastPossessed so accusations stay fair. */
+  applyRoster(possessed: number[], beastSlots: number[]) {
+    if (this.mpHost) return; // the host already knows
+    this.possessed = [...possessed];
+    this.lastPossessed = [...possessed];
+    this.mpBeastSlots = [...beastSlots];
+    this.youPossessed = beastSlots.includes(this.mpSlot);
+    for (const r of this.remotes) r.beast = beastSlots.includes(r.slot);
+    if (this.phase === "night") {
+      // roster arrived after our local beginNight — transform right now
+      for (const idx of this.possessed) {
+        const c = this.crew[idx];
+        if (c && c.alive) { c.mode = "possessed"; c.hp = HUNTER_HP; }
+      }
+      if (this.youPossessed) this.held = -1;
+    }
+  }
+
+  /** A teammate's client reported a crew death (or accusation) — mirror it here.
+   *  Their world already dropped the purse; the event carries an identical one. */
+  netCrewDeath(idx: number, clue: string, slain: boolean, loot?: { x: number; z: number; amt: number; label: string }) {
+    const c = this.crew[idx];
+    if (!c || !c.alive) return;
+    c.alive = false;
+    c.hp = 0;
+    c.mode = "dead";
+    c.deathX = c.x; c.deathZ = c.z;
+    c.clue = clue;
+    c.inspected = false;
+    if (loot) this.loot.push({ id: this.nid(), x: loot.x, z: loot.z, amt: Math.round(loot.amt), label: loot.label, bob: Math.random() * 6 });
+    this.fxQueue.push({ type: "confetti", x: c.x, y: 1.2, z: c.z, hue: 0.98 });
+    sfx.scream();
+    const left = this.possessed.filter((i) => this.crew[i].alive).length;
+    if (slain) this.toast(left > 0 ? `🗡️ A beast is DOWN — that was ${c.name}! (${left} still prowl…)` : `🗡️ The last beast is DOWN! That was ${c.name}…`, "good");
+    else this.toast(`💀 ${c.name} was slain by the beast!`, "bad");
+    if (this.crew.every((x) => !x.alive) && !this.mpOthersAlive()) {
+      if (this.youPossessed && this.phase === "night") this.winGame("beast");
+      else if (!this.youPossessed) this.winGame("solo");
+    }
+  }
+
+  /** A teammate's beast clawed near (x,z) — if WE are within reach, we bleed. */
+  netClawHit(x: number, z: number) {
+    if (!this.running || this.lost || this.won) return;
+    if (this.detainedT > 0 || this.drive || this.invulnT > 0) return;
+    if (this.youPossessed && this.phase === "night") return; // beasts don't claw beasts
+    const d2 = dist2(this.player.x, this.player.z, x, z);
+    if (d2 > 2.4 * 2.4) return;
+    this.hp = Math.max(0, this.hp - CLAW_DMG);
+    this.hurtT = HURT_FLASH_S;
+    const dx = this.player.x - x, dz = this.player.z - z, dl = Math.hypot(dx, dz) || 1;
+    this.player.vx = (dx / dl) * 10; this.player.vz = (dz / dl) * 10; this.player.vy = 4.5;
+    sfx.scream();
+    this.toast("🩸 A BEAST TORE INTO YOU! RUN!", "bad");
+  }
+
+  /** Wire damage addressed to US (a mirrored pack caught our avatar elsewhere). */
+  netTakeDmg(amount: number) {
+    if (!this.running || this.lost || this.won) return;
+    if (this.detainedT > 0 || this.drive || this.invulnT > 0) return;
+    this.hp = Math.max(0, this.hp - amount);
+    this.hurtT = HURT_FLASH_S;
+    sfx.scream();
+    this.toast("🩸 A BEAST TORE INTO YOU! RUN!", "bad");
+  }
+
+  /** A teammate built something — grow the same wall in our world. */
+  netBuild(kind: "barricade" | "campfire", x: number, z: number, rot: number) {
+    if (this.builds.some((b) => dist2(b.x, b.z, x, z) < 1.2 * 1.2)) return;
+    const ci = addDynamicCircle(this.world, { x, z, r: kind === "barricade" ? 1.15 : 0.6 });
+    this.builds.push({ id: this.nid(), kind, x, z, rot, hp: kind === "barricade" ? BARRICADE_HP : 999, ci });
+    sfx.build();
+  }
+
+  /** A teammate picked something up — vanish it from our world too (best effort). */
+  netPickup(kind: "item" | "loot" | "tool" | "power" | "vote", id: number, x?: number, z?: number) {
+    if (kind === "item") {
+      const it = this.items.find((i) => i.id === id);
+      if (it && it.active) { it.active = false; it.respawn = ITEM_RESPAWN_S; }
+    } else if (kind === "vote") {
+      const v = this.votes.find((i) => i.id === id);
+      if (v && v.state === "world") { v.state = "delivered"; v.respawnT = CASH_RESPAWN_S; }
+    } else if (kind === "tool") {
+      const te = this.toolEnts.find((i) => i.id === id);
+      if (te && te.active) { te.active = false; te.respawn = 45; }
+    } else if (kind === "power") {
+      const pw = this.powers.find((i) => i.id === id);
+      if (pw && pw.active) { pw.active = false; pw.respawn = POWER_RESPAWN_S; }
+    } else if (kind === "loot" && x !== undefined && z !== undefined) {
+      // loot ids differ per world — match by position
+      let best = -1, bd = 3 * 3;
+      for (let i = 0; i < this.loot.length; i++) {
+        const d = dist2(this.loot[i].x, this.loot[i].z, x, z);
+        if (d < bd) { bd = d; best = i; }
+      }
+      if (best >= 0) this.loot.splice(best, 1);
+    }
+  }
+
+  /** Sync the remote roster from the lobby (adds joiners, removes leavers). */
+  syncRemotes(players: { sid: string; slot: number; name: string; look: Appearance | null }[], mySid: string) {
+    for (const p of players) {
+      if (p.sid === mySid || p.slot === this.mpSlot) continue;
+      let r = this.remotes.find((x) => x.slot === p.slot);
+      if (!r) {
+        r = {
+          slot: p.slot, name: p.name, look: p.look ?? this.look,
+          x: SPAWN.x, z: SPAWN.z, y: 0, vx: 0, vz: 0, face: 0,
+          hp: 100, alive: true, beast: false, drive: false, sprint: false, air: false,
+          attackT: 0, points: 0, kills: 0, money: 0, lastSeen: 0,
+        };
+        this.remotes.push(r);
+        this.toast(`🌐 ${p.name} joined the 7 nights!`, "good");
+      } else {
+        r.name = p.name;
+        if (p.look) r.look = p.look;
+      }
+    }
+    // drop souls that left the room
+    const slots = new Set(players.map((p) => p.slot));
+    for (let i = this.remotes.length - 1; i >= 0; i--) {
+      if (!slots.has(this.remotes[i].slot)) {
+        this.toast(`🌐 ${this.remotes[i].name} left the town…`, "info");
+        this.remotes.splice(i, 1);
+      }
+    }
+  }
 
   /** camera target helpers */
   camTarget(): { x: number; y: number; z: number } {

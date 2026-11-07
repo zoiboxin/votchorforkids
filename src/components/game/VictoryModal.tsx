@@ -7,7 +7,7 @@ import { RotateCcw, Home, Trophy, Timer, MoonStar, Swords, Scale, XCircle, Hamme
 import type { GameEngine } from "@/lib/game/engine";
 import { NIGHTS_TOTAL } from "@/lib/game/constants";
 import { useGame } from "./store";
-import { Leaderboard } from "./Creator";
+import { Leaderboard } from "./Leaderboard";
 
 export function VictoryModal({ engine, onReplay, onMenu }: { engine: GameEngine; onReplay: () => void; onMenu: () => void }) {
   const open = useGame((s) => s.victoryOpen);

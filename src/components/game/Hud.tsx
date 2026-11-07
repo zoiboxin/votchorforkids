@@ -15,6 +15,9 @@ import { setMuted as setAudioMuted, sfx, stopMusic, startMusic } from "@/lib/gam
 import { Button } from "@/components/ui/button";
 import { HowToPlay, SettingsDialog } from "./Panels";
 
+/** 🌐 per-slot colors for the co-op souls (matches the lobby chips) */
+const SOUL_COLORS = ["#f472b6", "#fbbf24", "#4ade80", "#2dd4bf", "#f87171", "#c084fc", "#fb923c", "#a3e635"];
+
 /* ------- shared world-map canvas painting (156px minimap + 440px big map) ------- */
 function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine, night: boolean) {
   const K = S / 1150;         // world units → px (fits the bigger 545-radius wall)
@@ -114,6 +117,22 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
       c.moveTo(dx - 2.2 * U, dz - 2.2 * U); c.lineTo(dx + 2.2 * U, dz + 2.2 * U);
       c.moveTo(dx + 2.2 * U, dz - 2.2 * U); c.lineTo(dx - 2.2 * U, dz + 2.2 * U);
       c.stroke();
+    }
+  }
+  // 🌐 co-op souls — cyan-ringed dots so real players pop against the bots
+  if (engine.mp) {
+    for (const r of engine.remotes) {
+      const col = SOUL_COLORS[r.slot % SOUL_COLORS.length];
+      if (r.alive) {
+        dot(r.x, r.z, 2.9 * U, col, 1);
+        c.strokeStyle = "#67e8f9";
+        c.lineWidth = Math.max(1, 0.9 * U);
+        c.beginPath();
+        c.arc(S / 2 + r.x * K, S / 2 + r.z * K, 3.6 * U, 0, Math.PI * 2);
+        c.stroke();
+      } else {
+        dot(r.x, r.z, 2.2 * U, "#7f1d1d", 0.8);
+      }
     }
   }
   // dropped arms (yellow specks) + builds — brown barricade square / ember campfire
@@ -1219,9 +1238,40 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       {/* top-right: minimap + score */}
       <div className="absolute right-3 top-3 flex flex-col items-end gap-2">
         <Minimap engine={engine} onOpen={() => setBigMap(true)} />
+        {hud.mp && (
+          <div className="pointer-events-auto flex flex-col items-end gap-1.5">
+            {/* LIVE room chip */}
+            <div className="flex items-center gap-1.5 rounded-full border border-emerald-400/40 bg-emerald-500/20 px-2.5 py-1 text-[11px] font-black text-emerald-200 backdrop-blur-md" title="Co-op session — players share this night">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
+                <span className="relative inline-flex h-2 w-2 rounded-full bg-emerald-400" />
+              </span>
+              LIVE · {hud.mpCode}{hud.mpHost ? " 👑" : ""} · {hud.mpPing}ms
+            </div>
+            {/* souls scoreboard */}
+            <div className="max-w-44 overflow-hidden rounded-xl border border-cyan-300/20 bg-black/40 backdrop-blur-md">
+              <div className="border-b border-white/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-wider text-cyan-200">
+                🌐 Souls in town ({hud.netPlayers.length})
+              </div>
+              <div className="max-h-36 overflow-y-auto px-1.5 py-1">
+                {hud.netPlayers.map((p) => (
+                  <div key={p.slot} className={`flex items-center gap-1.5 rounded-lg px-1.5 py-0.5 text-[11px] ${p.self ? "bg-white/10" : ""}`}>
+                    <span className={`grid h-4 w-4 shrink-0 place-items-center rounded-full text-[8px] font-black text-slate-950 ${p.alive ? "" : "opacity-40 grayscale"}`} style={{ backgroundColor: SOUL_COLORS[p.slot % SOUL_COLORS.length] }}>
+                      {p.slot + 1}
+                    </span>
+                    <span className={`flex-1 truncate font-bold ${p.alive ? "text-slate-100" : "text-slate-500 line-through"}`}>
+                      {p.name}{p.beast ? " 🐾" : ""}
+                    </span>
+                    <span className="tabular-nums text-yellow-300">{p.points}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
         <div className="pointer-events-auto flex items-center gap-2">
           <motion.div
-            key={hud.points}
+            key={`pts-${hud.points}`}
             initial={{ scale: 1.3 }}
             animate={{ scale: 1 }}
             transition={{ type: "spring", stiffness: 400, damping: 16 }}
@@ -1231,7 +1281,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
             {hud.points} pts
           </motion.div>
           <motion.div
-            key={hud.money}
+            key={`money-${hud.money}`}
             initial={{ scale: 1.35 }}
             animate={{ scale: 1 }}
             transition={{ type: "spring", stiffness: 420, damping: 15 }}

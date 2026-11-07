@@ -5,7 +5,7 @@ import { defaultAppearance, normalizeAppearance, type Appearance } from "@/lib/g
 import type { HudData } from "@/lib/game/engine";
 import { DAILY_TASK_POOL, ALL_DONE_BONUS, applyRunToDaily, ensureDaily, freshDaily, type DailyState, type DailyRunFacts } from "@/lib/game/daily";
 
-export type Screen = "landing" | "select" | "outfit" | "creator" | "connecting" | "play";
+export type Screen = "landing" | "profile" | "select" | "outfit" | "creator" | "connecting" | "lobby" | "play";
 export interface Toast { msg: string; kind: "info" | "good" | "bad"; id: number }
 
 export interface ScoreRow { id: string; name: string; points: number; votes: number; rescues: number; won: boolean; timeMs: number; createdAt: string }
@@ -141,6 +141,24 @@ export interface GameStore {
   lifeCaught: number;
   playtimeMs: number;
   history: RunRecord[];
+  /** 🌐 multiplayer lobby state — the Multiplayer panel renders from this */
+  mp: {
+    open: boolean;
+    busy: boolean;
+    error: string;
+    code: string;
+    isHost: boolean;
+    ping: number;
+    slot: number;
+    players: { sid: string; slot: number; name: string; ready: boolean; self: boolean }[];
+    chat: { name: string; msg: string; at: number }[];
+  };
+  setMpOpen: (v: boolean) => void;
+  patchMp: (p: Partial<GameStore["mp"]>) => void;
+  pushMpChat: (name: string, msg: string) => void;
+  /** 🌐 registered by GameRoot: flips everyone into "connecting" and boots a net run */
+  mpStartRun: (() => void) | null;
+  setMpStartRun: (fn: (() => void) | null) => void;
   setLook: (p: Partial<Appearance>) => void;
   applyLook: (a: Appearance) => void;
   setName: (n: string) => void;
@@ -183,9 +201,15 @@ export const emptyHud: HudData = {
   nightNo: 1, phase: "day", phaseLeft: 0, wood: 0, rock: 0,
   tools: [], held: -1, youPossessed: false, beastCount: 0, crewAlive: 7, crew: [],
   attackReady: true, clue: null,
+  mp: false, mpCode: "", mpHost: false, mpPing: 0, netPlayers: [],
 };
 
 let toastId = 1;
+
+const freshMp = () => ({
+  open: false, busy: false, error: "", code: "", isHost: false, ping: 0, slot: 0,
+  players: [] as GameStore["mp"]["players"], chat: [] as GameStore["mp"]["chat"],
+});
 
 /** Hydrate persisted player identity once at module load (client only). */
 const saved = typeof window !== "undefined"
@@ -201,6 +225,7 @@ export const useGame = create<GameStore>()((set, get) => ({
   muted: false,
   touch: false,
   scores: [],
+  mp: freshMp(),
   showHelp: true,
   victoryOpen: false,
   paused: false,
@@ -249,6 +274,11 @@ export const useGame = create<GameStore>()((set, get) => ({
   },
   setScreen: (s) => set({ screen: s }),
   setHud: (h) => set({ hud: h }),
+  setMpOpen: (v) => set((s) => ({ mp: { ...s.mp, open: v } })),
+  patchMp: (p) => set((s) => ({ mp: { ...s.mp, ...p } })),
+  pushMpChat: (name, msg) => set((s) => ({ mp: { ...s.mp, chat: [...s.mp.chat.slice(-30), { name, msg, at: Date.now() }] } })),
+  mpStartRun: null,
+  setMpStartRun: (fn) => set({ mpStartRun: fn }),
   pushToast: (msg, kind = "info") => set((s) => ({ toasts: [...s.toasts.slice(-3), { msg, kind, id: toastId++ }] })),
   dropToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
   setMuted: (m) => set({ muted: m }),

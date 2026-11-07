@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
@@ -1105,3 +1105,109 @@ export function Stumps({ engine }: { engine: GameEngine }) {
   });
   return <>{pool.map((g, i) => <primitive object={g} key={i} />)}</>;
 }
+
+/* ------------------------------------------------------------------ */
+/* 🌐 multiplayer — the OTHER real souls, streamed over the wire        */
+/* ------------------------------------------------------------------ */
+export function RemotesView({ engine }: { engine: GameEngine }) {
+  // rigs are rebuilt whenever the roster's slot signature changes (someone joined/left)
+  const [slotKey, setSlotKey] = useState("");
+  const slots = engine.remotes.map((r) => r.slot).join(",");
+  if (slots !== slotKey) setSlotKey(slots); // React-sanctioned render-phase derived state
+  const rigs = useMemo(
+    () => engine.remotes.map((r, i) => ({ slot: r.slot, ...buildRemoteRig(r.look, r.name, i) })),
+    // engine.remotes is mutated in place; slotKey is the real identity of the roster
+    [slotKey, engine.remotes],
+  );
+
+  useFrame((s) => {
+    const t = s.clock.elapsedTime;
+    const cam = s.camera.position;
+    engine.remotes.forEach((r) => {
+      const v = rigs.find((x) => x.slot === r.slot);
+      if (!v) return;
+      const beast = r.beast && r.alive;
+      const body = beast ? v.beast : v.mesh;
+      const idle = beast ? v.mesh : v.beast;
+      if (idle.visible) idle.visible = false;
+      const dx = r.x - cam.x, dz = r.z - cam.z;
+      const d2 = dx * dx + dz * dz;
+      if (!r.alive) {
+        // their light went out — lie where their stream last placed them
+        body.visible = d2 < CULL_SQ;
+        if (body.visible) {
+          body.position.set(r.x, 0.34, r.z);
+          body.rotation.set(-Math.PI / 2.1, r.face, 0);
+        }
+        if (v.tag) v.tag.visible = false;
+        if (v.btag) v.btag.visible = false;
+        return;
+      }
+      if (d2 > CULL_SQ) {
+        body.visible = false;
+        return;
+      }
+      body.visible = true;
+      // y follows their stream (jump arcs) + terrain in the hills
+      const gy = terrainHeight(r.x, r.z);
+      body.position.set(r.x, gy + r.y, r.z);
+      let dd = r.face - body.rotation.y;
+      dd = Math.atan2(Math.sin(dd), Math.cos(dd));
+      body.rotation.y += dd * 0.22;
+      body.rotation.x = 0;
+      body.rotation.z = 0;
+      const speed = Math.hypot(r.vx, r.vz);
+      poseCharacter(body, speed, t, {
+        phase: r.slot * 1.7,
+        airborne: r.air,
+        zombie: beast,
+        swing: r.attackT > 0 ? 1 - r.attackT / 0.35 : 0,
+      });
+      if (r.attackT > 0) r.attackT = Math.max(0, r.attackT - 1 / 60);
+      const close = d2 < DETAIL_SQ;
+      const rig = body.userData.rig as { lids: THREE.Object3D[]; brows: THREE.Object3D[] } | undefined;
+      if (rig) {
+        for (const l of rig.lids) l.visible = close;
+        for (const b of rig.brows) b.visible = close;
+      }
+      const tag = beast ? v.btag : v.tag;
+      const otherTag = beast ? v.tag : v.btag;
+      if (otherTag) otherTag.visible = false;
+      // 🌐 real players KEEP their names at night — the mystery is about the crew bots
+      if (tag) tag.visible = close;
+    });
+  });
+
+  return (
+    <>
+      {rigs.flatMap((v, i) => [
+        <primitive object={v.mesh} key={`rm${i}`} />,
+        <primitive object={v.beast} key={`rmb${i}`} visible={false} />,
+      ])}
+    </>
+  );
+}
+
+/** One remote soul's rig: their look + name tag + possessed variant + a live ring. */
+function buildRemoteRig(look: Appearance, name: string, colorIdx: number) {
+  const mesh = buildCharacter(look);
+  const tag = nameTag(name, hexToTagBg(SLOT_TAG_COLORS[colorIdx % SLOT_TAG_COLORS.length]));
+  tag.position.y = 2.95;
+  mesh.add(tag);
+  // possessed body — swapped in while their beast flag is up
+  const beast = buildCharacter({ ...CREW_ZOMBIE_LOOK, girl: look.girl }, { zombie: true });
+  const btag = nameTag(`${name}?!`, "rgba(120,10,10,0.9)");
+  btag.position.y = 2.95;
+  beast.add(btag);
+  beast.visible = false;
+  // a live voice ring so you can tell REAL players from bots at a glance
+  const ringMat = new THREE.MeshBasicMaterial({ color: "#67e8f9", transparent: true, opacity: 0.55, depthWrite: false, side: THREE.DoubleSide });
+  const ring = new THREE.Mesh(new THREE.RingGeometry(0.52, 0.66, 26), ringMat);
+  ring.rotation.x = -Math.PI / 2;
+  ring.position.y = 0.06;
+  mesh.add(ring);
+  beast.add(ring.clone());
+  return { mesh, beast, tag, btag };
+}
+
+const SLOT_TAG_COLORS = ["#f472b6", "#fbbf24", "#4ade80", "#2dd4bf", "#f87171", "#c084fc", "#fb923c", "#a3e635"];

@@ -5,14 +5,13 @@ import { Canvas, useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { motion } from "framer-motion";
 import {
-  Play, Trophy, Sparkles, ArrowLeft, Dices, HelpCircle, Check, Hand, Moon,
+  Play, Sparkles, ArrowLeft, Dices, HelpCircle, Check, Hand, Moon,
   Gauge, ChevronsUp, HeartPulse, Shirt, Palette, Baby,
 } from "lucide-react";
 // (icons kept minimal — Hand = drag hint)
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
-import { ScrollArea } from "@/components/ui/scroll-area";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   AGE_STATS, CAP_COLORS, HAIR_COLORS, HAIR_STYLES, NAME_SUGGESTIONS, OUTFIT_PRESETS, PANTS_COLORS, SHIRT_COLORS, SHOE_COLORS, SKIN_TONES,
@@ -21,7 +20,8 @@ import {
 } from "@/lib/game/constants";
 import { buildCharacter, poseCharacter } from "@/lib/game/character";
 import { sfx } from "@/lib/game/audio";
-import { useGame, type ScoreRow } from "./store";
+import { useGame } from "./store";
+import { Leaderboard } from "./Leaderboard";
 import { HowToPlay } from "./Panels";
 
 /* ============================ 3D preview ============================ */
@@ -127,16 +127,18 @@ function PreviewAnim({
 
 function Swatches({ colors, value, onChange, label }: { colors: string[]; value: string; onChange: (c: string) => void; label: string }) {
   return (
-    <div>
-      <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-white/70">{label}</div>
-      <div className="flex flex-wrap gap-2">
+    <div className="flex items-center gap-3">
+      <div className="w-14 shrink-0 text-[11px] font-black uppercase tracking-wide text-white/70">{label}</div>
+      <div className="flex flex-1 flex-wrap gap-1.5">
         {colors.map((c) => (
           <button
             key={c}
             aria-label={`${label} ${c}`}
             aria-pressed={value === c}
             onClick={() => { sfx.click(); onChange(c); }}
-            className={`h-8 w-8 rounded-full border-2 transition-transform hover:scale-110 ${value === c ? "scale-110 border-white ring-2 ring-yellow-300" : "border-white/30"}`}
+            className={`h-7 w-7 rounded-full border-2 transition-transform hover:scale-110 ${
+              value === c ? "scale-110 border-white shadow-[0_0_10px_rgba(253,224,71,0.45)] ring-2 ring-yellow-300" : "border-white/25"
+            }`}
             style={{ background: c }}
           />
         ))}
@@ -197,17 +199,18 @@ function AgeCards({ value, onChange }: { value: AgeGroup; onChange: (a: AgeGroup
 
 function StylePicker({ value, onChange }: { value: HairStyle; onChange: (h: HairStyle) => void }) {
   return (
-    <div>
-      <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-white/70">Hair style</div>
-      <div className="grid grid-cols-3 gap-2">
+    <div className="flex items-start gap-3">
+      <div className="w-14 shrink-0 pt-1.5 text-[11px] font-black uppercase tracking-wide text-white/70">Hair</div>
+      <div className="grid flex-1 grid-cols-5 gap-1.5">
         {HAIR_STYLES.map((h) => (
           <button
             key={h.id}
             aria-pressed={value === h.id}
             onClick={() => { sfx.click(); onChange(h.id); }}
-            className={`rounded-full border-2 px-2 py-1.5 text-xs font-bold transition-all hover:scale-105 ${
+            className={`truncate rounded-full border-2 px-1 py-1 text-[11px] font-bold transition-all hover:scale-105 ${
               value === h.id ? "border-yellow-300 bg-yellow-300/20 text-white shadow-[0_0_10px_rgba(253,224,71,0.3)]" : "border-white/20 bg-white/5 text-white/75"
             }`}
+            title={h.label}
           >
             {h.label}
           </button>
@@ -221,19 +224,28 @@ function matchesPreset(look: Appearance, p: OutfitPreset) {
   return (Object.entries(p.look) as [keyof Appearance, unknown][]).every(([k, v]) => look[k] === v);
 }
 
-function PresetRow({ look, onPick }: { look: Appearance; onPick: (p: Partial<Appearance>) => void }) {
+/* Quick outfits — professional one-row swipe strip with outfit color dots */
+function PresetStrip({ look, onPick }: { look: Appearance; onPick: (p: Partial<Appearance>) => void }) {
   return (
     <div>
-      <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-white/70">Quick outfits</div>
-      <div className="grid grid-cols-3 gap-2">
+      <div className="mb-1.5 flex items-center justify-between">
+        <span className="text-[11px] font-black uppercase tracking-wide text-white/70">Quick outfits</span>
+        <span className="text-[10px] font-bold text-white/40">scroll →</span>
+      </div>
+      <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
         {OUTFIT_PRESETS.map((p) => {
           const on = matchesPreset(look, p);
+          const dots: { k: string; c?: string }[] = [
+            { k: "shirt", c: p.look.shirt },
+            { k: "pants", c: p.look.pants },
+            { k: "shoe", c: p.look.shoe },
+          ];
           return (
             <button
               key={p.id}
               onClick={() => { sfx.click(); onPick(p.look); }}
               aria-pressed={on}
-              className={`relative rounded-xl border-2 p-1.5 text-center transition-all hover:scale-105 ${
+              className={`relative w-[86px] shrink-0 rounded-xl border-2 p-1.5 text-center transition-all hover:scale-105 ${
                 on
                   ? "border-yellow-300 bg-yellow-300/15 shadow-[0_0_12px_rgba(253,224,71,0.35)]"
                   : "border-white/15 bg-white/5 hover:border-yellow-300/50"
@@ -244,43 +256,17 @@ function PresetRow({ look, onPick }: { look: Appearance; onPick: (p: Partial<App
                   <Check size={11} strokeWidth={3.5} />
                 </span>
               )}
-              <div className="text-lg">{p.emoji}</div>
-              <div className="text-[10px] font-bold leading-tight text-white/85">{p.label}</div>
+              <div className="text-xl leading-none transition-transform group-hover:scale-110">{p.emoji}</div>
+              <div className="mt-1 truncate text-[10px] font-bold leading-tight text-white/85">{p.label}</div>
+              <div className="mt-1 flex items-center justify-center gap-1">
+                {dots.map(({ k, c }) => (
+                  c ? <span key={k} aria-hidden className="h-2 w-2 rounded-full border border-black/40 ring-1 ring-white/20" style={{ background: c }} /> : null
+                ))}
+              </div>
             </button>
           );
         })}
       </div>
-    </div>
-  );
-}
-
-/* ============================ leaderboard ============================ */
-export function Leaderboard({ compact = false }: { compact?: boolean }) {
-  const scores = useGame((s) => s.scores);
-  return (
-    <div className="rounded-2xl border border-white/15 bg-black/40 p-4 backdrop-blur-md">
-      <div className="mb-2 flex items-center gap-2 font-black text-yellow-300">
-        <Trophy size={16} /> Hall of Fame
-      </div>
-      {scores.length === 0 ? (
-        <div className="text-sm text-white/60">No runs yet — be the first legend!</div>
-      ) : (
-        <ScrollArea className={compact ? "h-36" : "h-48"}>
-          <div className="pr-2">
-            {scores.map((s: ScoreRow, i: number) => (
-              <div key={s.id} className="flex items-center gap-2 border-b border-white/10 py-1.5 text-sm text-white last:border-0">
-                <span className={`w-6 text-center font-black ${i === 0 ? "text-yellow-300" : i === 1 ? "text-slate-200" : i === 2 ? "text-amber-600" : "text-white/50"}`}>
-                  {i + 1}
-                </span>
-                <span className="flex-1 truncate font-bold">{s.name}</span>
-                {s.won && <span title="Survived the 7 nights">🏆</span>}
-                <span className="rounded-full bg-white/10 px-2 py-0.5 text-xs font-black text-yellow-200">{s.points}</span>
-                <span className="w-10 text-right text-xs text-white/50">{Math.round(s.timeMs / 1000)}s</span>
-              </div>
-            ))}
-          </div>
-        </ScrollArea>
-      )}
     </div>
   );
 }
@@ -310,12 +296,6 @@ export function Creator({ onStart }: { onStart: () => void }) {
     if (s.look.fac === "police" || s.look.outfit) s.setLook({ fac: "protester", outfit: "" });
   }, []);
 
-  // random name chips (client only — safe, this tree is client-rendered)
-  const nameChips = useMemo(
-    () => [...NAME_SUGGESTIONS].sort(() => Math.random() - 0.5).slice(0, 6),
-    [],
-  );
-
   const update = (p: Partial<Appearance>) => setLook(p);
   const ready = playerName.trim().length > 0;
 
@@ -329,7 +309,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
   ].filter(Boolean);
 
   return (
-    <div className="relative min-h-screen w-full overflow-y-auto">
+    <div className="relative h-screen w-full overflow-y-auto overflow-x-hidden">
       {/* backdrop (fixed so it covers the viewport while the page scrolls) */}
       <div
         aria-hidden
@@ -357,9 +337,9 @@ export function Creator({ onStart }: { onStart: () => void }) {
           </div>
         </header>
 
-        <div className="grid flex-1 items-start gap-5 lg:grid-cols-[minmax(0,1fr)_460px]">
+        <div className="grid flex-1 grid-cols-1 items-start gap-5 lg:grid-cols-[minmax(0,1fr)_460px]">
           {/* -------- left: preview + leaderboard -------- */}
-          <div className="flex flex-col items-center gap-4">
+          <div className="flex w-full min-w-0 flex-col items-center gap-4">
             <div className="relative h-[340px] w-full max-w-[430px] overflow-hidden rounded-3xl border-2 border-white/20 bg-gradient-to-b from-sky-400/55 via-emerald-400/35 to-emerald-700/45 shadow-2xl sm:h-[400px] lg:w-full">
               <Preview look={look} />
               <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/50 to-transparent" />
@@ -397,7 +377,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
           </div>
 
           {/* -------- right: customization -------- */}
-          <div className="flex w-full flex-col gap-4">
+          <div className="flex w-full min-w-0 flex-col gap-4">
             <div className="rounded-2xl border border-white/15 bg-black/40 p-4 backdrop-blur-md">
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2 font-black text-white">
@@ -421,10 +401,10 @@ export function Creator({ onStart }: { onStart: () => void }) {
                 </div>
               </div>
 
-              {/* name — always visible */}
-              <div className="mb-4">
+              {/* name — compact single row */}
+              <div className="mb-3.5">
                 <div className="mb-1.5 flex items-center justify-between">
-                  <span className="text-xs font-bold uppercase tracking-wide text-white/70">Survivor name</span>
+                  <span className="text-[11px] font-black uppercase tracking-wide text-white/70">Survivor name</span>
                   <button
                     aria-label="Suggest a random name"
                     onClick={() => {
@@ -441,27 +421,11 @@ export function Creator({ onStart }: { onStart: () => void }) {
                 <Input
                   value={playerName}
                   onChange={(e) => setName(e.target.value.slice(0, 16))}
-                  placeholder="e.g. Chintu"
+                  placeholder="Type your name"
                   aria-label="Survivor name"
-                  className="border-white/25 bg-white/10 text-white placeholder:text-white/40"
+                  className="h-9 border-white/25 bg-white/10 text-white placeholder:text-white/40"
                   maxLength={16}
                 />
-                <div className="mt-2 flex flex-wrap gap-1.5">
-                  {nameChips.map((n) => (
-                    <button
-                      key={n}
-                      onClick={() => { sfx.click(); setName(n); }}
-                      aria-pressed={playerName === n}
-                      className={`rounded-full border px-2.5 py-0.5 text-[11px] font-bold transition-all hover:scale-105 ${
-                        playerName === n
-                          ? "border-yellow-300 bg-yellow-300/20 text-yellow-100"
-                          : "border-white/20 bg-white/5 text-white/70 hover:border-white/40"
-                      }`}
-                    >
-                      {n}
-                    </button>
-                  ))}
-                </div>
               </div>
 
               {/* tabbed customization */}
@@ -491,17 +455,32 @@ export function Creator({ onStart }: { onStart: () => void }) {
                 <TabsContent value="outfit" className="mt-3 outline-none">
                   <motion.div
                     initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}
-                    className="space-y-4"
+                    className="space-y-3.5"
                   >
-                    {/* quick outfits — pick a starter look, then fine-tune below */}
-                    <PresetRow look={look} onPick={update} />
+                    {/* quick outfits — one-row swipe strip, then fine-tune below */}
+                    <PresetStrip look={look} onPick={update} />
                     <Swatches label="Skin" colors={SKIN_TONES} value={look.skin} onChange={(skin) => update({ skin })} />
                     <Swatches label="Shirt" colors={SHIRT_COLORS} value={look.shirt} onChange={(shirt) => update({ shirt })} />
                     <Swatches label="Pants" colors={PANTS_COLORS} value={look.pants} onChange={(pants) => update({ pants })} />
                     <Swatches label="Shoes" colors={SHOE_COLORS} value={look.shoe} onChange={(shoe) => update({ shoe })} />
+                    {/* character — game-style segmented control */}
                     <div className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-2">
-                      <span className="text-sm font-bold text-white/85">👧 Girl character</span>
-                      <Switch checked={look.girl} onCheckedChange={(girl) => { sfx.click(); update({ girl, hairStyle: girl && look.hairStyle === "bald" ? "ponytail" : look.hairStyle }); }} />
+                      <span className="text-sm font-bold text-white/85">Character</span>
+                      <div className="flex rounded-full bg-black/40 p-0.5 ring-1 ring-white/15">
+                        {([false, true] as const).map((g) => (
+                          <button
+                            key={String(g)}
+                            aria-pressed={look.girl === g}
+                            aria-label={g ? "Girl character" : "Boy character"}
+                            onClick={() => { sfx.click(); update({ girl: g, hairStyle: g && look.hairStyle === "bald" ? "ponytail" : look.hairStyle }); }}
+                            className={`rounded-full px-3.5 py-1 text-xs font-black transition-all ${
+                              look.girl === g ? "bg-yellow-300 text-amber-950 shadow" : "text-white/70 hover:text-white"
+                            }`}
+                          >
+                            {g ? "👧 Girl" : "👦 Boy"}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </motion.div>
                 </TabsContent>
@@ -510,7 +489,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
                 <TabsContent value="style" className="mt-3 outline-none">
                   <motion.div
                     initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}
-                    className="space-y-4"
+                    className="space-y-3.5"
                   >
                     <Swatches label="Hair color" colors={HAIR_COLORS} value={look.hair} onChange={(hair) => update({ hair })} />
                     <StylePicker value={look.hairStyle} onChange={(hairStyle) => update({ hairStyle })} />
@@ -532,7 +511,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
                 <TabsContent value="body" className="mt-3 outline-none">
                   <motion.div
                     initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}
-                    className="space-y-4"
+                    className="space-y-3.5"
                   >
                     <AgeCards value={look.age} onChange={(age) => update({ age })} />
                     <div className="rounded-xl bg-white/5 p-3 text-xs leading-relaxed text-white/70">
