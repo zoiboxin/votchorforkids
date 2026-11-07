@@ -254,8 +254,14 @@ export function Scene({ engine }: { engine: GameEngine }) {
       }}
     >
       {low && <AdaptiveDpr />}
-      <WorldView clockRef={clockRef} engine={engine} />
+      {/* SIM FIRST — R3F runs useFrame callbacks in mount order. GameLoop (which
+        * advances the engine and aims the camera) used to mount AFTER WorldView,
+        * so the driven car was STAMPED from LAST frame's pose while the camera
+        * aimed at THIS frame's: a permanent ~1 u mesh-vs-camera offset at speed
+        * that swung the car around the screen through every turn — the residual
+        * "jerky driving" feel. The sim now ticks before any view reads it. */}
       <GameLoop engine={engine} clockRef={clockRef} />
+      <WorldView clockRef={clockRef} engine={engine} />
       <Npcs engine={engine} />
       <CrewRig engine={engine} />
       <RemotesView engine={engine} />
