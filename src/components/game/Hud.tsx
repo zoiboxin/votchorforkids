@@ -602,7 +602,7 @@ function PowerSlots({ engine }: { engine: GameEngine }) {
    Mouse angle + per-slice hover both drive the selection (up = slot 0, clockwise);
    click / G / Enter arms the hovered slice, Esc or backdrop click cancels.      */
 interface WheelApi { confirm: () => void; cancel: () => void }
-type WheelSlice = { type: "hands" | "tool" | "power"; emoji: string; name: string; tip: string; color: string; index: number; badge?: string };
+type WheelSlice = { type: "hands" | "tool" | "power" | "license"; emoji: string; name: string; tip: string; color: string; index: number; badge?: string };
 
 function ToolWheel({ engine, apiRef }: { engine: GameEngine; apiRef: { current: WheelApi | null } }) {
   const tools = useGame((s) => s.hud.tools);
@@ -610,6 +610,7 @@ function ToolWheel({ engine, apiRef }: { engine: GameEngine; apiRef: { current: 
   const held = useGame((s) => s.hud.held);
   const phase = useGame((s) => s.hud.phase);
   const youPossessed = useGame((s) => s.hud.youPossessed);
+  const hasLicense = useGame((s) => s.hud.hasLicense);
   const setWheelOpen = useGame((s) => s.setWheelOpen);
   const [hover, setHover] = useState(-1);
   const circleRef = useRef<HTMLDivElement>(null);
@@ -624,6 +625,9 @@ function ToolWheel({ engine, apiRef }: { engine: GameEngine; apiRef: { current: 
           return { type: "tool" as const, emoji: d?.emoji ?? "🪓", name: d?.name ?? t.kind, tip: d?.tip ?? "", color: d?.color ?? "#e2e8f0", index: i, badge: `×${t.count}` };
         }),
         ...pockets.map((p, i) => ({ type: "power" as const, emoji: p.emoji, name: p.name, tip: `${p.tip} — SINGLE USE`, color: p.color, index: i, badge: "1×" })),
+        // 🪪 the driving license rides in the wheel too — pick it to show the card
+        // (and hand it to the survivor next to you)
+        ...(hasLicense ? [{ type: "license" as const, emoji: "🪪", name: "License", tip: "Show your driving license · 🤝 give it to a survivor", color: "#38bdf8", index: -1 }] : []),
       ];
   const N = Math.max(1, slices.length);
 
@@ -633,6 +637,7 @@ function ToolWheel({ engine, apiRef }: { engine: GameEngine; apiRef: { current: 
     if (s && !beast) {
       if (s.type === "tool") engine.setHeld(s.index);
       else if (s.type === "power") engine.usePowerAt(s.index);
+      else if (s.type === "license") useGame.getState().setLicenseOpen(true); // 🪪 show the card
       else engine.setHeld(-1);
     }
     close(); // beast claws / empty picks just close
@@ -722,6 +727,91 @@ function ToolWheel({ engine, apiRef }: { engine: GameEngine; apiRef: { current: 
         )}
         <div className="pointer-events-none absolute left-1/2 top-[88%] -translate-x-1/2 whitespace-nowrap rounded-full bg-black/65 px-2 py-0.5 text-[8.5px] font-black uppercase tracking-widest text-white/55">
           click / G pick · Esc close
+        </div>
+      </motion.div>
+    </motion.div>
+  );
+}
+
+/* ------------- 🪪 driving-license card — shown from the G wheel. -------------
+   A proper ID card: photo, name, issuing night, and a 🤝 GIVE button that
+   hands the license to the closest survivor (real teammate over the wire in
+   multiplayer, else the fellow survivor standing next to you).             */
+function LicenseCard({ engine }: { engine: GameEngine }) {
+  const hasLicense = useGame((s) => s.hud.hasLicense);
+  const name = useGame((s) => s.playerName);
+  const look = useGame((s) => s.look);
+  const nightNo = useGame((s) => s.hud.nightNo);
+  const side = useGame((s) => s.hud.side);
+  const close = () => { useGame.getState().setLicenseOpen(false); requestGameLock(); };
+
+  const licNo = `7N-${(name || "SURV").slice(0, 4).toUpperCase().padEnd(4, "X")}-${String(1000 + ((look.shirt.length * 731 + look.hair.length * 97) % 9000))}`;
+
+  return (
+    <motion.div
+      data-ui
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0, transition: { duration: 0.12 } }}
+      role="dialog"
+      aria-label="Driving license card"
+      onClick={close}
+      className="pointer-events-auto absolute inset-0 z-40 flex items-center justify-center"
+      style={{ background: "radial-gradient(circle at 50% 50%, rgba(2,6,23,0.42) 0%, rgba(2,6,23,0.72) 55%, rgba(2,6,23,0.9) 100%)" }}
+    >
+      <motion.div
+        initial={{ scale: 0.8, y: 26, rotate: -3 }} animate={{ scale: 1, y: 0, rotate: 0 }}
+        transition={{ type: "spring", stiffness: 300, damping: 22 }}
+        onClick={(e) => e.stopPropagation()}
+        className="relative w-[min(92vw,400px)] overflow-hidden rounded-2xl border border-sky-300/30 shadow-[0_0_60px_rgba(56,189,248,0.25)]"
+        style={{ background: "linear-gradient(135deg,#0c2d4d 0%,#123a5e 55%,#0b2440 100%)" }}
+      >
+        {/* hologram strip */}
+        <div className="h-1.5 w-full" style={{ background: "linear-gradient(90deg,#38bdf8,#a5f3fc,#38bdf8)" }} />
+        <div className="flex items-start justify-between px-5 pt-4">
+          <div>
+            <div className="text-[9px] font-black uppercase tracking-[0.22em] text-sky-300/90">Republic of 7Nights</div>
+            <div className="text-lg font-black leading-tight text-white">DRIVING LICENSE</div>
+          </div>
+          <span className="text-3xl" aria-hidden>🪪</span>
+        </div>
+        <div className="flex gap-4 px-5 py-4">
+          {/* photo box — the survivor's own colours */}
+          <div className="flex h-24 w-[4.5rem] shrink-0 flex-col items-center justify-center rounded-xl border-2 border-sky-200/40 bg-gradient-to-b from-sky-400/25 to-sky-900/40">
+            <span className="text-3xl" aria-hidden>🧍</span>
+            <div className="mt-1 h-2.5 w-8 rounded-sm" style={{ background: look.shirt }} />
+            <div className="mt-0.5 h-2 w-8 rounded-sm" style={{ background: look.pants }} />
+          </div>
+          <div className="min-w-0 flex-1 space-y-1">
+            <div className="truncate text-base font-black text-white">{name || "Nameless Survivor"}</div>
+            <div className="text-[10px] font-bold uppercase tracking-wider text-sky-200/80">{side === "police" ? "On-duty officer" : "Survivor · civilian class"}</div>
+            <div className="flex flex-wrap gap-1 pt-1 text-[9px] font-black">
+              <span className="rounded-md bg-emerald-400/20 px-1.5 py-0.5 text-emerald-200 ring-1 ring-emerald-300/40">✓ ALL CARS UNLOCKED</span>
+              <span className="rounded-md bg-sky-400/15 px-1.5 py-0.5 text-sky-200 ring-1 ring-sky-300/30">ISSUED NIGHT {nightNo}</span>
+            </div>
+            <div className="pt-1 font-mono text-[10px] tracking-widest text-sky-100/60">{licNo}</div>
+          </div>
+        </div>
+        <div className="border-t border-white/10 bg-black/25 px-5 py-3">
+          {hasLicense ? (
+            <div className="flex items-center justify-between gap-3">
+              <div className="min-w-0 text-[10px] font-semibold leading-snug text-white/60">
+                Stand next to a survivor and hand the license over — they can drive, you hunt a fresh 🪪 card.
+              </div>
+              <Button
+                size="sm"
+                onClick={() => { engine.giveLicense(); close(); }}
+                className="shrink-0 rounded-xl bg-sky-400 text-xs font-black text-sky-950 hover:bg-sky-300"
+              >
+                🤝 Give
+              </Button>
+            </div>
+          ) : (
+            <div className="text-center text-[10px] font-black uppercase tracking-wider text-amber-300">
+              🤝 Handed away — hunt a glowing 🪪 card to drive again
+            </div>
+          )}
+          <div className="pointer-events-none mt-2 text-center text-[8.5px] font-black uppercase tracking-widest text-white/35">
+            Esc / G close
+          </div>
         </div>
       </motion.div>
     </motion.div>
@@ -971,6 +1061,8 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
   const bigMap = useGame((s) => s.bigMapOpen);
   const setBigMap = useGame((s) => s.setBigMapOpen);
   const wheelOpen = useGame((s) => s.wheelOpen);
+  const licenseOpen = useGame((s) => s.licenseOpen);
+  const setLicenseOpen = useGame((s) => s.setLicenseOpen);
   // the 🎯 wheel publishes its confirm/cancel so the global keydown can G-confirm / Esc-cancel
   const wheelApi = useRef<WheelApi | null>(null);
   // after the cursor gets hard-bound, remind the player how to free it (4 s)
@@ -985,6 +1077,10 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
   useEffect(() => {
     if (bigMap && document.pointerLockElement) document.exitPointerLock();
   }, [bigMap]);
+  // 🪪 the license card is a modal too — free the cursor while it's up
+  useEffect(() => {
+    if (licenseOpen && document.pointerLockElement) document.exitPointerLock();
+  }, [licenseOpen]);
 
   const hr = hud.clock * 24;
   const time = `${String(Math.floor(hr)).padStart(2, "0")}:${String(Math.floor((hr % 1) * 60)).padStart(2, "0")}`;
@@ -1016,6 +1112,16 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
     const onKey = (e: KeyboardEvent) => {
       if (e.target instanceof HTMLInputElement || e.target instanceof HTMLTextAreaElement) return;
       if (useGame.getState().victoryOpen) return;
+      // 🪪 the license card is keyboard-boss while open: Esc/G/Enter put it away,
+      // every other shortcut is swallowed so the world keys never fire unseen
+      if (licenseOpen) {
+        if (e.code === "Escape" || e.code === "KeyG" || e.code === "Enter") {
+          e.preventDefault();
+          setLicenseOpen(false);
+          requestGameLock();
+        }
+        return;
+      }
       // 🎯 the open tool wheel is keyboard-boss: G/Enter confirm the hovered slice,
       // Esc cancels — and every other shortcut is swallowed while it's up
       if (wheelOpen) {
@@ -1040,7 +1146,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
     };
     addEventListener("keydown", onKey);
     return () => removeEventListener("keydown", onKey);
-  }, [victoryOpen, engine, bigMap, togglePause, toggleHelp, wheelOpen]);
+  }, [victoryOpen, engine, bigMap, togglePause, toggleHelp, wheelOpen, licenseOpen, setLicenseOpen]);
 
   useEffect(() => {
     if (!toasts.length) return;
@@ -1547,7 +1653,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       {!touch && (
         <div className="absolute bottom-3 left-1/2 z-10 hidden -translate-x-1/2 flex-col items-center gap-1.5 md:flex">
           <div className="hidden whitespace-nowrap rounded-full bg-black/45 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/75 backdrop-blur-md lg:block">
-            WASD move · Shift sprint · Space jump ×2 · F attack · G tools · B/V build · E inspect/drive · R accuse · Q blink · 1-8 eat · M map
+            WASD move · Shift sprint · Space jump ×2 · F attack · G tools · 🪪 license · B/V build · E inspect/drive · R accuse · Q blink · 1-8 eat · M map
           </div>
           <CoordsChip px={hud.px} pz={hud.pz} />
         </div>
@@ -1556,6 +1662,11 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       {/* 🎯 tool wheel — G opens it with a free cursor; click/G arms, Esc cancels */}
       <AnimatePresence>
         {wheelOpen && <ToolWheel engine={engine} apiRef={wheelApi} />}
+      </AnimatePresence>
+
+      {/* 🪪 driving-license card — picked from the wheel's license slice */}
+      <AnimatePresence>
+        {licenseOpen && <LicenseCard engine={engine} />}
       </AnimatePresence>
 
       {/* big world map overlay */}

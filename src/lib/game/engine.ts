@@ -1053,7 +1053,8 @@ export class GameEngine {
     for (const r of this.remotes) { r.beast = false; r.alive = true; r.hp = 100; }
     for (const zb of this.zombies) { zb.dead = false; zb.hp = ZOMBIE_HP; }
     stopDrone();
-    this.hasLicense = true; // every survivor can drive in 7Nights — escape routes matter
+    // 🪪 the license is NO LONGER a freebie: every survivor must physically hunt
+    // down a glowing 🪪 card (or be handed one by a teammate) before any car starts
     for (const v of this.votes) { v.state = "world"; v.carrierId = undefined; v.respawnT = undefined; v.claimBy = undefined; const p = freeSpot(this.rnd, this.world, 16, 420); v.x = p.x; v.z = p.z; }
     for (const it of this.items) { it.active = true; it.respawn = 0; }
     for (const c of this.civs) { c.mode = "wander"; c.vanId = undefined; c.runner = false; c.voteId = undefined; c.pauseT = 0; }
@@ -1175,7 +1176,8 @@ export class GameEngine {
     // climb out on the door side; resolve nudges us clear of walls & the car itself
     p.x = d.x + Math.cos(d.rot) * 2.3;
     p.z = d.z - Math.sin(d.rot) * 2.3;
-    p.y = 0; p.vx = p.vz = p.vy = 0;
+    // hop out ONTO the ground — on the ⛰️ band y=0 would bury us inside the mesh
+    p.y = terrainHeight(p.x, p.z); p.vx = p.vz = p.vy = 0;
     p.face = d.rot;
     resolve(p, 0.45, this.world);
     const rr = Math.hypot(p.x, p.z);
@@ -1185,6 +1187,57 @@ export class GameEngine {
 
   /** H key while driving — beep beep! */
   horn() { if (this.drive) sfx.horn(); }
+
+  /* ---------------- 🪪 driving license — show & share ---------------- */
+
+  /** 🤝 Hand the driving license to the closest other survivor — a REAL teammate
+   *  in multiplayer (they get it over the wire), else the nearest fellow
+   *  survivor bot standing next to you. The giver is free to hunt a fresh 🪪
+   *  card afterwards — uncollected cards stay on the streets. */
+  giveLicense() {
+    if (!this.hasLicense) {
+      this.toast("🪪 You don't have a driving license to give — hunt a glowing card first!", "info");
+      return;
+    }
+    const R2 = 7 * 7; // arm's length + a bit
+    let bd = R2;
+    let best: { kind: "remote"; slot: number; name: string } | { kind: "crew"; name: string } | null = null;
+    // real players first — the license is worth most in a teammate's pocket
+    for (const r of this.remotes) {
+      if (!r.alive) continue;
+      const dd = dist2(this.player.x, this.player.z, r.x, r.z);
+      if (dd < bd) { bd = dd; best = { kind: "remote", slot: r.slot, name: r.name }; }
+    }
+    if (!best) {
+      for (const c of this.crew) {
+        if (!c.alive) continue;
+        const dd = dist2(this.player.x, this.player.z, c.x, c.z);
+        if (dd < bd) { bd = dd; best = { kind: "crew", name: c.name }; }
+      }
+    }
+    if (!best) {
+      this.toast("🤝 Nobody is close enough — stand next to a survivor to hand over the license!", "info");
+      return;
+    }
+    this.hasLicense = false;
+    sfx.click();
+    this.fxQueue.push({ type: "confetti", x: this.player.x, y: 1.4, z: this.player.z, hue: 0.55 });
+    if (best.kind === "remote") {
+      this.netEmit?.({ t: "gift", kind: "license", toSlot: best.slot, from: this.playerName });
+      this.toast(`🤝 You handed your driving license to ${best.name} — find another 🪪 card to drive again!`, "good");
+    } else {
+      this.toast(`🤝 ${best.name} promised to keep the license safe — find another 🪪 card to drive again!`, "good");
+    }
+  }
+
+  /** 🌐 a teammate's client handed US their driving license over the wire. */
+  receiveLicense(fromName: string) {
+    if (this.hasLicense) return;
+    this.hasLicense = true;
+    sfx.power();
+    this.fxQueue.push({ type: "confetti", x: this.player.x, y: 1.4, z: this.player.z, hue: 0.55 });
+    this.toast(`🪪 ${fromName} handed you their DRIVING LICENSE — every parked car is yours now!`, "good");
+  }
 
   /** Keep the driven vehicle's world entry + its two axle colliders glued to the body.
    *  The axle spread follows the body style — a bus sits on discs further apart.
@@ -1333,8 +1386,13 @@ export class GameEngine {
     d.steerVis += (wantSteer - d.steerVis) * (1 - Math.exp(-dt * 10));
     this.syncCarColliders(d);
     // the driver rides inside — glue the body to the car so the camera, HUD and
-    // every pickup (votes, snacks, gems, licenses) keep working off the player pos
-    p.x = d.x; p.z = d.z; p.y = 0.32;
+    // every pickup (votes, snacks, gems, licenses) keep working off the player pos.
+    // ⛰️ the body ALSO rides the terrain: on the mountain band the ground rises,
+    // and the camera hangs off p.y — keeping it at a flat 0.32 sank the chase
+    // camera (and every look-at) into the hillside while the car climbed.
+    p.x = d.x; p.z = d.z;
+    const gy = terrainHeight(d.x, d.z) + 0.32;
+    p.y += (gy - p.y) * Math.min(1, dt * 9); // eased so bumpy ground never jolts the camera
     p.vx = Math.sin(d.rot) * d.v; p.vz = Math.cos(d.rot) * d.v; p.vy = 0;
     p.face = d.rot;
     // camera trails behind the car while it rolls (mouse look still nudges it)

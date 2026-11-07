@@ -159,6 +159,12 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
     }
   });
 
+  // 🪪🤝 a teammate handed their driving license across the table — only the
+  // targeted survivor pockets it (the event broadcasts to the whole room)
+  on("gift", (ev) => {
+    if (ev.kind === "license" && ev.toSlot === slot) engine.receiveLicense(ev.from);
+  });
+
   on("hello", (_ev, from) => {
     const r = engine.remotes.find((x) => x.slot === from);
     if (r) engine.toast(`🌐 ${r.name} is back in town!`, "good");

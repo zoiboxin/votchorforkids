@@ -44,6 +44,7 @@ export type MpEvent =
   | { t: "build"; kind: "barricade" | "campfire"; x: number; z: number; rot: number }
   | { t: "score"; points: number; kills: number; money: number }
   | { t: "dead" }
+  | { t: "gift"; kind: "license"; toSlot: number; from: string }
   | { t: "reset" }
   | { t: "start" }
   | { t: "hello" };

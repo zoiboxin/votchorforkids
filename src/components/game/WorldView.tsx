@@ -877,11 +877,17 @@ function VehicleParts({ R, N, lampsInstance }: { R: VehicleRefs; N: number; lamp
 function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.MutableRefObject<number> }) {
   const R = useVehicleRefs();
   const lit = useRef(-1); // the parked car currently running (its lamps + beams are live)
+  // ⛰️ the driven car rides the TERRAIN — sampled at the smoothed visual pose and
+  // eased, so climbing the mountain band lifts the mesh (and its chase cam)
+  // instead of sinking it into the rock. Re-snapped whenever the ride changes.
+  const drvY = useRef(0);
+  const drvCi = useRef(-1);
   useLayoutEffect(() => {
     const P = partsOf(R);
     // parked fleet: engine OFF — beams folded, lamps at day glass (per-instance, so
-    // the ONE car being driven can blaze without lighting the whole street)
-    WORLD.cars.forEach((c, i) => placeCar(P, i, c.x, 0, c.z, c.rot, c.c, c.t, false));
+    // the ONE car being driven can blaze without lighting the whole street).
+    // y follows the ground so a car left parked on the ⛰️ band sits ON the hill.
+    WORLD.cars.forEach((c, i) => placeCar(P, i, c.x, terrainHeight(c.x, c.z), c.z, c.rot, c.c, c.t, false));
     for (let i = 0; i < WORLD.cars.length; i++) setLampGlow(P, i, 0);
     stampDone(P);
   }, []);
@@ -898,14 +904,17 @@ function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutabl
     let dirty = false;
     if (d) {
       const c = WORLD.cars[d.ci];
-      placeCar(P, d.ci, d.vx, 0, d.vz, d.vrot, c.c, c.t, true, d.spin, d.steerVis);
+      if (d.ci !== drvCi.current) { drvCi.current = d.ci; drvY.current = terrainHeight(d.vx, d.vz); } // new ride — snap
+      const gy = terrainHeight(d.vx, d.vz);
+      drvY.current += (gy - drvY.current) * Math.min(1, dt * 9); // eased — bumpy ground never jitters the body
+      placeCar(P, d.ci, d.vx, drvY.current, d.vz, d.vrot, c.c, c.t, true, d.spin, d.steerVis);
       setLampGlow(P, d.ci, nightFactor(clockRef.current));
       dirty = true;
     }
     if ((d ? d.ci : -1) !== lit.current) {
       if (lit.current >= 0) { // the previous ride is parked again — engine off
         const c = WORLD.cars[lit.current];
-        placeCar(P, lit.current, c.x, 0, c.z, c.rot, c.c, c.t, false);
+        placeCar(P, lit.current, c.x, terrainHeight(c.x, c.z), c.z, c.rot, c.c, c.t, false);
         setLampGlow(P, lit.current, 0);
       }
       lit.current = d ? d.ci : -1;
@@ -948,7 +957,8 @@ function DriveLight({ engine, clockRef }: { engine: GameEngine; clockRef: React.
     const nf = nightFactor(clockRef.current);
     l.visible = !!d && nf > 0.12;
     if (l.visible && d) {
-      l.position.set(d.x + Math.sin(d.rot) * 5.2, 1.5, d.z + Math.cos(d.rot) * 5.2);
+      // ride the terrain — on the ⛰️ band a flat 1.5 buries the glow inside the hill
+      l.position.set(d.x + Math.sin(d.rot) * 5.2, terrainHeight(d.x, d.z) + 1.5, d.z + Math.cos(d.rot) * 5.2);
       l.intensity = 30 * nf;
     }
   });

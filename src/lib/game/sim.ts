@@ -40,7 +40,11 @@ export function stepBody(
   // ⛰️ rough ground slows the climb — the steeper the slope, the harder the hike
   // (gradient sampled ±0.8u; on the flat it's 1, a 45° scree slope ≈ 0.5, cliffs floor at 0.38)
   let climb = 1;
-  if (b.x > MOUNTAIN_INNER - 12 || b.x < -MOUNTAIN_INNER + 12 || b.z > MOUNTAIN_INNER - 12 || b.z < -MOUNTAIN_INNER + 12) {
+  // ⛰️ RADIAL band check (was an axis box — a body at (430,430) sits at r≈608,
+  // inside the visual mountain band, yet x/z both stayed under 598 so the old
+  // check skipped the ground sample and the survivor waded INSIDE the mud-valley
+  // mesh instead of walking on top of it)
+  if (Math.hypot(b.x, b.z) > MOUNTAIN_INNER - 12) {
     const hx = terrainHeight(b.x + 0.8, b.z) - terrainHeight(b.x - 0.8, b.z);
     const hz = terrainHeight(b.x, b.z + 0.8) - terrainHeight(b.x, b.z - 0.8);
     const slope = Math.hypot(hx, hz) / 1.6;

@@ -125,6 +125,8 @@ export interface GameStore {
   bigMapOpen: boolean;
   /** true while the 🎒 tool wheel is open at screen center (G) — cursor is free, world keeps running */
   wheelOpen: boolean;
+  /** true while the 🪪 driving-license card overlay is open (G wheel → license slice) */
+  licenseOpen: boolean;
   /** true while the browser pointer is hard-bound to the game (pointer lock) */
   mouseLocked: boolean;
   settings: Settings;
@@ -175,6 +177,7 @@ export interface GameStore {
   setPaused: (p: boolean) => void;
   setBigMapOpen: (v: boolean) => void;
   setWheelOpen: (v: boolean) => void;
+  setLicenseOpen: (v: boolean) => void;
   setMouseLocked: (v: boolean) => void;
   patchSettings: (p: Partial<Settings>) => void;
   recordRun: (score: number, votes?: number, rescues?: number, caught?: number, won?: boolean, timeMs?: number, extra?: Partial<DailyRunFacts>) => RunRecord;
@@ -231,6 +234,7 @@ export const useGame = create<GameStore>()((set, get) => ({
   paused: false,
   bigMapOpen: false,
   wheelOpen: false,
+  licenseOpen: false,
   mouseLocked: false,
   settings: typeof window !== "undefined" ? loadSettings() : { music: 0.7, sfx: 0.8, showFps: false },
   runsPlayed: saved.stats.runs,
@@ -291,6 +295,7 @@ export const useGame = create<GameStore>()((set, get) => ({
   setMouseLocked: (v) => set({ mouseLocked: v }),
   setBigMapOpen: (v) => set({ bigMapOpen: v }),
   setWheelOpen: (v) => set({ wheelOpen: v }),
+  setLicenseOpen: (v) => set({ licenseOpen: v }),
   patchSettings: (p) => {
     set((s) => {
       const settings = { ...s.settings, ...p };

@@ -84,7 +84,7 @@ export function useGameInput(engine: GameEngine | null) {
       // 🖱️ menus own the keyboard: the big map, the tool wheel and the victory
       // screen swallow every game verb (E/F/B/V/R/Q/H) so nothing fires unseen
       const s0 = useGame.getState();
-      const menuOwns = s0.victoryOpen || s0.bigMapOpen || s0.wheelOpen;
+      const menuOwns = s0.victoryOpen || s0.bigMapOpen || s0.wheelOpen || s0.licenseOpen;
       if (e.code === "Space") {
         e.preventDefault();
         if (!menuOwns) {
@@ -98,6 +98,7 @@ export function useGameInput(engine: GameEngine | null) {
       if (e.code === "KeyG" && !e.repeat) {
         const s = useGame.getState();
         if (s.wheelOpen) { /* the Hud owns G while the wheel is open (confirm select) */ }
+        else if (s.licenseOpen) { /* the Hud owns G while the license card is up (Esc/G close) */ }
         else if (s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen) {
           s.setWheelOpen(true);
           if (document.pointerLockElement) document.exitPointerLock();
@@ -123,7 +124,7 @@ export function useGameInput(engine: GameEngine | null) {
     const mu = () => { dragging = false; };
     const mm = (e: MouseEvent) => {
       const s = useGame.getState();
-      if (s.screen !== "play" || s.paused || s.victoryOpen || s.bigMapOpen || s.wheelOpen) return; // the wheel owns the cursor
+      if (s.screen !== "play" || s.paused || s.victoryOpen || s.bigMapOpen || s.wheelOpen || s.licenseOpen) return; // the wheel owns the cursor
       // mouse is bound to the game: steer when the cursor is hard-locked (FPS
       // style), whenever it glides over the open world, or while drag-looking
       if (!document.pointerLockElement && !(e.target instanceof HTMLCanvasElement) && !dragging) return;
@@ -137,7 +138,7 @@ export function useGameInput(engine: GameEngine | null) {
     // (sandboxed iframes); free-look + Z/X keyboard turn keep working there.
     const grab = (e: MouseEvent) => {
       const s = useGame.getState();
-      if (s.screen !== "play" || s.paused || s.victoryOpen || s.bigMapOpen || s.wheelOpen || s.touch) return;
+      if (s.screen !== "play" || s.paused || s.victoryOpen || s.bigMapOpen || s.wheelOpen || s.licenseOpen || s.touch) return;
       const t = e.target;
       if (document.pointerLockElement || !(t instanceof Element) || t.closest("[data-ui]")) return;
       requestGameLock();
@@ -150,7 +151,7 @@ export function useGameInput(engine: GameEngine | null) {
         // pointer lock — the page never sees that keydown. So treat an unexpected
         // unlock (no menu/modal/map/WHEEL already open) as "Esc pressed" → pause menu.
         const s = useGame.getState();
-        if (s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen && !s.wheelOpen) {
+        if (s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen && !s.wheelOpen && !s.licenseOpen) {
           engine.running = false; // match togglePause: freeze the simulation too
           s.setPaused(true);
         }
@@ -163,7 +164,7 @@ export function useGameInput(engine: GameEngine | null) {
     // free the cursor whenever a menu, modal, the big map or the victory screen takes over
     const lockWatch = setInterval(() => {
       const s = useGame.getState();
-      if (document.pointerLockElement && (s.screen !== "play" || s.paused || s.victoryOpen || s.bigMapOpen)) {
+      if (document.pointerLockElement && (s.screen !== "play" || s.paused || s.victoryOpen || s.bigMapOpen || s.licenseOpen)) {
         document.exitPointerLock();
       }
     }, 250);
@@ -234,7 +235,7 @@ export function Scene({ engine }: { engine: GameEngine }) {
   // hides it natively; this covers browsers/iframes where the lock is blocked.
   // cursor is inherited, so it reaches the inner <canvas>; paused/menus/map
   // restore the cursor so buttons stay clickable.
-  const playing = useGame((s) => s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen && !s.wheelOpen);
+  const playing = useGame((s) => s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen && !s.wheelOpen && !s.licenseOpen);
   const touch = useGame((s) => s.touch);
   const dpr: [number, number] = useMemo(() => {
     if (typeof window === "undefined") return [1, 1.5];
@@ -294,7 +295,7 @@ export function requestGameLock(): void {
   if (typeof document === "undefined") return;
   const ok = () => {
     const s = useGame.getState();
-    return s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen && !s.wheelOpen && !s.touch && !document.pointerLockElement;
+    return s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen && !s.wheelOpen && !s.licenseOpen && !s.touch && !document.pointerLockElement;
   };
   if (!ok()) return;
   let tries = 0;
