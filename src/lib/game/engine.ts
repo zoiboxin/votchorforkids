@@ -1349,7 +1349,7 @@ export class GameEngine {
       const want = d.v < 0 ? d.rot : d.rot + Math.PI; // reversing: look the way the car backs
       let dd = want - this.input.yaw;
       dd = Math.atan2(Math.sin(dd), Math.cos(dd));
-      this.input.yaw += dd * (1 - Math.exp(-dt * 2.6)); // exp ease — identical at any fps
+      this.input.yaw += dd * (1 - Math.exp(-dt * 4.2)); // exp ease, fps-safe — 4.2/s halves the cornering hang (was 2.6: the camera swung ~33° behind the tail mid-turn and the car read as sliding)
       this.input.yaw = ((this.input.yaw + Math.PI) % TAU + TAU) % TAU - Math.PI;
     }
     if (mouseIdle) this.input.pitch += (0.34 - this.input.pitch) * Math.min(1, dt * 1.6);

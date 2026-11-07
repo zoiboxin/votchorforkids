@@ -33,19 +33,26 @@ export function isLowPower(): boolean {
 }
 
 /** Slowly tunes render resolution up/down to hold a smooth framerate on weak GPUs.
- *  Wide hysteresis (down <20 fps, up >32) — a narrow band makes the resolution
- *  pump every second or two, which itself reads as stutter while driving. */
+ *  Wide hysteresis (down <17 fps, up >38) plus a 3 s cooldown between steps — a
+ *  narrow band makes the resolution pump every second or two, which itself reads
+ *  as stutter while driving (each setDpr reallocates the canvas buffer). */
 function AdaptiveDpr() {
   const setDpr = useThree((s) => s.setDpr);
-  const st = useRef({ t: 0, n: 0, dpr: 0.62 });
+  const st = useRef({ t: 0, n: 0, dpr: 0.62, cool: 0 });
   useFrame((_, dt) => {
     const a = st.current;
-    a.t += dt; a.n++;
+    a.t += dt; a.n++; a.cool += dt;
     if (a.t < 1.2) return;
     const fps = a.n / a.t;
     a.t = 0; a.n = 0;
-    if (fps < 20 && a.dpr > 0.32) { a.dpr = Math.max(0.32, a.dpr - 0.06); setDpr(a.dpr); }
-    else if (fps > 32 && a.dpr < 0.72) { a.dpr = Math.min(0.72, a.dpr + 0.04); setDpr(a.dpr); }
+    // RESIZE-JANK GUARD: every setDpr reallocates the drawing buffer — a visible
+    // hitch. A driving car's fps lives right around the old 20/32 band, so the
+    // scaler ping-ponged resolutions mid-drive (down at 19 fps, up again at 33,
+    // down at 19…): a per-second flicker of stutters. Wide hysteresis + a 3 s
+    // cooldown make quality steps rare, deliberate events.
+    if (a.cool < 3) return;
+    if (fps < 17 && a.dpr > 0.32) { a.dpr = Math.max(0.32, a.dpr - 0.06); setDpr(a.dpr); a.cool = 0; }
+    else if (fps > 38 && a.dpr < 0.72) { a.dpr = Math.min(0.72, a.dpr + 0.04); setDpr(a.dpr); a.cool = 0; }
   });
   return null;
 }

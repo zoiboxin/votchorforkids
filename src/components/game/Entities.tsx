@@ -240,13 +240,19 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       const t = performance.now() / 1000;
       camera.position.set(tx + Math.sin(t * 21) * 0.09 * wob, ty + Math.sin(t * 17) * 0.06 * wob, tz);
     } else if (engine.drive) {
-      // 🚗 behind the wheel: glide to the chase pose (exponential, frame-rate safe).
-      // Pull-in from camBlocked still applies — it feeds the glide TARGET.
+      // 🚗 behind the wheel: the chase POSITION glides softly (k=9) for that GTA
+      // rubber-band, but the LOOK-AT is GLUED to the car's already-smoothed pose.
+      // The old extra 9/s lerp on the target stacked a SECOND ~110 ms of lag on
+      // top of the pose easing — at 26 u/s the look point trailed the body by
+      // ~2.5 u, so the car visibly slid around the middle of the screen (and
+      // slid more through every corner & brake): the "driving looks jerky" feel.
+      // Double-smoothing added zero stability — the pose is pre-smoothed in
+      // stepDrive, so the camera now aims exactly where the car mesh renders.
       const sm = camSm.current;
       if (!sm.on) { sm.on = true; sm.pos.copy(camera.position); sm.tgt.set(camX, p.y + 1.7, camZ); }
       const k = 1 - Math.exp(-dt * 9);
       sm.pos.lerp(camV1.set(tx, ty, tz), k);
-      sm.tgt.lerp(camV2.set(camX, p.y + 1.7, camZ), k);
+      sm.tgt.set(camX, p.y + 1.7, camZ); // glued — no second lag stage
       camera.position.copy(sm.pos);
     } else {
       camSm.current.on = false;
@@ -581,7 +587,6 @@ export function Licenses({ engine }: { engine: GameEngine }) {
 /* ------------------------------------------------------------------ */
 const dummy = new THREE.Object3D();
 const camV1 = new THREE.Vector3(); // scratch for the driving chase-cam glide
-const camV2 = new THREE.Vector3();
 /** Shadow-blob radius multiplier per animal kind — matches buildAnimal conf.s. */
 const ANIMAL_SCALES: Record<string, number> = { cow: 1.7, chicken: 0.95, deer: 1.45, monkey: 1.1 };
 
