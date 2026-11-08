@@ -109,6 +109,8 @@ export interface Zombie {
   id: number; x: number; z: number; vx: number; vz: number; face: number; phase: number; touchCd: number; hp?: number; dead?: boolean;
   /** crew id of the contestant who turned — the contest feed/elimination link */
   owner?: number;
+  /** 💰 purses this zombie swallowed off the dirt — spills back when it falls or at dawn */
+  hoard?: number;
   /* game-ai skill: stuck probe + sidestep detour — chasers must never grind into walls */
   chkT?: number; chkX?: number; chkZ?: number;   // periodic displacement probe
   sideT?: number; sideDx?: number; sideDz?: number; // active detour waypoint
@@ -465,6 +467,8 @@ export class GameEngine {
   private hudT = 0;
   private hud: HudData;
   private groanT = 0;
+  /** throttle for "a zombie gulped loot" toasts so 50 shamblers don't spam */
+  private zLootCd = 0;
 
   /* --- 7 Nights: the survival-horror storyline --- */
   /** 1..7 — which night is approaching / dark */
@@ -2226,7 +2230,7 @@ export class GameEngine {
     this.zombies = this.possessed
       .map((idx) => this.crew[idx])
       .filter((c) => c && c.alive)
-      .map((c) => ({ id: this.nid(), owner: c.id, x: c.x, z: c.z, vx: 0, vz: 0, face: c.face, phase: Math.random() * 6, touchCd: 0, hp: ZOMBIE_HP, dead: false, chkT: 0, chkX: 0, chkZ: 0, sideT: 0, sideDx: 0, sideDz: 0 }));
+      .map((c) => ({ id: this.nid(), owner: c.id, x: c.x, z: c.z, vx: 0, vz: 0, face: c.face, phase: Math.random() * 6, touchCd: 0, hp: ZOMBIE_HP, dead: false, hoard: 0, chkT: 0, chkX: 0, chkZ: 0, sideT: 0, sideDx: 0, sideDz: 0 }));
     this.zRev++;
     const zc = this.zombies.length;
     if (zc > 0) {
@@ -2249,6 +2253,11 @@ export class GameEngine {
     this.youPossessed = false;
     this.mpBeastSlots = [];
     for (const r of this.remotes) r.beast = false;
+    // 🌅 the beast forms dissolve with the light — every purse they swallowed
+    // spills back where they stand, crumbled or fed: the night's takings return
+    for (const zb of this.zombies) {
+      if (!zb.dead && (zb.hoard ?? 0) > 0) this.dropLoot(zb.x, zb.z, zb.hoard ?? 0, "a zombie's spilled hoard");
+    }
     this.zombies = [];
     this.zRev++;
     this.nightsSurvived = Math.min(NIGHTS_TOTAL, this.nightNo);
@@ -2592,7 +2601,8 @@ export class GameEngine {
           this.kills++;
           this.points += POINTS_KILL_ZOMBIE;
           sfx.scream();
-          this.dropLoot(zb.x, zb.z, range(this.rnd, ZOMBIE_PURSE[0], ZOMBIE_PURSE[1]), "the zombie's hoard");
+          this.dropLoot(zb.x, zb.z, range(this.rnd, ZOMBIE_PURSE[0], ZOMBIE_PURSE[1]) + (zb.hoard ?? 0), "the zombie's hoard");
+          zb.hoard = 0; // its takings hit the dirt — no double-dip at dawn
           // the turned are REAL contestants — cutting one down removes its soul
           const oi = this.crew.findIndex((cc) => cc.id === zb.owner);
           if (oi >= 0 && this.crew[oi].alive) {
@@ -3451,11 +3461,23 @@ export class GameEngine {
 
     /* --- zombies (graveyard) — they rise at night, fear fire, and can be SLAIN --- */
     this.groanT -= dt;
+    this.zLootCd = Math.max(0, this.zLootCd - dt);
     for (const zb of this.zombies) {
       if (zb.dead) continue; // slain — stays down until the next night rises
       zb.touchCd = Math.max(0, zb.touchCd - dt);
       const d2p = dist2(zb.x, zb.z, p.x, p.z);
       if (night > 0.55) {
+        // 🧟 the horde hoovers dropped loot — every purse claimed off the dirt
+        // fattens this beast's hoard, spilled back at dawn (or when you cut it down)
+        for (let li = this.loot.length - 1; li >= 0; li--) {
+          const l = this.loot[li];
+          if (dist2(l.x, l.z, zb.x, zb.z) < 1.7 * 1.7) {
+            zb.hoard = (zb.hoard ?? 0) + l.amt;
+            this.loot.splice(li, 1);
+            if (this.mp) this.netEmit?.({ t: "pickup", kind: "loot", id: -1, x: l.x, z: l.z });
+            if (d2p < 18 * 18 && this.zLootCd <= 0) { this.zLootCd = 5; this.toast(`🧟 A zombie gulped down ${l.label} — ₹${l.amt} in its belly now!`, "info"); }
+          }
+        }
         const fire = this.nearestBuildOf("campfire", zb.x, zb.z);
         const scared = !!fire && dist2(fire.x, fire.z, zb.x, zb.z) < CAMPFIRE_R * CAMPFIRE_R;
         const beastYou = this.youPossessed && this.phase === "night"; // monsters don't fight monsters
@@ -3524,7 +3546,11 @@ export class GameEngine {
           this.hurtT = HURT_FLASH_S;
           this.addShake(0.4); // 💥 MEDIUM — rotting hands on you
           sfx.zombie();
-          if (this.hp <= 0) this.die();
+          if (this.hp <= 0) {
+            const owner = this.crew.find((cc) => cc.id === zb.owner);
+            if (owner) owner.fed = (owner.fed ?? 0) + 1; // a kill is a kill — this beast lives to see dawn
+            this.die();
+          }
         }
         if (this.groanT <= 0 && d2p < 20 * 20) { this.groanT = range(this.rnd, 2, 6); sfx.zombie(); }
       }

@@ -116,12 +116,47 @@ export function useGameInput(engine: GameEngine | null) {
     const up = (e: KeyboardEvent) => { keys.delete(e.code); applyKey(); };
     const blur = () => { keys.clear(); applyKey(); };
 
-    let dragging = false;
+    let dragging = false, downX = 0, downY = 0;
     const md = (e: MouseEvent) => {
       dragging = e.target instanceof HTMLCanvasElement; // drag-look only starts on the world, not on HUD
+      downX = e.clientX; downY = e.clientY;
+      const s = useGame.getState();
+      const menuOwns = s.victoryOpen || s.bigMapOpen || s.wheelOpen || s.licenseOpen;
+      const onUi = e.target instanceof Element && e.target.closest("[data-ui]");
+      // 🖱️ mouse verbs (desktop): LMB swings (same as F) · RMB opens the 🎯 tool wheel (same as G)
+      if (s.screen === "play" && !s.paused && !menuOwns && !s.touch && !onUi) {
+        if (e.button === 0) {
+          if (document.pointerLockElement) { e.preventDefault(); engine.attack(); } // hard-locked: every click swings
+        } else if (e.button === 2) {
+          e.preventDefault();
+          s.setWheelOpen(true);
+          if (document.pointerLockElement) document.exitPointerLock();
+        }
+      } else if (s.wheelOpen && e.button === 2 && !onUi) {
+        e.preventDefault(); // RMB again → wheel shut (toggle), cursor re-binds like Esc
+        s.setWheelOpen(false);
+        requestGameLock();
+      }
       if (e.button === 0) sfx.click();
     };
-    const mu = () => { dragging = false; };
+    const mu = (e: MouseEvent) => {
+      // free-cursor LMB: a still click on the world swings too (drag-look never does)
+      if (e.button === 0 && dragging && !document.pointerLockElement) {
+        const s = useGame.getState();
+        const menuOwns = s.victoryOpen || s.bigMapOpen || s.wheelOpen || s.licenseOpen;
+        if (s.screen === "play" && !s.paused && !menuOwns && !s.touch) {
+          if (Math.hypot(e.clientX - downX, e.clientY - downY) < 6) engine.attack();
+        }
+      }
+      dragging = false;
+    };
+    // RMB belongs to the game while playing — no browser menu over the world
+    const cm = (e: MouseEvent) => {
+      const s = useGame.getState();
+      if (s.screen !== "play") return;
+      if (e.target instanceof Element && e.target.closest("[data-ui]")) return;
+      e.preventDefault();
+    };
     const mm = (e: MouseEvent) => {
       const s = useGame.getState();
       if (s.screen !== "play" || s.paused || s.victoryOpen || s.bigMapOpen || s.wheelOpen || s.licenseOpen) return; // the wheel owns the cursor
@@ -199,6 +234,7 @@ export function useGameInput(engine: GameEngine | null) {
     addEventListener("mousedown", md);
     addEventListener("mouseup", mu);
     addEventListener("mousemove", mm);
+    addEventListener("contextmenu", cm);
     addEventListener("click", grab);
     document.addEventListener("pointerlockchange", plc);
     document.addEventListener("pointerlockerror", ple);
@@ -216,6 +252,7 @@ export function useGameInput(engine: GameEngine | null) {
       removeEventListener("mousedown", md);
       removeEventListener("mouseup", mu);
       removeEventListener("mousemove", mm);
+      removeEventListener("contextmenu", cm);
       removeEventListener("click", grab);
       document.removeEventListener("pointerlockchange", plc);
       document.removeEventListener("pointerlockerror", ple);

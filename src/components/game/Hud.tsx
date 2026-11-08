@@ -1699,7 +1699,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       {!touch && (
         <div className="absolute bottom-3 left-1/2 z-10 hidden -translate-x-1/2 flex-col items-center gap-1.5 md:flex">
           <div className="hidden whitespace-nowrap rounded-full bg-black/45 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/75 backdrop-blur-md lg:block">
-            WASD move · Shift sprint · Space jump ×2 · F attack · G tools · 🪪 license · B/V build · E inspect/drive · R accuse · Q blink · 1-8 eat · M map
+            WASD move · Shift sprint · Space jump ×2 · F/LMB attack · G/RMB tools · 🪪 license · B/V build · E inspect/drive · R accuse · Q blink · 1-8 eat · M map
           </div>
           <CoordsChip px={hud.px} pz={hud.pz} />
         </div>
