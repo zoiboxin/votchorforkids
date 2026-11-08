@@ -536,15 +536,15 @@ export const ATTACK_RANGE = 2.7;
 export const HANDS_DMG = 10;
 export const TOOL_PICKUP_R = 2.1;
 
-/* ---------- the contest — 99 players enter, ONE walks out ---------- */
-/** Total souls in the 7-Nights contest: YOU + 98 AI contestants.
+/* ---------- the contest — 100 players enter, ONE walks out ---------- */
+/** Total souls in the 7-Nights contest: YOU + 99 AI contestants.
  *  Each dusk ~HALF of everyone still alive turns; the turned must FEED before
  *  dawn or crumble — so the lobby bleeds down night by night to one winner. */
-export const PLAYERS_TOTAL = 99;
-export const CREW_COUNT = PLAYERS_TOTAL - 1; // 98 AI contestants (you are #99)
+export const PLAYERS_TOTAL = 100;
+export const CREW_COUNT = PLAYERS_TOTAL - 1; // 99 AI contestants (you are #100)
 const CREW_FIRSTS = ["Mia", "Ravi", "Zoe", "Kofi", "Anya", "Marco", "Luna", "Chintu", "Pintu", "Bijli", "Laddo", "Golu", "Babli", "Rinku"];
 const CREW_SURNAMES = ["Kaur", "Sharma", "Verma", "Singh", "Iyer", "Khan", "Das"];
-/** 98 unique contestant names — the originals first, then first+surname combos. */
+/** 99 unique contestant names — the originals first, then first+surname combos. */
 export const CREW_NAMES: readonly string[] = Array.from({ length: CREW_COUNT }, (_, i) =>
   i < 7 ? CREW_FIRSTS[i] : `${CREW_FIRSTS[i % CREW_FIRSTS.length]} ${CREW_SURNAMES[Math.floor(i / CREW_FIRSTS.length) % CREW_SURNAMES.length]}`);
 export const CREW_COLORS: readonly string[] = ["#e91e8c", "#7bc043", "#00b4d8", "#f5a524", "#8a5aa8", "#ff6b35", "#2a9d8f"];

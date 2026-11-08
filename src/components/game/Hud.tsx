@@ -18,8 +18,10 @@ import { HowToPlay, SettingsDialog } from "./Panels";
 /** 🌐 per-slot colors for the co-op souls (matches the lobby chips) */
 const SOUL_COLORS = ["#f472b6", "#fbbf24", "#4ade80", "#2dd4bf", "#f87171", "#c084fc", "#fb923c", "#a3e635"];
 
-/* ------- shared world-map canvas painting (156px minimap + 440px big map) ------- */
-function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine, night: boolean) {
+/* ------- shared world-map canvas painting (156px minimap + 440px big map).
+   mini = true → clean survival view: terrain, landmarks, night zombies & YOU only —
+   all the food/loot/police/contestant clutter stays on the big map (M). ------- */
+function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine, night: boolean, mini = false) {
   const K = S / 1150;         // world units → px (fits the bigger 545-radius wall)
   const U = S / 156;          // scale for the hand-tuned 156px marker sizes
   const dot = (x: number, z: number, r: number, col: string, alpha = 1) => {
@@ -65,9 +67,11 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
   // parliament
   c.fillStyle = "#e0483a";
   c.fillRect(S / 2 - 4 * U, S / 2 - 196 * K - 3 * U, 8 * U, 6 * U);
-  // ballot
-  c.fillStyle = "#f7c948";
-  c.beginPath(); c.arc(S / 2, S / 2 - 170 * K, 2.6 * U, 0, 6.3); c.fill();
+  // ballot (big map only — the mini stays clean)
+  if (!mini) {
+    c.fillStyle = "#f7c948";
+    c.beginPath(); c.arc(S / 2, S / 2 - 170 * K, 2.6 * U, 0, 6.3); c.fill();
+  }
   // police stations — white squares with a navy badge
   for (const st of POLICE_STATIONS) {
     const sx = S / 2 + st.x * K, sz = S / 2 + st.z * K;
@@ -81,81 +85,90 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     c.textAlign = "center"; c.textBaseline = "middle";
     c.fillText("P", sx, sz + 0.5);
   }
-  // police vans on an arrest run
-  for (const van of engine.vans) if (van.state !== "idle") dot(van.x, van.z, 2.6 * U, "#ff4d5e", 0.95);
-  for (const it of engine.items) if (it.active) dot(it.x, it.z, 1.1 * U, "#ffd166", 0.8);
-  // driving-license cards — sky-blue with a white core so they pop next to food
-  for (const lc of engine.licenses) if (lc.active) { dot(lc.x, lc.z, 2.7 * U, "#38bdf8", 0.95); dot(lc.x, lc.z, 1.15 * U, "#ffffff", 0.9); }
-  // rare super-power gems — glowing coloured dots (hunt them in the jungle!)
-  for (const pw of engine.powers) if (pw.active) dot(pw.x, pw.z, 2.8 * U, POWERS[pw.def].color, 0.95);
-  for (const v of engine.votes) if (v.state === "world") dot(v.x, v.z, 2.2 * U, "#f7c948");
-  // 💰 dropped loot — bright pulsing gold so you can race the bots to it
-  for (const l of engine.loot) { dot(l.x, l.z, 3 * U, "#ffd447", 0.95); dot(l.x, l.z, 1.3 * U, "#fff7d6", 0.9); }
-  for (const cop of engine.cops) {
-    const chasing = cop.mode === "chase";
-    dot(cop.x, cop.z, (chasing ? 3 : 2) * U, chasing ? "#ff4d4d" : "#6aa0ff");
-  }
-  for (const cv of engine.civs) if (cv.mode === "detained") dot(cv.x, cv.z, 3 * U, "#ff8fa3");
-  // police side: vote-runners stand out — amber specks, carriers glow bright with loot
-  if (engine.side === "police") {
-    for (const cv of engine.civs) {
-      if (!cv.runner || cv.mode === "detained") continue;
-      dot(cv.x, cv.z, (cv.voteId ? 2.7 : 1.9) * U, cv.voteId ? "#ffb020" : "#f0b455", cv.voteId ? 1 : 0.85);
+  /* 🧹 mini map declutter: vans, food, licenses, power gems, votes, loot, police,
+     civilians, vote-runners, animals, crew, co-op souls, dropped arms, builds and
+     planes are BIG-MAP-ONLY — the corner minimap shows just terrain, landmarks,
+     tonight's zombie horde and you. */
+  if (!mini) {
+    // police vans on an arrest run
+    for (const van of engine.vans) if (van.state !== "idle") dot(van.x, van.z, 2.6 * U, "#ff4d5e", 0.95);
+    for (const it of engine.items) if (it.active) dot(it.x, it.z, 1.1 * U, "#ffd166", 0.8);
+    // driving-license cards — sky-blue with a white core so they pop next to food
+    for (const lc of engine.licenses) if (lc.active) { dot(lc.x, lc.z, 2.7 * U, "#38bdf8", 0.95); dot(lc.x, lc.z, 1.15 * U, "#ffffff", 0.9); }
+    // rare super-power gems — glowing coloured dots (hunt them in the jungle!)
+    for (const pw of engine.powers) if (pw.active) dot(pw.x, pw.z, 2.8 * U, POWERS[pw.def].color, 0.95);
+    for (const v of engine.votes) if (v.state === "world") dot(v.x, v.z, 2.2 * U, "#f7c948");
+    // 💰 dropped loot — bright pulsing gold so you can race the bots to it
+    for (const l of engine.loot) { dot(l.x, l.z, 3 * U, "#ffd447", 0.95); dot(l.x, l.z, 1.3 * U, "#fff7d6", 0.9); }
+    for (const cop of engine.cops) {
+      const chasing = cop.mode === "chase";
+      dot(cop.x, cop.z, (chasing ? 3 : 2) * U, chasing ? "#ff4d4d" : "#6aa0ff");
     }
-  }
-  // farm & jungle animals — little brown specks so the world feels alive on the map
-  for (const an of engine.animals) dot(an.x, an.z, 1.3 * U, "#a97b4f", 0.8);
-  if (night) for (const zb of engine.zombies) dot(zb.x, zb.z, 2.4 * U, "#c084fc");
-  // 7 Nights: the crew — each survivor in their color; the fallen leave a dark-red ✕ where they died
-  for (const cm of engine.crew) {
-    if (cm.alive) dot(cm.x, cm.z, 2.7 * U, cm.color, 0.95);
-    else {
-      const dx = S / 2 + cm.deathX * K, dz = S / 2 + cm.deathZ * K;
-      c.strokeStyle = "#7f1d1d";
-      c.lineWidth = Math.max(1, 1.1 * U);
-      c.beginPath();
-      c.moveTo(dx - 2.2 * U, dz - 2.2 * U); c.lineTo(dx + 2.2 * U, dz + 2.2 * U);
-      c.moveTo(dx + 2.2 * U, dz - 2.2 * U); c.lineTo(dx - 2.2 * U, dz + 2.2 * U);
-      c.stroke();
-    }
-  }
-  // 🌐 co-op souls — cyan-ringed dots so real players pop against the bots
-  if (engine.mp) {
-    for (const r of engine.remotes) {
-      const col = SOUL_COLORS[r.slot % SOUL_COLORS.length];
-      if (r.alive) {
-        dot(r.x, r.z, 2.9 * U, col, 1);
-        c.strokeStyle = "#67e8f9";
-        c.lineWidth = Math.max(1, 0.9 * U);
-        c.beginPath();
-        c.arc(S / 2 + r.x * K, S / 2 + r.z * K, 3.6 * U, 0, Math.PI * 2);
-        c.stroke();
-      } else {
-        dot(r.x, r.z, 2.2 * U, "#7f1d1d", 0.8);
+    for (const cv of engine.civs) if (cv.mode === "detained") dot(cv.x, cv.z, 3 * U, "#ff8fa3");
+    // police side: vote-runners stand out — amber specks, carriers glow bright with loot
+    if (engine.side === "police") {
+      for (const cv of engine.civs) {
+        if (!cv.runner || cv.mode === "detained") continue;
+        dot(cv.x, cv.z, (cv.voteId ? 2.7 : 1.9) * U, cv.voteId ? "#ffb020" : "#f0b455", cv.voteId ? 1 : 0.85);
       }
     }
+    // farm & jungle animals — little brown specks so the world feels alive on the map
+    for (const an of engine.animals) dot(an.x, an.z, 1.3 * U, "#a97b4f", 0.8);
   }
-  // dropped arms (yellow specks) + builds — brown barricade square / ember campfire
-  for (const te of engine.toolEnts) if (te.active) dot(te.x, te.z, 1.7 * U, "#facc15", 0.9);
-  for (const b of engine.builds) {
-    if (b.kind === "campfire") { dot(b.x, b.z, 2.7 * U, "#fb923c", 0.95); dot(b.x, b.z, 1.2 * U, "#fde68a", 0.9); }
-    else {
-      c.fillStyle = "#92400e";
-      c.fillRect(S / 2 + b.x * K - 2.2 * U, S / 2 + b.z * K - 2.2 * U, 4.4 * U, 4.4 * U);
+  // night danger: the risen horde — the ONE thing the mini must never hide
+  if (night) for (const zb of engine.zombies) dot(zb.x, zb.z, 2.4 * U, "#c084fc");
+  if (!mini) {
+    // 7 Nights: the crew — each survivor in their color; the fallen leave a dark-red ✕ where they died
+    for (const cm of engine.crew) {
+      if (cm.alive) dot(cm.x, cm.z, 2.7 * U, cm.color, 0.95);
+      else {
+        const dx = S / 2 + cm.deathX * K, dz = S / 2 + cm.deathZ * K;
+        c.strokeStyle = "#7f1d1d";
+        c.lineWidth = Math.max(1, 1.1 * U);
+        c.beginPath();
+        c.moveTo(dx - 2.2 * U, dz - 2.2 * U); c.lineTo(dx + 2.2 * U, dz + 2.2 * U);
+        c.moveTo(dx + 2.2 * U, dz - 2.2 * U); c.lineTo(dx - 2.2 * U, dz + 2.2 * U);
+        c.stroke();
+      }
     }
-  }
-  // bot planes — sky-blue arrow heads so the random flights read on the map
-  for (const pl of engine.planes) {
-    const px = S / 2 + pl.x * K, pz = S / 2 + pl.z * K;
-    c.save();
-    c.translate(px, pz);
-    c.rotate(-pl.hdg + Math.PI / 2); // heading 0 = +x (map-east)
-    c.beginPath();
-    c.moveTo(0, -3.4 * U); c.lineTo(2.2 * U, 2.4 * U); c.lineTo(-2.2 * U, 2.4 * U);
-    c.closePath();
-    c.fillStyle = pl.alt > 2 ? "#7dd3fc" : "#94a3b8";
-    c.fill();
-    c.restore();
+    // 🌐 co-op souls — cyan-ringed dots so real players pop against the bots
+    if (engine.mp) {
+      for (const r of engine.remotes) {
+        const col = SOUL_COLORS[r.slot % SOUL_COLORS.length];
+        if (r.alive) {
+          dot(r.x, r.z, 2.9 * U, col, 1);
+          c.strokeStyle = "#67e8f9";
+          c.lineWidth = Math.max(1, 0.9 * U);
+          c.beginPath();
+          c.arc(S / 2 + r.x * K, S / 2 + r.z * K, 3.6 * U, 0, Math.PI * 2);
+          c.stroke();
+        } else {
+          dot(r.x, r.z, 2.2 * U, "#7f1d1d", 0.8);
+        }
+      }
+    }
+    // dropped arms (yellow specks) + builds — brown barricade square / ember campfire
+    for (const te of engine.toolEnts) if (te.active) dot(te.x, te.z, 1.7 * U, "#facc15", 0.9);
+    for (const b of engine.builds) {
+      if (b.kind === "campfire") { dot(b.x, b.z, 2.7 * U, "#fb923c", 0.95); dot(b.x, b.z, 1.2 * U, "#fde68a", 0.9); }
+      else {
+        c.fillStyle = "#92400e";
+        c.fillRect(S / 2 + b.x * K - 2.2 * U, S / 2 + b.z * K - 2.2 * U, 4.4 * U, 4.4 * U);
+      }
+    }
+    // bot planes — sky-blue arrow heads so the random flights read on the map
+    for (const pl of engine.planes) {
+      const px = S / 2 + pl.x * K, pz = S / 2 + pl.z * K;
+      c.save();
+      c.translate(px, pz);
+      c.rotate(-pl.hdg + Math.PI / 2); // heading 0 = +x (map-east)
+      c.beginPath();
+      c.moveTo(0, -3.4 * U); c.lineTo(2.2 * U, 2.4 * U); c.lineTo(-2.2 * U, 2.4 * U);
+      c.closePath();
+      c.fillStyle = pl.alt > 2 ? "#7dd3fc" : "#94a3b8";
+      c.fill();
+      c.restore();
+    }
   }
   /* player: white direction arrow (amber outline) — rotation −yaw maps camera
      forward (−sin yaw, −cos yaw) onto the fixed-north map (up = −z) */
@@ -180,7 +193,7 @@ function Minimap({ engine, onOpen }: { engine: GameEngine; onOpen: () => void })
   const hud = useGame((s) => s.hud);
   useEffect(() => {
     const c = ref.current?.getContext("2d");
-    if (c) drawWorldMap(c, 156, engine, hud.night > 0.5);
+    if (c) drawWorldMap(c, 156, engine, hud.night > 0.5, true); // mini: decluttered survival view
   }, [engine, hud]);
   return (
     <button
@@ -210,7 +223,7 @@ function BigMap({ engine, onClose }: { engine: GameEngine; onClose: () => void }
   const hud = useGame((s) => s.hud);
   useEffect(() => {
     const c = ref.current?.getContext("2d");
-    if (c) drawWorldMap(c, BIG_MAP_S, engine, hud.night > 0.5);
+    if (c) drawWorldMap(c, BIG_MAP_S, engine, hud.night > 0.5, false); // big map: full detail
   }, [engine, hud]);
   return (
     <motion.div
@@ -1662,8 +1675,22 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
             <CoordsChip px={hud.px} pz={hud.pz} />
           </div>
         )}
-        <div className="rounded-xl bg-black/30 px-3 py-1 text-xs text-white/80 backdrop-blur-md">
-          🚓 {hud.police} police · 🧍 {hud.civilians} civilians
+        {/* 🏟️ contest dashboard — the lobby count IS the game (no more police/civilians noise) */}
+        <div
+          data-ui
+          className="rounded-xl border border-white/15 bg-black/45 px-3 py-1.5 text-right backdrop-blur-md"
+          role="status"
+          aria-label={`${hud.crewAlive + 1} of ${hud.aliveTotal} players alive, ${hud.aliveTotal - hud.crewAlive - 1} fallen, night ${hud.nightNo} of ${NIGHTS_TOTAL}${hud.phase === "night" ? `, ${hud.beastCount} zombies hunting` : ""}`}
+        >
+          <div className="text-xs font-black leading-4 text-white">
+            🧍 {hud.crewAlive + 1}<span className="text-white/55">/{hud.aliveTotal} players</span>
+          </div>
+          <div className="text-[10px] font-bold leading-4 text-white/70">
+            💀 {hud.aliveTotal - hud.crewAlive - 1} fallen · {hud.phase === "night" ? "🌙 Night" : "☀️ Day"} {hud.nightNo}/{NIGHTS_TOTAL}
+          </div>
+          {hud.phase === "night" && hud.beastCount > 0 && (
+            <div className="text-[10px] font-black leading-4 text-purple-300">🧟 {hud.beastCount} zombies hunting</div>
+          )}
         </div>
       </div>
 

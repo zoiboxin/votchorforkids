@@ -2138,7 +2138,7 @@ export class GameEngine {
    *  every run, so the accusation mystery stays learnable. Shirt color = identity. */
   private spawnCrew() {
     for (let i = 0; i < CREW_COUNT; i++) {
-      // 🏟️ 98 contestants scattered across the whole town in widening rings — a full
+      // 🏟️ 99 contestants scattered across the whole town in widening rings — a full
       // lobby, not a campfire circle (14 per ring × 7 rings, radii 15…87+jitter)
       const a = (i % 14) / 14 * Math.PI * 2 + Math.floor(i / 14) * 0.37;
       const rad = 15 + Math.floor(i / 14) * 12 + (i % 3) * 4;

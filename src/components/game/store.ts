@@ -191,7 +191,7 @@ export interface GameStore {
 export const emptyHud: HudData = {
   hp: 100, stamina: 100, stars: 0, carried: 0, delivered: 0, total: 16,
   points: 0, rescues: 0, support: 0, zone: "City", clock: 0.3, night: 0,
-  aliveTotal: 99,
+  aliveTotal: 100,
   detained: false, detainLeft: 0, prompt: "", policeNear: false,
   arrest: "free", station: "",
   civilians: 0, police: 0, won: false, elapsed: 0,
@@ -203,7 +203,7 @@ export const emptyHud: HudData = {
   hasLicense: false, driving: false, speed: 0,
   /* --- 7 Nights --- */
   nightNo: 1, phase: "day", phaseLeft: 0, wood: 0, rock: 0,
-  tools: [], held: -1, youPossessed: false, beastCount: 0, crewAlive: 7, crew: [],
+  tools: [], held: -1, youPossessed: false, beastCount: 0, crewAlive: 99, crew: [],
   attackReady: true, clue: null,
   mp: false, mpCode: "", mpHost: false, mpPing: 0, netPlayers: [],
 };

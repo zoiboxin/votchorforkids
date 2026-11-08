@@ -355,7 +355,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
               <Sparkles size={14} className="shrink-0 text-yellow-300" />
               {runsPlayed > 0
                 ? `${runsPlayed} run${runsPlayed === 1 ? "" : "s"} played — night ${runsPlayed + 1} awaits, survivor!`
-                : "8 survivors · 7 nights · 1 beast in disguise"}
+                : "100 souls · 7 nights · 1 winner takes the dawn"}
             </div>
 
             <div className="w-full max-w-[430px] lg:w-full">

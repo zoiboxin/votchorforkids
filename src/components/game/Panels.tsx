@@ -46,13 +46,13 @@ export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange:
 
         <div className="space-y-4 text-sm">
           <section className="rounded-2xl border border-indigo-300/30 bg-indigo-500/10 p-3">
-            <div className="mb-1.5 flex items-center gap-2 font-black text-indigo-300"><Moon size={15} /> One town · 7 nights · 8 souls</div>
+            <div className="mb-1.5 flex items-center gap-2 font-black text-indigo-300"><Moon size={15} /> One town · 7 nights · 100 souls</div>
             <p className="leading-relaxed text-white/85">
-              You and 7 survivors — <b className="text-yellow-200">Mia, Ravi, Zoe, Kofi, Anya, Marco &amp; Luna</b> — must hold out
-              for <b className="text-red-200">7 nights</b>. Every dusk a warning plays and the dark spirit
-              <b className="text-rose-200"> possesses one of the group</b>; at night they become a zombie beast and
-              <b> hunt the others</b>. At dawn you inspect the bodies, follow the clues… and <b className="text-amber-200">accuse your suspect</b>.
-              Survive all 7 nights — or be the last one standing — to win.
+              <b className="text-yellow-200">100 players</b> enter the contest — 99 contestants and you. Every dusk
+              <b className="text-rose-200"> about HALF of everyone still alive turns</b> into zombies, and the turned must
+              <b className="text-amber-200"> FEED before dawn or crumble</b> with the sunrise. Fight back with your fists, an
+              axe, a sword or any tool — every swing costs them health, and punches barely scratch. Survive all
+              <b> 7 nights</b> — or be the last one breathing — to win.
             </p>
           </section>
 
