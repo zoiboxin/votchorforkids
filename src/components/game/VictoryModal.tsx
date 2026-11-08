@@ -3,7 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
-import { RotateCcw, Home, Trophy, Timer, MoonStar, Swords, Scale, XCircle, Hammer } from "lucide-react";
+import { RotateCcw, Home, Trophy, Timer, MoonStar, Swords, Scale, XCircle, Hammer, Eye } from "lucide-react";
 import type { GameEngine } from "@/lib/game/engine";
 import { NIGHTS_TOTAL } from "@/lib/game/constants";
 import { useGame } from "./store";
@@ -86,6 +86,16 @@ export function VictoryModal({ engine, onReplay, onMenu }: { engine: GameEngine;
           <Stat icon={<RotateCcw size={14} />} label="Run" value={saved ? "saved ✓" : "saving…"} />
         </div>
         <Leaderboard compact />
+        {/* 👀 the contest doesn't end with you — ride the free cam behind the living */}
+        {!won && (
+          <Button
+            onClick={() => { setOpen(false); engine.startSpectate(); }}
+            variant="outline"
+            className="w-full rounded-xl border-emerald-300/40 bg-emerald-500/15 font-black text-emerald-200 hover:bg-emerald-500/30"
+          >
+            <Eye size={16} className="mr-1" /> Free cam — watch the town finish
+          </Button>
+        )}
         <div className="flex gap-2">
           <Button
             onClick={() => { setOpen(false); onReplay(); }}

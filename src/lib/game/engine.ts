@@ -311,6 +311,8 @@ export interface HudData {
   attackReady: boolean;
   /** last clue discovered by inspecting a body (null = none yet) */
   clue: string | null;
+  /** 👀 free-cam spectate — on = you're riding behind another living soul */
+  spec: { on: boolean; name: string };
   /* --- 🌐 multiplayer --- */
   /** true while this run is a co-op session */
   mp: boolean;
@@ -327,6 +329,9 @@ export interface HudData {
 export type ToastFn = (msg: string, kind?: "info" | "good" | "bad") => void;
 
 const dist2 = (ax: number, az: number, bx: number, bz: number) => (ax - bx) * (ax - bx) + (az - bz) * (az - bz);
+
+/** 👀 free cam: seconds before the camera drifts to another living soul */
+const SPEC_SWAP_S = 12;
 
 /** Index of the road line closest to a coordinate. */
 const nearestRoadIdx = (v: number): number => {
@@ -474,8 +479,21 @@ export class GameEngine {
   /** police side: min seconds between two busts so one crowd can't be mass-arrested */
   catchCd = 0;
   running = false;
+  /** ⏸ PERSONAL pause (Esc/P): only YOU step out of the world — the town keeps
+   *  living (bots forage, the pack hunts, the clock runs) like a real multiplayer
+   *  server. Your body stands still, verbs are gated, and every notable event is
+   *  journaled into pauseLog for the welcome-back report. */
+  personalPause = false;
+  /** 📜 events that happened while the player was personally paused (welcome-back feed) */
+  pauseLog: { msg: string; kind: "info" | "good" | "bad" }[] = [];
+  /** 👀 free-cam spectate — dead souls channel-surf the living town */
+  spectating = false;
+  /** 👀 the name of the soul the free cam is currently riding behind */
+  specName = "";
+  private specKey = "";
+  private specSwapT = 0;
   private nextId = 1;
-  toast: ToastFn;
+  private rawToast: ToastFn;
   private zone: Zone = "City";
   private hudT = 0;
   private hud: HudData;
@@ -556,7 +574,7 @@ export class GameEngine {
   constructor(world: World, look: Appearance, toast: ToastFn) {
     this.world = world;
     this.look = look;
-    this.toast = toast;
+    this.rawToast = toast;
     this.side = look.fac;
     this.policePerk = policeOutfitOf(look.fac === "police" ? look.outfit : "").stats;
     // snapshot every static collider radius so reset() can un-fell trees & un-smash rocks
@@ -1048,7 +1066,67 @@ export class GameEngine {
     this.toast("☀️ DAY: chop trees (🪓 + F), smash rocks (🔨 + F), build defenses (🔧 + B). Find arms around town — press G to open your pack!", "info");
     this.toast("⚠️ DUSK: sirens howl… SEVERAL of us turn. Names vanish in the dark! NIGHT: the pack hunts. Hide, run… or FIGHT (🗡️ + F).", "info");
   }
-  setToast(fn: ToastFn) { this.toast = fn; }
+  setToast(fn: ToastFn) { this.rawToast = fn; }
+
+  /** Every event funnels through here — while the player is personally paused
+   *  the feed is ALSO journaled so the welcome-back report can replay it. */
+  toast(msg: string, kind: "info" | "good" | "bad" = "info") {
+    if (this.personalPause && this.pauseLog.length < 60) this.pauseLog.push({ msg, kind });
+    this.rawToast(msg, kind);
+  }
+
+  /** ⏸ flip the PERSONAL pause — the town keeps living, only you step out.
+   *  Entering starts a fresh journal for the welcome-back report. */
+  setPersonalPause(v: boolean) {
+    if (v === this.personalPause) return;
+    this.personalPause = v;
+    if (v) this.pauseLog = [];
+  }
+
+  /* ------------ 👀 free-cam spectate — dead souls watch the town ------------ */
+
+  /** Every living soul the free cam can hop to (bots + real remote players). */
+  private specTargets(): { key: string; x: number; z: number; name: string }[] {
+    const out: { key: string; x: number; z: number; name: string }[] = [];
+    for (const c of this.crew) if (c.alive) out.push({ key: `c${c.id}`, x: c.x, z: c.z, name: c.name });
+    for (const r of this.remotes) if (r.alive) out.push({ key: `r${r.slot}`, x: r.x, z: r.z, name: r.name });
+    return out;
+  }
+
+  /** Enter free cam — the camera detaches from your corpse and follows the living. */
+  startSpectate() {
+    if (!this.lost) return; // only taken souls may wander the town unseen
+    this.spectating = true;
+    this.specKey = "";
+    this.specSwapT = SPEC_SWAP_S;
+    this.nextSpec();
+    this.toast("👀 Free cam — you watch the town now. Click or N: next soul · Esc: death menu.", "info");
+  }
+
+  /** Leave free cam (back to the death recap menu). */
+  stopSpectate() { this.spectating = false; }
+
+  /** Hop to another random living soul (click / N / the auto-swap timer). */
+  nextSpec() {
+    const ts = this.specTargets();
+    if (!ts.length) { this.specName = ""; return; }
+    let pick = ts[Math.floor(this.rnd() * ts.length)];
+    if (ts.length > 1 && pick.key === this.specKey) pick = ts[(ts.indexOf(pick) + 1) % ts.length];
+    this.specKey = pick.key;
+    this.specName = pick.name;
+    this.specSwapT = SPEC_SWAP_S;
+  }
+
+  /** Where the free cam should float right now (null = nobody left alive). */
+  specFocus(): { x: number; z: number; name: string } | null {
+    if (!this.spectating) return null;
+    const ts = this.specTargets();
+    if (!ts.length) { this.specName = ""; return null; }
+    const cur = ts.find((t) => t.key === this.specKey);
+    if (cur) return cur;
+    this.nextSpec(); // our soul just got taken — hop to someone else
+    return ts.find((t) => t.key === this.specKey) ?? null;
+  }
 
   reset(look: Appearance) {
     this.look = look;
@@ -1057,6 +1135,7 @@ export class GameEngine {
     this.player = newBody(SPAWN.x, SPAWN.z);
     this.hp = 100; this.stamina = 100; this.stars = 0; this.starTimer = 0; this.chased = false;
     this.crimeReport = null; this.botLootCd = 0;
+    this.setPersonalPause(false); this.pauseLog = []; this.spectating = false; this.specName = ""; this.specKey = "";
     this.inv = []; this.hurtT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0; this.powerFullT = 0;
     this.flipT = 0; this.squashT = 0; this.faintT = 0; this.carHitCd = 0;
     this.activePower = null; this.powerT = 0; this.powerPockets = []; this.morphKind = null; this.blinkCd = 0;
@@ -1134,7 +1213,7 @@ export class GameEngine {
 
   /* ---------------- interactions ---------------- */
   interact() {
-    if (!this.running) return;
+    if (!this.running || this.personalPause || this.lost) return;
     // in a car? E hops out first — everything else waits
     if (this.drive) { this.exitCar(); return; }
     // 🩸 7Nights: inspect a fallen survivor's body — learn the killer's clue
@@ -1248,6 +1327,7 @@ export class GameEngine {
    *  slips out of your hands and DROPS at your feet (see dropLicense). The
    *  giver is free to hunt a fresh 🪪 card afterwards. */
   giveLicense() {
+    if (!this.running || this.personalPause || this.lost) return;
     if (!this.hasLicense) {
       this.toast("🪪 You don't have a driving license to give — hunt a glowing card first!", "info");
       return;
@@ -2069,7 +2149,7 @@ export class GameEngine {
 
   /** Eat/use a pocketed item: restores ❤ health and/or ⚡ energy. */
   useItem(def: number) {
-    if (!this.running) return; // hotkeys 1-8 must not eat snacks while paused
+    if (!this.running || this.personalPause || this.lost) return; // no snacking while paused / dead
     const idx = this.inv.findIndex((s) => s.def === def);
     if (idx < 0 || this.inv[idx].count <= 0) return;
     const d = ITEMS[def];
@@ -2098,7 +2178,7 @@ export class GameEngine {
 
   /** Blink Teleport: poof ~15u in the direction the CAMERA looks. Only while the blink power lasts. */
   tryBlink() {
-    if (!this.running) return;
+    if (!this.running || this.personalPause || this.lost) return;
     if (this.drive) {
       // teleporting out of a moving car would leave it driverless — park first!
       if (this.driveMsgT <= 0) {
@@ -2145,13 +2225,13 @@ export class GameEngine {
   /** Unleash the FIRST pocketed power gem — press G or tap the ✨ slot.
    *  Each gem is SINGLE-USE: firing consumes it. */
   usePower() {
-    if (!this.running || this.powerPockets.length === 0) return;
+    if (!this.running || this.personalPause || this.lost || this.powerPockets.length === 0) return;
     this.usePowerAt(0);
   }
 
   /** Unleash a SPECIFIC pocketed gem (HUD slot tap, 0 = first). Consumes it — one shot per gem. */
   usePowerAt(slot: number) {
-    if (!this.running) return;
+    if (!this.running || this.personalPause || this.lost) return;
     if (slot < 0 || slot >= this.powerPockets.length) return;
     if (this.detainedT > 0 || this.faintT > 0) return;
     const def = this.powerPockets.splice(slot, 1)[0]; // the gem is spent — no refunds!
@@ -2723,7 +2803,7 @@ export class GameEngine {
 
   /** Swing the held arm — claws, blade, axe, hammer… or sad bare fists. */
   attack() {
-    if (!this.running || this.attackCd > 0 || this.faintT > 0 || this.detainedT > 0 || this.drive) return;
+    if (!this.running || this.personalPause || this.lost || this.attackCd > 0 || this.faintT > 0 || this.detainedT > 0 || this.drive) return;
     const p = this.player;
     this.attackCd = ATTACK_CD;
     // 🩸 possessed player = the beast: claws tear the crew
@@ -2943,7 +3023,7 @@ export class GameEngine {
 
   /** Build a barricade (B) or a campfire (V) a few units ahead of the camera. */
   placeBuild(kind: "barricade" | "campfire") {
-    if (!this.running) return;
+    if (!this.running || this.personalPause || this.lost) return;
     if (this.drive) {
       // building from the driver's seat drops walls in the road ahead of the
       // moving car — park first, same rule as Blink
@@ -3012,7 +3092,7 @@ export class GameEngine {
   /** R — accuse the survivor next to you. Right call banishes the possessed;
    *  wrong call kills an innocent. The town never forgives. */
   accuse() {
-    if (!this.running) return;
+    if (!this.running || this.personalPause || this.lost) return;
     if (this.drive) {
       if (this.driveMsgT <= 0) {
         this.driveMsgT = 2.5;
@@ -3104,6 +3184,14 @@ export class GameEngine {
     this.stepPhase(dt); // 🌙 7Nights — the story drives the sky clock now
     const night = nightFactor(this.clock);
     const p = this.player;
+
+    // ⏸ PERSONAL PAUSE (or dead): the town keeps living — only YOUR body freezes.
+    //  Movement/verbs stop; bots forage, the pack hunts, cops patrol, the clock
+    //  runs and yes — you can even be caught (or eaten) while you were away.
+    if (this.personalPause || this.lost) {
+      this.input.f = 0; this.input.r = 0; this.input.sprint = false;
+      this.input.jump = false; this.input.turn = 0;
+    }
 
     // 🎮 keyboard camera turn (hold Z / X) — the fallback when the mouse cursor
     // can't be hard-locked (sandboxed preview iframes block pointer lock) and the
@@ -3866,6 +3954,12 @@ export class GameEngine {
     // 🩸 7Nights: at 0 hp the dark takes you — no dizzy respawn, the story ends
     if (this.hp <= 0 && this.detainedT <= 0) this.die();
 
+    // 👀 free cam: drift the camera to a new living soul every so often
+    if (this.spectating) {
+      this.specSwapT -= dt;
+      if (this.specSwapT <= 0) this.nextSpec();
+    }
+
     /* --- HUD snapshot --- */
     this.hudT += dt;
     if (this.hudT > 0.1) { this.hudT = 0; this.hud = this.buildHud(); }
@@ -3965,6 +4059,7 @@ export class GameEngine {
       crew: this.crew.map((c) => ({ name: c.name, color: c.color, alive: c.alive, mode: c.mode })),
       attackReady: this.attackCd <= 0,
       clue: this.lastClue,
+      spec: { on: this.spectating, name: this.specName },
       /* --- 🌐 multiplayer --- */
       mp: this.mp,
       mpCode: this.mpCode,

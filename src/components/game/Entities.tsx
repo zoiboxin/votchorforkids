@@ -115,8 +115,8 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     const heldKind = !beast && !morphing && !engine.drive && engine.held >= 0 && engine.tools[engine.held]
       ? engine.tools[engine.held].kind as HeldToolKind : null;
     if (heldRef.current !== heldKind) { setHeldTool(mesh, heldKind); heldRef.current = heldKind; }
-    mesh.visible = !engine.playerInVan && !morphing && !engine.drive && !beast;
-    beastMesh.visible = beast && !engine.playerInVan && !engine.drive;
+    mesh.visible = !engine.lost && !engine.playerInVan && !morphing && !engine.drive && !beast; // 🩸 the dark takes the body too
+    beastMesh.visible = beast && !engine.lost && !engine.playerInVan && !engine.drive;
     if (beastMesh.visible) {
       beastMesh.position.set(p.x, p.y, p.z);
       let bd = p.face - beastMesh.rotation.y;
@@ -199,19 +199,23 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     // The camera rides the SMOOTHED visual pose while driving (the same pose the
     // car mesh renders at) — following the raw sim pose instead made the world
     // shake against the gliding body after every collision push-out.
+    // 👀 free cam: a dead soul's camera rides behind another LIVING survivor
+    // (random hop, click/N to channel-surf) instead of staring at their corpse.
     const drv = engine.drive;
-    const camX = drv ? drv.vx : p.x;
-    const camZ = drv ? drv.vz : p.z;
+    const spec = engine.spectating ? engine.specFocus() : null;
+    const camX = spec ? spec.x : drv ? drv.vx : p.x;
+    const camZ = spec ? spec.z : drv ? drv.vz : p.z;
+    const focusY = spec ? 0 : p.y;
     const cd = drv ? 11 : 8.6;
     const iy = engine.input.yaw, ip = engine.input.pitch;
     let tx = camX + Math.sin(iy) * cd * Math.cos(ip);
-    let ty = Math.max(1.2, p.y + 2.1 + Math.sin(ip) * cd);
+    let ty = Math.max(1.2, focusY + 2.1 + Math.sin(ip) * cd);
     let tz = camZ + Math.cos(iy) * cd * Math.cos(ip);
     // 🎥 chase camera vs the world — sample the focus→camera line; if a building,
     // tree canopy or lamp post stands in the way, slide the camera closer so the
     // hero (and their ride!) can never be hidden behind a dark blob
     if (introT.current >= 1) {
-      const fx = camX, fy = p.y + 1.9, fz = camZ;
+      const fx = camX, fy = focusY + 1.9, fz = camZ;
       let keep = 1;
       for (let s = 1; s <= 7; s++) {
         const f = s / 7;
@@ -239,7 +243,7 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       const wob = engine.faintT / FAINT_S;
       const t = performance.now() / 1000;
       camera.position.set(tx + Math.sin(t * 21) * 0.09 * wob, ty + Math.sin(t * 17) * 0.06 * wob, tz);
-    } else if (engine.drive) {
+    } else if (engine.drive && !spec) {
       // 🚗 behind the wheel: the chase POSITION glides softly (k=9) for that GTA
       // rubber-band, but the LOOK-AT is GLUED to the car's already-smoothed pose.
       // The old extra 9/s lerp on the target stacked a SECOND ~110 ms of lag on
@@ -271,7 +275,7 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       camera.position.z += Math.cos(st * 19.1 + 0.9) * 0.62 * sh;
     }
     if (engine.drive && camSm.current.on) camera.lookAt(camSm.current.tgt);
-    else camera.lookAt(camX, p.y + 1.7, camZ);
+    else camera.lookAt(camX, focusY + 1.7, camZ);
 
     // HUD @ ~8 Hz
     hudT.current += dt;

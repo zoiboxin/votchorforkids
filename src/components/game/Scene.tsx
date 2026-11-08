@@ -85,6 +85,11 @@ export function useGameInput(engine: GameEngine | null) {
       // screen swallow every game verb (E/F/B/V/R/Q/H) so nothing fires unseen
       const s0 = useGame.getState();
       const menuOwns = s0.victoryOpen || s0.bigMapOpen || s0.wheelOpen || s0.licenseOpen;
+      // 👀 free cam: N / → hops to another soul — every game verb is ghost-quiet
+      if (engine.spectating && !s0.victoryOpen) {
+        if (e.code === "KeyN" || e.code === "ArrowRight") { e.preventDefault(); engine.nextSpec(); }
+        return;
+      }
       if (e.code === "Space") {
         e.preventDefault();
         if (!menuOwns) {
@@ -123,6 +128,11 @@ export function useGameInput(engine: GameEngine | null) {
       const s = useGame.getState();
       const menuOwns = s.victoryOpen || s.bigMapOpen || s.wheelOpen || s.licenseOpen;
       const onUi = e.target instanceof Element && e.target.closest("[data-ui]");
+      // 👀 spectating: LMB hops to another living soul — dead souls don't swing tools
+      if (engine.spectating && s.screen === "play" && !s.paused && !menuOwns && !onUi) {
+        if (e.button === 0) engine.nextSpec();
+        return;
+      }
       // 🖱️ mouse verbs (desktop): LMB swings (same as F) · RMB opens the 🎯 tool wheel (same as G)
       if (s.screen === "play" && !s.paused && !menuOwns && !s.touch && !onUi) {
         if (e.button === 0) {
@@ -180,14 +190,18 @@ export function useGameInput(engine: GameEngine | null) {
     };
     const plc = () => {
       const locked = !!document.pointerLockElement;
+      const wasLocked = useGame.getState().mouseLocked; // did we truly HOLD the lock?
       useGame.getState().setMouseLocked(locked);
       if (!locked) {
         // Esc while the cursor is hard-bound is swallowed by the browser to exit
         // pointer lock — the page never sees that keydown. So treat an unexpected
         // unlock (no menu/modal/map/WHEEL already open) as "Esc pressed" → pause menu.
+        // BUT only when we actually HELD the lock: Chrome fires spurious
+        // locked=false change events after a FAILED request (pointerlockerror) —
+        // treating those as Esc instantly re-paused every resume click. 🐛
         const s = useGame.getState();
-        if (s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen && !s.wheelOpen && !s.licenseOpen) {
-          engine.running = false; // match togglePause: freeze the simulation too
+        if (wasLocked && s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen && !s.wheelOpen && !s.licenseOpen) {
+          engine.setPersonalPause(true); // ⏸ only YOU step out — the town keeps living
           s.setPaused(true);
         }
       }

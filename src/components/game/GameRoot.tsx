@@ -44,6 +44,7 @@ export function GameRoot() {
   const startGame = useCallback(() => {
     useGame.getState().setScreen("connecting");
     useGame.getState().setPaused(false);
+    useGame.getState().setPauseReport(false);
     useGame.getState().setVictoryOpen(false);
     useGame.getState().setShowHelp(true); // goal card re-shows every round, auto-hides after 12 s
     useGame.getState().setWheelOpen(false); // never carry a stale 🎒 tool wheel into a fresh run
@@ -121,6 +122,8 @@ export function GameRoot() {
     stopDrone();
     const eng = engineRef.current;
     if (eng) {
+      eng.setPersonalPause(false);
+      eng.spectating = false;
       eng.running = false;
       // save unfinished runs too (quit mid-story) — wins are recorded by the victory watcher
       if (!eng.won && eng.points > 0) {
@@ -143,6 +146,7 @@ export function GameRoot() {
       }
     }
     useGame.getState().setPaused(false);
+    useGame.getState().setPauseReport(false);
     // leaving a net run: drop the relay wiring but STAY in the lobby room
     netRef.current?.detach();
     netRef.current = null;
@@ -165,6 +169,9 @@ export function GameRoot() {
       // screen guard: a "Play again" click closes the modal while the OLD engine still
       // has won/lost=true for the 650 ms connecting window — never re-open in that gap
       if (useGame.getState().screen !== "play") return;
+      // ⏸ the end screen waits while the player is personally paused (the welcome-back
+      // report reveals the death itself) and while the 👀 free cam is riding around town
+      if (useGame.getState().paused || useGame.getState().pauseReport || eng.spectating) return;
       if ((eng.won || eng.lost) && !useGame.getState().victoryOpen) {
         useGame.getState().setVictoryOpen(true);
         const h = useGame.getState().hud;

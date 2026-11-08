@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Heart, Zap, Star, Sun, Moon, MapPin, Volume2, VolumeX, Pause, Play as PlayIcon,
   Gauge, CircleHelp, Flag, Home, Settings as SettingsIcon, CheckCircle2, Siren, Info, ShieldCheck,
-  ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon, Mouse,
+  ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon, Mouse, Eye, ScrollText,
 } from "lucide-react";
 import type { GameEngine } from "@/lib/game/engine";
 import { DETAIN_SECONDS, ITEMS, INV_SLOTS, NIGHTS_TOTAL, POLICE_STATIONS, POWERS, TOOLS } from "@/lib/game/constants";
@@ -1010,20 +1010,108 @@ function MobileButtons({ engine }: { engine: GameEngine }) {
   );
 }
 
-/* ----------------------------- pause menu ----------------------------- */
+/* ------------- pause menu + 📜 welcome-back report ------------- */
 function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void }) {
   const setPaused = useGame((s) => s.setPaused);
+  const pauseReport = useGame((s) => s.pauseReport);
   const [help, setHelp] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const hud = useGame((s) => s.hud);
 
-  const resume = () => {
+  /** leave the pause menu — back to play, the free cam, or the death recap */
+  const leavePause = (after?: () => void) => {
     sfx.click();
+    engine.setPersonalPause(false);
     engine.running = true;
     startMusic();
+    useGame.getState().setPauseReport(false);
     setPaused(false);
-    requestGameLock(); // re-weld the mouse to the camera — a fresh click gesture, so this is allowed
+    if (after) after();
+    else requestGameLock(); // re-weld the mouse to the camera — a fresh click gesture, so this is allowed
   };
+
+  /* ---------- 📜 the welcome-back report (what happened while away) ---------- */
+  if (pauseReport) {
+    const alive = hud.crewAlive + (engine.lost ? 0 : 1);
+    const log = engine.pauseLog;
+    const chips: { t: string; c: string }[] = [
+      { t: hud.phase === "night" ? `🌙 Night ${hud.nightNo}/${NIGHTS_TOTAL}` : `☀️ Day ${hud.nightNo}/${NIGHTS_TOTAL}`, c: "text-amber-200" },
+      { t: `🧍 ${alive}/${hud.aliveTotal} alive`, c: "text-white" },
+      { t: hud.beastCount > 0 ? `🧟 ${hud.beastCount} hunting` : "🧟 pack asleep", c: hud.beastCount > 0 ? "text-purple-300" : "text-white/70" },
+      { t: `❤️ ${hud.hp} hp`, c: hud.hp < 40 ? "text-rose-300" : "text-white" },
+      { t: `💰 ₹${hud.money}`, c: "text-emerald-200" },
+      { t: `📍 ${hud.zone}`, c: "text-sky-200" },
+    ];
+    return (
+      <motion.div
+        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+        className="pointer-events-auto absolute inset-0 z-20 flex items-center justify-center bg-slate-950/60 backdrop-blur-sm"
+        data-ui
+      >
+        <motion.div
+          initial={{ scale: 0.9, y: 14 }} animate={{ scale: 1, y: 0 }}
+          transition={{ type: "spring", stiffness: 260, damping: 22 }}
+          className="w-[min(94vw,440px)] rounded-3xl border border-white/20 bg-slate-900/95 p-5 text-white shadow-2xl"
+        >
+          {engine.lost ? (
+            <>
+              <div className="mb-1 text-center text-3xl font-black text-rose-300">🩸 You Died</div>
+              <p className="mb-3 text-center text-xs text-white/70">
+                The town didn&apos;t stop for you — the dark took you on night {hud.nightNo} while you were away.
+                You placed <b className="text-rose-200">#{hud.crewAlive + 1} of {hud.aliveTotal}</b>.
+              </p>
+            </>
+          ) : (
+            <>
+              <div className="mb-1 text-center text-3xl font-black text-yellow-300">Welcome back 👀</div>
+              <p className="mb-3 text-center text-xs text-white/60">
+                This is a living town — {hud.aliveTotal - alive} fell while you were gone. Here&apos;s what you missed.
+              </p>
+            </>
+          )}
+          {/* right-now status */}
+          <div className="mb-2 grid grid-cols-2 gap-1.5 text-[11px] font-bold sm:grid-cols-3" aria-label="current status">
+            {chips.map((c) => (
+              <div key={c.t} className={`rounded-xl border border-white/10 bg-white/5 px-2 py-1.5 text-center ${c.c}`}>{c.t}</div>
+            ))}
+          </div>
+          {/* the journal — everything the town did while you were out */}
+          <div className="mb-4 max-h-44 overflow-y-auto rounded-2xl border border-white/10 bg-black/30 p-2.5" role="log" aria-label="events while paused">
+            {log.length === 0 ? (
+              <p className="py-3 text-center text-[11px] text-white/45">Quiet while you were away — the town just lived.</p>
+            ) : (
+              <ul className="space-y-1 text-[11px] leading-snug">
+                {log.map((e, i) => (
+                  <li key={i} className={e.kind === "bad" ? "text-rose-200" : e.kind === "good" ? "text-emerald-200" : "text-white/75"}>{e.msg}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+          <div className="space-y-2">
+            {engine.lost ? (
+              <>
+                <Button onClick={() => leavePause(() => { engine.startSpectate(); requestGameLock(); })} className="h-12 w-full rounded-2xl bg-gradient-to-r from-emerald-400 to-teal-300 text-lg font-black text-emerald-950">
+                  <Eye size={18} className="mr-2" /> Free cam — watch the town
+                </Button>
+                <Button onClick={() => leavePause(() => useGame.getState().setVictoryOpen(true))} variant="outline" className="h-11 w-full rounded-2xl border-white/25 bg-white/10 font-bold text-white hover:bg-white/20">
+                  <ScrollText size={16} className="mr-2" /> Death recap &amp; leaderboard
+                </Button>
+              </>
+            ) : (
+              <Button onClick={() => leavePause()} className="h-12 w-full rounded-2xl bg-gradient-to-r from-amber-400 to-yellow-300 text-lg font-black text-amber-950">
+                <PlayIcon size={18} className="mr-2" fill="currentColor" /> Back to the hunt
+              </Button>
+            )}
+            <Button onClick={onQuit} variant="outline" className="h-11 w-full rounded-2xl border-rose-300/40 bg-rose-500/15 font-bold text-rose-200 hover:bg-rose-500/30">
+              <Home size={16} className="mr-2" /> Quit to menu
+            </Button>
+          </div>
+        </motion.div>
+        <HowToPlay open={help} onOpenChange={setHelp} />
+        <SettingsDialog open={settingsOpen} onOpenChange={setSettingsOpen} />
+      </motion.div>
+    );
+  }
 
   const secs = Math.floor(hud.elapsed);
   const mm = String(Math.floor(secs / 60)).padStart(2, "0");
@@ -1041,9 +1129,17 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
         className="w-[min(92vw,380px)] rounded-3xl border border-white/20 bg-slate-900/95 p-6 text-white shadow-2xl"
       >
         <div className="mb-1 text-center text-3xl font-black text-yellow-300">Paused ⏸</div>
+        <p className="mb-3 text-center text-xs text-white/60">
+          The town keeps living without you — bots forage, the pack hunts, the clock runs.
+        </p>
+        {engine.lost && (
+          <div className="mb-3 rounded-2xl border border-rose-400/40 bg-rose-500/15 px-3 py-2 text-center text-xs font-black text-rose-200">
+            🩸 You died while you were away — Resume to see the report &amp; free cam.
+          </div>
+        )}
         <p className="mb-4 text-center text-xs text-white/60">Run time {mm}:{ss} · score {hud.points} · 🌙 night {hud.nightNo}</p>
         <div className="space-y-2">
-          <Button onClick={resume} className="h-12 w-full rounded-2xl bg-gradient-to-r from-amber-400 to-yellow-300 text-lg font-black text-amber-950">
+          <Button onClick={() => leavePause(() => useGame.getState().setPauseReport(true))} className="h-12 w-full rounded-2xl bg-gradient-to-r from-amber-400 to-yellow-300 text-lg font-black text-amber-950">
             <PlayIcon size={18} className="mr-2" fill="currentColor" /> Resume
           </Button>
           <Button onClick={() => setHelp(true)} variant="outline" className="h-11 w-full rounded-2xl border-white/25 bg-white/10 font-bold text-white hover:bg-white/20">
@@ -1128,9 +1224,27 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
     if (victoryOpen) return;
     const next = !useGame.getState().paused;
     sfx.click();
-    engine.running = !next;
-    if (next) stopMusic(); else startMusic();
-    setPaused(next);
+    if (next) {
+      engine.setPersonalPause(true); // ⏸ only YOU step out — the town keeps living
+      stopMusic();
+      useGame.getState().setPauseReport(false);
+      setPaused(true);
+    } else {
+      // Esc pressed again while paused: if the welcome-back report is already
+      // showing that means "just get me back in" — otherwise reveal the report
+      // (multiplayer rules: time passed while you were away, show what you missed)
+      const st = useGame.getState();
+      if (st.pauseReport) {
+        engine.setPersonalPause(false);
+        engine.running = true;
+        startMusic();
+        st.setPauseReport(false);
+        setPaused(false);
+        requestGameLock();
+      } else {
+        st.setPauseReport(true);
+      }
+    }
   };
 
   // P / Escape toggles pause · 1-8 eats pocketed food · M opens the big map
@@ -1159,6 +1273,17 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       if (wheelOpen) {
         if (e.code === "KeyG" || e.code === "Enter") { e.preventDefault(); wheelApi.current?.confirm(); }
         else if (e.code === "Escape") { e.preventDefault(); wheelApi.current?.cancel(); }
+        return;
+      }
+      // 👀 free cam (spectating the town after death): N / → hops souls,
+      // Esc / P returns to the death recap — everything else is ghost-quiet
+      if (useGame.getState().hud.spec.on) {
+        if (e.code === "KeyN" || e.code === "ArrowRight") { e.preventDefault(); engine.nextSpec(); }
+        else if (e.code === "Escape" || e.code === "KeyP") {
+          e.preventDefault();
+          engine.stopSpectate();
+          useGame.getState().setVictoryOpen(true);
+        }
         return;
       }
       if (bigMap) {
@@ -1300,7 +1425,8 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       {/* directional warning toward the closest chasing cop */}
       <AnimatePresence>{hud.policeNear && <DangerCompass engine={engine} />}</AnimatePresence>
 
-      {/* top-left: vitals */}
+      {/* top-left: vitals — hidden while the free cam rides (dead souls have no heartbeat) */}
+      {!hud.spec.on && (
       <div className="absolute left-3 top-3 flex flex-col gap-1.5 rounded-2xl bg-black/35 p-3 backdrop-blur-md">
         <Bar v={hud.hp} color="bg-gradient-to-r from-rose-500 to-rose-400" icon={<Heart size={16} className="text-rose-300" fill="currentColor" />} low={hud.hp <= 30} />
         <Bar v={hud.stamina} color="bg-gradient-to-r from-amber-500 to-yellow-300" icon={<Zap size={16} className="text-amber-300" fill="currentColor" />} low={hud.stamina <= 15} />
@@ -1356,6 +1482,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
           </div>
         )}
       </div>
+      )}
       {/* floating +❤/+⚡ chip right after a snack is eaten */}
       <GainFlash />
 
@@ -1544,7 +1671,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       )}
 
       {/* prompt */}
-      {hud.prompt && (
+      {hud.prompt && !hud.spec.on && (
         <div role="status" className="absolute bottom-36 left-1/2 -translate-x-1/2 animate-pulse rounded-full bg-emerald-500/90 px-5 py-2 font-black text-white shadow-xl sm:bottom-28">
           {hud.prompt}
         </div>
@@ -1635,9 +1762,12 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
             onQuit={() => {
               if (onQuit) { onQuit(); return; }
               // fallback when no GameRoot handler is wired
+              engine.setPersonalPause(false);
+              engine.spectating = false;
               engine.running = false;
               stopMusic();
               setPaused(false);
+              useGame.getState().setPauseReport(false);
               useGame.getState().setVictoryOpen(false);
               useGame.getState().recordRun(useGame.getState().hud.points, useGame.getState().hud.money, useGame.getState().hud.rescues, engine.caughtCount, false, Math.round(useGame.getState().hud.elapsed * 1000));
               useGame.getState().setScreen("landing");
@@ -1646,8 +1776,27 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         )}
       </AnimatePresence>
 
+      {/* 👀 free-cam spectate banner — you ride behind another living soul */}
+      {hud.spec.on && (
+        <div className="pointer-events-none absolute left-1/2 top-3 z-10 -translate-x-1/2 text-center">
+          <motion.div
+            initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
+            className="rounded-2xl border border-emerald-300/30 bg-black/55 px-5 py-2 backdrop-blur-md"
+            role="status"
+            aria-label={`Spectating ${hud.spec.name}`}
+          >
+            <div className="text-sm font-black text-white">
+              👀 SPECTATING <span className="text-emerald-300">{hud.spec.name}</span>
+            </div>
+            <div className="mt-0.5 text-[10px] font-bold text-white/70">
+              🧍 {hud.crewAlive}/{hud.aliveTotal} alive · {hud.phase === "night" ? `🌙 Night ${hud.nightNo}` : `☀️ Day ${hud.nightNo}`} · Click / N — next soul · Esc — menu
+            </div>
+          </motion.div>
+        </div>
+      )}
+
       {/* food pockets + 🎒 tool belt — desktop: bottom-left corner, with the ✨ power slots beside them */}
-      {!touch && (
+      {!touch && !hud.spec.on && (
         <div className="absolute bottom-3 left-3 z-10 flex items-end gap-2">
           <ItemBar engine={engine} />
           <ToolBelt engine={engine} />
@@ -1656,7 +1805,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
       )}
 
       {/* mobile controls */}
-      {touch && !paused && (
+      {touch && !paused && !hud.spec.on && (
         <>
           <div className="absolute bottom-[10rem] left-4 z-10"><ItemBar engine={engine} vertical /></div>
           <div className="absolute bottom-6 left-4 z-10"><Joystick engine={engine} /></div>
@@ -1673,7 +1822,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
 
       {/* bottom-right: big-map shortcut + coords (narrow) + city life */}
       <div className="absolute bottom-3 right-3 z-10 flex flex-col items-end gap-1.5">
-        {!touch && (
+        {!touch && !hud.spec.on && (
           <button
             data-ui type="button" onClick={() => setBigMap(true)} title="Big map (M)"
             aria-label="Open big map"
@@ -1682,7 +1831,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
             <MapIcon size={11} /> M — big map
           </button>
         )}
-        {!touch && (
+        {!touch && !hud.spec.on && (
           <div className="md:hidden">
             <CoordsChip px={hud.px} pz={hud.pz} />
           </div>
@@ -1692,10 +1841,10 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
           data-ui
           className="rounded-xl border border-white/15 bg-black/45 px-3 py-1.5 text-right backdrop-blur-md"
           role="status"
-          aria-label={`${hud.crewAlive + 1} of ${hud.aliveTotal} players alive, ${hud.aliveTotal - hud.crewAlive - 1} fallen, night ${hud.nightNo} of ${NIGHTS_TOTAL}${hud.phase === "night" ? `, ${hud.beastCount} zombies hunting` : ""}`}
+          aria-label={`${hud.crewAlive + (hud.spec.on ? 0 : 1)} of ${hud.aliveTotal} players alive, ${hud.aliveTotal - hud.crewAlive - 1} fallen, night ${hud.nightNo} of ${NIGHTS_TOTAL}${hud.phase === "night" ? `, ${hud.beastCount} zombies hunting` : ""}`}
         >
           <div className="text-xs font-black leading-4 text-white">
-            🧍 {hud.crewAlive + 1}<span className="text-white/55">/{hud.aliveTotal} players</span>
+            🧍 {hud.crewAlive + (hud.spec.on ? 0 : 1)}<span className="text-white/55">/{hud.aliveTotal} players</span>
           </div>
           <div className="text-[10px] font-bold leading-4 text-white/70">
             💀 {hud.aliveTotal - hud.crewAlive - 1} fallen · {hud.phase === "night" ? "🌙 Night" : "☀️ Day"} {hud.nightNo}/{NIGHTS_TOTAL}
@@ -1708,7 +1857,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
 
       {/* bottom-center: controls hint + location chip (old-game footer, revived) —
           narrow desktops hide the center stack and tuck the coords chip bottom-right instead */}
-      {!touch && (
+      {!touch && !hud.spec.on && (
         <div className="absolute bottom-3 left-1/2 z-10 hidden -translate-x-1/2 flex-col items-center gap-1.5 md:flex">
           <div className="hidden whitespace-nowrap rounded-full bg-black/45 px-3 py-1 text-[9px] font-black uppercase tracking-widest text-white/75 backdrop-blur-md lg:block">
             WASD move · Shift sprint · Space jump ×2 · F/LMB attack · G/RMB tools · 🪪 license · B/V build · E inspect/drive · R accuse · Q blink · 1-8 eat · M map

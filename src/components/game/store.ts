@@ -121,6 +121,8 @@ export interface GameStore {
   showHelp: boolean;
   victoryOpen: boolean;
   paused: boolean;
+  /** true while the ⏸ pause menu shows the welcome-back report (what happened while you were away) */
+  pauseReport: boolean;
   /** true while the big world map overlay is open (M) */
   bigMapOpen: boolean;
   /** true while the 🎒 tool wheel is open at screen center (G) — cursor is free, world keeps running */
@@ -175,6 +177,7 @@ export interface GameStore {
   setShowHelp: (v: boolean) => void;
   setVictoryOpen: (v: boolean) => void;
   setPaused: (p: boolean) => void;
+  setPauseReport: (v: boolean) => void;
   setBigMapOpen: (v: boolean) => void;
   setWheelOpen: (v: boolean) => void;
   setLicenseOpen: (v: boolean) => void;
@@ -205,6 +208,7 @@ export const emptyHud: HudData = {
   nightNo: 1, phase: "day", phaseLeft: 0, wood: 0, rock: 0,
   tools: [], held: -1, youPossessed: false, beastCount: 0, crewAlive: 99, crew: [],
   attackReady: true, clue: null,
+  spec: { on: false, name: "" },
   mp: false, mpCode: "", mpHost: false, mpPing: 0, netPlayers: [],
 };
 
@@ -233,6 +237,7 @@ export const useGame = create<GameStore>()((set, get) => ({
   showHelp: true,
   victoryOpen: false,
   paused: false,
+  pauseReport: false,
   bigMapOpen: false,
   wheelOpen: false,
   licenseOpen: false,
@@ -293,6 +298,7 @@ export const useGame = create<GameStore>()((set, get) => ({
   setShowHelp: (v) => set({ showHelp: v }),
   setVictoryOpen: (v) => set({ victoryOpen: v }),
   setPaused: (p) => set({ paused: p }),
+  setPauseReport: (v) => set({ pauseReport: v }),
   setMouseLocked: (v) => set({ mouseLocked: v }),
   setBigMapOpen: (v) => set({ bigMapOpen: v }),
   setWheelOpen: (v) => set({ wheelOpen: v }),
