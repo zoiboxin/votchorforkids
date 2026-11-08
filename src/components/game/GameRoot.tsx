@@ -59,7 +59,7 @@ export function GameRoot() {
         eng = new GameEngine(WORLD, freshLook, (msg, kind) => pushToast(msg, kind));
         engineRef.current = eng;
         setEngine(eng);
-        (window as unknown as { __vc?: unknown }).__vc = { engine: eng, world: WORLD, terrainH: terrainHeight };
+        (window as unknown as { __vc?: unknown }).__vc = { engine: eng, world: WORLD, terrainH: terrainHeight, net };
         (window as unknown as { __vcStore?: unknown }).__vcStore = useGame; // debug/test hook
         // FIRST RUN init: the constructor spawns the town, but only reset() grants
         // the driving license, scatters the votes, homes the vans & calms the cops.

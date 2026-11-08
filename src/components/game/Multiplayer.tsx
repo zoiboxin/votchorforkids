@@ -15,6 +15,16 @@ import { Input } from "@/components/ui/input";
 import { useGame } from "./store";
 import { net, type LobbyPlayer } from "@/lib/game/net/client";
 import type { Appearance } from "@/lib/game/constants";
+import { useGame as storeHook } from "./store";
+
+// 🔍 always-probeable store + net handles (debug/automation hooks survive
+// whether or not a run ever started — startGame's first-run path used to be
+// the only place these landed, which made lobby-side debugging blind)
+declare global { interface Window { __vcStore?: typeof storeHook; __net?: typeof net } }
+if (typeof window !== "undefined") {
+  window.__vcStore = storeHook;
+  window.__net = net;
+}
 
 const SLOT_COLORS = ["#f472b6", "#fbbf24", "#4ade80", "#2dd4bf", "#f87171", "#c084fc", "#fb923c", "#a3e635"];
 
@@ -63,7 +73,7 @@ export function Multiplayer() {
     const unLeave = net.onPeerLeave((n) => pushToast(`🌐 ${n} left the room`, "info"));
     // 🌐 the host started — every guest auto-launches into the same night
     const unStart = net.on("start", () => {
-      if (!net.isHost) useGame.getState().mpStartRun?.();
+      if (!net.isHost && useGame.getState().screen !== "play") useGame.getState().mpStartRun?.();
     });
     return () => { unLobby(); unState(); unChat(); unJoin(); unLeave(); unStart(); };
   }, [patchMp, pushMpChat, pushToast]);
@@ -104,11 +114,53 @@ export function Multiplayer() {
         busy: false, code: lobby.code, isHost: lobby.host === net.mySid, error: "",
         players: lobby.players.map((p) => ({ sid: p.sid, slot: p.slot, name: p.name, ready: p.ready, self: p.sid === net.mySid })),
       });
-      pushToast(`🌐 Joined room ${lobby.code}!`, "good");
+      pushToast(net.sessionStarted ? "⚡ Joined a LIVE night — dropping you in!" : `🌐 Joined room ${lobby.code}!`, "good");
     } catch (e) {
       patchMp({ busy: false, error: e instanceof Error ? e.message : "Could not join" });
     }
   }, [joinCode, name, look, patchMp, pushToast]);
+
+  /* ⚡ auto-matchmaking — one click: drop into the current live session (a bot
+   * frees their seat for you), the fullest open lobby, or a brand-new session
+   * when every other one is full. */
+  const doQuick = useCallback(async () => {
+    patchMp({ busy: true, error: "" });
+    useGame.getState().setName(name);
+    try {
+      const r = await net.quick(name || "Survivor", look as Appearance);
+      patchMp({
+        busy: false, code: r.lobby.code, isHost: r.lobby.host === net.mySid, error: "",
+        players: r.lobby.players.map((p) => ({ sid: p.sid, slot: p.slot, name: p.name, ready: p.ready, self: p.sid === net.mySid })),
+      });
+      if (r.started) {
+        pushToast("⚡ Night already running — a bot freed their seat for you!", "good");
+        // 💫 drop straight in — the auto-launch effect below is the backstop for
+        // by-code joins; here we fire immediately (the screen guard inside
+        // mpStartRun keeps a double-launch harmless)
+        setTimeout(() => useGame.getState().mpStartRun?.(), 350);
+      } else if (r.lobby.players.length > 1) {
+        pushToast(`🌐 Joined an open session (${r.lobby.players.length} souls waiting)!`, "good");
+      } else {
+        pushToast(`🌐 New session ${r.lobby.code} opened — you host. Share the code!`, "good");
+      }
+    } catch (e) {
+      patchMp({ busy: false, error: e instanceof Error ? e.message : "Could not join a session" });
+    }
+  }, [name, look, patchMp, pushToast]);
+
+  /* a live session + not the host = drop straight into the running night
+   * (covers quick-join AND joining-by-code while the week is underway) */
+  const inRoom = !!mp.code;
+  const joiningLive = inRoom && net.sessionStarted && !net.isHost;
+  useEffect(() => {
+    if (!inRoom || !net.sessionStarted || net.isHost) return;
+    const t = setTimeout(() => {
+      if (useGame.getState().screen === "landing" || useGame.getState().screen === "lobby") {
+        useGame.getState().mpStartRun?.();
+      }
+    }, 900);
+    return () => clearTimeout(t);
+  }, [inRoom, mp.code]);
 
   const doLeave = useCallback(() => {
     net.leave();
@@ -124,7 +176,6 @@ export function Multiplayer() {
     setChatMsg("");
   }, [chatMsg]);
 
-  const inRoom = !!mp.code;
   const players: LobbyPlayer[] = (net.lobby?.players ?? []) as LobbyPlayer[];
   const readyCount = players.filter((p) => p.ready || p.sid === net.lobby?.host).length;
   const myPlayer = players.find((p) => p.sid === net.mySid);
@@ -167,6 +218,26 @@ export function Multiplayer() {
               <p className="mt-2 text-xs text-slate-500">Your creator outfit is used — customize it on the home page first if you like.</p>
             </div>
 
+            {/* ⚡ quick join — the ONE-CLICK path into the current game */}
+            <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rounded-2xl border border-cyan-400/30 bg-cyan-400/10 p-5 md:col-span-2">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <h2 className="text-lg font-black text-cyan-200">⚡ Quick join — drop into the current night</h2>
+                  <p className="mt-1 text-sm text-slate-400">
+                    Matches you into the live session instantly — <b className="text-slate-200">one bot frees their seat for you</b> (100 souls, always).
+                    Every session full? A fresh session opens with you as host.
+                  </p>
+                </div>
+                <Button
+                  onClick={doQuick}
+                  disabled={mp.busy || !name.trim()}
+                  className="h-12 min-w-52 bg-cyan-400 font-black text-slate-950 hover:bg-cyan-300"
+                >
+                  {mp.busy ? "Matching…" : "⚡ Quick join"}
+                </Button>
+              </div>
+            </motion.div>
+
             {/* create */}
             <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} className="rounded-2xl border border-amber-400/25 bg-amber-400/5 p-5">
               <h2 className="text-lg font-black text-amber-200">🏰 Host a night</h2>
@@ -201,6 +272,12 @@ export function Multiplayer() {
           </div>
         ) : (
           <div className="grid gap-4 md:grid-cols-5">
+            {/* ⚡ live session banner — dropping into the running night */}
+            {joiningLive && (
+              <div className="rounded-2xl border border-cyan-400/40 bg-cyan-400/10 px-5 py-3 text-sm font-bold text-cyan-100 md:col-span-5">
+                🔴 Night in progress — dropping you into the running session (a bot freed their seat)…
+              </div>
+            )}
             {/* room + players */}
             <div className="rounded-2xl border border-white/10 bg-white/5 p-5 md:col-span-3">
               <div className="flex items-center justify-between">

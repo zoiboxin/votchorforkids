@@ -5,15 +5,17 @@
  *
  *   ┌──────┬────────┬────────┬─────┬───────┬────┬───────┐
  *   │ slot │ x      │ z      │ y   │ yaw   │ hp │ flags │
- *   │ u8   │ i16×100│ i16×100│ u8×8│ u8    │ u8 │ u8    │
+ *   │ u8   │ i16×10 │ i16×10 │ u8×8│ u8    │ u8 │ u8    │
  *   └──────┴────────┴────────┴─────┴───────┴────┴───────┘
  *
  * flags bits: 0 sprint · 1 airborne · 2 beast · 3 dead · 4 driving · 5 attackAnim
  *
- * Quantization: world is ≤ 1500 u across → i16 (±327 u fits easily) with 2
- * decimals = 1 cm resolution; y ≤ 25 u at 8 cm; yaw wraps to one byte (2π/256 ≈
- * 1.4° — plenty for an interpolated avatar). 9 bytes/soul @ 12 Hz ≈ 108 B/s
- * per player uplink — fast enough for a school Wi-Fi laptop farm.
+ * Quantization: the world is a 712 u-radius disc (walls at ±712, mountains at
+ * 610) → i16 with 0.1 u steps covers ±3276 u at 10 cm resolution. (The old
+ * ×100 scale clamped at ±320 u — anyone who drove past that got PACKED to the
+ * 320 mark, so remote souls teleported to the map corner and players literally
+ * could not see each other. 🐛) 9 bytes/soul @ 12 Hz ≈ 108 B/s per player
+ * uplink — fast enough for a school Wi-Fi laptop farm.
  *
  * Implemented with ArrayBuffer/DataView — identical on browsers (socket.io
  * treats it as a native binary attachment) and on the Bun/Node relay.
@@ -49,8 +51,8 @@ export function packState(s: {
   const buf = new ArrayBuffer(STATE_BYTES);
   const v = new DataView(buf);
   v.setUint8(0, s.slot & 0xff);
-  v.setInt16(1, Math.max(-320, Math.min(320, s.x)) * 100 | 0, true);
-  v.setInt16(3, Math.max(-320, Math.min(320, s.z)) * 100 | 0, true);
+  v.setInt16(1, Math.round(Math.max(-3276, Math.min(3276, s.x)) * 10), true);
+  v.setInt16(3, Math.round(Math.max(-3276, Math.min(3276, s.z)) * 10), true);
   v.setUint8(5, Math.max(0, Math.min(25.5, s.y)) * 8 | 0);
   v.setUint8(6, Math.round((wrap(s.yaw) / (Math.PI * 2)) * 255));
   v.setUint8(7, Math.max(0, Math.min(100, Math.round(s.hp))));
@@ -85,8 +87,8 @@ export function unpackState(data: BinSrc, t = 0): NetState | null {
   const f = v.getUint8(8);
   return {
     slot: v.getUint8(0),
-    x: v.getInt16(1, true) / 100,
-    z: v.getInt16(3, true) / 100,
+    x: v.getInt16(1, true) / 10,
+    z: v.getInt16(3, true) / 10,
     y: v.getUint8(5) / 8,
     yaw: (v.getUint8(6) / 255) * Math.PI * 2,
     hp: v.getUint8(7),

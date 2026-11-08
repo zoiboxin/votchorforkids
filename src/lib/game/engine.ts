@@ -139,6 +139,9 @@ export interface Crew extends SteerMemory {
   clue: string;
   /** true once the player inspected the body */
   inspected: boolean;
+  /** 🌐 true when a REAL player took over this bot's seat (100-seat contest:
+   *  every real player beyond the host frees one bot's chair — total stays 100) */
+  replaced?: boolean;
   /** 💰 the purse they carry — drops where they fall */
   purse: number;
   /* --- 🤖 daylight foraging — bots race you for snacks, cash & gems --- */
@@ -311,6 +314,8 @@ export interface HudData {
   crewAlive: number;
   /** total souls in the contest (99) — HUD alive counter denominator */
   aliveTotal: number;
+  /** 🌐 living real players (other than you) — bots freed a seat for each */
+  remotesAlive: number;
   /** the roster — names, colors & who's still alive (accuse board + map) */
   crew: { name: string; color: string; alive: boolean; mode: string }[];
   /** attack cooldown ready */
@@ -2390,7 +2395,7 @@ export class GameEngine {
     // idempotent: clear last dusk's flags before re-choosing (restarts & re-entries)
     for (const c of this.crew) { c.zombieTonight = false; c.fed = 0; }
     const aliveIdx = this.crew.map((c, i) => (c.alive ? i : -1)).filter((i) => i >= 0);
-    const aliveAll = aliveIdx.length + (this.lost ? 0 : 1);
+    const aliveAll = aliveIdx.length + this.remotes.filter((r) => r.alive).length + (this.lost ? 0 : 1);
     this.possessed = [];
     if (aliveAll <= 1) return;
     // half turn tonight — ceil tips odd numbers toward the horde; a 2-soul dusk
@@ -2461,7 +2466,7 @@ export class GameEngine {
     stopDrone();
     sfx.bell();
     const aliveCrew = this.crew.filter((c) => c.alive).length;
-    const aliveAll = aliveCrew + (this.lost ? 0 : 1);
+    const aliveAll = aliveCrew + this.remotes.filter((r) => r.alive).length + (this.lost ? 0 : 1);
     this.toast(`🌅 DAWN — night ${this.nightNo} survived. ${aliveAll} of ${PLAYERS_TOTAL} still breathe${aliveAll > 1 && aliveAll <= 4 ? "… it's nearly over." : "."}`, "good");
   }
 
@@ -2484,7 +2489,7 @@ export class GameEngine {
     this.lost = true;
     stopDrone();
     sfx.lose();
-    const place = this.crew.filter((c) => c.alive).length + 1;
+    const place = this.crew.filter((c) => c.alive).length + this.remotes.filter((r) => r.alive).length + 1;
     this.toast(`🩸 The darkness took you on night ${this.nightNo}… PLACED #${place} OF ${PLAYERS_TOTAL}.`, "bad");
   }
 
@@ -4162,6 +4167,7 @@ export class GameEngine {
       beastCount: this.zombies.filter((z) => !z.dead).length, // contest: how many risen hunters roam
       crewAlive: this.crew.filter((c) => c.alive).length,
       aliveTotal: PLAYERS_TOTAL,
+      remotesAlive: this.remotes.filter((r) => r.alive).length,
       crew: this.crew.map((c) => ({ name: c.name, color: c.color, alive: c.alive, mode: c.mode })),
       attackReady: this.attackCd <= 0,
       clue: this.lastClue,
@@ -4326,6 +4332,39 @@ export class GameEngine {
         this.toast(`🌐 ${this.remotes[i].name} left the town…`, "info");
         this.remotes.splice(i, 1);
       }
+    }
+    // 🌐 100-seat contest: every real soul except the session's native seat
+    // (slot 0 = the host's own chair) takes over one bot's chair. The seat
+    // list is the FULL session slot list — mine + every remote — so every
+    // client, host or guest, frees the exact SAME chairs.
+    this.applyBotReplacement([this.mpSlot, ...this.remotes.map((r) => r.slot)].filter((s) => s !== 0));
+  }
+
+  /* --- 🌐 100-seat contest: free one bot's chair per real player ---
+   * Total contestants stays 100: 99 bots + you → 99 - (N-1) bots + N souls.
+   * The seat choice is a pure function of the (sorted) slot list, so every
+   * client — same seed, same roster order — frees the SAME chairs. */
+  private replacedKey = "";
+  private applyBotReplacement(slots: number[]) {
+    if (!this.mp) return;
+    const want = [...new Set(slots)].sort((a, b) => a - b).join(",");
+    if (want === this.replacedKey) return;
+    this.replacedKey = want;
+    const taken = new Set<number>();
+    for (const slot of want ? want.split(",").map(Number) : []) {
+      let i = ((slot * 7919 + 13) % this.crew.length + this.crew.length) % this.crew.length;
+      while (taken.has(i)) i = (i + 1) % this.crew.length;
+      taken.add(i);
+      const c = this.crew[i];
+      if (!c || c.replaced) continue;
+      c.replaced = true;          // their soul now walks as a REAL player
+      c.alive = false;            // not a bot anymore — hunts/prey/accuse skip them
+      c.hp = 0;
+      c.mode = "dead";
+      c.deathX = c.x; c.deathZ = c.z;
+      c.inspected = true;         // no body to inspect — the seat was taken
+      this.possessed = this.possessed.filter((pi) => pi !== i); // a real soul is never a bot-beast
+      if (this.lastPossessed) this.lastPossessed = this.lastPossessed.filter((pi) => pi !== i);
     }
   }
 

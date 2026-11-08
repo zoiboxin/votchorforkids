@@ -33,7 +33,8 @@ export interface NetHandle {
 const lastRaw = new Map<number, { x: number; z: number; t: number }>(); // slot → last raw sample (velocity estimate)
 
 export function attachNet(opts: AttachNetOpts): NetHandle {
-  const { engine, code, slot, isHost, name, look } = opts;
+  const { engine, code, isHost, name, look } = opts;
+  let slot = opts.slot; // mutable — a mid-game rejoin can reseat us
   const unsubs: (() => void)[] = [];
 
   engine.mp = true;
@@ -42,6 +43,10 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
   engine.mpCode = code;
   engine.playerName = name;
   void look; // the player's own look is already baked into the engine
+
+  // 🛡️ a reconnect reclaims our seat — possibly at a NEW slot: re-bind the
+  // engine's identity and the publish stream live
+  unsubs.push(net.onSlotChange((s) => { slot = s; engine.mpSlot = s; }));
 
   /* ---------- seed remotes from the current lobby roster ---------- */
   const syncFromLobby = (players: LobbyPlayer[]) => {
@@ -102,7 +107,11 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
   on("roster", (ev) => engine.applyRoster(ev.possessed, ev.beastSlots));
 
   on("phase", (ev, from) => {
-    if (isHost || from !== 0) return; // only the host's clock speaks (slot 0 = host)
+    if (isHost) return; // we own the clock
+    // only the host's clock speaks — resolve the host's slot LIVE (host
+    // migration after a disconnect can move the crown past slot 0)
+    const hostSlot = net.lobby?.players.find((p) => p.sid === net.lobby?.host)?.slot ?? 0;
+    if (from !== hostSlot) return;
     const ph = ev.phase as typeof engine.phase;
     if (engine.phase !== ph) {
       engine.phase = ph;
@@ -132,7 +141,6 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
   on("dmg", (ev) => {
     if (ev.target === slot) engine.netTakeDmg(ev.amount);
   });
-
   on("claw", (ev) => engine.netClawHit(ev.x, ev.z));
 
   on("loot", (ev) => {

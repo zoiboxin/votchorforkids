@@ -71,6 +71,9 @@ export class NetClient {
   state: ConnState = "idle";
   lastError = "";
   lobby: LobbySnapshot | null = null;
+  /** true while our session's night is already running (host pressed START) —
+   *  quick-joiners into a live session auto-launch instead of waiting around */
+  sessionStarted = false;
 
   /** ping/pong latency estimate (ms) — HUD chip */
   ping = 0;
@@ -82,12 +85,20 @@ export class NetClient {
   private chatListeners = new Set<ChatListener>();
   private joinListeners = new Set<PeerListener>();
   private leaveListeners = new Set<PeerListener>();
+  private slotListeners = new Set<(s: number) => void>();
 
   onLobby(h: LobbyListener): () => void { this.lobbyListeners.add(h); return () => this.lobbyListeners.delete(h); }
   onStateChange(h: StateListener): () => void { this.stateListeners.add(h); return () => this.stateListeners.delete(h); }
   onChat(h: ChatListener): () => void { this.chatListeners.add(h); return () => this.chatListeners.delete(h); }
   onPeerJoin(h: PeerListener): () => void { this.joinListeners.add(h); return () => this.joinListeners.delete(h); }
   onPeerLeave(h: PeerListener): () => void { this.leaveListeners.add(h); return () => this.leaveListeners.delete(h); }
+  /** fires whenever our seat slot changes (mid-game rejoin after a hiccup) */
+  onSlotChange(h: (s: number) => void): () => void { this.slotListeners.add(h); return () => this.slotListeners.delete(h); }
+  private setSlot(s: number) {
+    if (s === this.slot) return;
+    this.slot = s;
+    this.slotListeners.forEach((h) => h(s));
+  }
 
   /* ---------------- lifecycle ---------------- */
 
@@ -109,6 +120,10 @@ export class NetClient {
         this.startPing();
         resolve();
       });
+
+      // the host started (or restarted) the week — remember the session is live
+      // so code-joiners / quick-joiners drop straight into the running night
+      const markLive = (ev: { t?: string }) => { if (ev?.t === "start") this.sessionStarted = true; };
       sock.on("connect_error", (e: Error) => {
         if (this.state === "connecting") { this.setState("error", e.message); reject(e); }
       });
@@ -146,6 +161,7 @@ export class NetClient {
 
       sock.on("mp:event", (ev: MpEvent & { s?: number }) => {
         if (!ev || typeof ev !== "object" || !ev.t) return;
+        markLive(ev);
         const from = typeof ev.s === "number" ? ev.s : -1;
         if (from === this.slot) return;
         this.evHandlers.get(ev.t)?.forEach((h) => h(ev as MpEvent, from));
@@ -154,8 +170,23 @@ export class NetClient {
       sock.on("mp:chat", (m: { name: string; msg: string }) => this.chatListeners.forEach((h) => h(m.name, m.msg)));
 
       sock.io.on("reconnect", () => {
-        // rooms die with the old socket — surface it instead of silently spectating
-        if (this.code) this.setState("error", "Reconnected — room expired, rejoin from the menu");
+        this.mySid = sock.id ?? ""; // the sid changes with every new connection
+        if (!this.code) return;
+        // 🛡️ mid-game hiccup recovery — reclaim our seat in the same session by
+        // code. The relay seats us at a (possibly new) slot; the engine glue
+        // hears about it through onSlotChange and re-binds everything.
+        const me = this.lobby?.players.find((p) => p.sid === this.mySid);
+        sock.timeout(6000).emit("mp:join", { code: this.code, name: me?.name ?? "Survivor", look: me?.look ?? null }, (err: unknown, r: { ok: boolean; code?: string; lobby?: LobbySnapshot; err?: string }) => {
+          if (err || !r?.ok) {
+            this.setState("error", "Session expired — rejoin from the menu");
+            return;
+          }
+          this.lobby = r.lobby!;
+          this.isHost = r.lobby!.host === this.mySid;
+          this.setSlot(r.lobby!.players.find((p) => p.sid === this.mySid)?.slot ?? this.slot);
+          this.interps.clear(); // stale poses from before the drop
+          this.setState("room");
+        });
       });
     });
   }
@@ -189,6 +220,7 @@ export class NetClient {
     this.code = "";
     this.slot = -1;
     this.lobby = null;
+    this.sessionStarted = false;
     this.setState("closed");
   }
 
@@ -202,7 +234,7 @@ export class NetClient {
         clearTimeout(t);
         if (!r.ok) return reject(new Error(r.err ?? "Could not create room"));
         this.code = r.code!;
-        this.slot = r.lobby!.players.find((p) => p.sid === this.mySid)?.slot ?? 0;
+        this.setSlot(r.lobby!.players.find((p) => p.sid === this.mySid)?.slot ?? 0);
         this.lobby = r.lobby!;
         this.isHost = true;
         this.setState("room");
@@ -219,11 +251,32 @@ export class NetClient {
         clearTimeout(t);
         if (!r.ok) return reject(new Error(r.err ?? "Could not join"));
         this.code = r.code!;
-        this.slot = r.lobby!.players.find((p) => p.sid === this.mySid)?.slot ?? 0;
+        this.setSlot(r.lobby!.players.find((p) => p.sid === this.mySid)?.slot ?? 0);
         this.lobby = r.lobby!;
         this.isHost = r.lobby!.host === this.mySid;
         this.setState("room");
         resolve(r.lobby!);
+      });
+    });
+  }
+
+  /** ⚡ auto-matchmaking — join the current live session (a bot's seat is freed
+   *  for you), else the fullest open lobby; if EVERY session is full a brand
+   *  new one opens and you host it. Resolves with whether the night is live. */
+  async quick(name: string, look: Appearance): Promise<{ lobby: LobbySnapshot; started: boolean }> {
+    await this.connect();
+    return new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error("Relay timeout")), 8000);
+      this.sock!.emit("mp:quick", { name, look }, (r: { ok: boolean; code?: string; lobby?: LobbySnapshot; started?: boolean; err?: string }) => {
+        clearTimeout(t);
+        if (!r.ok) return reject(new Error(r.err ?? "Could not join a session"));
+        this.code = r.code!;
+        this.setSlot(r.lobby!.players.find((p) => p.sid === this.mySid)?.slot ?? 0);
+        this.lobby = r.lobby!;
+        this.isHost = r.lobby!.host === this.mySid;
+        this.sessionStarted = !!r.started;
+        this.setState("room");
+        resolve({ lobby: r.lobby!, started: !!r.started });
       });
     });
   }

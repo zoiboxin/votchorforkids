@@ -320,7 +320,9 @@ function NightStrip() {
   const phase = useGame((s) => s.hud.phase);
   const phaseLeft = useGame((s) => s.hud.phaseLeft);
   const crewAlive = useGame((s) => s.hud.crewAlive);
+  const remotesAlive = useGame((s) => s.hud.remotesAlive);
   const aliveTotal = useGame((s) => s.hud.aliveTotal);
+  const souls = crewAlive + remotesAlive; // crew bots (minus freed seats) + other real players
   const youPossessed = useGame((s) => s.hud.youPossessed);
   const beastCount = useGame((s) => s.hud.beastCount);
   const beast = youPossessed && phase === "night";
@@ -339,7 +341,7 @@ function NightStrip() {
     <div className="flex items-center gap-1.5">
       <motion.div
         role="status"
-        aria-label={`Night ${nightNo} of ${NIGHTS_TOTAL}, ${phase} phase, ${mm}:${ss} left, ${crewAlive + 1} of ${aliveTotal} souls alive`}
+        aria-label={`Night ${nightNo} of ${NIGHTS_TOTAL}, ${phase} phase, ${mm}:${ss} left, ${souls + 1} of ${aliveTotal} souls alive`}
         animate={phase === "dusk" ? { opacity: [1, 0.62, 1], scale: [1, 1.03, 1] } : { opacity: 1, scale: 1 }}
         transition={phase === "dusk" ? { repeat: Infinity, duration: 1.05 } : { duration: 0.2 }}
         className={`flex items-center gap-2 rounded-full border px-3 py-1 backdrop-blur-md ${
@@ -367,10 +369,10 @@ function NightStrip() {
         )}
       </motion.div>
       <span
-        title={`${crewAlive + 1} of ${aliveTotal} souls still breathing`}
-        className={`rounded-full border px-2 py-1 text-[10px] font-black tabular-nums backdrop-blur-md ${crewAlive + 1 <= 10 ? "border-rose-400/60 bg-rose-950/50 text-rose-100" : "border-white/20 bg-black/45 text-white/90"}`}
+        title={`${souls + 1} of ${aliveTotal} souls still breathing`}
+        className={`rounded-full border px-2 py-1 text-[10px] font-black tabular-nums backdrop-blur-md ${souls + 1 <= 10 ? "border-rose-400/60 bg-rose-950/50 text-rose-100" : "border-white/20 bg-black/45 text-white/90"}`}
       >
-        🧍 {crewAlive + 1}/{aliveTotal}
+        🧍 {souls + 1}/{aliveTotal}
       </span>
     </div>
   );
@@ -1046,7 +1048,7 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
 
   /* ---------- 📜 the welcome-back report (what happened while away) ---------- */
   if (pauseReport) {
-    const alive = hud.crewAlive + (engine.lost ? 0 : 1);
+    const alive = hud.crewAlive + hud.remotesAlive + (engine.lost ? 0 : 1);
     const log = engine.pauseLog;
     const chips: { t: string; c: string }[] = [
       { t: hud.phase === "night" ? `🌙 Night ${hud.nightNo}/${NIGHTS_TOTAL}` : `☀️ Day ${hud.nightNo}/${NIGHTS_TOTAL}`, c: "text-amber-200" },
@@ -1072,7 +1074,7 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
               <div className="mb-1 text-center text-3xl font-black text-rose-300">🩸 You Died</div>
               <p className="mb-3 text-center text-xs text-white/70">
                 The town didn&apos;t stop for you — the dark took you on night {hud.nightNo} while you were away.
-                You placed <b className="text-rose-200">#{hud.crewAlive + 1} of {hud.aliveTotal}</b>.
+                You placed <b className="text-rose-200">#{hud.crewAlive + hud.remotesAlive + 1} of {hud.aliveTotal}</b>.
               </p>
             </>
           ) : (
@@ -1803,7 +1805,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
               👀 SPECTATING <span className="text-emerald-300">{hud.spec.name}</span>
             </div>
             <div className="mt-0.5 text-[10px] font-bold text-white/70">
-              🧍 {hud.crewAlive}/{hud.aliveTotal} alive · {hud.phase === "night" ? `🌙 Night ${hud.nightNo}` : `☀️ Day ${hud.nightNo}`} · Click / N — next soul · Esc — menu
+              🧍 {hud.crewAlive + hud.remotesAlive}/{hud.aliveTotal} alive · {hud.phase === "night" ? `🌙 Night ${hud.nightNo}` : `☀️ Day ${hud.nightNo}`} · Click / N — next soul · Esc — menu
             </div>
           </motion.div>
         </div>
@@ -1855,13 +1857,13 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
           data-ui
           className="rounded-xl border border-white/15 bg-black/45 px-3 py-1.5 text-right backdrop-blur-md"
           role="status"
-          aria-label={`${hud.crewAlive + (hud.spec.on ? 0 : 1)} of ${hud.aliveTotal} players alive, ${hud.aliveTotal - hud.crewAlive - 1} fallen, night ${hud.nightNo} of ${NIGHTS_TOTAL}${hud.phase === "night" ? `, ${hud.beastCount} zombies hunting` : ""}`}
+          aria-label={`${hud.crewAlive + hud.remotesAlive + (hud.spec.on ? 0 : 1)} of ${hud.aliveTotal} players alive, ${hud.aliveTotal - hud.crewAlive - hud.remotesAlive - 1} fallen, night ${hud.nightNo} of ${NIGHTS_TOTAL}${hud.phase === "night" ? `, ${hud.beastCount} zombies hunting` : ""}`}
         >
           <div className="text-xs font-black leading-4 text-white">
-            🧍 {hud.crewAlive + (hud.spec.on ? 0 : 1)}<span className="text-white/55">/{hud.aliveTotal} players</span>
+            🧍 {hud.crewAlive + hud.remotesAlive + (hud.spec.on ? 0 : 1)}<span className="text-white/55">/{hud.aliveTotal} players</span>
           </div>
           <div className="text-[10px] font-bold leading-4 text-white/70">
-            💀 {hud.aliveTotal - hud.crewAlive - 1} fallen · {hud.phase === "night" ? "🌙 Night" : "☀️ Day"} {hud.nightNo}/{NIGHTS_TOTAL}
+            💀 {hud.aliveTotal - hud.crewAlive - hud.remotesAlive - 1} fallen · {hud.phase === "night" ? "🌙 Night" : "☀️ Day"} {hud.nightNo}/{NIGHTS_TOTAL}
           </div>
           {hud.phase === "night" && hud.beastCount > 0 && (
             <div className="text-[10px] font-black leading-4 text-purple-300">🧟 {hud.beastCount} zombies hunting</div>
