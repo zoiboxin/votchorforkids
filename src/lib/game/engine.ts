@@ -547,6 +547,8 @@ export class GameEngine {
   kills = 0; accusesRight = 0; accusesWrong = 0; buildsMade = 0; nightsSurvived = 0;
   /** safe hiding spots the crew runs to at dusk (camp + station gates) */
   hideSpots: { x: number; z: number }[] = [];
+  /** 🏕️ jungle camps you've walked up to — one discovery toast each */
+  discCamps = new Set<number>();
   /** original static-circle radii — reset() un-fells trees & un-smashes rocks with this */
   private circleR0: number[] = [];
   private heartT = 0;
@@ -585,6 +587,11 @@ export class GameEngine {
       { x: PROTEST_CAMP.x, z: PROTEST_CAMP.z },
       ...POLICE_STATIONS.map((s) => stationGate(s)),
       { x: SPAWN.x + 42, z: SPAWN.z + 18 },
+      // 🏕️ the jungle camps shelter the crew at dusk too — bots gather round the safe fires
+      ...this.world.camps.map((cp) => {
+        const l = Math.hypot(cp.x, cp.z) || 1;
+        return { x: cp.x - (cp.x / l) * 3.4, z: cp.z - (cp.z / l) * 3.4 };
+      }),
     ];
     this.hud = this.buildHud();
     this.spawnAll();
@@ -764,6 +771,17 @@ export class GameEngine {
     for (let i = 0; i < ITEM_COUNT; i++) {
       const p = freeSpot(r, this.world, 10, 430);
       this.items.push({ id: this.nid(), def: Math.floor(r() * ITEMS.length), x: p.x, z: p.z, active: true, respawn: 0 });
+    }
+    // 🏕️ camp supplies — every jungle camp left snacks and a money stash by the fire
+    for (const cp of this.world.camps) {
+      for (let k = 0; k < 2; k++) {
+        const sa = range(r, 0, Math.PI * 2), sd = range(r, 2.6, 3.6);
+        const s = { x: cp.x + Math.cos(sa) * sd, z: cp.z + Math.sin(sa) * sd };
+        resolve(s, 0.4, this.world);
+        this.items.push({ id: this.nid(), def: Math.floor(r() * ITEMS.length), x: s.x, z: s.z, active: true, respawn: 0 });
+      }
+      const la = range(r, 0, Math.PI * 2), ld = range(r, 2.8, 3.8);
+      this.dropLoot(cp.x + Math.cos(la) * ld, cp.z + Math.sin(la) * ld, 18 + Math.round(r() * 30), "Camper's stash");
     }
     // rare super powers — mostly deep-jungle treasures, a couple of mystery spots anywhere
     for (let i = 0; i < POWER_COUNT; i++) {
@@ -2503,7 +2521,7 @@ export class GameEngine {
           const d = dist2(c.x, c.z, r.x, r.z);
           if (d < td) { td = d; tx = r.x; tz = r.z; victim = -1; victimCiv = null; remoteVictim = r; }
         }
-        const fire = this.nearestBuildOf("campfire", c.x, c.z);
+        const fire = this.nearFire(c.x, c.z);
         if (fire && dist2(fire.x, fire.z, c.x, c.z) < CAMPFIRE_R * CAMPFIRE_R) {
           const dx = c.x - fire.x, dz = c.z - fire.z, dl = Math.hypot(dx, dz) || 1;
           tx = c.x + (dx / dl) * 12; tz = c.z + (dz / dl) * 12; victim = -1; victimCiv = null;
@@ -3176,6 +3194,22 @@ export class GameEngine {
     return best;
   }
 
+  /** 🔥 nearest flame that scares the dark — a player-built campfire OR one of
+   *  the always-lit 🏕️ jungle camps. Drives repel, heal and flee logic alike. */
+  private nearFire(x: number, z: number): { x: number; z: number } | null {
+    let bx = 0, bz = 0, bd = Infinity;
+    for (const b of this.builds) {
+      if (b.kind !== "campfire") continue;
+      const d = dist2(x, z, b.x, b.z);
+      if (d < bd) { bd = d; bx = b.x; bz = b.z; }
+    }
+    for (const cp of this.world.camps) {
+      const d = dist2(x, z, cp.x, cp.z);
+      if (d < bd) { bd = d; bx = cp.x; bz = cp.z; }
+    }
+    return bd === Infinity ? null : { x: bx, z: bz };
+  }
+
   /* ---------------- main update ---------------- */
   update(dt0: number) {
     if (!this.running) return;
@@ -3203,6 +3237,16 @@ export class GameEngine {
     // day/night zone toast
     const z = zoneOf(p.x, p.z);
     if (z !== this.zone) { this.zone = z; this.toast(ZONE_TOAST[z], "info"); }
+
+    // 🏕️ camp discovery — walking up to a lonely jungle camp is worth a line
+    for (let ci = 0; ci < this.world.camps.length; ci++) {
+      if (this.discCamps.has(ci)) continue;
+      const cp = this.world.camps[ci];
+      if (dist2(p.x, p.z, cp.x, cp.z) < 13 * 13) {
+        this.discCamps.add(ci);
+        this.toast("⛺ You found a hidden jungle camp — rest by the fire, the dark keeps its distance.", "info");
+      }
+    }
 
     /* --- player --- */
     this.pocketFullT = Math.max(0, this.pocketFullT - dt);
@@ -3713,7 +3757,7 @@ export class GameEngine {
           c.fearX = undefined; c.fearZ = undefined; // the horror outweighs yesterday's attacker
           const dx = c.x - hx, dz = c.z - hz, dl = Math.hypot(dx, dz) || 1;
           // sprint for the nearest campfire if one is roughly on the run direction — fire = safety
-          const fire = this.nearestBuildOf("campfire", c.x, c.z);
+          const fire = this.nearFire(c.x, c.z);
           if (fire && dist2(fire.x, fire.z, c.x, c.z) < 45 * 45) {
             const fdx = fire.x - c.x, fdz = fire.z - c.z, fl = Math.hypot(fdx, fdz) || 1;
             if ((fdx / fl) * (dx / dl) + (fdz / fl) * (dz / dl) > 0.25) { stepNpc(c, fire.x, fire.z, c.speed * CIV_FLEE_MULT, dt, this.world); continue; }
@@ -3799,11 +3843,10 @@ export class GameEngine {
     }
 
     // 🔥 campfires mend survivors by day (and keep the dark things away by night)
+    // — the always-lit 🏕️ jungle camps count as campfires too
     if (this.phase === "day" || this.phase === "dawn") {
-      for (const b of this.builds) {
-        if (b.kind !== "campfire") continue;
-        if (dist2(p.x, p.z, b.x, b.z) < 5 * 5) { this.hp = Math.min(100, this.hp + 2.5 * dt); break; }
-      }
+      const f = this.nearFire(p.x, p.z);
+      if (f && dist2(p.x, p.z, f.x, f.z) < 5 * 5) this.hp = Math.min(100, this.hp + 2.5 * dt);
     }
 
     /* --- zombies (graveyard) — they rise at night, fear fire, and can be SLAIN --- */
@@ -3826,7 +3869,7 @@ export class GameEngine {
             if (d2p < 18 * 18 && this.zLootCd <= 0) { this.zLootCd = 5; this.toast(`🧟 A zombie gulped down ${l.label} — ₹${l.amt} in its belly now!`, "info"); }
           }
         }
-        const fire = this.nearestBuildOf("campfire", zb.x, zb.z);
+        const fire = this.nearFire(zb.x, zb.z);
         const scared = !!fire && dist2(fire.x, fire.z, zb.x, zb.z) < CAMPFIRE_R * CAMPFIRE_R;
         const beastYou = this.youPossessed && this.phase === "night"; // monsters don't fight monsters
         if (scared) {

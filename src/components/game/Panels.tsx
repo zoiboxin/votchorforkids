@@ -79,7 +79,7 @@ export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange:
             </div>
             <div className="rounded-2xl bg-white/5 p-3">
               <div className="mb-1.5 flex items-center gap-2 font-black text-indigo-300"><MoonStar size={15} /> 🌑 Night — survive</div>
-              <p className="text-white/85">The possessed become a PACK of beasts and hunt everyone else. Hide behind barricades, circle the campfires — or pick your sharpest tool and fight (F). If YOU are chosen… claw away! 🩸</p>
+              <p className="text-white/85">The possessed become a PACK of beasts and hunt everyone else. Hide behind barricades, circle the campfires or sprint for the 🏕️ jungle camps — their fires never die. Or pick your sharpest tool and fight (F). If YOU are chosen… claw away! 🩸</p>
             </div>
             <div className="rounded-2xl bg-white/5 p-3">
               <div className="mb-1.5 flex items-center gap-2 font-black text-yellow-300"><Scale size={15} /> ⚖️ Dawn — accuse</div>
@@ -92,6 +92,7 @@ export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange:
             <p className="leading-relaxed text-white/85">
               <b>Barricades</b> (B — 4 wood) block the beast&apos;s path and soak <b>100 HP</b> of hits.
               <b> Campfires</b> (V — 2 wood + 2 stone) throw a ring of light that beasts &amp; zombies won&apos;t cross.
+              The old 🏕️ <b>jungle camps</b> burn forever — find them on the map and rest by their fires (they mend you by day).
               Build both — wood runs out, and the jungle is a long walk in the dark.
             </p>
           </section>

@@ -85,6 +85,19 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     c.textAlign = "center"; c.textBaseline = "middle";
     c.fillText("P", sx, sz + 0.5);
   }
+  // 🏕️ jungle camps — canvas tent triangles (night shelters; the fire never dies)
+  for (const cp of engine.world.camps) {
+    const px = S / 2 + cp.x * K, pz = S / 2 + cp.z * K;
+    c.beginPath();
+    c.moveTo(px, pz - 3.4 * U); c.lineTo(px + 2.9 * U, pz + 2.4 * U); c.lineTo(px - 2.9 * U, pz + 2.4 * U);
+    c.closePath();
+    c.fillStyle = "#e8b13c";
+    c.fill();
+    c.strokeStyle = "rgba(20,12,4,0.6)";
+    c.lineWidth = Math.max(1, 0.8 * U);
+    c.stroke();
+    dot(cp.x, cp.z, 1.1 * U, "#fb923c", 0.95); // the ever-burning pit
+  }
   /* 🧹 mini map declutter: vans, food, licenses, power gems, votes, loot, police,
      civilians, vote-runners, animals, crew, co-op souls, dropped arms, builds and
      planes are BIG-MAP-ONLY — the corner minimap shows just terrain, landmarks,
@@ -217,6 +230,7 @@ const MAP_LEGEND: [string, string][] = [
   ["#ffb020", "Vote runner (bright = carrying)"],
   ["#e2e8f0", "Crew survivors (each their color)"], ["#7f1d1d", "Fallen crew ✕"],
   ["#facc15", "Dropped arms"], ["#ffd447", "💰 Loot drops"], ["#92400e", "Barricade"], ["#fb923c", "Campfire"],
+  ["#e8b13c", "⛺ Jungle camp (shelter)"],
 ];
 function BigMap({ engine, onClose }: { engine: GameEngine; onClose: () => void }) {
   const ref = useRef<HTMLCanvasElement>(null);

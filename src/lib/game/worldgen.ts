@@ -133,6 +133,21 @@ export interface Sign { x: number; z: number; rot: number; text: string; c: numb
 
 export interface Rock { x: number; z: number; s: number }
 
+/** 🏕️ A lonely camper site deep in the jungle — a cleared glade around a
+ *  stone-ringed fire pit that NEVER goes out (see <CampFires> in WorldView).
+ *  All offsets are relative to the camp centre (the fire pit itself). */
+export interface Camp {
+  x: number; z: number; rot: number;
+  /** A-frame tents — rot aims the doorway back at the fire; c = canvas tint index */
+  tents: { dx: number; dz: number; rot: number; c: number; s: number }[];
+  /** split-log seats ringing the fire (no colliders — step over them) */
+  logs: { dx: number; dz: number; rot: number }[];
+  /** supply crates the campers left behind */
+  crates: { dx: number; dz: number; rot: number }[];
+  /** lantern pole — glows warm at dusk */
+  pole: { dx: number; dz: number } | null;
+}
+
 export interface World {
   buildings: Building[];
   trees: Tree[];
@@ -151,6 +166,8 @@ export interface World {
   umbrellas: Umbrella[];
   signs: Sign[];
   windmills: { x: number; z: number; rot: number }[];
+  /** 🏕️ jungle camps — lit glades that double as night shelters (beasts & zombies shy from fire) */
+  camps: Camp[];
   /** 🗺️ spatial hash over boxes+circles — makes resolve() O(neighbours) instead of O(world) */
   grid: ColliderGrid;
 }
@@ -586,16 +603,66 @@ export function generateWorld(seed = WORLD_SEED): World {
     { x: 425, z: -68, rot: 0 }, { x: 403, z: 195, rot: 1.2 }, { x: -412, z: 193, rot: 2.1 },
   ];
 
+  /* ---- 🏕️ jungle camps — lonely camper glades in the wild band ----
+   * Six cleared sites between the farm ring and the deep jungle: A-frame tents
+   * facing a stone-ringed fire pit, split-log seats, supply crates and a
+   * lantern pole. The fire is ALWAYS burning (rendered by <CampFires>) and the
+   * glow keeps beasts & zombies at arm's length — a night shelter for the brave.
+   * Placed BEFORE the tree pass so every camp keeps its own clearing. */
+  const camps: Camp[] = [];
+  const TENT_CANVAS = [0xd9a441, 0xb0553a, 0x7a8c5a, 0xc9b28a, 0x9a6a8a];
+  let campTries = 0;
+  while (camps.length < 6 && campTries++ < 500) {
+    const a = range(rnd, 0, Math.PI * 2), cr = range(rnd, 486, 576);
+    const x = Math.cos(a) * cr, z = Math.sin(a) * cr;
+    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 42) continue;
+    if (inAirportPlot(x, z)) continue;
+    if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 95)) continue;
+    const baseRot = range(rnd, 0, Math.PI * 2);
+    const tents: Camp["tents"] = [];
+    const logs: Camp["logs"] = [];
+    const crates: Camp["crates"] = [];
+    const tentN = 2 + (rnd() < 0.5 ? 1 : 0);
+    for (let ti = 0; ti < tentN; ti++) {
+      // tents ring the pit on the far side, doorways turned toward the fire
+      const ta = baseRot + Math.PI + (ti - (tentN - 1) / 2) * 1.2 + range(rnd, -0.15, 0.15);
+      const td = range(rnd, 4.4, 5.2);
+      tents.push({
+        dx: Math.cos(ta) * td, dz: Math.sin(ta) * td,
+        rot: Math.atan2(-Math.cos(ta), -Math.sin(ta)), // doorway (+z of the mesh) looks at the pit
+        c: Math.floor(rnd() * TENT_CANVAS.length), s: range(rnd, 0.9, 1.12),
+      });
+    }
+    const logN = 3 + Math.floor(rnd() * 2);
+    for (let li = 0; li < logN; li++) {
+      const la = baseRot + (li / logN) * Math.PI * 2 + range(rnd, -0.2, 0.2);
+      const ld = range(rnd, 2.1, 2.7);
+      logs.push({ dx: Math.cos(la) * ld, dz: Math.sin(la) * ld, rot: la + Math.PI / 2 + range(rnd, -0.3, 0.3) });
+    }
+    const crateN = 1 + Math.floor(rnd() * 2);
+    for (let ki = 0; ki < crateN; ki++) {
+      const ka = baseRot + range(rnd, 0, Math.PI * 2), kd = range(rnd, 2.6, 3.4);
+      crates.push({ dx: Math.cos(ka) * kd, dz: Math.sin(ka) * kd, rot: range(rnd, 0, Math.PI * 2) });
+    }
+    const pa = baseRot + Math.PI / 3 + range(rnd, -0.4, 0.4), pd = 2.9;
+    camps.push({
+      x, z, rot: baseRot, tents, logs, crates,
+      pole: { dx: Math.cos(pa) * pd, dz: Math.sin(pa) * pd },
+    });
+  }
+
   /* ---- jungle forest (outer ring) + DEEP jungle (denser, darker band hugging the mountains) ----
    * The map grew: the outer jungle band is now 465 → 545 and the deep band 545 → 610.
    * The deep band is where rare gems & rocks hide: nearly double tree density, bigger
    * canopies and mostly round dark crowns so it reads visually darker than the regular
-   * jungle ring. Trees keep out of the ⛰️ mountain band (that's rock country). */
+   * jungle ring. Trees keep out of the ⛰️ mountain band (that's rock country)
+   * and out of the 🏕️ camp glades. */
   let n = 0;
   while (n < 560) {
     const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 472, DEEP_JUNGLE_RADIUS);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
+    if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 10.5)) continue; // keep camp glades clear
     addTree(x, z, range(rnd, 0.85, 1.55), rnd() < 0.75 ? 0 : 1);
     n++;
   }
@@ -604,6 +671,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     const a = range(rnd, 0, Math.PI * 2), r = range(rnd, DEEP_JUNGLE_RADIUS + 2, JUNGLE_RADIUS - 2);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
+    if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 10.5)) continue; // keep camp glades clear
     addTree(x, z, range(rnd, 1.1, 1.95), rnd() < 0.28 ? 0 : 1); // big dark round canopies dominate
     n++;
   }
@@ -625,6 +693,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     const a = range(rnd, 0, Math.PI * 2), r = range(rnd, DEEP_JUNGLE_RADIUS + 3, JUNGLE_RADIUS - 6);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 6) continue;
+    if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 7)) continue; // not inside a camp glade
     if (trees.some((t) => Math.hypot(t.x - x, t.z - z) < 2.6)) continue;
     rocks.push({ x, z, s: range(rnd, 0.9, 1.8) });
     n++;
@@ -658,6 +727,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     if (ROADS.some((rd) => Math.abs(x - rd) < ROAD_W / 2 + 3 || Math.abs(z - rd) < ROAD_W / 2 + 3)) continue;
     if (buildings.some((b) => Math.abs(x - b.x) < b.w + 4 && Math.abs(z - b.z) < b.d + 4)) continue;
     if (trees.some((t) => Math.hypot(x - t.x, z - t.z) < 2.6)) continue;
+    if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 7)) continue; // not inside a camp glade
     rocks.push({ x, z, s: range(rnd, 0.85, 1.7) });
     n++;
   }
@@ -724,6 +794,15 @@ export function generateWorld(seed = WORLD_SEED): World {
   });
   for (const s of silos) circles.push({ x: s.x, z: s.z, r: 3.3 });
   for (const w of windmills) circles.push({ x: w.x, z: w.z, r: 0.8 });
+  // 🏕️ jungle camps — the fire pit, every tent and the supply crates are SOLID
+  // (log seats stay steppable — they're knee-high). The pit circle also doubles
+  // as the anchor the engine's fire-logic reads via world.camps.
+  for (const cp of camps) {
+    circles.push({ x: cp.x, z: cp.z, r: 0.95 }); // fire pit — don't walk into the flames
+    for (const t of cp.tents) circles.push({ x: cp.x + t.dx, z: cp.z + t.dz, r: 1.55 });
+    for (const cr of cp.crates) circles.push({ x: cp.x + cr.dx, z: cp.z + cr.dz, r: 0.55 });
+    if (cp.pole) circles.push({ x: cp.x + cp.pole.dx, z: cp.z + cp.pole.dz, r: 0.3 });
+  }
   // 🔨 breakable boulders — each rock owns one solid collider tagged with its
   // index (rock:i); its slot is ALSO recorded in rockCi so the hammer can
   // shrink it to rubble when it finally cracks.
@@ -737,7 +816,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   // every circle remembers its array slot — the driven car refreshes its grid cells via this
   for (let i = 0; i < circles.length; i++) circles[i].idx = i;
 
-  return { buildings, trees, rocks, rockCi, flowers, boxes, circles, cars, lamps, benches, fields, silos, umbrellas, signs, windmills, grid: buildColliderGrid(boxes, circles) };
+  return { buildings, trees, rocks, rockCi, flowers, boxes, circles, cars, lamps, benches, fields, silos, umbrellas, signs, windmills, camps, grid: buildColliderGrid(boxes, circles) };
 }
 
 /**

@@ -2115,6 +2115,446 @@ function Fireflies({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
   );
 }
 
+/* ------------------------- 🏕️ jungle camps: tents, lanterns & living fires ------------------------- */
+const CAMP_CANVAS_HEX = ["#d9a441", "#b0553a", "#7a8c5a", "#c9b28a", "#9a6a8a"];
+
+/** soft radial glow texture — flame halo, ground light pool, lantern halo */
+function campGlowTexture(): THREE.CanvasTexture {
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = 128;
+  const g = cv.getContext("2d")!;
+  const grad = g.createRadialGradient(64, 64, 2, 64, 64, 64);
+  grad.addColorStop(0, "rgba(255,255,255,1)");
+  grad.addColorStop(0.3, "rgba(255,255,255,0.5)");
+  grad.addColorStop(1, "rgba(255,255,255,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 128, 128);
+  return new THREE.CanvasTexture(cv);
+}
+
+/** 🔥 fire shader — a cone whose silhouette is eaten by two octaves of
+ *  seamlessly-wrapping noise scrolling upward. Vertex pass sways the tip while
+ *  the root stays anchored; fragment pass runs a deep-red → orange → yellow →
+ *  white body ramp with a faint blue gas root and additive blending. */
+const FIRE_VERT = /* glsl */ `
+uniform float uTime;
+uniform float uSeed;
+varying vec2 vUv;
+varying float vAng;
+varying float vN;
+float fhash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+float fnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(fhash(i), fhash(i + vec2(1.0, 0.0)), f.x),
+             mix(fhash(i + vec2(0.0, 1.0)), fhash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+void main() {
+  vUv = uv;
+  float ang = atan(position.x, position.z);
+  vAng = ang;
+  vec2 nc = vec2(cos(ang), sin(ang)) * 1.6;
+  float h = uv.y;
+  float t = uTime * 2.1 + uSeed * 19.0;
+  float n = fnoise(nc + vec2(0.0, h * 2.6 - t)) * 0.65
+          + fnoise(nc * 2.4 + vec2(7.3, h * 5.0 - t * 1.8)) * 0.35;
+  vN = n;
+  vec3 pos = position;
+  float rad = length(position.xz);
+  vec2 radial = position.xz / max(rad, 0.001);
+  float amp = pow(h, 1.5) * 0.34;          // tips flicker hard, roots stay put
+  pos.xz += radial * (n - 0.5) * 1.7 * amp;
+  pos.x += sin(t * 0.8 + uSeed * 3.1) * 0.12 * h;   // whole-tongue sway
+  pos.z += cos(t * 0.63 + uSeed * 5.7) * 0.1 * h;
+  pos.y += (n - 0.5) * 0.16 * h;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(pos, 1.0);
+}
+`;
+const FIRE_FRAG = /* glsl */ `
+uniform float uTime;
+uniform float uSeed;
+uniform float uCore;
+varying vec2 vUv;
+varying float vAng;
+varying float vN;
+float fhash(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453123); }
+float fnoise(vec2 p) {
+  vec2 i = floor(p), f = fract(p);
+  f = f * f * (3.0 - 2.0 * f);
+  return mix(mix(fhash(i), fhash(i + vec2(1.0, 0.0)), f.x),
+             mix(fhash(i + vec2(0.0, 1.0)), fhash(i + vec2(1.0, 1.0)), f.x), f.y);
+}
+void main() {
+  float h = vUv.y;
+  float t = uTime * 2.9 + uSeed * 29.0;
+  vec2 nc = vec2(cos(vAng), sin(vAng)) * 2.0;
+  float n = fnoise(nc + vec2(0.0, h * 3.0 - t)) * 0.6
+          + fnoise(nc * 2.7 + vec2(3.7, h * 5.5 - t * 1.9)) * 0.4;
+  float body = (1.0 - h) * 1.12 + n * 0.6 - 0.3;
+  float alpha = smoothstep(0.05, 0.6, body) * (0.75 + 0.35 * vN);
+  vec3 c = mix(vec3(0.45, 0.02, 0.0), vec3(1.0, 0.33, 0.02), smoothstep(0.08, 0.42, body));
+  c = mix(c, vec3(1.0, 0.74, 0.16), smoothstep(0.4, 0.75, body));
+  c = mix(c, vec3(1.0, 0.97, 0.8), smoothstep(0.72, 1.0, body));
+  c = mix(vec3(0.22, 0.4, 0.95), c, smoothstep(0.0, 0.14, h)); // faint blue gas root
+  if (uCore > 0.5) c = mix(c, vec3(1.0, 0.94, 0.72), 0.4);
+  gl_FragColor = vec4(c * (0.8 + 0.45 * n), alpha);
+}
+`;
+/** ✨ rising sparks — per-spark life cycle with sway + twinkle, all camps in one draw call */
+const SPARK_VERT = /* glsl */ `
+attribute float aSeed;
+uniform float uTime;
+varying float vTw;
+void main() {
+  float life = fract(uTime * (0.22 + aSeed * 0.3) + aSeed * 43.7);
+  vec3 pos = position;
+  pos.y += life * (1.5 + aSeed * 2.1);
+  pos.x += sin(life * (6.0 + aSeed * 6.0) + aSeed * 40.0) * (0.12 + aSeed * 0.25) * life;
+  pos.z += cos(life * (5.0 + aSeed * 7.0) + aSeed * 31.0) * (0.1 + aSeed * 0.2) * life;
+  vTw = (1.0 - life) * (0.55 + 0.45 * sin(life * 34.0 + aSeed * 95.0));
+  vec4 mv = modelViewMatrix * vec4(pos, 1.0);
+  float fade = clamp(1.0 - (-mv.z - 70.0) / 130.0, 0.0, 1.0);
+  vTw *= fade;
+  gl_PointSize = clamp(mix(0.1, 0.03, life) * (340.0 / -mv.z), 1.0, 22.0);
+  gl_Position = projectionMatrix * mv;
+}
+`;
+const SPARK_FRAG = /* glsl */ `
+varying float vTw;
+void main() {
+  float d = length(gl_PointCoord - 0.5);
+  float a = smoothstep(0.5, 0.1, d) * max(vTw, 0.0);
+  vec3 c = mix(vec3(1.0, 0.45, 0.08), vec3(1.0, 0.9, 0.55), clamp(vTw, 0.0, 1.0));
+  gl_FragColor = vec4(c, a);
+}
+`;
+/** 🌚 soft smoke puffs — slow rise, wind drift, gentle fade (subtle, both day & night) */
+const SMOKE_VERT = /* glsl */ `
+attribute float aSeed;
+uniform float uTime;
+varying float vA;
+void main() {
+  float life = fract(uTime * (0.1 + aSeed * 0.07) + aSeed * 17.3);
+  vec3 pos = position;
+  pos.y += 1.9 + life * (4.5 + aSeed * 2.5);
+  pos.x += life * (0.9 + aSeed * 0.7) + sin(uTime * 0.5 + aSeed * 20.0) * 0.25;
+  pos.z += life * (aSeed - 0.5) * 0.7;
+  vA = (1.0 - life) * smoothstep(0.0, 0.18, life) * (0.1 + aSeed * 0.08);
+  vec4 mv = modelViewMatrix * vec4(pos, 1.0);
+  float fade = clamp(1.0 - (-mv.z - 70.0) / 130.0, 0.0, 1.0);
+  vA *= fade;
+  gl_PointSize = clamp((0.7 + life * 2.6) * (340.0 / -mv.z), 1.0, 150.0);
+  gl_Position = projectionMatrix * mv;
+}
+`;
+const SMOKE_FRAG = /* glsl */ `
+varying float vA;
+void main() {
+  float d = length(gl_PointCoord - 0.5);
+  float a = smoothstep(0.5, 0.06, d) * vA;
+  gl_FragColor = vec4(vec3(0.42, 0.4, 0.38), a);
+}
+`;
+
+function Camps({ engine, clockRef }: { engine: GameEngine; clockRef: React.MutableRefObject<number> }) {
+  const shared = useMemo(() => ({ time: { value: 0 } }), []);
+  const lights = useRef<THREE.PointLight[]>([]);
+
+  /* one imperative group per camp: furniture + the living fire */
+  const campGroups = useMemo(() => {
+    const r = mulberry32(4242);
+    const glowTex = campGlowTexture();
+    // shared geometries
+    const tentGeo = (() => {
+      const shp = new THREE.Shape();
+      shp.moveTo(-1.3, 0); shp.lineTo(1.3, 0); shp.lineTo(0, 2.0); shp.closePath();
+      const geo = new THREE.ExtrudeGeometry(shp, { depth: 2.9, bevelEnabled: false });
+      geo.translate(0, 0, -1.45);
+      return geo;
+    })();
+    const doorGeo = (() => {
+      const shp = new THREE.Shape();
+      shp.moveTo(-0.52, 0); shp.lineTo(0.52, 0); shp.lineTo(0, 1.25); shp.closePath();
+      return new THREE.ShapeGeometry(shp);
+    })();
+    const logGeo = new THREE.CylinderGeometry(0.24, 0.26, 1.5, 7);
+    const fireLogGeo = new THREE.CylinderGeometry(0.13, 0.15, 1.3, 6);
+    const stoneGeo = new THREE.DodecahedronGeometry(0.24, 0);
+    const crateGeo = new THREE.BoxGeometry(0.85, 0.85, 0.85);
+    const crate2Geo = new THREE.BoxGeometry(0.62, 0.62, 0.62);
+    const barrelGeo = new THREE.CylinderGeometry(0.4, 0.42, 0.95, 10);
+    const poleGeo = new THREE.CylinderGeometry(0.05, 0.07, 2.7, 6);
+    const armGeo = new THREE.BoxGeometry(0.5, 0.06, 0.06);
+    const cageGeo = new THREE.SphereGeometry(0.17, 8, 6);
+    const bulbGeo = new THREE.SphereGeometry(0.13, 8, 6);
+    const scorchGeo = new THREE.CircleGeometry(1.2, 20);
+    const emberGeo = new THREE.CircleGeometry(0.46, 14);
+    const poolGeo = new THREE.CircleGeometry(4.4, 26);
+    // shared materials
+    const tentMats = CAMP_CANVAS_HEX.map((h) => new THREE.MeshLambertMaterial({ color: h }));
+    const doorMat = new THREE.MeshLambertMaterial({ color: "#43301f" });
+    const barkMat = new THREE.MeshLambertMaterial({ color: "#6e4a2a" });
+    const charMat = new THREE.MeshLambertMaterial({ color: "#3a2a1e" });
+    const stoneMats = ["#8d8d95", "#7d7d86", "#97948c"].map((h) => new THREE.MeshLambertMaterial({ color: h }));
+    const crateMat = new THREE.MeshLambertMaterial({ color: "#a3703f" });
+    const barrelMat = new THREE.MeshLambertMaterial({ color: "#7a4a2b" });
+    const poleMat = new THREE.MeshLambertMaterial({ color: "#54402c" });
+    const cageMat = new THREE.MeshLambertMaterial({ color: "#2f333a" });
+    const scorchMat = new THREE.MeshBasicMaterial({ color: "#241812" });
+    const emberMat = new THREE.MeshBasicMaterial({ color: "#ff5a1f" });
+    const poolMat = new THREE.MeshBasicMaterial({ map: glowTex, color: 0xff8c3a, transparent: true, opacity: 0.3, depthWrite: false, blending: THREE.AdditiveBlending });
+
+    return WORLD.camps.map((cp, ci) => {
+      const g = new THREE.Group();
+      const ty = terrainHeight(cp.x, cp.z);
+      g.position.set(cp.x, ty, cp.z);
+
+      /* A-frame tents — doorways face the fire */
+      for (const t of cp.tents) {
+        const tg = new THREE.Group();
+        tg.position.set(t.dx, 0, t.dz);
+        tg.rotation.y = t.rot;
+        tg.scale.setScalar(t.s);
+        const canvasMesh = new THREE.Mesh(tentGeo, tentMats[t.c % tentMats.length]);
+        canvasMesh.rotation.z = (t.dx + t.dz) % 2 < 1 ? 0.035 : -0.035;
+        tg.add(canvasMesh);
+        const door = new THREE.Mesh(doorGeo, doorMat);
+        door.position.set(0, 0.02, 1.452);
+        tg.add(door);
+        const ridge = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 3.2, 6), charMat);
+        ridge.rotation.x = Math.PI / 2;
+        ridge.position.y = 1.98;
+        tg.add(ridge);
+        g.add(tg);
+      }
+
+      /* split-log seats ringing the fire */
+      for (const l of cp.logs) {
+        const m = new THREE.Mesh(logGeo, barkMat);
+        m.position.set(l.dx, 0.24, l.dz);
+        m.rotation.z = Math.PI / 2;   // lie flat
+        m.rotation.y = l.rot;         // tangent to the pit
+        g.add(m);
+      }
+
+      /* supply crates (some stacked) & the odd barrel */
+      cp.crates.forEach((cr, k) => {
+        const m = new THREE.Mesh(k % 2 === 0 ? crateGeo : crate2Geo, crateMat);
+        m.position.set(cr.dx, 0.43, cr.dz);
+        m.rotation.y = cr.rot;
+        g.add(m);
+        if (k === 0) {
+          const top = new THREE.Mesh(crate2Geo, crateMat);
+          top.position.set(cr.dx + 0.14, 1.12, cr.dz - 0.1);
+          top.rotation.y = cr.rot + 0.5;
+          g.add(top);
+        }
+        if (k === cp.crates.length - 1 && cp.crates.length === 1) {
+          const b = new THREE.Mesh(barrelGeo, barrelMat);
+          b.position.set(cr.dx + 0.9, 0.48, cr.dz + 0.5);
+          g.add(b);
+        }
+      });
+
+      /* lantern pole — glows warm once the dusk rolls in */
+      if (cp.pole) {
+        const p = new THREE.Mesh(poleGeo, poleMat);
+        p.position.set(cp.pole.dx, 1.35, cp.pole.dz);
+        g.add(p);
+        const arm = new THREE.Mesh(armGeo, poleMat);
+        arm.position.set(cp.pole.dx - 0.22, 2.66, cp.pole.dz);
+        g.add(arm);
+        const cage = new THREE.Mesh(cageGeo, cageMat);
+        cage.position.set(cp.pole.dx - 0.42, 2.5, cp.pole.dz);
+        g.add(cage);
+        const bulb = new THREE.Mesh(bulbGeo, new THREE.MeshBasicMaterial({ color: 0xffd66b, transparent: true, opacity: 0 }));
+        bulb.position.copy(cage.position);
+        bulb.name = "lbulb";
+        g.add(bulb);
+      }
+
+      /* ----- the fire pit ----- */
+      const scorch = new THREE.Mesh(scorchGeo, scorchMat);
+      scorch.rotation.x = -Math.PI / 2;
+      scorch.position.y = 0.022;
+      g.add(scorch);
+      const ember = new THREE.Mesh(emberGeo, emberMat);
+      ember.rotation.x = -Math.PI / 2;
+      ember.position.y = 0.05;
+      ember.name = "ember";
+      g.add(ember);
+      for (let k = 0; k < 9; k++) {
+        const a = (k / 9) * Math.PI * 2 + ci;
+        const s = new THREE.Mesh(stoneGeo, stoneMats[k % stoneMats.length]);
+        s.position.set(Math.cos(a) * 0.88, 0.14 + r() * 0.06, Math.sin(a) * 0.88);
+        s.rotation.set(r() * 3, r() * 3, r() * 3);
+        s.scale.setScalar(0.85 + r() * 0.5);
+        g.add(s);
+      }
+      // crossed fire lay
+      for (const a of [0.55, -0.55]) {
+        const fl = new THREE.Mesh(fireLogGeo, charMat);
+        fl.position.y = 0.16;
+        fl.rotation.z = Math.PI / 2;
+        fl.rotation.y = a;
+        g.add(fl);
+      }
+
+      /* ----- 🔥 the living flame: outer body + hot core ----- */
+      const mkFlame = (rad: number, h: number, core: boolean) => {
+        const geo = new THREE.ConeGeometry(rad, h, 12, 16, true);
+        geo.translate(0, h / 2, 0);
+        const mat = new THREE.ShaderMaterial({
+          uniforms: { uTime: shared.time, uSeed: { value: ci * 3.7 + (core ? 5.1 : 0) }, uCore: { value: core ? 1 : 0 } },
+          vertexShader: FIRE_VERT,
+          fragmentShader: FIRE_FRAG,
+          transparent: true,
+          depthWrite: false,
+          blending: THREE.AdditiveBlending,
+          side: THREE.DoubleSide,
+        });
+        const m = new THREE.Mesh(geo, mat);
+        m.position.y = 0.14;
+        m.renderOrder = 5;
+        return m;
+      };
+      g.add(mkFlame(0.52, 1.85, false));
+      g.add(mkFlame(0.3, 1.15, true));
+
+      /* additive halo + warm pool of light on the ground */
+      const glow = new THREE.Sprite(new THREE.SpriteMaterial({ map: glowTex, color: 0xff8c3a, transparent: true, opacity: 0.6, depthWrite: false, blending: THREE.AdditiveBlending }));
+      glow.position.y = 0.95;
+      glow.scale.setScalar(2.6);
+      glow.renderOrder = 6;
+      glow.name = "glow";
+      g.add(glow);
+      const pool = new THREE.Mesh(poolGeo, poolMat.clone());
+      pool.rotation.x = -Math.PI / 2;
+      pool.position.y = 0.055;
+      pool.renderOrder = 4;
+      pool.name = "pool";
+      g.add(pool);
+      return g;
+    });
+  }, [shared]);
+
+  /* sparks + smoke — one Points cloud per effect covering every camp */
+  const sparkGeo = useMemo(() => {
+    const per = 22;
+    const pos = new Float32Array(WORLD.camps.length * per * 3);
+    const seed = new Float32Array(WORLD.camps.length * per);
+    const r = mulberry32(9001);
+    let i = 0;
+    for (const cp of WORLD.camps) {
+      for (let k = 0; k < per; k++) {
+        const a = r() * Math.PI * 2, d = r() * 0.3;
+        pos[i * 3] = cp.x + Math.cos(a) * d;
+        pos[i * 3 + 1] = terrainHeight(cp.x, cp.z) + 0.4;
+        pos[i * 3 + 2] = cp.z + Math.sin(a) * d;
+        seed[i] = r();
+        i++;
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    g.setAttribute("aSeed", new THREE.BufferAttribute(seed, 1));
+    return g;
+  }, []);
+  const smokeGeo = useMemo(() => {
+    const per = 8;
+    const pos = new Float32Array(WORLD.camps.length * per * 3);
+    const seed = new Float32Array(WORLD.camps.length * per);
+    const r = mulberry32(9002);
+    let i = 0;
+    for (const cp of WORLD.camps) {
+      for (let k = 0; k < per; k++) {
+        pos[i * 3] = cp.x + (r() - 0.5) * 0.4;
+        pos[i * 3 + 1] = terrainHeight(cp.x, cp.z);
+        pos[i * 3 + 2] = cp.z + (r() - 0.5) * 0.4;
+        seed[i] = r();
+        i++;
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    g.setAttribute("aSeed", new THREE.BufferAttribute(seed, 1));
+    return g;
+  }, []);
+  const sparkMat = useMemo(() => new THREE.ShaderMaterial({
+    uniforms: { uTime: shared.time },
+    vertexShader: SPARK_VERT, fragmentShader: SPARK_FRAG,
+    transparent: true, depthWrite: false, blending: THREE.AdditiveBlending,
+  }), [shared]);
+  const smokeMat = useMemo(() => new THREE.ShaderMaterial({
+    uniforms: { uTime: shared.time },
+    vertexShader: SMOKE_VERT, fragmentShader: SMOKE_FRAG,
+    transparent: true, depthWrite: false,
+  }), [shared]);
+
+  /* per-frame: ember pulse, halo/pool flicker, lantern dusk-glow, and the two
+   * pooled fire lights that chase the camps nearest the player */
+  useFrame((s, dt) => {
+    const t = s.clock.elapsedTime;
+    shared.time.value = t;
+    const nf = nightFactor(clockRef.current);
+    const p = engine.player;
+    const order = WORLD.camps
+      .map((cp, i) => ({ i, d: (cp.x - p.x) * (cp.x - p.x) + (cp.z - p.z) * (cp.z - p.z) }))
+      .sort((a, b) => a.d - b.d);
+    for (let i = 0; i < WORLD.camps.length; i++) {
+      const g = campGroups[i];
+      const flick = 0.82 + 0.18 * Math.sin(t * 11 + i * 2.4) * Math.sin(t * 6.3 + i);
+      const glow = g.getObjectByName("glow") as THREE.Sprite | undefined;
+      if (glow) {
+        const m = glow.material as THREE.SpriteMaterial;
+        m.opacity = (0.42 + 0.34 * nf) * flick;
+        glow.scale.setScalar(2.1 + 0.6 * flick + 0.9 * nf);
+      }
+      const pool = g.getObjectByName("pool") as THREE.Mesh | undefined;
+      if (pool) {
+        const m = pool.material as THREE.MeshBasicMaterial;
+        m.opacity = (0.16 + 0.5 * nf) * flick;
+      }
+      const ember = g.getObjectByName("ember") as THREE.Mesh | undefined;
+      if (ember) (ember.material as THREE.MeshBasicMaterial).color.setHSL(0.07, 0.95, 0.4 + 0.13 * Math.sin(t * 7 + i * 1.7));
+      const bulb = g.getObjectByName("lbulb") as THREE.Mesh | undefined;
+      if (bulb) (bulb.material as THREE.MeshBasicMaterial).opacity = Math.max(0, nf - 0.25) * 1.3;
+    }
+    for (let k = 0; k < 2; k++) {
+      const L = lights.current[k];
+      if (!L) continue;
+      const cp = WORLD.camps[order[k]?.i ?? 0];
+      if (!cp) continue;
+      const ty = terrainHeight(cp.x, cp.z) + 1.25;
+      const f = Math.min(1, 5 * dt);
+      L.position.x += (cp.x - L.position.x) * f;
+      L.position.y += (ty - L.position.y) * f;
+      L.position.z += (cp.z - L.position.z) * f;
+      const flick = 0.78 + 0.22 * Math.sin(t * 9.7 + k * 3.1) * Math.sin(t * 5.3 + k) + 0.06 * Math.sin(t * 23);
+      L.intensity = (2.4 + 15 * nf) * flick;
+    }
+  });
+
+  return (
+    <>
+      {campGroups.map((g, i) => <primitive object={g} key={`camp${i}`} />)}
+      <points geometry={sparkGeo} material={sparkMat} frustumCulled={false} />
+      <points geometry={smokeGeo} material={smokeMat} frustumCulled={false} />
+      {[0, 1].map((k) => (
+        <pointLight
+          key={`fl${k}`}
+          ref={(r) => { if (r) lights.current[k] = r; }}
+          color="#ff8c3a"
+          intensity={0}
+          distance={22}
+          decay={1.7}
+          position={[0, -60, 0]}
+        />
+      ))}
+    </>
+  );
+}
+
 /* ------------------------- environment ------------------------- */
 const DAY = new THREE.Color(0x8fd3ff);
 const DUSK = new THREE.Color(0xff9a5a);
@@ -2422,6 +2862,7 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
       <Farm />
       <Landmarks />
       <Forest engine={engine} />
+      <Camps engine={engine} clockRef={clockRef} />
       <Graves />
       <Flowers />
       <Mountains />
