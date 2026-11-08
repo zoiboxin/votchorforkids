@@ -508,6 +508,24 @@ export const PHASE_NIGHT_S = 75;  // the beast hunts
 export const PHASE_DAWN_S = 9;    // recap, then a new day
 export type Phase = "day" | "dusk" | "night" | "dawn";
 
+/* ---------- 🧱 THE WALL — PUBG-style shrinking safe zone ----------
+ * After EVERY night a shimmering transparent wall slams down around the
+ * town, and each night it tightens further. Anyone caught beyond the wall
+ * (player, contestant, townsfolk — everyone) withers: health drains until
+ * they fall. The radii walk city → downtown → a final arena:
+ *   lv0 (day 1)  = whole map, no pressure
+ *   lv1 (day 2)  = 430u  — farmland abandoned, camps beyond reach
+ *   lv2 (day 3)  = 300u  — the jungle is gone
+ *   lv3 (day 4)  = 200u  — city outskirts die
+ *   lv4 (day 5)  = 130u  — downtown core only
+ *   lv5 (day 6)  = 82u
+ *   lv6 (day 7)  = 46u   — a screaming final arena            */
+export const ZONE_RADII: readonly number[] = [712, 430, 300, 200, 130, 82, 46];
+export const ZONE_DRAIN_BASE = 4;    // hp/s outside the wall at level 1
+export const ZONE_DRAIN_STEP = 1.8;  // extra hp/s per extra level (late walls bite harder)
+export const ZONE_GRACE_S = 14;      // seconds after a shrink before the drain hits full strength
+export const ZONE_WALL_H = 26;       // visual height of the transparent wall (u)
+
 /* ---------- arms & tools (collect multiple of the same!) ---------- */
 export type ToolKind = "axe" | "sword" | "hammer" | "builder";
 export interface ToolDef {

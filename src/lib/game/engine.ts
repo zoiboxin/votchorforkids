@@ -16,6 +16,7 @@ import {
   POINTS_BUILD, POINTS_HARVEST, POINTS_KILL_BEAST, POINTS_KILL_ZOMBIE, POINTS_NIGHT, POINTS_RIGHT_ACCUSE,
   POINTS_WRONG_ACCUSE, ROCK_HITS, ROCK_PER_BOULDER, TOOL_PICKUP_R, TOOL_SPAWN, TOOLS,
   TREE_HITS, WOOD_PER_TREE, WIN_BONUS, PLAYERS_TOTAL, ZOMBIE_CREW_DMG, ZOMBIE_HP,
+  ZONE_DRAIN_BASE, ZONE_DRAIN_STEP, ZONE_GRACE_S, ZONE_RADII,
   MONEY_PER_PILE, CASH_RESPAWN_S, CREW_PURSE, CIV_PURSE, ZOMBIE_PURSE, POINTS_LOOT,
   CIV_PANIC_R, CREW_PANIC_R, ZOMBIE_HUNT_R,
   CREW_SEEK_R, CREW_EAT_R, CREW_BOOST_S, CREW_BOOST_MULT,
@@ -314,6 +315,13 @@ export interface HudData {
   crewAlive: number;
   /** total souls in the contest (99) — HUD alive counter denominator */
   aliveTotal: number;
+  /* --- 🧱 THE WALL (shrinking safe zone) --- */
+  /** current wall level (0 = whole map free · 1..6 after each night) */
+  zoneLevel: number;
+  /** current safe-zone radius in world units */
+  zoneR: number;
+  /** true while YOU stand outside the safe zone — HUD drain warning */
+  outsideWall: boolean;
   /** 🌐 living real players (other than you) — bots freed a seat for each */
   remotesAlive: number;
   /** the roster — names, colors & who's still alive (accuse board + map) */
@@ -558,6 +566,15 @@ export class GameEngine {
   kills = 0; accusesRight = 0; accusesWrong = 0; buildsMade = 0; nightsSurvived = 0;
   /** safe hiding spots the crew runs to at dusk (camp + station gates) */
   hideSpots: { x: number; z: number }[] = [];
+  /* --- 🧱 THE WALL — the shrinking safe zone --- */
+  /** wall level: 0 = whole map free · +1 every dawn (see ZONE_RADII) */
+  zoneLevel = 0;
+  /** seconds left of the post-shrink grace window (drain ramps 0→full) */
+  zoneGraceT = 0;
+  /** true while the PLAYER stands beyond the wall (HUD warning + wall tint) */
+  outsideWall = false;
+  /** throttle for the "you're outside the wall" toast */
+  private zoneToastCd = 0;
   /** 🏕️ jungle camps you've walked up to — one discovery toast each */
   discCamps = new Set<number>();
   /** original static-circle radii — reset() un-fells trees & un-smashes rocks with this */
@@ -722,9 +739,13 @@ export class GameEngine {
       this.cops.push({ id: this.nid(), kind: "police", x: p.x, z: p.z, vx: 0, vz: 0, face: 0, mode: "patrol", tx: p.x, tz: p.z, timer: 0, phase: Math.random() * 6, name: "Police", speed: POLICE_SPEED * 0.6, alertT: 0, copCd: 0 });
     }
     // civilians — soft Poisson-disc scatter: every bot keeps a minimum gap from its
-    // neighbours, so no more “all 94 spawned in one neighbourhood” clumping
-    const civSpots = scatterSpots(r, this.world, CIVILIAN_COUNT, 8, CITY_RADIUS - 8, BOT_SPAWN_GAP);
-    for (let i = 0; i < CIVILIAN_COUNT; i++) {
+    // neighbours, so no more “all 94 spawned in one neighbourhood” clumping.
+    // 🧟 7Nights: the town is ABANDONED — only a few stubborn townsfolk never left
+    // (110 ambient civilians would drown out the 100-soul contest and make the
+    // alive counter read as a lie). Other modes keep the full living city.
+    const civN = this.horror ? 26 : CIVILIAN_COUNT;
+    const civSpots = scatterSpots(r, this.world, civN, 8, CITY_RADIUS - 8, BOT_SPAWN_GAP);
+    for (let i = 0; i < civN; i++) {
       const p = civSpots[i];
       this.civs.push({ id: this.nid(), kind: "civilian", x: p.x, z: p.z, vx: 0, vz: 0, face: 0, mode: "wander", tx: p.x, tz: p.z, timer: range(r, 0, 4), phase: Math.random() * 6, name: CIVIL_NAMES[i % CIVIL_NAMES.length], speed: range(r, 2.2, 3.4), alertT: 0, purse: Math.round(range(r, CIV_PURSE[0], CIV_PURSE[1])) });
     }
@@ -1091,6 +1112,7 @@ export class GameEngine {
   start() {
     this.running = true;
     this.toast(`🌙 Welcome, ${this.playerName}. ${PLAYERS_TOTAL} souls enter the 7 nights — each dusk, HALF turn. One walks out.`, "info");
+    this.toast("🧱 THE WALL: after every night a shimmering barrier slams down TIGHTER. Beyond it, life drains fast — always stay inside the circle!", "info");
     this.toast("💰 Cash piles lie around town — scoop them up! The fallen drop their purses… first one there is richer.", "info");
     this.toast("☀️ DAY: chop trees (🪓 + F), smash rocks (🔨 + F), build defenses (🔧 + B). Find arms around town — press G to open your pack!", "info");
     this.toast("⚠️ DUSK: sirens howl… SEVERAL of us turn. Names vanish in the dark! NIGHT: the pack hunts. Hide, run… or FIGHT (🗡️ + F).", "info");
@@ -1191,6 +1213,7 @@ export class GameEngine {
     /* --- 7 Nights: rewind the story --- */
     this.nightNo = 1; this.phase = "day"; this.phaseT = PHASE_DAY_S;
     this.possessed = []; this.youPossessed = false; this.lastPossessed = []; this.lastClue = null;
+    this.zoneLevel = 0; this.zoneGraceT = 0; this.outsideWall = false; this.zoneToastCd = 0; // 🧱 the wall rewinds too
     this.tools = []; this.held = -1; this.res = { wood: 0, rock: 0 };
     this.attackCd = 0; this.accuseCd = 0; this.heartT = 0;
     this.kills = 0; this.accusesRight = 0; this.accusesWrong = 0; this.buildsMade = 0; this.nightsSurvived = 0;
@@ -2349,6 +2372,51 @@ export class GameEngine {
 
   /* ---------------- phase machine: day → dusk → night → dawn ---------------- */
 
+  /** 🧱 current safe-zone radius in world units (level 0 = the whole map). */
+  zoneRadius(): number {
+    return ZONE_RADII[Math.min(this.zoneLevel, ZONE_RADII.length - 1)];
+  }
+
+  /** 🧱 drain rate outside the wall right now (hp/s, grace ramp included). */
+  private zoneDrain(): number {
+    const lvl = Math.max(0, this.zoneLevel - 1);
+    const graceK = this.zoneGraceT > 0 ? 1 - this.zoneGraceT / ZONE_GRACE_S : 1;
+    return (ZONE_DRAIN_BASE + ZONE_DRAIN_STEP * lvl) * graceK;
+  }
+
+  /** Dawn after night N: the transparent wall slams down one ring tighter.
+   *  Everyone outside it (player, bots, townsfolk) starts withering. */
+  private shrinkZone() {
+    if (this.zoneLevel >= ZONE_RADII.length - 1) return;
+    this.zoneLevel++;
+    this.zoneGraceT = ZONE_GRACE_S;
+    const R = this.zoneRadius();
+    sfx.howl();
+    this.toast(`🧱 THE WALL CLOSED IN — safe ground is now ${R}u wide. Outside it, your life DRAINS away!`, "bad");
+  }
+
+  /** 🧱 per-frame wall tick for the PLAYER: outside = health drains to death. */
+  private stepZone(dt: number) {
+    this.zoneGraceT = Math.max(0, this.zoneGraceT - dt);
+    this.zoneToastCd = Math.max(0, this.zoneToastCd - dt);
+    if (this.won || this.lost) { this.outsideWall = false; return; }
+    const R = this.zoneRadius();
+    const d = Math.hypot(this.player.x, this.player.z);
+    this.outsideWall = d > R;
+    if (this.outsideWall && this.detainedT <= 0 && !this.playerInVan) {
+      const drain = this.zoneDrain();
+      if (drain > 0) {
+        this.hp -= drain * dt;
+        this.hurtT = Math.max(this.hurtT, 0.3);
+        this.addShake(0.12); // 💥 small constant dread while standing in the burn
+        if (this.zoneToastCd <= 0) {
+          this.zoneToastCd = 4.5;
+          this.toast(`☢️ OUTSIDE THE WALL — your life is draining! ${Math.round(d - R)}u to safety — RUN!`, "bad");
+        }
+      }
+    }
+  }
+
   /** Advance the 7-Nights story clock. The visual day/night `clock` is SYNTHESIZED
    *  from the phase so sky, fog, lamps, windows & fireflies all follow the story. */
   private stepPhase(dt: number) {
@@ -2447,13 +2515,16 @@ export class GameEngine {
     this.zombies = [];
     this.zRev++;
     this.nightsSurvived = Math.min(NIGHTS_TOTAL, this.nightNo);
+    // 🧱 dawn after night N — the transparent wall slams down one ring tighter
+    this.shrinkZone();
     if (!early) this.points += POINTS_NIGHT;
     if (crumbled > 0) this.toast(`💀 ${crumbled} zombie${crumbled > 1 ? "s" : ""} crumbled at sunrise — the hunger won.`, "info");
     // 🌤️ the living city refills: everyone the night took is replaced by fresh faces
     let revived = 0;
+    const revMax = Math.max(20, Math.min(CITY_RADIUS - 10, this.zoneRadius() - 12)); // 🧱 fresh faces wake INSIDE the wall
     for (const c of this.civs) {
       if (!c.dead) continue;
-      const t = freeSpot(this.rnd, this.world, 12, CITY_RADIUS - 10);
+      const t = freeSpot(this.rnd, this.world, 12, revMax);
       c.x = t.x; c.z = t.z; c.tx = t.x; c.tz = t.z;
       c.vx = 0; c.vz = 0; c.dead = false; c.looted = false;
       c.mode = "wander"; c.timer = range(this.rnd, 1, 5);
@@ -2507,6 +2578,21 @@ export class GameEngine {
       if (c.seekBlock) { c.seekBlock.t -= dt; if (c.seekBlock.t <= 0) c.seekBlock = null; } // 🧱 unreachable-goodie blacklist decays
       c.avoidT = Math.max(0, (c.avoidT ?? 0) - dt);              // 🧱 beast prey-avoid decays
       const d2p = dist2(c.x, c.z, p.x, p.z);
+
+      // 🧱 THE WALL — lingering beyond the safe circle withers the body.
+      // Everyone but the possessed pack marches back inside (the pack still
+      // drains too — the wall spares nobody — but it hunts wherever prey runs).
+      const zR = this.zoneRadius();
+      const dCz = Math.hypot(c.x, c.z);
+      if (dCz > zR - 2) {
+        c.hp -= this.zoneDrain() * dt * 1.5; // bots wither a touch faster — keeps the lobby inside the circle
+        if (c.hp <= 0) { this.killCrew(i, false, -1, false, false, true); continue; }
+        if (dCz > zR - 12 && c.mode !== "possessed") {
+          const k = Math.max(4, zR - 15) / (dCz || 1);
+          stepNpc(c, c.x * k, c.z * k, CREW_SPEED * 1.35, dt, this.world);
+          continue;
+        }
+      }
 
       if (c.mode === "possessed") {
         // 🩸 THE PACK — each beast hunts the nearest living soul (crew, townsfolk, or you), fears fire, chews barricades
@@ -2768,7 +2854,7 @@ export class GameEngine {
 
   /** 🧟 a townsfolk is caught by the dark — they fall, their purse drops,
    *  and the town quietly refills them at dawn (the city stays alive). */
-  private killCiv(c: Npc, by: "zombie" | "beast" | "player") {
+  private killCiv(c: Npc, by: "zombie" | "beast" | "player" | "wall") {
     if (c.dead) return;
     c.dead = true;
     c.mode = "wander"; // frozen while dead — the renderer lays the body down
@@ -2784,6 +2870,7 @@ export class GameEngine {
       this.toast(
         by === "zombie" ? `🧟 The zombies got ${c.name}! Their 💰 purse dropped — grab it!`
         : by === "beast" ? `🩸 A beast tore ${c.name} apart! Their 💰 dropped — run for it!`
+        : by === "wall" ? `☠️ ${c.name} withered beyond the WALL! Their 💰 purse dropped.`
         : `🩸 You killed ${c.name}! Their 💰 purse dropped — and the law will hear of it!`, "bad");
     }
   }
@@ -2791,8 +2878,9 @@ export class GameEngine {
   /** A crew member dies — corpse stays, a clue appears, the town shrinks.
    *  `killerIdx` = which beast of the pack did it (−1 = unknown/you).
    *  `quiet` skips the scream (mass dawn crumbles play ONE sound instead).
-   *  `byYou` = the PLAYER murdered them in cold blood (crime clue + toast). */
-  private killCrew(idx: number, slain: boolean, killerIdx = -1, quiet = false, byYou = false) {
+   *  `byYou` = the PLAYER murdered them in cold blood (crime clue + toast).
+   *  `wall` = the shrinking safe zone took them (🧱 THE WALL is the killer). */
+  private killCrew(idx: number, slain: boolean, killerIdx = -1, quiet = false, byYou = false, wall = false) {
     const c = this.crew[idx];
     if (!c.alive) return;
     c.alive = false;
@@ -2802,7 +2890,9 @@ export class GameEngine {
     c.inspected = false;
     // 💰 their purse scatters where they fell — risk the night to loot it!
     this.dropLoot(c.deathX, c.deathZ, c.purse, slain ? `${c.name}'s dropped pouch` : `${c.name}'s purse`);
-    if (byYou) {
+    if (wall) {
+      c.clue = "no wounds at all… the light beyond the WALL scorched them where they stood.";
+    } else if (byYou) {
       c.clue = "a clean blade wound… no beast made this cut. A HUMAN did.";
     } else if (slain) {
       c.clue = "no fibers, no footprints… the beast fell right where it stood.";
@@ -2822,7 +2912,9 @@ export class GameEngine {
       });
     }
     const alive = this.crew.filter((x) => x.alive).length;
-    if (byYou) {
+    if (wall) {
+      this.toast(`☠️ ${c.name} withered beyond the WALL — the safe circle is death ground now! (${alive} left)`, "bad");
+    } else if (byYou) {
       this.toast(`🗡️ You killed ${c.name} — one less in the contest! (${alive} left)`, "bad");
     } else if (slain) {
       const left = this.possessed.filter((i) => this.crew[i].alive).length;
@@ -3209,26 +3301,25 @@ export class GameEngine {
     return best;
   }
 
-  private nearestHideout(x: number, z: number): { x: number; z: number } {
-    let best = this.hideSpots[0], bd = Infinity;
-    for (const h of this.hideSpots) {
-      const d = dist2(x, z, h.x, h.z);
-      if (d < bd) { bd = d; best = h; }
-    }
-    return best;
-  }
-
   /** 🌆🧱 personal dusk shelter — the old code sent EVERY bot on the street to
    *  the single nearest hideout, where they piled into one grinding blob. Now:
    *  the roster is spread across all hideouts id-biased (still local — an id
    *  spot far away loses to the nearest one), and each bot gets a golden-angle
    *  ring slot around its shelter so the crowd forms a circle, not a pile. */
   private hideTargetFor(c: Crew): { x: number; z: number } {
-    const n = Math.max(1, this.hideSpots.length);
-    const mine = this.hideSpots[c.id % n];
-    const near = this.nearestHideout(c.x, c.z);
+    // 🧱 shelters beyond the wall are DEAD ground — only aim at hideouts the
+    // shrinking circle still covers (fallback: a spot back toward the middle)
+    const zR = this.zoneRadius() - 10;
+    const inside = this.hideSpots.filter((h) => Math.hypot(h.x, h.z) < zR);
+    const spots = inside.length ? inside : [{ x: 0, z: 0 }];
+    const mine = spots[c.id % spots.length];
+    let near = spots[0], nd = Infinity;
+    for (const h of spots) {
+      const d = dist2(c.x, c.z, h.x, h.z);
+      if (d < nd) { nd = d; near = h; }
+    }
     const dMine = dist2(c.x, c.z, mine.x, mine.z);
-    const dNear = dist2(c.x, c.z, near.x, near.z);
+    const dNear = nd;
     const pick = dMine <= Math.max(38 * 38, dNear * 1.7) ? mine : near;
     const a = (c.id % 97) * 2.399;              // golden angle — even ring spacing
     const r = 1.1 + (c.id % 4) * 0.55;          // 3 radii so rings nest, not overlap
@@ -3396,6 +3487,8 @@ export class GameEngine {
       } else if (this.stamina > 25) this.exhaustedAnnounced = false;
     }
     this.hp = Math.min(100, this.hp + 1.2 * dt * AGE_STATS[this.look.age].regen);
+    // 🧱 THE WALL — outside the safe circle your life drains away (PUBG blue-zone)
+    this.stepZone(dt);
 
     /* --- ring-road traffic: solid cars that bonk careless runners --- */
     for (const t of this.traffic) {
@@ -3647,6 +3740,13 @@ export class GameEngine {
       const d2p = dist2(cop.x, cop.z, p.x, p.z);
       switch (cop.mode) {
         case "patrol": {
+          // 🧱 THE WALL — officers on beat walk back inside the shrinking circle
+          const copR = Math.hypot(cop.x, cop.z);
+          if (copR > this.zoneRadius() - 6) {
+            const k = Math.max(6, this.zoneRadius() - 12) / (copR || 1);
+            stepNpc(cop, cop.x * k, cop.z * k, POLICE_SPEED * 0.9, dt, this.world);
+            break;
+          }
           cop.timer -= dt;
           const arrived = dist2(cop.x, cop.z, cop.tx, cop.tz) < 4;
           if (arrived || cop.timer <= 0) {
@@ -3819,6 +3919,19 @@ export class GameEngine {
           continue;
         }
       }
+      // 🧱 THE WALL — townsfolk caught beyond the safe circle wither; the living
+      // hurry back toward the middle (their dawn refills land inside too)
+      {
+        const zR = this.zoneRadius();
+        const dCv = Math.hypot(c.x, c.z);
+        if (dCv > zR - 2) {
+          c.hp = (c.hp ?? 30) - this.zoneDrain() * dt * 1.5;
+          if (c.hp <= 0) { this.killCiv(c, "wall"); continue; }
+          const k = Math.max(4, zR - 10) / (dCv || 1);
+          stepNpc(c, c.x * k, c.z * k, c.speed * CIV_FLEE_MULT, dt, this.world);
+          continue;
+        }
+      }
       // 🤝 living city: passers-by scoop up dropped purses when the coast is clear
       if (this.phase === "day" || this.phase === "dawn") {
         for (let li = this.loot.length - 1; li >= 0; li--) {
@@ -3845,12 +3958,14 @@ export class GameEngine {
           if (c.timer <= 0 || dist2(c.x, c.z, c.tx, c.tz) < 2) {
             // protest marchers stick to the main road strip and keep the line moving;
             // everyone else mostly strolls their own neighbourhood (spotNear), with
-            // the occasional long cross-town trip — no more downtown beeline crowds
+            // the occasional long cross-town trip — no more downtown beeline crowds.
+            // 🧱 wander targets stay INSIDE the shrinking safe circle.
+            const zMax = Math.max(20, Math.min(CITY_RADIUS - 8, this.zoneRadius() - 12));
             const t = c.protest
               ? { x: range(this.rnd, -9, 9), z: range(this.rnd, -120, 260) }
               : (this.rnd() < 0.7
                 ? spotNear(this.rnd, this.world, c.x, c.z, 10, 78)
-                : freeSpot(this.rnd, this.world, 8, CITY_RADIUS - 8));
+                : freeSpot(this.rnd, this.world, 8, zMax));
             c.tx = t.x; c.tz = t.z; c.timer = range(this.rnd, c.protest ? 9 : 6, c.protest ? 18 : 14);
             if (!c.protest && this.rnd() < 0.4) c.pauseT = range(this.rnd, 0.8, 2.8);
           }
@@ -3931,6 +4046,14 @@ export class GameEngine {
       zb.touchCd = Math.max(0, zb.touchCd - dt);
       zb.avoidT = Math.max(0, (zb.avoidT ?? 0) - dt); // 🧱 walled-in prey ban decays
       const d2p = dist2(zb.x, zb.z, p.x, p.z);
+      // 🧱 THE WALL — the dead feel it too: a shambler caught beyond the safe
+      // circle drags itself back toward the middle instead of hunting
+      const dzC = Math.hypot(zb.x, zb.z);
+      if (dzC > this.zoneRadius() + 2) {
+        const k = Math.max(4, this.zoneRadius() - 6) / (dzC || 1);
+        stepNpc(zb, zb.x * k, zb.z * k, ZOMBIE_SPEED * 1.05, dt, this.world);
+        continue;
+      }
       if (night > 0.55) {
         // 🧟 the horde hoovers dropped loot — every purse claimed off the dirt
         // fattens this beast's hoard, spilled back at dawn (or when you cut it down)
@@ -4159,6 +4282,10 @@ export class GameEngine {
       nightNo: this.nightNo,
       phase: this.phase,
       phaseLeft: Math.max(0, this.phaseT),
+      /* --- 🧱 THE WALL --- */
+      zoneLevel: this.zoneLevel,
+      zoneR: this.zoneRadius(),
+      outsideWall: this.outsideWall,
       wood: this.res.wood,
       rock: this.res.rock,
       tools: this.tools.map((s) => ({ kind: s.kind, count: s.count })),

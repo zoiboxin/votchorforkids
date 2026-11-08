@@ -5,7 +5,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
   ANIMAL_SET, ATTACK_CD, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, SHIRT_COLORS, SKIN_TONES,
-  TOTAL_VOTES, type AnimalKind, type Appearance,
+  TOTAL_VOTES, ZONE_WALL_H, type AnimalKind, type Appearance,
 } from "@/lib/game/constants";
 import type { GameEngine } from "@/lib/game/engine";
 import { nightFactor } from "@/lib/game/sim";
@@ -1269,3 +1269,78 @@ function buildRemoteRig(look: Appearance, name: string, colorIdx: number) {
 }
 
 const SLOT_TAG_COLORS = ["#f472b6", "#fbbf24", "#4ade80", "#2dd4bf", "#f87171", "#c084fc", "#fb923c", "#a3e635"];
+
+/* ------------------------------------------------------------------ */
+/* 🧱 THE WALL — the PUBG-style shrinking safe zone. A shimmering       */
+/* transparent cylinder that slams down one ring tighter after every    */
+/* night; stand beyond it and your life drains away. Teal when you're   */
+/* safe, hot red when YOU are caught outside.                           */
+/* ------------------------------------------------------------------ */
+const ZONE_SAFE = "#38e0c8";
+const ZONE_BURN = "#ff5a4d";
+
+export function ZoneWall({ engine }: { engine: GameEngine }) {
+  const group = useRef<THREE.Group>(null);
+  const wall = useRef<THREE.Mesh>(null);
+  const ring = useRef<THREE.Mesh>(null);
+  const top = useRef<THREE.Mesh>(null);
+  const wallMat = useRef<THREE.MeshBasicMaterial>(null);
+  const ringMat = useRef<THREE.MeshBasicMaterial>(null);
+  const topMat = useRef<THREE.MeshBasicMaterial>(null);
+  useFrame((s) => {
+    const g = group.current;
+    if (!g) return;
+    const on = engine.zoneLevel > 0 && !engine.won;
+    g.visible = on;
+    if (!on) return;
+    const R = engine.zoneRadius();
+    wall.current?.scale.set(R, 1, R);
+    ring.current?.scale.set(R, R, 1);
+    top.current?.scale.set(R, R, 1);
+    // the player's own stance decides the mood: safe teal vs. burning red
+    const outside = Math.hypot(engine.player.x, engine.player.z) > R;
+    const t = s.clock.elapsedTime;
+    const pulse = 0.72 + Math.sin(t * 2.1) * 0.28;
+    const col = outside ? ZONE_BURN : ZONE_SAFE;
+    if (wallMat.current) {
+      wallMat.current.color.set(col);
+      wallMat.current.opacity = (outside ? 0.34 : 0.24) * pulse + (outside ? 0.1 : 0);
+    }
+    if (ringMat.current) {
+      ringMat.current.color.set(col);
+      ringMat.current.opacity = (outside ? 0.95 : 0.7) * (0.8 + Math.sin(t * 2.7) * 0.2);
+    }
+    if (topMat.current) {
+      topMat.current.color.set(col);
+      topMat.current.opacity = (outside ? 0.9 : 0.6) * (0.75 + Math.sin(t * 2.4) * 0.25);
+    }
+  });
+  return (
+    <group ref={group} visible={false}>
+      {/* the shimmering wall itself — open-ended cylinder, no caps */}
+      <mesh ref={wall} position={[0, ZONE_WALL_H / 2, 0]}>
+        <cylinderGeometry args={[1, 1, ZONE_WALL_H, 96, 1, true]} />
+        <meshBasicMaterial
+          ref={wallMat} color={ZONE_SAFE} transparent opacity={0.24}
+          side={THREE.DoubleSide} depthWrite={false}
+        />
+      </mesh>
+      {/* ground ring — reads the exact boundary at your feet */}
+      <mesh ref={ring} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.22, 0]}>
+        <ringGeometry args={[0.985, 1, 96]} />
+        <meshBasicMaterial
+          ref={ringMat} color={ZONE_SAFE} transparent opacity={0.7}
+          side={THREE.DoubleSide} depthWrite={false}
+        />
+      </mesh>
+      {/* top edge — the wall reads from across the whole safe zone */}
+      <mesh ref={top} rotation={[-Math.PI / 2, 0, 0]} position={[0, ZONE_WALL_H, 0]}>
+        <ringGeometry args={[0.988, 1, 96]} />
+        <meshBasicMaterial
+          ref={topMat} color={ZONE_SAFE} transparent opacity={0.6}
+          side={THREE.DoubleSide} depthWrite={false}
+        />
+      </mesh>
+    </group>
+  );
+}

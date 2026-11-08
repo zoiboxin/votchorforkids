@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { GameLoop, Npcs, Zombies, Animals, Pickups, Powers, Licenses, Shadows, Confetti, CrewRig, RemotesView, ToolDrops, BuildsView, RocksView, Stumps, LootView, type ClockRef } from "./Entities";
+import { GameLoop, Npcs, Zombies, Animals, Pickups, Powers, Licenses, Shadows, Confetti, CrewRig, RemotesView, ToolDrops, BuildsView, RocksView, Stumps, LootView, ZoneWall, type ClockRef } from "./Entities";
 import { WorldView, WORLD } from "./WorldView";
 import { GameEngine } from "@/lib/game/engine";
 import type { Appearance } from "@/lib/game/constants";
@@ -325,6 +325,7 @@ export function Scene({ engine }: { engine: GameEngine }) {
       <ToolDrops engine={engine} />
       <LootView engine={engine} />
       <BuildsView engine={engine} />
+      <ZoneWall engine={engine} />
       <RocksView engine={engine} />
       <Stumps engine={engine} />
       <Shadows engine={engine} />

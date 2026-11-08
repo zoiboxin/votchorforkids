@@ -64,6 +64,25 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     c.fillText("GRAVEYARD", S / 2 - 255 * K, S / 2 + 265 * K);
     c.fillText("✈ AIRPORT", S / 2 + 295 * K, S / 2 + 345 * K);
   }
+  // 🧱 THE WALL — the shrinking safe zone. Every map (mini & big) shows it:
+  // the ground beyond the wall dims red, the boundary glows teal (red when
+  // YOU are caught outside it).
+  if (engine.zoneLevel > 0) {
+    const zR = engine.zoneRadius();
+    const outside = Math.hypot(engine.player.x, engine.player.z) > zR;
+    c.save();
+    c.beginPath();
+    c.rect(0, 0, S, S);
+    c.arc(S / 2, S / 2, zR * K, 0, 6.3, true); // counter-clockwise → hole in the rect
+    c.fillStyle = outside ? "rgba(255,64,54,0.16)" : "rgba(10,16,20,0.34)";
+    c.fill();
+    c.restore();
+    c.beginPath();
+    c.arc(S / 2, S / 2, zR * K, 0, 6.3);
+    c.strokeStyle = outside ? "#ff5a4d" : "#38e0c8";
+    c.lineWidth = Math.max(1.4, 1.6 * U);
+    c.stroke();
+  }
   // parliament
   c.fillStyle = "#e0483a";
   c.fillRect(S / 2 - 4 * U, S / 2 - 196 * K - 3 * U, 8 * U, 6 * U);
@@ -322,6 +341,9 @@ function NightStrip() {
   const crewAlive = useGame((s) => s.hud.crewAlive);
   const remotesAlive = useGame((s) => s.hud.remotesAlive);
   const aliveTotal = useGame((s) => s.hud.aliveTotal);
+  const zoneLevel = useGame((s) => s.hud.zoneLevel);
+  const zoneR = useGame((s) => s.hud.zoneR);
+  const outsideWall = useGame((s) => s.hud.outsideWall);
   const souls = crewAlive + remotesAlive; // crew bots (minus freed seats) + other real players
   const youPossessed = useGame((s) => s.hud.youPossessed);
   const beastCount = useGame((s) => s.hud.beastCount);
@@ -374,6 +396,20 @@ function NightStrip() {
       >
         🧍 {souls + 1}/{aliveTotal}
       </span>
+      {/* 🧱 THE WALL — live safe-zone chip (hidden before the first dawn) */}
+      {zoneLevel > 0 && (
+        <span
+          title={outsideWall ? `You are OUTSIDE the wall — ${zoneR}u safe circle, health draining!` : `The wall holds a ${zoneR}u circle — stay inside it!`}
+          aria-label={outsideWall ? "Outside the wall, health draining" : `Safe zone radius ${zoneR}`}
+          className={`rounded-full border px-2 py-1 text-[10px] font-black tabular-nums backdrop-blur-md ${
+            outsideWall
+              ? "animate-pulse border-rose-400/80 bg-rose-600/70 text-white shadow-[0_0_14px_rgba(244,63,94,0.65)]"
+              : "border-teal-300/40 bg-teal-950/60 text-teal-200"
+          }`}
+        >
+          {outsideWall ? "☢️ OUT!" : `🧱 ${zoneR}u`}
+        </span>
+      )}
     </div>
   );
 }
@@ -1829,6 +1865,23 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         </>
       )}
 
+      {/* 🧱 THE WALL — screen-edge burn + big warning while YOU stand beyond it */}
+      {hud.outsideWall && !hud.spec.on && (
+        <>
+          <div aria-hidden className="pointer-events-none absolute inset-0 z-[5] animate-pulse shadow-[inset_0_0_120px_30px_rgba(244,63,94,0.45)]" />
+          <motion.div
+            role="alert"
+            initial={{ opacity: 0, y: -14 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="absolute left-1/2 top-16 z-20 -translate-x-1/2 rounded-xl border border-rose-400/70 bg-rose-950/85 px-4 py-1.5 text-center shadow-lg shadow-rose-900/50 backdrop-blur-md"
+          >
+            <span className="text-xs font-black uppercase tracking-wider text-rose-100 sm:text-sm">
+              ☢️ OUTSIDE THE WALL — HEALTH DRAINING! RUN TO THE SAFE ZONE ({hud.zoneR}u)
+            </span>
+          </motion.div>
+        </>
+      )}
+
       {/* win flag hint */}
       {hud.won && (
         <div className="absolute left-1/2 top-16 -translate-x-1/2 rounded-full bg-yellow-400/90 px-4 py-1.5 text-sm font-black text-yellow-950 shadow-lg">
@@ -1865,6 +1918,13 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
           <div className="text-[10px] font-bold leading-4 text-white/70">
             💀 {hud.aliveTotal - hud.crewAlive - hud.remotesAlive - 1} fallen · {hud.phase === "night" ? "🌙 Night" : "☀️ Day"} {hud.nightNo}/{NIGHTS_TOTAL}
           </div>
+          {hud.outsideWall ? (
+            <div className="animate-pulse text-[10px] font-black leading-4 text-rose-300">☢️ OUTSIDE THE WALL — HP DRAINING!</div>
+          ) : hud.zoneLevel > 0 ? (
+            <div className="text-[10px] font-bold leading-4 text-teal-300">🧱 Safe zone {hud.zoneR}u · Lv {hud.zoneLevel}</div>
+          ) : (
+            <div className="text-[10px] font-bold leading-4 text-white/50">🧱 The wall closes in at dawn…</div>
+          )}
           {hud.phase === "night" && hud.beastCount > 0 && (
             <div className="text-[10px] font-black leading-4 text-purple-300">🧟 {hud.beastCount} zombies hunting</div>
           )}
