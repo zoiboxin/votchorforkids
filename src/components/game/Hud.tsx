@@ -1321,6 +1321,18 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
             </motion.span>
           ))}
         </motion.div>
+        {/* 👮 wanted badge — the law noticed your crimes and cops give chase */}
+        <AnimatePresence>
+          {hud.stars > 0 && (
+            <motion.div
+              initial={{ opacity: 0, scale: 0.7 }} animate={{ opacity: 1, scale: 1 }} exit={{ opacity: 0, scale: 0.7 }}
+              className="w-fit rounded-full bg-red-500/25 px-2 py-0.5 text-[10px] font-black uppercase tracking-wider text-red-200 ring-1 ring-red-400/40"
+              role="status"
+            >
+              👮 WANTED — the police know your face
+            </motion.div>
+          )}
+        </AnimatePresence>
         {/* ✨ rare super power countdown — appears while a gem power is active */}
         <AnimatePresence>
           {hud.power && <PowerBadge key={hud.power.kind} />}

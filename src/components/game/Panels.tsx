@@ -52,7 +52,8 @@ export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange:
               <b className="text-rose-200"> about HALF of everyone still alive turns</b> into zombies, and the turned must
               <b className="text-amber-200"> FEED before dawn or crumble</b> with the sunrise. Fight back with your fists, an
               axe, a sword or any tool — every swing costs them health, and punches barely scratch. Survive all
-              <b> 7 nights</b> — or be the last one breathing — to win.
+              <b> 7 nights</b> — or be the last one breathing — to win. And the law still holds by day: <b className="text-rose-200">murder,
+              assault or robbery in front of witnesses</b> and the police will chase you down and lock you up.
             </p>
           </section>
 
@@ -70,7 +71,7 @@ export function HowToPlay({ open, onOpenChange }: { open: boolean; onOpenChange:
           <section className="grid gap-2 sm:grid-cols-2">
             <div className="rounded-2xl bg-white/5 p-3">
               <div className="mb-1.5 flex items-center gap-2 font-black text-amber-300"><Sunrise size={15} /> ☀️ Day — build</div>
-              <p className="text-white/85">Swing the 🪓 axe at trees and the 🔨 hammer at boulders for wood &amp; stone, then stack barricades and campfires. The beast can&apos;t touch you while the sun is up.</p>
+              <p className="text-white/85">Swing the 🪓 axe at trees and the 🔨 hammer at boulders for wood &amp; stone, then stack barricades and campfires. The beast can&apos;t touch you while the sun is up. The <b>bots forage too</b> — they scoop dropped purses, pocket snacks and grab power gems, so race them for every goodie!</p>
             </div>
             <div className="rounded-2xl bg-white/5 p-3">
               <div className="mb-1.5 flex items-center gap-2 font-black text-orange-300"><Siren size={15} /> ⚠️ Dusk — the warning</div>

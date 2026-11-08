@@ -586,6 +586,21 @@ export const CREW_PANIC_R = 12;
 /** …and graveyard zombies SHUFFLE after any living soul (player or townsfolk). */
 export const ZOMBIE_HUNT_R = 26;
 
+/* ---------- 🤖 bots forage too — food, money & power gems ---------- */
+export const CREW_SEEK_R = 42;       // a bot walks this far off-path to grab a snack/pile
+export const CREW_EAT_R = 1.7;       // close enough to scoop it up
+export const CREW_BOOST_S = 22;      // ⚡ a pocketed power gem supercharges a bot this long
+export const CREW_BOOST_MULT = 1.35; // …moving this much faster while it lasts
+
+/* ---------- 👮 crime & punishment — the law is watching ---------- */
+export const CRIME_SEE_R = 30;         // a cop this close (with clear sight) witnesses the crime
+export const CRIME_CIV_SEE_R = 20;     // a townsfolk witness screams & runs to report it
+export const CRIME_REPORT_RANGE = 120; // cops this close answer the report & walk to the scene
+export const CRIME_REPORT_T = 9;       // seconds a witness report stays hot
+export const WARRANT_DETECT = 20;      // while wanted (stars > 0) cops recognize you this close
+export const CRIME_STAR_MURDER = 2;    // wanted stars for a witnessed murder
+export const CRIME_STAR_MINOR = 1;     // wanted stars for assault / robbery
+
 /* ---------- horror-hint ticker lines (landing page) ---------- */
 export const NIGHT_TICKER: readonly string[] = [
   "🌙 NIGHT 1 of 7 — the town sleeps with one eye open.",
