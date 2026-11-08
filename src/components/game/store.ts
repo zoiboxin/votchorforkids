@@ -191,6 +191,7 @@ export interface GameStore {
 export const emptyHud: HudData = {
   hp: 100, stamina: 100, stars: 0, carried: 0, delivered: 0, total: 16,
   points: 0, rescues: 0, support: 0, zone: "City", clock: 0.3, night: 0,
+  aliveTotal: 99,
   detained: false, detainLeft: 0, prompt: "", policeNear: false,
   arrest: "free", station: "",
   civilians: 0, police: 0, won: false, elapsed: 0,

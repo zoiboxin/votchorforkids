@@ -413,25 +413,56 @@ const ZOMBIE_VARIANTS = [
   { skin: "#7da860", shirt: "#8a8a6a", pants: "#54503a", hair: "#4a3a2a", hairStyle: "bald" as const, age: "old" as const },
 ];
 
+/** Release a built character's GPU buffers (used when the run's zombie cache dies). */
+function disposeTree(obj: THREE.Object3D) {
+  obj.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (m.geometry) m.geometry.dispose();
+    const mat = m.material as THREE.Material | THREE.Material[] | undefined;
+    if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+    else if (mat) mat.dispose();
+  });
+}
+
 export function Zombies({ engine }: { engine: GameEngine }) {
-  const views = useMemo(
-    () => new Map(engine.zombies.map((z, i) => {
-      const v = ZOMBIE_VARIANTS[i % ZOMBIE_VARIANTS.length];
-      const g = buildCharacter(
-        { fac: "protester", outfit: "", skin: v.skin, shirt: v.shirt, pants: v.pants, shoe: "#3a3a2a", hair: v.hair, hairStyle: v.hairStyle, cap: false, capColor: "#3a4a2a", glasses: false, age: v.age, girl: false },
-        { zombie: true },
-      );
-      g.scale.setScalar(0.92 + ((i * 37) % 5) * 0.04); // 0.92–1.08, deterministic per index
-      return [z.id, g] as const;
-    })),
-    [engine],
-  );
+  // 🧟 contest zombies WEAR THEIR FORMER SELVES — each body is built from the
+  // look of the contestant who turned (identity shirt kept), cached once per
+  // contestant for the whole run so nightly risings never rebuild old bodies
+  const cacheRef = useRef(new Map<number, THREE.Group>());
+  const [rev, setRev] = useState(engine.zRev);
+  const revRef = useRef(engine.zRev);
+  const views = useMemo(() => {
+    const map = new Map<number, THREE.Group>();
+    for (const z of engine.zombies) {
+      if (z.owner == null) continue;
+      let g = cacheRef.current.get(z.owner);
+      if (!g) {
+        const owner = engine.crew.find((c) => c.id === z.owner);
+        const v = ZOMBIE_VARIANTS[Math.abs(z.owner) % ZOMBIE_VARIANTS.length];
+        g = buildCharacter(
+          owner?.look ?? { fac: "protester", outfit: "", skin: v.skin, shirt: v.shirt, pants: v.pants, shoe: "#3a3a2a", hair: v.hair, hairStyle: v.hairStyle, cap: false, capColor: "#3a4a2a", glasses: false, age: v.age, girl: false },
+          { zombie: true, keepShirt: true },
+        );
+        g.scale.setScalar(0.92 + (Math.abs(z.owner) % 5) * 0.035); // deterministic per-contestant jitter
+        cacheRef.current.set(z.owner, g);
+      }
+      map.set(z.id, g);
+    }
+    return map;
+  }, [engine, rev]);
+  // run over → release every cached zombie body
+  useEffect(() => () => {
+    for (const g of cacheRef.current.values()) disposeTree(g);
+    cacheRef.current.clear();
+  }, []);
   useFrame((s) => {
+    if (engine.zRev !== revRef.current) { revRef.current = engine.zRev; setRev(engine.zRev); }
     const night = nightFactor(engine.clock);
     const t = s.clock.elapsedTime;
     const cam = s.camera.position;
     for (const z of engine.zombies) {
-      const m = views.get(z.id)!;
+      const m = views.get(z.id);
+      if (!m) continue;
       const vis = night > 0.4;
       const dx = z.x - cam.x, dz = z.z - cam.z;
       m.visible = vis && dx * dx + dz * dz < CULL_SQ;
@@ -825,12 +856,6 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
       const tag = nameTag(c.name, hexToTagBg(c.color));
       tag.position.y = 2.95;
       mesh.add(tag);
-      // the possessed body — swapped in at night
-      const beast = buildCharacter({ ...CREW_ZOMBIE_LOOK, girl: c.look.girl }, { zombie: true });
-      const btag = nameTag(`${c.name}?!`, "rgba(120,10,10,0.9)");
-      btag.position.y = 2.95;
-      beast.add(btag);
-      beast.visible = false;
       // blood pool under a corpse
       const blood = new THREE.Mesh(
         new THREE.CircleGeometry(0.85, 18),
@@ -839,7 +864,7 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
       blood.rotation.x = -Math.PI / 2;
       blood.position.y = 0.04;
       blood.visible = false;
-      return { mesh, beast, blood, tag, btag };
+      return { mesh, blood, tag };
     });
   }, [engine]);
 
@@ -855,54 +880,44 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
       const dz = (c.alive ? c.z : c.deathZ) - cam.z;
       const d2 = dx * dx + dz * dz;
       const near = d2 < CULL_SQ;
-      const possessed = c.alive && c.mode === "possessed";
-      const body = possessed ? v.beast : v.mesh;
-      const idle = possessed ? v.mesh : v.beast;
-      if (idle.visible) idle.visible = false;
+      // 🧟 a TURNED contestant at night is walking the dirt as their zombie —
+      // the human body sinks away; dawn (or death) brings it back
+      const turned = c.alive && c.zombieTonight && engine.phase === "night";
       v.blood.visible = near && !c.alive;
       if (v.blood.visible) v.blood.position.set(c.deathX, 0.04, c.deathZ);
-      if (!near) {
-        body.visible = false;
+      if (!near || turned) {
+        v.mesh.visible = false;
         return;
       }
-      body.visible = true;
+      v.mesh.visible = true;
       if (c.alive) {
-        body.position.set(c.x, 0, c.z);
-        let dd = c.face - body.rotation.y;
+        v.mesh.position.set(c.x, 0, c.z);
+        let dd = c.face - v.mesh.rotation.y;
         dd = Math.atan2(Math.sin(dd), Math.cos(dd));
-        body.rotation.y += dd * 0.15;
-        body.rotation.x = 0;
-        body.rotation.z = 0;
+        v.mesh.rotation.y += dd * 0.15;
+        v.mesh.rotation.x = 0;
+        v.mesh.rotation.z = 0;
         const speed = Math.hypot(c.vx, c.vz);
-        poseCharacter(body, speed, t, {
-          phase: c.phase,
-          zombie: possessed,
-          // 🩸 the beast's claw swipe — plays through the 0.45s maul animation
-          swing: possessed && c.attackAnimT > 0 ? 1 - c.attackAnimT / 0.45 : 0,
-        });
+        poseCharacter(v.mesh, speed, t, { phase: c.phase });
         const close = d2 < DETAIL_SQ;
-        const rig = body.userData.rig as { lids: THREE.Object3D[]; brows: THREE.Object3D[] } | undefined;
+        const rig = v.mesh.userData.rig as { lids: THREE.Object3D[]; brows: THREE.Object3D[] } | undefined;
         if (rig) {
           for (const l of rig.lids) l.visible = close;
           for (const b of rig.brows) b.visible = close;
         }
-        const tag = possessed ? v.btag : v.tag;
-        const otherTag = possessed ? v.tag : v.btag;
-        if (otherTag) otherTag.visible = false;
-        if (tag) tag.visible = close && !namesHidden;
+        if (v.tag) v.tag.visible = close && !namesHidden;
       } else {
         // a body on the ground — lie still, tag says their name one last time
-        body.position.set(c.deathX, 0.34, c.deathZ);
-        body.rotation.y = c.face;
-        body.rotation.x = -Math.PI / 2.1;
-        body.rotation.z = 0;
-        const rig = body.userData.rig as { lids: THREE.Object3D[]; brows: THREE.Object3D[] } | undefined;
+        v.mesh.position.set(c.deathX, 0.34, c.deathZ);
+        v.mesh.rotation.y = c.face;
+        v.mesh.rotation.x = -Math.PI / 2.1;
+        v.mesh.rotation.z = 0;
+        const rig = v.mesh.userData.rig as { lids: THREE.Object3D[]; brows: THREE.Object3D[] } | undefined;
         if (rig) {
           for (const l of rig.lids) l.visible = false;
           for (const b of rig.brows) b.visible = false;
         }
         if (v.tag) v.tag.visible = d2 < DETAIL_SQ && !namesHidden;
-        if (v.btag) v.btag.visible = false;
       }
     });
   });
@@ -910,7 +925,6 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
     <>
       {views.flatMap((v, i) => [
         <primitive object={v.mesh} key={`c${i}`} />,
-        <primitive object={v.beast} key={`cb${i}`} visible={false} />,
         <primitive object={v.blood} key={`cl${i}`} visible={false} />,
       ])}
     </>

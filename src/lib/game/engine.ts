@@ -8,15 +8,14 @@ import {
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
   RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SCAVENGER_COUNT, SCAVENGER_SENSE_R, SPAWN, SONIC_MULT, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_LABELS, VEHICLE_POOL, VEHICLE_STEER, VEHICLE_TOP, VAN_AXLE, VAN_LOAD_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
   AIRPORT, PLANE_COUNT, POWER_CARRY,
-  WALL_RADIUS, ZOMBIE_COUNT, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
+  WALL_RADIUS, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
   ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, BOT_SPAWN_GAP, policeOutfitOf, randomAppearance, stationCage, stationGate,
   ACCUSE_RADIUS, ATTACK_CD, ATTACK_RANGE, BARRICADE_COST, BARRICADE_HP, CAMPFIRE_COST, CAMPFIRE_R, CLAW_DMG,
   CREW_COLORS, CREW_COLOR_NAMES, CREW_COUNT, CREW_HP, CREW_NAMES, CREW_SPEED, HANDS_DMG, HUNTER_DMG, HUNTER_HP, HUNTER_SPEED,
-  HUNTER_TOUCH_CD, NIGHTS_TOTAL, PHASE_DAY_S, PHASE_DAWN_S, PHASE_DUSK_S, PHASE_NIGHT_S, PLAYER_NIGHTS,
-  beastsForNight,
+  HUNTER_TOUCH_CD, NIGHTS_TOTAL, PHASE_DAY_S, PHASE_DAWN_S, PHASE_DUSK_S, PHASE_NIGHT_S,
   POINTS_BUILD, POINTS_HARVEST, POINTS_KILL_BEAST, POINTS_KILL_ZOMBIE, POINTS_NIGHT, POINTS_RIGHT_ACCUSE,
-  POINTS_WRONG_ACCUSE, POSSESS_PLAYER_CHANCE, ROCK_HITS, ROCK_PER_BOULDER, TOOL_PICKUP_R, TOOL_SPAWN, TOOLS,
-  TREE_HITS, WOOD_PER_TREE, WIN_BONUS, ZOMBIE_HP,
+  POINTS_WRONG_ACCUSE, ROCK_HITS, ROCK_PER_BOULDER, TOOL_PICKUP_R, TOOL_SPAWN, TOOLS,
+  TREE_HITS, WOOD_PER_TREE, WIN_BONUS, PLAYERS_TOTAL, ZOMBIE_CREW_DMG, ZOMBIE_HP,
   MONEY_PER_PILE, CASH_RESPAWN_S, CREW_PURSE, CIV_PURSE, ZOMBIE_PURSE, POINTS_LOOT,
   CIV_PANIC_R, CREW_PANIC_R, ZOMBIE_HUNT_R,
   type AnimalKind, type Appearance, type Phase, type PolicePerk, type PowerKind, type Side, type ToolKind, type Zone, zoneOf, ZONE_TOAST,
@@ -108,6 +107,8 @@ export interface Npc {
 }
 export interface Zombie {
   id: number; x: number; z: number; vx: number; vz: number; face: number; phase: number; touchCd: number; hp?: number; dead?: boolean;
+  /** crew id of the contestant who turned — the contest feed/elimination link */
+  owner?: number;
   /* game-ai skill: stuck probe + sidestep detour — chasers must never grind into walls */
   chkT?: number; chkX?: number; chkZ?: number;   // periodic displacement probe
   sideT?: number; sideDx?: number; sideDz?: number; // active detour waypoint
@@ -131,6 +132,13 @@ export interface Crew {
   inspected: boolean;
   /** 💰 the purse they carry — drops where they fall */
   purse: number;
+  /* --- 🏟️ 7-Nights contest roster bookkeeping --- */
+  /** true dusk→dawn while this contestant is one of the TURNED (a contest zombie) */
+  zombieTonight?: boolean;
+  /** contestants this contestant's zombie devoured tonight — 0 by dawn = crumble */
+  fed?: number;
+  /** zombies this contestant fought off (contest stat) */
+  cKills?: number;
 }
 
 /** 💰 a dropped stash of money — purses of the fallen, zombie hoards… walk over it! */
@@ -280,6 +288,8 @@ export interface HudData {
   beastCount: number;
   /** survivors still breathing (crew only — you make crewAlive + 1) */
   crewAlive: number;
+  /** total souls in the contest (99) — HUD alive counter denominator */
+  aliveTotal: number;
   /** the roster — names, colors & who's still alive (accuse board + map) */
   crew: { name: string; color: string; alive: boolean; mode: string }[];
   /** attack cooldown ready */
@@ -493,6 +503,8 @@ export class GameEngine {
   lastPossessed: number[] = [];
   /** last clue learned from a body — HUD chip */
   lastClue: string | null = null;
+  /** bumped whenever the zombie roster rebuilds (dusk rise / dawn clear) — renderer rebuilds rigs */
+  zRev = 0;
   kills = 0; accusesRight = 0; accusesWrong = 0; buildsMade = 0; nightsSurvived = 0;
   /** safe hiding spots the crew runs to at dusk (camp + station gates) */
   hideSpots: { x: number; z: number }[] = [];
@@ -674,11 +686,7 @@ export class GameEngine {
     // beside the officer (set up in assignScavengers/assignRunners below)
     const jx = spotNear(r, this.world, SPAWN.x, SPAWN.z, 14, 26);
     this.civs.push({ id: this.nid(), kind: "civilian", x: jx.x, z: jx.z, vx: 0, vz: 0, face: 0, mode: "wander", tx: jx.x, tz: jx.z, timer: range(r, 1, 3), phase: Math.random() * 6, name: "Bijli", speed: 3.15, alertT: 0, companion: true, purse: Math.round(range(r, CIV_PURSE[0], CIV_PURSE[1])) });
-    // zombies (graveyard) — they rise every night, and NOW they can be slain
-    for (let i = 0; i < ZOMBIE_COUNT; i++) {
-      const a = range(r, 0, Math.PI * 2), d = range(r, 4, 36);
-      this.zombies.push({ id: this.nid(), x: GRAVEYARD.x + Math.cos(a) * d, z: GRAVEYARD.z + Math.sin(a) * d, vx: 0, vz: 0, face: 0, phase: Math.random() * 6, touchCd: 0, hp: ZOMBIE_HP, dead: false, chkT: 0, chkX: 0, chkZ: 0, sideT: 0, sideDx: 0, sideDz: 0 });
-    }
+    // 🧟 contest zombies never pre-spawn — each dusk the TURNED rise where they stood
     // 👥 the crew — 7 fellow "players" join you for the 7 nights
     this.spawnCrew();
     // 🪓 arms & tools — spread across the wild: city edge, farmland, jungle,
@@ -1013,7 +1021,7 @@ export class GameEngine {
 
   start() {
     this.running = true;
-    this.toast(`🌙 Welcome, ${this.playerName}. You and ${CREW_COUNT} strangers must survive SEVEN nights.`, "info");
+    this.toast(`🌙 Welcome, ${this.playerName}. ${PLAYERS_TOTAL} souls enter the 7 nights — each dusk, HALF turn. One walks out.`, "info");
     this.toast("💰 Cash piles lie around town — scoop them up! The fallen drop their purses… first one there is richer.", "info");
     this.toast("☀️ DAY: chop trees (🪓 + F), smash rocks (🔨 + F), build defenses (🔧 + B). Find arms around town — press G to open your pack!", "info");
     this.toast("⚠️ DUSK: sirens howl… SEVERAL of us turn. Names vanish in the dark! NIGHT: the pack hunts. Hide, run… or FIGHT (🗡️ + F).", "info");
@@ -1072,7 +1080,7 @@ export class GameEngine {
     this.mpBeastSlots = [];
     this.netScores.clear();
     for (const r of this.remotes) { r.beast = false; r.alive = true; r.hp = 100; }
-    for (const zb of this.zombies) { zb.dead = false; zb.hp = ZOMBIE_HP; }
+    this.zombies = []; this.zRev++; // the dirt is empty — the contest fills it at dusk
     stopDrone();
     // 🪪 the license is NO LONGER a freebie: every survivor must physically hunt
     // down a glowing 🪪 card (or be handed one by a teammate) before any car starts
@@ -2130,13 +2138,16 @@ export class GameEngine {
    *  every run, so the accusation mystery stays learnable. Shirt color = identity. */
   private spawnCrew() {
     for (let i = 0; i < CREW_COUNT; i++) {
-      const a = (i / CREW_COUNT) * Math.PI * 2;
-      const spot = { x: SPAWN.x + Math.cos(a) * (13 + (i % 3) * 6), z: SPAWN.z + Math.sin(a) * (13 + (i % 3) * 6) };
+      // 🏟️ 98 contestants scattered across the whole town in widening rings — a full
+      // lobby, not a campfire circle (14 per ring × 7 rings, radii 15…87+jitter)
+      const a = (i % 14) / 14 * Math.PI * 2 + Math.floor(i / 14) * 0.37;
+      const rad = 15 + Math.floor(i / 14) * 12 + (i % 3) * 4;
+      const spot = { x: SPAWN.x + Math.cos(a) * rad, z: SPAWN.z + Math.sin(a) * rad };
       resolve(spot, 0.5, this.world);
       const look = randomAppearance(this.rnd);
-      look.shirt = CREW_COLORS[i]; // the color IS the identity — clues depend on it
+      look.shirt = CREW_COLORS[i % CREW_COLORS.length]; // the color IS the identity — clues depend on it
       this.crew.push({
-        id: this.nid(), name: CREW_NAMES[i], color: CREW_COLORS[i], colorName: CREW_COLOR_NAMES[i], look,
+        id: this.nid(), name: CREW_NAMES[i], color: CREW_COLORS[i % CREW_COLORS.length], colorName: CREW_COLOR_NAMES[i % CREW_COLOR_NAMES.length], look,
         x: spot.x, z: spot.z, vx: 0, vz: 0, face: a + Math.PI,
         alive: true, mode: "wander", tx: spot.x, tz: spot.z,
         timer: range(this.rnd, 2, 6), phase: Math.random() * 6,
@@ -2187,79 +2198,62 @@ export class GameEngine {
     this.clock += (target - this.clock) * Math.min(1, dt * 2.4);
   }
 
-  /** Dusk: the spirit chooses its hosts — a random PACK of survivors, maybe YOU.
-   *  🌐 In multiplayer the host alone rolls the dice and broadcasts the roster;
-   *  guests receive it via `applyRoster` (no local dice — one spirit, one will). */
+  /** Dusk: the contest takes its due — ~HALF of everyone still alive TURNS.
+   *  The turned must FEED on a survivor before dawn or crumble with the sunrise.
+   *  You never turn — the immune outsider every pack hunts. */
   private choosePossessed() {
-    if (this.mp && !this.mpHost) return; // guests: the host's roster event rules
+    // idempotent: clear last dusk's flags before re-choosing (restarts & re-entries)
+    for (const c of this.crew) { c.zombieTonight = false; c.fed = 0; }
     const aliveIdx = this.crew.map((c, i) => (c.alive ? i : -1)).filter((i) => i >= 0);
-    const forcePlayer = PLAYER_NIGHTS.includes(this.nightNo);
-    const anyCrew = aliveIdx.length > 0;
-    // how many turn tonight — the pack grows as the week wears on
-    const want = Math.max(1, Math.min(beastsForNight(this.nightNo), aliveIdx.length + 1 + this.remotes.filter((r) => r.alive).length));
-    // are YOU one of them?
-    this.youPossessed = forcePlayer || (anyCrew && this.rnd() < POSSESS_PLAYER_CHANCE && want >= 2);
-    // pick the crew hosts — shuffled take, never duplicates
+    const aliveAll = aliveIdx.length + (this.lost ? 0 : 1);
+    this.possessed = [];
+    if (aliveAll <= 1) return;
+    // half turn tonight — ceil tips odd numbers toward the horde; a 2-soul dusk
+    // still turns 1, so the endgame is a proper final duel
+    const want = Math.min(aliveIdx.length, Math.ceil(aliveAll / 2));
     const pool = [...aliveIdx];
     for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(this.rnd() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
-    const crewWanted = Math.max(0, Math.min(want - (this.youPossessed ? 1 : 0), pool.length));
-    this.possessed = pool.slice(0, crewWanted);
-    this.lastPossessed = [...this.possessed];
-    // 🌐 host: hand some of the pack to REAL players (never the host's own slot — youPossessed already covers it)
-    this.mpBeastSlots = [];
-    if (this.mp) {
-      const liveSlots = this.remotes.filter((r) => r.alive).map((r) => r.slot);
-      for (let i = liveSlots.length - 1; i > 0; i--) { const j = Math.floor(this.rnd() * (i + 1)); [liveSlots[i], liveSlots[j]] = [liveSlots[j], liveSlots[i]]; }
-      const slotsWanted = Math.max(0, Math.min(want - this.possessed.length - (this.youPossessed ? 1 : 0), liveSlots.length));
-      this.mpBeastSlots = liveSlots.slice(0, slotsWanted);
-      this.netEmit?.({ t: "roster", possessed: [...this.possessed], beastSlots: [...this.mpBeastSlots], nightNo: this.nightNo });
-    }
+    this.possessed = pool.slice(0, want); // tonight's TURNED roster (crew indices)
+    for (const i of this.possessed) { const c = this.crew[i]; c.zombieTonight = true; c.fed = 0; }
     sfx.howl();
-    sfx.possess();
-    const total = this.possessed.length + (this.youPossessed ? 1 : 0);
-    if (this.youPossessed) {
-      this.toast(total > 1
-        ? `⚠ YOUR SKIN GOES COLD. YOUR EYES GO BLACK. The spirit chose YOU and ${this.possessed.length} other${this.possessed.length > 1 ? "s" : ""}…`
-        : "⚠ YOUR SKIN GOES COLD. YOUR EYES GO BLACK. The spirit has chosen YOU…", "bad");
-    } else if (anyCrew) {
-      this.toast(`⚠ DUSK SIRENS — ${total} of the ${aliveIdx.length + 1} survivors will turn tonight… watch them all.`, "info");
-    }
+    if (want > 0) this.toast(`🌙 DUSK — ${want} of ${aliveAll} survivors are TURNING. They must FEED before dawn… or crumble.`, "bad");
   }
 
-  /** Night falls: the hosts transform into a pack of beasts. */
+  /** Night falls: the TURNED rise from the dirt where they stood — a hungering
+   *  pack with everything to prove: feed before dawn, or crumble. */
   private beginNight() {
-    for (const zb of this.zombies) { zb.dead = false; zb.hp = ZOMBIE_HP; } // the graveyard rises fresh
     startDrone();
-    for (const idx of this.possessed) {
-      const c = this.crew[idx];
-      if (c && c.alive) { c.mode = "possessed"; c.hp = HUNTER_HP; }
-    }
-    // 🌐 remote souls in the pack — their own client tells THEM they're the beast
-    for (const r of this.remotes) r.beast = this.mpBeastSlots.includes(r.slot);
-    if (!this.youPossessed) this.toast("🌑 Names vanish in the dark — watch CLOTHES, not name tags!", "info");
-    if (this.youPossessed) {
-      this.held = -1;
-      this.toast(this.possessed.length > 0
-        ? `🌑 NIGHT ${this.nightNo} — YOU ARE A BEAST, and ${this.possessed.length} more walk beside you. HUNT! (F = claw)`
-        : `🌑 NIGHT ${this.nightNo} — YOU ARE THE BEAST. Hunt the survivors! (F = claw)`, "bad");
-    } else if (this.possessed.length > 0) {
+    this.zombies = this.possessed
+      .map((idx) => this.crew[idx])
+      .filter((c) => c && c.alive)
+      .map((c) => ({ id: this.nid(), owner: c.id, x: c.x, z: c.z, vx: 0, vz: 0, face: c.face, phase: Math.random() * 6, touchCd: 0, hp: ZOMBIE_HP, dead: false, chkT: 0, chkX: 0, chkZ: 0, sideT: 0, sideDx: 0, sideDz: 0 }));
+    this.zRev++;
+    const zc = this.zombies.length;
+    if (zc > 0) {
       sfx.scream();
-      this.toast(`🌑 NIGHT ${this.nightNo} — SCREAMS tear the sky… ${this.possessed.length > 1 ? this.possessed.length + " beasts" : "a beast"} walk${this.possessed.length > 1 ? "" : "s"}. Survive!`, "bad");
+      this.toast(`🌑 NIGHT ${this.nightNo} — ${zc} rise${zc > 1 ? "" : "s"} from the dirt where they stood. They HUNT you. FIGHT (F) or RUN!`, "bad");
     }
   }
 
-  /** Dawn: the spirit lets go. Nights survived, points, and a recap. */
+  /** Dawn: the contest's reckoning. The turned who never FEED crumble with the
+   *  sunrise; everyone who fed walks into the day. Nights survived + recap. */
   private endNight(early: boolean) {
-    for (const idx of this.possessed) {
-      const c = this.crew[idx];
-      if (c && c.alive) { c.mode = "hide"; c.timer = 0; } // they wake up… remembering nothing
+    let crumbled = 0;
+    for (let i = 0; i < this.crew.length; i++) {
+      const c = this.crew[i];
+      if (!c.zombieTonight) continue;
+      if (c.alive && (c.fed ?? 0) <= 0) { this.killCrew(i, false, -1, true); crumbled++; } // the hunger won
+      c.zombieTonight = false; c.fed = 0;
     }
     this.possessed = [];
     this.youPossessed = false;
     this.mpBeastSlots = [];
     for (const r of this.remotes) r.beast = false;
+    this.zombies = [];
+    this.zRev++;
     this.nightsSurvived = Math.min(NIGHTS_TOTAL, this.nightNo);
     if (!early) this.points += POINTS_NIGHT;
+    if (crumbled > 0) this.toast(`💀 ${crumbled} zombie${crumbled > 1 ? "s" : ""} crumbled at sunrise — the hunger won.`, "info");
     // 🌤️ the living city refills: everyone the night took is replaced by fresh faces
     let revived = 0;
     for (const c of this.civs) {
@@ -2275,8 +2269,9 @@ export class GameEngine {
     this.civsLostTonight = 0;
     stopDrone();
     sfx.bell();
-    const alive = this.crew.filter((c) => c.alive).length;
-    this.toast(`🌅 DAWN — you survived night ${this.nightNo}! ${alive + 1} souls remain. Inspect bodies (E)… then accuse (R).`, "good");
+    const aliveCrew = this.crew.filter((c) => c.alive).length;
+    const aliveAll = aliveCrew + (this.lost ? 0 : 1);
+    this.toast(`🌅 DAWN — night ${this.nightNo} survived. ${aliveAll} of ${PLAYERS_TOTAL} still breathe${aliveAll > 1 && aliveAll <= 4 ? "… it's nearly over." : "."}`, "good");
   }
 
   private winGame(reason: "dawn" | "solo" | "beast") {
@@ -2287,8 +2282,8 @@ export class GameEngine {
     this.points += WIN_BONUS;
     stopDrone();
     sfx.win();
-    if (reason === "dawn") this.toast("🌅 DAWN AFTER NIGHT 7 — you survived ALL SEVEN NIGHTS! The town is saved!", "good");
-    else if (reason === "solo") this.toast("🔪 Everyone is gone… you are the SOLE SURVIVOR.", "good");
+    if (reason === "dawn") this.toast(`🌅 DAWN AFTER NIGHT 7 — LAST ONE STANDING OUT OF ${PLAYERS_TOTAL}! The town is yours!`, "good");
+    else if (reason === "solo") this.toast(`🔪 Everyone is gone… you are the SOLE SURVIVOR — #1 of ${PLAYERS_TOTAL}.`, "good");
     else this.toast("🩸 The pack is complete. None remain… but YOU.", "good");
   }
 
@@ -2298,7 +2293,8 @@ export class GameEngine {
     this.lost = true;
     stopDrone();
     sfx.lose();
-    this.toast(`🩸 The darkness took you on night ${this.nightNo}…`, "bad");
+    const place = this.crew.filter((c) => c.alive).length + 1;
+    this.toast(`🩸 The darkness took you on night ${this.nightNo}… PLACED #${place} OF ${PLAYERS_TOTAL}.`, "bad");
   }
 
   /* ---------------- crew AI: wander by day, hide by night, hunt when possessed ---------------- */
@@ -2426,6 +2422,25 @@ export class GameEngine {
       if (this.phase === "night" && bd2 < 12 * 12) {
         const dx = c.x - bx, dz = c.z - bz, dl = Math.hypot(dx, dz) || 1;
         stepNpc(c, c.x + (dx / dl) * 14, c.z + (dz / dl) * 14, CREW_SPEED * 1.7, dt, this.world);
+        // 🥊 cornered contestants FIGHT BACK — desperate bare-fisted swings
+        if (bd2 < 1.7 * 1.7 && c.touchCd <= 0) {
+          const zb = this.zombies.find((z) => !z.dead && dist2(z.x, z.z, c.x, c.z) < 1.7 * 1.7);
+          if (zb) {
+            c.touchCd = 1.3;
+            c.attackAnimT = 0.45;
+            zb.hp = (zb.hp ?? ZOMBIE_HP) - HANDS_DMG;
+            if (d2p < 26 * 26) sfx.stab();
+            if (zb.hp <= 0 && zb.owner != null) {
+              zb.dead = true;
+              const oi = this.crew.findIndex((cc) => cc.id === zb.owner);
+              if (oi >= 0 && this.crew[oi].alive) {
+                this.crew[oi].cKills = (this.crew[oi].cKills ?? 0) + 1;
+                this.killCrew(oi, true); // cut down mid-hunt — their soul leaves the contest
+                if (d2p < 30 * 30) this.toast(`⚔️ ${c.name} fought off a zombie — it crumbled!`, "good");
+              }
+            }
+          }
+        }
       }
     }
   }
@@ -2460,8 +2475,9 @@ export class GameEngine {
   }
 
   /** A crew member dies — corpse stays, a clue appears, the town shrinks.
-   *  `killerIdx` = which beast of the pack did it (−1 = unknown/you). */
-  private killCrew(idx: number, slain: boolean, killerIdx = -1) {
+   *  `killerIdx` = which beast of the pack did it (−1 = unknown/you).
+   *  `quiet` skips the scream (mass dawn crumbles play ONE sound instead). */
+  private killCrew(idx: number, slain: boolean, killerIdx = -1, quiet = false) {
     const c = this.crew[idx];
     if (!c.alive) return;
     c.alive = false;
@@ -2479,7 +2495,7 @@ export class GameEngine {
       const k = killerIdx >= 0 && this.crew[killerIdx] ? this.crew[killerIdx] : null;
       c.clue = k ? `torn ${k.colorName} cloth under the claws… that color belongs to someone in the camp.` : "claw marks in the dirt.";
     }
-    sfx.scream();
+    if (!quiet) sfx.scream();
     this.fxQueue.push({ type: "confetti", x: c.x, y: 1.2, z: c.z, hue: 0.98 });
     // 🌐 every client must see the same body & the same clue — the killer's client speaks
     if (this.mp) {
@@ -2577,7 +2593,14 @@ export class GameEngine {
           this.points += POINTS_KILL_ZOMBIE;
           sfx.scream();
           this.dropLoot(zb.x, zb.z, range(this.rnd, ZOMBIE_PURSE[0], ZOMBIE_PURSE[1]), "the zombie's hoard");
-          this.toast("🧟 The zombie crumbles — its 💰 hoard drops! +40", "good");
+          // the turned are REAL contestants — cutting one down removes its soul
+          const oi = this.crew.findIndex((cc) => cc.id === zb.owner);
+          if (oi >= 0 && this.crew[oi].alive) {
+            this.killCrew(oi, true);
+            this.toast(`⚔️ You cut down ${this.crew[oi].name} — one less in the contest! +40`, "good");
+          } else {
+            this.toast("🧟 The zombie crumbles — its 💰 hoard drops! +40", "good");
+          }
         }
         return;
       }
@@ -3441,13 +3464,14 @@ export class GameEngine {
           const dx = zb.x - fire!.x, dz = zb.z - fire!.z, dl = Math.hypot(dx, dz) || 1;
           stepNpc(zb, zb.x + (dx / dl) * 9, zb.z + (dz / dl) * 9, ZOMBIE_SPEED, dt, this.world);
         } else {
-          // 🧟 hunt the NEAREST living soul — you OR any townsfolk out in the dark
-          let tx = p.x, tz = p.z, td = d2p, victimCiv: Npc | null = null;
+          // 🧟 hunt the NEAREST living contestant — you OR any survivor still human
+          let tx = p.x, tz = p.z, td = d2p, victimCrew = -1;
           if (beastYou || this.detainedT > 0 || this.drive) { td = Infinity; } // beasts are invisible to shamblers
-          for (const c of this.civs) {
-            if (c.dead) continue; // the fallen don't interest the shamblers
+          for (let ci = 0; ci < this.crew.length; ci++) {
+            const c = this.crew[ci];
+            if (!c.alive || c.zombieTonight) continue; // the turned hunt the living, not their own
             const d = dist2(zb.x, zb.z, c.x, c.z);
-            if (d < td) { td = d; tx = c.x; tz = c.z; victimCiv = c; }
+            if (d < td) { td = d; tx = c.x; tz = c.z; victimCrew = ci; }
           }
           if (td < ZOMBIE_HUNT_R * ZOMBIE_HUNT_R) {
             if ((zb.sideT ?? 0) > 0) {
@@ -3476,10 +3500,18 @@ export class GameEngine {
                 zb.chkT = 0.5; zb.chkX = zb.x; zb.chkZ = zb.z;
               }
             }
-            // caught a townsfolk — they fall, their purse scatters (respawned at dawn)
-            if (victimCiv && zb.touchCd <= 0 && td < 1.5 * 1.5) {
+            // caught a survivor — a few grabs bring them down and the zombie FEEDS
+            if (victimCrew >= 0 && zb.touchCd <= 0 && td < 1.5 * 1.5) {
               zb.touchCd = ZOMBIE_TOUCH_CD;
-              this.killCiv(victimCiv, "zombie");
+              const victim = this.crew[victimCrew];
+              victim.hp -= ZOMBIE_CREW_DMG;
+              sfx.zombie();
+              if (victim.hp <= 0) {
+                this.killCrew(victimCrew, false);
+                const owner = this.crew.find((cc) => cc.id === zb.owner);
+                if (owner) owner.fed = (owner.fed ?? 0) + 1; // fed — survives the sunrise
+                if (d2p < 30 * 30) this.toast(`🧟 ${victim.name} fell to the horde… their 💰 dropped!`, "bad");
+              }
             }
           } else {
             zb.vx *= 0.95; zb.vz *= 0.95;
@@ -3641,8 +3673,9 @@ export class GameEngine {
       tools: this.tools.map((s) => ({ kind: s.kind, count: s.count })),
       held: this.held,
       youPossessed: this.youPossessed,
-      beastCount: this.possessed.filter((i) => this.crew[i]?.alive).length + (this.youPossessed ? 1 : 0),
+      beastCount: this.zombies.filter((z) => !z.dead).length, // contest: how many risen hunters roam
       crewAlive: this.crew.filter((c) => c.alive).length,
+      aliveTotal: PLAYERS_TOTAL,
       crew: this.crew.map((c) => ({ name: c.name, color: c.color, alive: c.alive, mode: c.mode })),
       attackReady: this.attackCd <= 0,
       clue: this.lastClue,

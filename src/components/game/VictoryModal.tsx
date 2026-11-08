@@ -45,30 +45,25 @@ export function VictoryModal({ engine, onReplay, onMenu }: { engine: GameEngine;
   const secs = Math.round(hud.elapsed);
   const mm = Math.floor(secs / 60), ss = String(secs % 60).padStart(2, "0");
 
-  /* outcome titles — 7Nights endings */
+  /* outcome titles — the contest: 99 enter, one walks out */
+  const place = won ? 1 : Math.min(hud.aliveTotal, hud.crewAlive + 1);
   const title = won
     ? survivedAll
-      ? "🌅 You Survived All 7 Nights!"
-      : engine.youPossessed
-        ? "🩸 The Pack Consumed Them All!"
-        : "🔪 Sole Survivor!"
-    : `🌑 The Darkness Took You — Night ${engine.nightNo}`;
+      ? `🌅 LAST ONE STANDING — #1 OF ${hud.aliveTotal}!`
+      : `🔪 SOLE SURVIVOR — #1 OF ${hud.aliveTotal}!`
+    : `🌑 The Darkness Took You — #${place} of ${hud.aliveTotal}`;
   const tone = !won
     ? "text-slate-200"
     : survivedAll
       ? "text-amber-300"
-      : engine.youPossessed
-        ? "text-rose-300"
-        : "text-red-300";
+      : "text-red-300";
 
   /* flavor line per ending */
   const blurb = won
     ? survivedAll
-      ? "Seven sirens, seven dawns — you outlasted the dark. The town lights a candle for the ones who didn't make it."
-      : engine.youPossessed
-        ? "The dark chose you, and by the last moonrise every other heartbeat was gone. The pack is fed… for now."
-        : "The clues spoke, the fire held, your swing was true. You're the last heartbeat in town — the night blinked first."
-    : `Night ${engine.nightNo} caught you. ${engine.nightsSurvived > 0 ? `You held out for ${engine.nightsSurvived} night${engine.nightsSurvived === 1 ? "" : "s"} — ` : ""}the dark keeps what it takes.`;
+      ? `Seven dusks, half the lobby turning each night — and when dawn broke on night 7, your heartbeat was the only one left of ${hud.aliveTotal}.`
+      : `The hunger took them one by one. Of ${hud.aliveTotal} souls who entered, yours is the last still breathing.`
+    : `Night ${engine.nightNo} caught you. You placed #${place} of ${hud.aliveTotal} — ${engine.nightsSurvived > 0 ? `you held out for ${engine.nightsSurvived} night${engine.nightsSurvived === 1 ? "" : "s"} — ` : ""}the dark keeps what it takes.`;
 
   return (
     <Dialog open={open} onOpenChange={setOpen}>
@@ -81,8 +76,9 @@ export function VictoryModal({ engine, onReplay, onMenu }: { engine: GameEngine;
         <p className="text-center text-sm text-white/75">{blurb}</p>
         <div className="grid grid-cols-2 gap-2 text-sm">
           <Stat icon={<MoonStar size={14} />} label="Nights survived" value={`${engine.nightsSurvived}/${NIGHTS_TOTAL}`} />
+          <Stat icon={<Trophy size={14} />} label="Placement" value={`#${place} of ${hud.aliveTotal}`} />
           <Stat icon={<Timer size={14} />} label="Time" value={`${mm}:${ss}`} />
-          <Stat icon={<Swords size={14} />} label="Beast & zombie kills" value={`${engine.kills}`} />
+          <Stat icon={<Swords size={14} />} label="Zombies slain" value={`${engine.kills}`} />
           <Stat icon={<Scale size={14} />} label="Right accusations" value={`${engine.accusesRight}`} />
           <Stat icon={<XCircle size={14} />} label="Wrong accusations" value={`${engine.accusesWrong}`} />
           <Stat icon={<Hammer size={14} />} label="Things built" value={`${engine.buildsMade}`} />

@@ -293,6 +293,7 @@ function NightStrip() {
   const phase = useGame((s) => s.hud.phase);
   const phaseLeft = useGame((s) => s.hud.phaseLeft);
   const crewAlive = useGame((s) => s.hud.crewAlive);
+  const aliveTotal = useGame((s) => s.hud.aliveTotal);
   const youPossessed = useGame((s) => s.hud.youPossessed);
   const beastCount = useGame((s) => s.hud.beastCount);
   const beast = youPossessed && phase === "night";
@@ -303,7 +304,7 @@ function NightStrip() {
   const label = beast
     ? "🔪 YOU ARE A BEAST — F to claw"
     : phase === "dusk" ? `⚠️ NIGHT FALLS IN ${secs}s`
-    : phase === "night" ? `🌑 NIGHT ${nightNo} — ${beastCount > 1 ? `${beastCount} BEASTS HUNT YOU` : "THE BEAST HUNTS"}`
+    : phase === "night" ? `🌑 NIGHT ${nightNo} — ${beastCount > 0 ? `${beastCount} ZOMBIES HUNT YOU` : "THE HUNTED WALK"}`
     : phase === "dawn" ? "🌅 DAWN — you made it"
     : `☀️ DAY ${nightNo} — gather & build`;
   const hot = phase === "dusk" || phase === "night";
@@ -311,7 +312,7 @@ function NightStrip() {
     <div className="flex items-center gap-1.5">
       <motion.div
         role="status"
-        aria-label={`Night ${nightNo} of ${NIGHTS_TOTAL}, ${phase} phase, ${mm}:${ss} left, ${crewAlive + 1} of 8 souls alive`}
+        aria-label={`Night ${nightNo} of ${NIGHTS_TOTAL}, ${phase} phase, ${mm}:${ss} left, ${crewAlive + 1} of ${aliveTotal} souls alive`}
         animate={phase === "dusk" ? { opacity: [1, 0.62, 1], scale: [1, 1.03, 1] } : { opacity: 1, scale: 1 }}
         transition={phase === "dusk" ? { repeat: Infinity, duration: 1.05 } : { duration: 0.2 }}
         className={`flex items-center gap-2 rounded-full border px-3 py-1 backdrop-blur-md ${
@@ -339,10 +340,10 @@ function NightStrip() {
         )}
       </motion.div>
       <span
-        title={`${crewAlive + 1} of 8 souls still breathing`}
-        className="rounded-full border border-white/20 bg-black/45 px-2 py-1 text-[10px] font-black tabular-nums text-white/90 backdrop-blur-md"
+        title={`${crewAlive + 1} of ${aliveTotal} souls still breathing`}
+        className={`rounded-full border px-2 py-1 text-[10px] font-black tabular-nums backdrop-blur-md ${crewAlive + 1 <= 10 ? "border-rose-400/60 bg-rose-950/50 text-rose-100" : "border-white/20 bg-black/45 text-white/90"}`}
       >
-        🧍 {crewAlive + 1}/8
+        🧍 {crewAlive + 1}/{aliveTotal}
       </span>
     </div>
   );

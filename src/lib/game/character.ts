@@ -210,7 +210,7 @@ export interface CharRig {
   lids: THREE.Group[];
 }
 
-export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?: boolean; mustache?: boolean; shadow?: boolean } = {}): THREE.Group {
+export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?: boolean; /** contest zombies keep their identity shirt — you recognize WHO turned */ keepShirt?: boolean; mustache?: boolean; shadow?: boolean } = {}): THREE.Group {
   const root = new THREE.Group();
   const body = new THREE.Group();
   root.add(body);
@@ -222,7 +222,7 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
   const outfit = police ? policeOutfitOf(a.outfit).id : "";
   const isTraffic = outfit === "traffic", isCommando = outfit === "commando";
   const isArmy = outfit === "army", isRiot = outfit === "riot", isDetective = outfit === "detective";
-  const shirt = police ? (a.shirt || POLICE_UNIFORM.shirt) : zombie ? "#77874f" : a.shirt;
+  const shirt = police ? (a.shirt || POLICE_UNIFORM.shirt) : zombie ? (opts.keepShirt ? a.shirt : "#77874f") : a.shirt;
   const pants = police ? (a.pants || POLICE_UNIFORM.pants) : zombie ? "#49513c" : a.pants;
   const skin = zombie ? "#93c06f" : a.skin;
   const hairCol = zombie ? "#3d4d2a" : a.age === "old" ? "#dcdcdc" : a.hair;
