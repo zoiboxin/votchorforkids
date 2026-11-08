@@ -95,19 +95,99 @@ export function stepBody(
   if (moving) b.face = Math.atan2(b.vx, b.vz);
 }
 
-/** Move a simple ground-hugging NPC toward a point with wall sliding. */
+/* ---------------- 🧱 anti-stuck steering brain ----------------
+ * Every stepNpc body carries this little memory (optional props — any entity
+ * passes as-is). stepNpc writes it: a whisker probe keeps bots sliding along
+ * walls/cars BEFORE they touch them, a displacement watchdog catches whatever
+ * grinding is left and orders a sidestep detour, and `blockT` tells callers
+ * "this goal is unreachable — pick another one". */
+export interface SteerMemory {
+  chkT?: number; chkX?: number; chkZ?: number;     // periodic displacement probe
+  sideT?: number; sideDx?: number; sideDz?: number; // active sidestep detour heading
+  sideS?: number;                                   // persistent detour side (+1/-1)
+  sideN?: number;                                   // detours in a row without progress
+  blockT?: number;                                  // seconds spent grinding (callers read this)
+}
+
+/** How much a wall/car eats a hop of `len` units from (x,z) toward (dx,dz):
+ *  0 = clear road, ~1 = solid obstacle right there. One cheap grid resolve. */
+function whisker(x: number, z: number, dx: number, dz: number, len: number, world: World): number {
+  const probe = { x: x + dx * len, z: z + dz * len };
+  const ox = probe.x, oz = probe.z;
+  resolve(probe, 0.45, world);
+  return Math.hypot(probe.x - ox, probe.z - oz) / len;
+}
+
+/** Move a simple ground-hugging NPC toward a point with wall sliding.
+ *
+ *  🧱 game-ai anti-stuck pass: bots used to grind into walls/cars whenever the
+ *  straight line was blocked (targets behind buildings, goodies in yards, cars
+ *  parked across the street). Now the body feels ahead with a whisker probe and
+ *  banks toward the freer tangent before touching anything, and a watchdog
+ *  turns any remaining grind into a sidestep detour around the obstacle. */
 export function stepNpc(
-  b: { x: number; z: number; vx: number; vz: number; face: number },
+  b: { x: number; z: number; vx: number; vz: number; face: number } & SteerMemory,
   tx: number, tz: number, speed: number, dt: number, world: World,
 ): void {
-  const dx = tx - b.x, dz = tz - b.z, d = Math.hypot(dx, dz);
-  if (d < 0.05) return;
+  const rdx = tx - b.x, rdz = tz - b.z, rd = Math.hypot(rdx, rdz);
+  if (rd < 0.05) { // at the goal — decay the grinding clock so the next trip starts clean
+    b.blockT = Math.max(0, (b.blockT ?? 0) - dt * 2);
+    return;
+  }
+  let dx = rdx / rd, dz = rdz / rd;
+  const want = speed;
+
+  if ((b.sideT ?? 0) > 0) {
+    // 🧱 sidestep detour in progress — slide along the obstacle first
+    b.sideT = (b.sideT ?? 0) - dt;
+    dx = b.sideDx ?? dx; dz = b.sideDz ?? dz;
+  } else {
+    // 🧱 whisker lookahead — is something eating the road straight ahead? Bias
+    // toward the freer tangent NOW: real sliding around buildings & cars.
+    const ahead = whisker(b.x, b.z, dx, dz, 1.7, world);
+    if (ahead > 0.25) {
+      const rot = (s: number) => {
+        const c = Math.cos(s), sn = Math.sin(s);
+        return { x: dx * c - dz * sn, z: dx * sn + dz * c };
+      };
+      const L = rot(-0.96), R = rot(0.96); // ±55°
+      const eatL = whisker(b.x, b.z, L.x, L.z, 1.5, world);
+      const eatR = whisker(b.x, b.z, R.x, R.z, 1.5, world);
+      // score = clearance + bonus for keeping progress toward the goal
+      const scoreL = (1 - eatL) + 0.45 * Math.max(0, L.x * dx + L.z * dz);
+      const scoreR = (1 - eatR) + 0.45 * Math.max(0, R.x * dx + R.z * dz);
+      const straight = (1 - ahead) + 0.45; // what grinding straight would score
+      if (Math.max(scoreL, scoreR) > straight + 0.12) {
+        if (scoreL >= scoreR) { dx = L.x; dz = L.z; } else { dx = R.x; dz = R.z; }
+      }
+    }
+  }
+
   const k = Math.min(1, dt * 8);
-  b.vx += ((dx / d) * speed - b.vx) * k;
-  b.vz += ((dz / d) * speed - b.vz) * k;
+  b.vx += (dx * want - b.vx) * k;
+  b.vz += (dz * want - b.vz) * k;
   b.x += b.vx * dt; b.z += b.vz * dt;
   resolve(b, 0.4, world);
   b.face = Math.atan2(b.vx, b.vz);
+
+  // 🧱 watchdog: every 0.45s compare actual displacement vs intent — grinding
+  // means the whisker wasn't enough (corner pocket, crowd, car door) → sidestep
+  b.chkT = (b.chkT ?? 0) - dt;
+  if ((b.chkT ?? 0) <= 0) {
+    const moved = Math.hypot(b.x - (b.chkX ?? b.x), b.z - (b.chkZ ?? b.z));
+    if (moved < Math.max(0.22, want * 0.2)) {
+      b.blockT = (b.blockT ?? 0) + 0.45;
+      b.sideN = (b.sideN ?? 0) + 1;
+      if ((b.sideN ?? 0) % 3 === 0) b.sideS = -(b.sideS ?? (Math.random() < 0.5 ? 1 : -1)); // dead end? try the other side
+      const s = b.sideS ?? 1;
+      b.sideDx = dz * s; b.sideDz = -dx * s; // perpendicular to the intended heading
+      b.sideT = 0.55 + Math.min(0.5, (b.sideN ?? 0) * 0.12);
+    } else {
+      b.blockT = Math.max(0, (b.blockT ?? 0) - 0.9);
+      if ((b.sideN ?? 0) > 0) b.sideN = (b.sideN ?? 0) - 1;
+    }
+    b.chkT = 0.45; b.chkX = b.x; b.chkZ = b.z;
+  }
 }
 
 /** 0 = day, 1 = deep night, from clock in [0,1) where 0.5 is noon. */
