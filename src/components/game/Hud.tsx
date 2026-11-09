@@ -144,8 +144,12 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
         dot(cv.x, cv.z, (cv.voteId ? 2.7 : 1.9) * U, cv.voteId ? "#ffb020" : "#f0b455", cv.voteId ? 1 : 0.85);
       }
     }
-    // farm & jungle animals — little brown specks so the world feels alive on the map
-    for (const an of engine.animals) dot(an.x, an.z, 1.3 * U, "#a97b4f", 0.8);
+    // farm & jungle animals — brown specks; 🧟 turned strays blaze red so the
+    // hounds of the night can never sneak up on you
+    for (const an of engine.animals) {
+      if (an.dead) continue;
+      dot(an.x, an.z, 1.3 * U, an.zombie ? "#ff5a3a" : "#a97b4f", 0.8);
+    }
   }
   // night danger: the risen horde — the ONE thing the mini must never hide
   if (night) for (const zb of engine.zombies) dot(zb.x, zb.z, 2.4 * U, "#c084fc");

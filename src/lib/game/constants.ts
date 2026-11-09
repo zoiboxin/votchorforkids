@@ -364,13 +364,26 @@ export const ZOMBIE_TOUCH_CD = 1.2;
 export const GRAVEYARD_CENTER = GRAVEYARD;
 
 /* ---------- Animals ---------- */
-export type AnimalKind = "cow" | "chicken" | "deer" | "monkey";
-export const ANIMAL_SET: { kind: AnimalKind; count: number; zone: "farm" | "jungle" }[] = [
+export type AnimalKind = "cow" | "chicken" | "deer" | "monkey" | "dog";
+export const ANIMAL_SET: { kind: AnimalKind; count: number; zone: "farm" | "jungle" | "city" }[] = [
+  { kind: "dog", count: 9, zone: "city" },
   { kind: "cow", count: 5, zone: "farm" },
   { kind: "chicken", count: 7, zone: "farm" },
   { kind: "deer", count: 4, zone: "jungle" },
   { kind: "monkey", count: 4, zone: "jungle" },
 ];
+
+/* ---------- 🐕 street dogs & 🧟 zombie hounds ----------
+ * Friendly strays roam the city by day — curious, they amble up to you and
+ * bark hello. When night falls, EVERY stray turns into a rotting hound that
+ * hunts the living: faster than any shambler, but frail (3 punches).         */
+export const DOG_SPEED = 3.2;         // daytime trot toward a friendly hello
+export const ZOMDOG_HP = 26;          // 3 punches / 1 sword — frail but fast
+export const ZOMDOG_SPEED = 5.7;      // faster than every zombie — RUN
+export const ZOMDOG_DMG = 11;         // a bite tears 11 hp
+export const ZOMDOG_SENSE = 44;       // they smell you from across the block
+export const ZOMDOG_TOUCH_CD = 1.0;   // seconds between bites
+export const POINTS_KILL_ZOMDOG = 25; // putting a hound down pays a little
 
 /* ---------- Police van fleet: arrest transport to the nearest station ---------- */
 export const VAN_SPEED = 22;       // u/s — vans respond fast, sirens on

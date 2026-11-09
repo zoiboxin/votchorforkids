@@ -9,7 +9,7 @@ import {
   RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SCAVENGER_COUNT, SCAVENGER_SENSE_R, SPAWN, SONIC_MULT, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_LABELS, VEHICLE_POOL, VEHICLE_STEER, VEHICLE_TOP, VAN_AXLE, VAN_LOAD_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
   AIRPORT, PLANE_COUNT, POWER_CARRY,
   WALL_RADIUS, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
-  ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, BOT_SPAWN_GAP, policeOutfitOf, randomAppearance, stationCage, stationGate,
+  ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, DOG_SPEED, ZOMDOG_DMG, ZOMDOG_HP, ZOMDOG_SENSE, ZOMDOG_SPEED, ZOMDOG_TOUCH_CD, POINTS_KILL_ZOMDOG, BOT_SPAWN_GAP, policeOutfitOf, randomAppearance, stationCage, stationGate,
   ACCUSE_RADIUS, ATTACK_CD, ATTACK_RANGE, BARRICADE_COST, BARRICADE_HP, CAMPFIRE_COST, CAMPFIRE_R, CLAW_DMG,
   CREW_COLORS, CREW_COLOR_NAMES, CREW_COUNT, CREW_HP, CREW_NAMES, CREW_SPEED, HANDS_DMG, HUNTER_DMG, HUNTER_HP, HUNTER_SPEED,
   HUNTER_TOUCH_CD, NIGHTS_TOTAL, PHASE_DAY_S, PHASE_DAWN_S, PHASE_DUSK_S, PHASE_NIGHT_S,
@@ -26,7 +26,7 @@ import {
 import { clamp, mulberry32, range } from "./rng";
 import { addDynamicCircle, freeSpot, lineClear, refreshCarCircle, resolve, RING_R, ROADS, scatterSpots, spotNear, terrainHeight, PROTEST_CAMP, type CircleCollider, type World } from "./worldgen";
 import { nightFactor, newBody, stepBody, stepNpc, type Body, type SteerMemory } from "./sim";
-import { sfx, startDrone, stopDrone } from "./audio";
+import { sfx, startDrone, stopDrone, setInsects, stopInsects } from "./audio";
 import type { MpEvent } from "@/lib/game/net/client";
 
 const TAU = Math.PI * 2; // full circle — used to keep the camera yaw wrapped
@@ -192,7 +192,9 @@ export interface Build {
   /** index of its circle collider in world.circles */
   ci: number;
 }
-export interface Animal { id: number; kind: AnimalKind; x: number; z: number; vx: number; vz: number; face: number; tx: number; tz: number; timer: number; phase: number; resting: boolean }
+export interface Animal { id: number; kind: AnimalKind; x: number; z: number; vx: number; vz: number; face: number; tx: number; tz: number; timer: number; phase: number; resting: boolean;
+  /* 🐕 dogs: night turns every stray into a rotting hound */
+  zombie?: boolean; hp?: number; barkT?: number; touchCd?: number; dead?: boolean; }
 export interface ItemEnt { id: number; def: number; x: number; z: number; active: boolean; respawn: number }
 export interface VoteEnt { id: number; x: number; z: number; state: "world" | "carried" | "delivered"; /** runner only: which runner holds this vote */ carrierId?: number; /** police side: a runner-delivered vote sneaks back into the city after this timer */ respawnT?: number; /** AI vote-claim ticket: the bot currently walking to grab it (spread bots across the map) */ claimBy?: number }
 /** A rare super-power gem glowing somewhere in the jungle (or a mystery spot). */
@@ -795,7 +797,10 @@ export class GameEngine {
     let ai = 0;
     for (const set of ANIMAL_SET)
       for (let i = 0; i < set.count; i++) {
-        const p = freeSpot(r, this.world, set.zone === "farm" ? CITY_RADIUS + 10 : FARM_RADIUS + 10, set.zone === "farm" ? FARM_RADIUS - 8 : JUNGLE_RADIUS - 30);
+        // 🐕 strays sleep & roam RANDOM city spots — streets, parks, alley mouths
+        const p = set.zone === "city"
+          ? freeSpot(r, this.world, 14, CITY_RADIUS - 14)
+          : freeSpot(r, this.world, set.zone === "farm" ? CITY_RADIUS + 10 : FARM_RADIUS + 10, set.zone === "farm" ? FARM_RADIUS - 8 : JUNGLE_RADIUS - 30);
         this.animals.push({ id: this.nid(), kind: set.kind, x: p.x, z: p.z, vx: 0, vz: 0, face: 0, tx: p.x, tz: p.z, timer: range(r, 0, 5), phase: Math.random() * 6, resting: false });
         ai++;
       }
@@ -1235,7 +1240,7 @@ export class GameEngine {
     this.netScores.clear();
     for (const r of this.remotes) { r.beast = false; r.alive = true; r.hp = 100; }
     this.zombies = []; this.zRev++; // the dirt is empty — the contest fills it at dusk
-    stopDrone();
+    stopDrone(); stopInsects(); // 🦗 the chorus falls silent with the light
     // 🪪 the license is NO LONGER a freebie: every survivor must physically hunt
     // down a glowing 🪪 card (or be handed one by a teammate) before any car starts
     for (const v of this.votes) { v.state = "world"; v.carrierId = undefined; v.respawnT = undefined; v.claimBy = undefined; const p = freeSpot(this.rnd, this.world, 16, 420); v.x = p.x; v.z = p.z; }
@@ -2330,10 +2335,11 @@ export class GameEngine {
   }
 
   private grazeSpot(an: Animal, farm: boolean): { x: number; z: number } | null {
-    const minR = farm ? CITY_RADIUS + 6 : FARM_RADIUS + 6;
-    const maxR = farm ? FARM_RADIUS - 10 : JUNGLE_RADIUS - 30;
+    const city = an.kind === "dog";                              // 🐕 dogs wander the STREETS
+    const minR = city ? 10 : farm ? CITY_RADIUS + 6 : FARM_RADIUS + 6;
+    const maxR = city ? CITY_RADIUS - 16 : farm ? FARM_RADIUS - 10 : JUNGLE_RADIUS - 30;
     for (let i = 0; i < 12; i++) {
-      const a = this.rnd() * Math.PI * 2, d = 7 + this.rnd() * 16;
+      const a = this.rnd() * Math.PI * 2, d = city ? 6 + this.rnd() * 14 : 7 + this.rnd() * 16;
       const x = an.x + Math.cos(a) * d, z = an.z + Math.sin(a) * d;
       const rr = Math.hypot(x, z);
       if (rr < minR || rr > maxR) continue;
@@ -2491,6 +2497,21 @@ export class GameEngine {
       sfx.scream();
       this.toast(`🌑 NIGHT ${this.nightNo} — ${zc} rise${zc > 1 ? "" : "s"} from the dirt where they stood. They HUNT you. FIGHT (F) or RUN!`, "bad");
     }
+    // 🐕‍🦺 the dark takes the strays too — every dog in town turns into a
+    // rotting hound. Faster than any shambler, but frail: 3 punches ends one.
+    let hounds = 0;
+    for (const an of this.animals) {
+      if (an.kind !== "dog" || an.dead) continue;
+      an.zombie = true;
+      an.hp = ZOMDOG_HP;
+      an.resting = false;
+      an.touchCd = 0;
+      hounds++;
+    }
+    if (hounds > 0) {
+      sfx.howl();
+      this.toast(`🐕‍🦺 Even the street dogs TURNED — ${hounds} zombie hounds${hounds > 1 ? "" : ""} prowl tonight. They're fast… but frail.`, "bad");
+    }
   }
 
   /** Dawn: the contest's reckoning. The turned who never FEED crumble with the
@@ -2517,6 +2538,19 @@ export class GameEngine {
     this.nightsSurvived = Math.min(NIGHTS_TOTAL, this.nightNo);
     // 🧱 dawn after night N — the transparent wall slams down one ring tighter
     this.shrinkZone();
+    // 🐕 sunrise breaks the hounds' curse — strays shake off the rot; any you
+    // slew is replaced by a fresh stray wandering in from the edge of town
+    for (const an of this.animals) {
+      if (an.kind !== "dog") continue;
+      an.zombie = false;
+      an.hp = undefined;
+      an.resting = false;
+      if (an.dead) {
+        const t = freeSpot(this.rnd, this.world, 14, CITY_RADIUS - 14);
+        an.x = t.x; an.z = t.z; an.tx = t.x; an.tz = t.z;
+        an.vx = 0; an.vz = 0; an.dead = false;
+      }
+    }
     if (!early) this.points += POINTS_NIGHT;
     if (crumbled > 0) this.toast(`💀 ${crumbled} zombie${crumbled > 1 ? "s" : ""} crumbled at sunrise — the hunger won.`, "info");
     // 🌤️ the living city refills: everyone the night took is replaced by fresh faces
@@ -2534,7 +2568,7 @@ export class GameEngine {
     }
     if (revived > 0) this.toast(`🌤️ Dawn light… ${revived} fresh face${revived > 1 ? "s" : ""} wander${revived > 1 ? "" : "s"} back into town (and 💰 loot may still lie where the fallen did).`, "info");
     this.civsLostTonight = 0;
-    stopDrone();
+    stopDrone(); stopInsects(); // 🦗 the chorus falls silent with the light
     sfx.bell();
     const aliveCrew = this.crew.filter((c) => c.alive).length;
     const aliveAll = aliveCrew + this.remotes.filter((r) => r.alive).length + (this.lost ? 0 : 1);
@@ -2547,7 +2581,7 @@ export class GameEngine {
     this.wonAt = this.elapsed;
     if (reason === "dawn") this.nightsSurvived = NIGHTS_TOTAL;
     this.points += WIN_BONUS;
-    stopDrone();
+    stopDrone(); stopInsects(); // 🦗 the chorus falls silent with the light
     sfx.win();
     if (reason === "dawn") this.toast(`🌅 DAWN AFTER NIGHT 7 — LAST ONE STANDING OUT OF ${PLAYERS_TOTAL}! The town is yours!`, "good");
     else if (reason === "solo") this.toast(`🔪 Everyone is gone… you are the SOLE SURVIVOR — #1 of ${PLAYERS_TOTAL}.`, "good");
@@ -2558,7 +2592,7 @@ export class GameEngine {
   private die() {
     if (this.won || this.lost) return;
     this.lost = true;
-    stopDrone();
+    stopDrone(); stopInsects(); // 🦗 the chorus falls silent with the light
     sfx.lose();
     const place = this.crew.filter((c) => c.alive).length + this.remotes.filter((r) => r.alive).length + 1;
     this.toast(`🩸 The darkness took you on night ${this.nightNo}… PLACED #${place} OF ${PLAYERS_TOTAL}.`, "bad");
@@ -3017,6 +3051,27 @@ export class GameEngine {
         return;
       }
     }
+    // 2.5) 🧟 zombie hounds — the night's turned strays
+    let bestDog: Animal | null = null, dogD = 2.3 * 2.3;
+    for (const an of this.animals) {
+      if (!an.zombie || an.dead) continue;
+      const d = dist2(p.x, p.z, an.x, an.z);
+      if (d < dogD) { dogD = d; bestDog = an; }
+    }
+    if (bestDog) {
+      bestDog.hp = (bestDog.hp ?? ZOMDOG_HP) - dmg;
+      sfx.whine();
+      this.fxQueue.push({ type: "confetti", x: bestDog.x, y: 0.9, z: bestDog.z, hue: 0.35 });
+      if (bestDog.hp <= 0) {
+        bestDog.dead = true;      // lies where it fell; a fresh stray wanders in at dawn
+        bestDog.zombie = false;
+        this.points += POINTS_KILL_ZOMDOG;
+        sfx.scream();
+        this.dropLoot(bestDog.x, bestDog.z, range(this.rnd, 4, 14), "the hound's scavenged purse");
+        this.toast("🐕‍🦺 The zombie hound falls! +25 — another one prowls the dark…", "good");
+      }
+      return;
+    }
     // 3) innocent townsfolk — swing at them and the LAW takes notice
     let civHit: Npc | null = null, civD = 2.3 * 2.3;
     for (const c of this.civs) {
@@ -3381,6 +3436,13 @@ export class GameEngine {
     // day/night zone toast
     const z = zoneOf(p.x, p.z);
     if (z !== this.zone) { this.zone = z; this.toast(ZONE_TOAST[z], "info"); }
+    // 🦗 the jungle never goes quiet — crickets & cicadas swell at night and
+    // fade to lone daytime chirps; silent the moment you leave the trees
+    {
+      const nf = nightFactor(this.clock);
+      const inJ = z === "Jungle" ? 0.72 : z === "Deep Jungle" ? 0.95 : 0;
+      setInsects(inJ === 0 ? 0 : Math.min(1.15, inJ + nf * 0.35 + (this.phase === "night" ? 0.12 : this.phase === "dusk" ? 0.08 : 0)));
+    }
 
     // 🏕️ camp discovery — walking up to a lonely jungle camp is worth a line
     for (let ci = 0; ci < this.world.camps.length; ci++) {
@@ -4156,32 +4218,141 @@ export class GameEngine {
     for (const an of this.animals) {
       an.timer -= dt;
       const d2p = dist2(an.x, an.z, p.x, p.z);
+
+      /* 🧟 ZOMBIE HOUNDS — every stray turns at nightfall (see beginNight).
+       * Faster than shamblers, they run down the living: you, the survivors,
+       * fleeing townsfolk — but campfire fire still keeps them at bay. */
+      if (an.zombie) {
+        an.touchCd = Math.max(0, (an.touchCd ?? 0) - dt);
+        an.barkT = Math.max(0, (an.barkT ?? 0) - dt);
+        const fire = this.nearFire(an.x, an.z);
+        if (fire && dist2(fire.x, fire.z, an.x, an.z) < CAMPFIRE_R * CAMPFIRE_R) {
+          // fire wins — the hound paces snarling just outside the glow
+          const dx = an.x - fire.x, dz = an.z - fire.z, dl = Math.hypot(dx, dz) || 1;
+          stepNpc(an, an.x + (dx / dl) * 8, an.z + (dz / dl) * 8, ZOMDOG_SPEED * 0.7, dt, this.world);
+        } else {
+          // hunt the NEAREST living thing — you, a survivor, or a townsfolk
+          let tx = p.x, tz = p.z;
+          let td = (this.detainedT > 0 || this.drive || (this.youPossessed && this.phase === "night")) ? Infinity : d2p;
+          let victimCrew = -1, victimCiv: Npc | null = null;
+          for (let ci = 0; ci < this.crew.length; ci++) {
+            const c = this.crew[ci];
+            if (!c.alive || c.zombieTonight) continue; // the turned hunt the living, not their own kind
+            const d = dist2(an.x, an.z, c.x, c.z);
+            if (d < td) { td = d; tx = c.x; tz = c.z; victimCrew = ci; victimCiv = null; }
+          }
+          for (const cv of this.civs) {
+            if (cv.dead) continue;
+            const d = dist2(an.x, an.z, cv.x, cv.z);
+            if (d < td) { td = d; tx = cv.x; tz = cv.z; victimCiv = cv; victimCrew = -1; }
+          }
+          if (td < ZOMDOG_SENSE * ZOMDOG_SENSE) {
+            /* 🎯 pack surround — golden-angle ring slots, straight lunge inside 3u */
+            const td1 = Math.sqrt(td);
+            const offR = Math.max(0, Math.min(1.4, (td1 - 3) * 0.4));
+            const oa = (an.id % 89) * 2.399;
+            stepNpc(an, tx + Math.cos(oa) * offR, tz + Math.sin(oa) * offR, ZOMDOG_SPEED, dt, this.world);
+            // BITE — a few grabs bring a survivor down. touchCd is only consumed
+            // when a bite actually lands, so player-targeted lunges stay live
+            if ((an.touchCd ?? 0) <= 0 && td < 1.45 * 1.45) {
+              if (victimCrew >= 0) {
+                an.touchCd = ZOMDOG_TOUCH_CD;
+                const victim = this.crew[victimCrew];
+                victim.hp -= ZOMDOG_DMG;
+                sfx.zdog();
+                if (victim.hp <= 0) {
+                  this.killCrew(victimCrew, false);
+                  if (d2p < 30 * 30) this.toast(`🐕‍🦺 A zombie hound brought down ${victim.name}… their 💰 dropped!`, "bad");
+                }
+              } else if (victimCiv) {
+                an.touchCd = ZOMDOG_TOUCH_CD;
+                victimCiv.hp = (victimCiv.hp ?? 30) - ZOMDOG_DMG;
+                victimCiv.panicT = 3; victimCiv.fearX = an.x; victimCiv.fearZ = an.z;
+                sfx.zdog();
+                if (victimCiv.hp <= 0) this.killCiv(victimCiv, "zombie");
+              }
+            }
+            // snarl when closing on YOU
+            if (an.barkT <= 0 && td < 17 * 17) { an.barkT = range(this.rnd, 2.5, 5.5); sfx.zdog(); }
+          } else {
+            // scent lost — trot the empty streets
+            if ((an.blockT ?? 0) > 2 || an.timer <= 0 || dist2(an.x, an.z, an.tx, an.tz) < 2) {
+              an.timer = range(this.rnd, 4, 9);
+              const spot = this.grazeSpot(an, false);
+              if (spot) { an.tx = spot.x; an.tz = spot.z; }
+              if ((an.blockT ?? 0) > 2) an.blockT = 0;
+            }
+            stepNpc(an, an.tx, an.tz, ZOMDOG_SPEED * 0.45, dt, this.world);
+          }
+          // 🩸 the jaws find YOU too — the car shell keeps dogs out, the beast-night keeps them off
+          if (d2p < 1.5 * 1.5 && (an.touchCd ?? 0) <= 0 && this.detainedT <= 0 && !this.drive
+            && !(this.youPossessed && this.phase === "night")) {
+            an.touchCd = ZOMDOG_TOUCH_CD;
+            this.hp = Math.max(0, this.hp - ZOMDOG_DMG);
+            this.hurtT = HURT_FLASH_S;
+            this.addShake(0.35); // 💥 MEDIUM — teeth in your leg
+            sfx.zdog();
+          }
+        }
+        continue;
+      }
+
+      const isDog = an.kind === "dog";
       const fleeR = an.kind === "cow" ? 4.5 : 6;
-      if (this.morphKind == null && d2p < fleeR * fleeR) {
+      if (!isDog && this.morphKind == null && d2p < fleeR * fleeR) {
         an.resting = false; // panic overrides grazing
         const dx = an.x - p.x, dz = an.z - p.z, d = Math.hypot(dx, dz) || 1;
         const fs = an.kind === "cow" ? 2.4 : an.kind === "chicken" ? 4.6 : an.kind === "deer" ? 6.2 : 5;
         stepNpc(an, an.x + (dx / d) * 8, an.z + (dz / d) * 8, fs, dt, this.world);
-      } else {
-        const arrived = dist2(an.x, an.z, an.tx, an.tz) < 2;
-        if (an.timer <= 0 || (arrived && !an.resting)) {
-          const farm = an.kind === "cow" || an.kind === "chicken";
+        continue;
+      }
+      const arrived = dist2(an.x, an.z, an.tx, an.tz) < 2;
+      if (isDog) {
+        /* 🐕 friendly strays — dogs DON'T fear you: they amble up to say hello,
+         * bark a wagging welcome, then wander off to sniff the next corner */
+        an.barkT = Math.max(0, (an.barkT ?? 0) - dt);
+        if (this.detainedT <= 0 && !this.drive && d2p < 13 * 13 && d2p > 2.6 * 2.6) {
+          stepNpc(an, p.x, p.z, DOG_SPEED, dt, this.world);
+          if (an.barkT <= 0 && d2p < 9 * 9) { an.barkT = range(this.rnd, 3.5, 8); sfx.bark(); }
+        } else {
+          if (an.timer <= 0 || (arrived && !an.resting)) {
+            if (!an.resting) {
+              // reached the spot (or ran out of time en route) → sit and sniff a while
+              an.resting = true;
+              an.tx = an.x; an.tz = an.z;
+              an.timer = range(this.rnd, 2, 5);
+            } else {
+              // rest over → amble to a new street corner
+              an.resting = false;
+              const spot = this.grazeSpot(an, false);
+              if (spot) { an.tx = spot.x; an.tz = spot.z; }
+              an.timer = range(this.rnd, 4, 11);
+            }
+          }
           if (!an.resting) {
-            // reached the spot (or ran out of time en route) → stop and graze a while
-            an.resting = true;
-            an.tx = an.x; an.tz = an.z;
-            an.timer = range(this.rnd, 2.5, 6.5);
-          } else {
-            // rest over → amble to a nearby patch of grass
-            an.resting = false;
-            const spot = this.grazeSpot(an, farm);
-            if (spot) { an.tx = spot.x; an.tz = spot.z; }
-            an.timer = range(this.rnd, 5, 12);
+            stepNpc(an, an.tx, an.tz, DOG_SPEED * 0.62, dt, this.world);
           }
         }
+        continue;
+      }
+      // the farm & jungle wildlife — graze/rest cycle as always
+      if (an.timer <= 0 || (arrived && !an.resting)) {
         if (!an.resting) {
-          stepNpc(an, an.tx, an.tz, an.kind === "cow" ? 1.1 : an.kind === "chicken" ? 1.6 : 1.8, dt, this.world);
+          // reached the spot (or ran out of time en route) → stop and graze a while
+          an.resting = true;
+          an.tx = an.x; an.tz = an.z;
+          an.timer = range(this.rnd, 2.5, 6.5);
+        } else {
+          // rest over → amble to a nearby patch of grass
+          an.resting = false;
+          const farm = an.kind === "cow" || an.kind === "chicken";
+          const spot = this.grazeSpot(an, farm);
+          if (spot) { an.tx = spot.x; an.tz = spot.z; }
+          an.timer = range(this.rnd, 5, 12);
         }
+      }
+      if (!an.resting) {
+        stepNpc(an, an.tx, an.tz, an.kind === "cow" ? 1.1 : an.kind === "chicken" ? 1.6 : 1.8, dt, this.world);
       }
     }
 

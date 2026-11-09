@@ -5,13 +5,13 @@ import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
   ANIMAL_SET, ATTACK_CD, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, SHIRT_COLORS, SKIN_TONES,
-  TOTAL_VOTES, ZONE_WALL_H, type AnimalKind, type Appearance,
+  TOTAL_VOTES, ZONE_WALL_H, FARM_RADIUS, JUNGLE_RADIUS, type AnimalKind, type Appearance,
 } from "@/lib/game/constants";
 import type { GameEngine } from "@/lib/game/engine";
 import { nightFactor } from "@/lib/game/sim";
 import { mulberry32 } from "@/lib/game/rng";
 import {
-  buildAnimal, buildCharacter, nameTag, helpBubble, poseAnimal, poseCharacter,
+  buildAnimal, buildZombieDog, buildCharacter, nameTag, helpBubble, poseAnimal, poseCharacter,
   setHeldTool, voteTokenGeometry, foodGeometry, shadowMaterial, basicVertexMaterial,
   type HeldToolKind,
 } from "@/lib/game/character";
@@ -490,8 +490,26 @@ export function Zombies({ engine }: { engine: GameEngine }) {
 export function Animals({ engine }: { engine: GameEngine }) {
   const views = useMemo(() => {
     const map = new Map<number, THREE.Object3D>();
-    const kinds = ANIMAL_SET.flatMap((s) => Array.from({ length: s.count }, () => s.kind));
-    engine.animals.forEach((a, i) => map.set(a.id, buildAnimal(kinds[i])));
+    // per-kind variant counter — each stray dog gets its own coat & the
+    // matching rot-palette for its zombie form
+    const counters = new Map<string, number>();
+    engine.animals.forEach((a) => {
+      const vi = counters.get(a.kind) ?? 0;
+      counters.set(a.kind, vi + 1);
+      if (a.kind === "dog") {
+        // 🐕 strays carry BOTH bodies — the friendly stray by day, the
+        // rotting red-eyed hound at night; useFrame swaps visibility
+        const wrap = new THREE.Group();
+        const norm = buildAnimal("dog", vi);
+        const zom = buildZombieDog(vi);
+        zom.visible = false;
+        wrap.add(norm, zom);
+        wrap.userData.dogParts = { norm, zom };
+        map.set(a.id, wrap);
+      } else {
+        map.set(a.id, buildAnimal(a.kind));
+      }
+    });
     return map;
   }, [engine]);
   useFrame((s) => {
@@ -499,6 +517,7 @@ export function Animals({ engine }: { engine: GameEngine }) {
     const cam = s.camera.position;
     for (const a of engine.animals) {
       const m = views.get(a.id)!;
+      if (a.dead) { m.visible = false; continue; } // the hound lies where it fell
       const dx = a.x - cam.x, dz = a.z - cam.z;
       if (dx * dx + dz * dz > CULL_SQ) { m.visible = false; continue; }
       m.visible = true;
@@ -506,10 +525,77 @@ export function Animals({ engine }: { engine: GameEngine }) {
       let dd = a.face - m.rotation.y;
       dd = Math.atan2(Math.sin(dd), Math.cos(dd));
       m.rotation.y += dd * 0.12;
-      poseAnimal(m, Math.hypot(a.vx, a.vz), t, a.phase);
+      if (a.kind === "dog") {
+        const parts = m.userData.dogParts as { norm: THREE.Object3D; zom: THREE.Object3D };
+        const active = a.zombie ? parts.zom : parts.norm;
+        parts.norm.visible = !a.zombie;
+        parts.zom.visible = !!a.zombie;
+        poseAnimal(active, Math.hypot(a.vx, a.vz), t, a.phase);
+      } else {
+        poseAnimal(m, Math.hypot(a.vx, a.vz), t, a.phase);
+      }
     }
   });
   return <>{[...views.values()].map((m, i) => <primitive object={m} key={i} />)}</>;
+}
+
+/* ------------------------------------------------------------------ */
+/* 🦗 Jungle insects — a drifting swarm of flies by day, fireflies by   */
+/* night. One THREE.Points cloud wandering the jungle band; paired with */
+/* the cricket/cicada ambience in audio.ts it makes the trees feel ALIVE.*/
+/* ------------------------------------------------------------------ */
+const INSECT_N = 64;
+export function JungleInsects({ engine }: { engine: GameEngine }) {
+  const { pts, anchors, pos } = useMemo(() => {
+    const anchors: { x: number; z: number; r: number; ph: number; sp: number; bob: number }[] = [];
+    for (let i = 0; i < INSECT_N; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const rr = FARM_RADIUS + 12 + Math.random() * (JUNGLE_RADIUS - FARM_RADIUS - 22);
+      anchors.push({
+        x: Math.cos(a) * rr, z: Math.sin(a) * rr,
+        r: 2.5 + Math.random() * 6.5,
+        ph: Math.random() * Math.PI * 2,
+        sp: 0.5 + Math.random() * 1.3,
+        bob: 0.6 + Math.random() * 2.4,   // hover height — low undergrowth to canopy
+      });
+    }
+    const pos = new Float32Array(INSECT_N * 3);
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    const mat = new THREE.PointsMaterial({
+      size: 0.42, map: glowTexture(), transparent: true, opacity: 0,
+      depthWrite: false, blending: THREE.AdditiveBlending, sizeAttenuation: true,
+      color: new THREE.Color("#d8d2b8"),
+    });
+    const pts = new THREE.Points(geo, mat);
+    pts.frustumCulled = false;
+    pts.visible = false;
+    return { pts, anchors, pos };
+  }, []);
+  const fade = useRef(0);
+  useFrame((s) => {
+    const t = s.clock.elapsedTime;
+    const night = nightFactor(engine.clock);
+    const inJungle = engine.zone === "Jungle" || engine.zone === "Deep Jungle";
+    fade.current += ((inJungle ? 1 : 0) - fade.current) * Math.min(1, 0.06);
+    const f = fade.current;
+    pts.visible = f > 0.02;
+    if (!pts.visible) return;
+    for (let i = 0; i < INSECT_N; i++) {
+      const an = anchors[i];
+      const w = t * an.sp + an.ph;
+      pos[i * 3] = an.x + Math.cos(w * 0.7) * an.r + Math.sin(w * 2.3) * 0.9;
+      pos[i * 3 + 1] = an.bob + Math.sin(w * 1.7) * 0.55;
+      pos[i * 3 + 2] = an.z + Math.sin(w * 0.9) * an.r + Math.cos(w * 1.9) * 0.9;
+    }
+    (pts.geometry.getAttribute("position") as THREE.BufferAttribute).needsUpdate = true;
+    // daytime: faint pale flies; night: warm glowing fireflies that blink
+    const mat = pts.material as THREE.PointsMaterial;
+    mat.color.setStyle(night > 0.5 ? "#ffd97a" : night > 0.25 ? "#e8d8a0" : "#c9c2a8");
+    const blink = night > 0.5 ? 0.72 + 0.28 * Math.abs(Math.sin(t * 2.1)) : 1;
+    mat.opacity = (night > 0.4 ? 0.62 : 0.2 + night * 0.5) * blink * f;
+  });
+  return <primitive object={pts} />;
 }
 
 /* ------------------------------------------------------------------ */
@@ -658,7 +744,7 @@ export function Licenses({ engine }: { engine: GameEngine }) {
 const dummy = new THREE.Object3D();
 const camV1 = new THREE.Vector3(); // scratch for the driving chase-cam glide
 /** Shadow-blob radius multiplier per animal kind — matches buildAnimal conf.s. */
-const ANIMAL_SCALES: Record<string, number> = { cow: 1.7, chicken: 0.95, deer: 1.45, monkey: 1.1 };
+const ANIMAL_SCALES: Record<string, number> = { cow: 1.7, chicken: 0.95, deer: 1.45, monkey: 1.1, dog: 1.05 };
 
 export function Pickups({ engine }: { engine: GameEngine }) {
   const { voteMesh, foodMeshes, defs } = useMemo(() => {

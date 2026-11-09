@@ -126,6 +126,12 @@ export const sfx = {
   heart: () => { tone(58, 0.1, "sine", 0.5, 44); tone(52, 0.12, "sine", 0.42, 40, 0.16); },
   // low guttural beast growl
   groan: () => { tone(96, 0.6, "sawtooth", 0.2, 62); noise(0.5, 0.08, 220, 0.05); },
+  // happy double woof — a stray says hello
+  bark: () => { tone(300, 0.09, "sawtooth", 0.3, 165); noise(0.05, 0.1, 600); tone(265, 0.11, "sawtooth", 0.26, 150, 0.13); noise(0.06, 0.08, 520, 0.13); },
+  // hurt-dog yelp — sharp, high, falling
+  whine: () => { tone(760, 0.2, "sine", 0.28, 360); tone(1020, 0.13, "triangle", 0.12, 540, 0.05); },
+  // 🧟 zombie hound — low snarling rumble with a wet rasp
+  zdog: () => { tone(88, 0.7, "sawtooth", 0.24, 56); tone(126, 0.5, "square", 0.09, 72, 0.1); noise(0.55, 0.11, 240, 0.08); },
   // dawn bell — relief
   bell: () => { tone(660, 0.7, "sine", 0.3, 659); tone(990, 0.5, "sine", 0.12, undefined, 0.02); },
   // angry crowd drags the accused away
@@ -182,4 +188,67 @@ export function startDrone() {
 
 export function stopDrone() {
   if (droneTimer) { clearInterval(droneTimer); droneTimer = null; }
+}
+
+/* ------- 🦗 jungle insect ambience — crickets, cicadas & beetles -------
+ * Original-sound synthesis, zero assets: crickets chirp with the classic
+ * 3-5 pulse trains around 4 kHz, cicadas buzz in swelling waves with a
+ * wobble, beetles bumble past low and slow. The engine calls setInsects()
+ * every frame with an intensity from (player zone × story hour) — the
+ * chorus breathes louder at night, fades to lone daytime chirps, and
+ * stops entirely outside the jungle.                                        */
+let insectTimer: ReturnType<typeof setInterval> | null = null;
+let insectLvl = 0;      // smoothed 0..1.15 intensity
+let insectTarget = 0;
+let insectStep = 0;
+let cicadaLeft = 0;     // seconds left in the current cicada wave
+
+/** Drive the jungle insect chorus (0 = silent/off, 1 = full night band). */
+export function setInsects(intensity01: number) {
+  insectTarget = Math.max(0, Math.min(1.15, intensity01));
+  if (insectTimer || insectTarget <= 0) return;
+  if (!ac()) return;
+  insectTimer = setInterval(insectTick, 130);
+}
+
+export function stopInsects() {
+  insectTarget = 0; insectLvl = 0; cicadaLeft = 0;
+  if (insectTimer) { clearInterval(insectTimer); insectTimer = null; }
+}
+
+function insectTick() {
+  if (muted || document.hidden || musicVol <= 0.001) return;
+  insectLvl += (insectTarget - insectLvl) * 0.12;
+  if (insectLvl < 0.015) {
+    if (insectTarget <= 0 && insectTimer) { clearInterval(insectTimer); insectTimer = null; }
+    return;
+  }
+  insectStep++;
+  // 🦗 crickets — the signature night sound: rapid pulse-train chirps.
+  // Each chirp is 3-5 short pulses ~40 ms apart near 3.9-4.8 kHz.
+  if (Math.random() < 0.15 + insectLvl * 0.5) {
+    const base = 3900 + Math.random() * 900;
+    const pulses = 3 + Math.floor(Math.random() * 3);
+    const v = 0.045 + insectLvl * 0.05;
+    for (let i = 0; i < pulses; i++) tone(base, 0.034, "sine", v, undefined, i * 0.042, true);
+    // an answering cricket, a little lower and later
+    if (Math.random() < 0.45) {
+      const b2 = base * (0.82 + Math.random() * 0.12);
+      for (let i = 0; i < pulses; i++) tone(b2, 0.03, "sine", v * 0.8, undefined, 0.5 + Math.random() * 0.4 + i * 0.044, true);
+    }
+  }
+  // 🪰 cicadas — long buzzing waves that swell and fade with a wobble
+  if (cicadaLeft <= 0 && insectLvl > 0.4 && Math.random() < 0.045 + insectLvl * 0.09) cicadaLeft = 1.8 + Math.random() * 2.4;
+  if (cicadaLeft > 0) {
+    cicadaLeft -= 0.13;
+    if (insectStep % 2 === 0) {
+      const f = 5400 + Math.sin(insectStep * 0.7) * 380 + Math.random() * 120;
+      const swell = Math.sin((1.8 + 2.4 - Math.max(0, cicadaLeft)) * 1.6); // breathe in & out
+      tone(f, 0.27, "sawtooth", (0.018 + insectLvl * 0.028) * Math.max(0.25, swell), f + 140, 0, true);
+    }
+  }
+  // 🪲 beetle fly-by — a fat low bumble drifting past (mostly daylight)
+  if (Math.random() < 0.012 + (1 - insectLvl) * 0.011) {
+    tone(190 + Math.random() * 70, 0.9, "sawtooth", 0.03, 150 + Math.random() * 90, 0, true);
+  }
 }

@@ -765,9 +765,27 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
 /* ------------------------------------------------------------------ */
 /* Animals — cute cartoon quadrupeds, merged to ~6 draw calls          */
 /* ------------------------------------------------------------------ */
-export type AnimalKind3 = "cow" | "chicken" | "deer" | "monkey";
+export type AnimalKind3 = "cow" | "chicken" | "deer" | "monkey" | "dog";
 
-export function buildAnimal(kind: AnimalKind3): THREE.Group {
+/** 🐕 street-dog coat variants — every stray looks a little different
+ *  (golden lab · shepherd saddle · dark stray · grey · patched white) */
+const DOG_COATS: { fur: string; muzzle: string; belly: string; saddle?: string }[] = [
+  { fur: "#c99a4e", muzzle: "#e2c48a", belly: "#e2c48a" },                    // golden labrador
+  { fur: "#8a6a48", muzzle: "#b59772", belly: "#c8b088", saddle: "#3d3428" }, // shepherd saddle
+  { fur: "#6b4a30", muzzle: "#8a6a4a", belly: "#8a6a4a" },                    // dark brown stray
+  { fur: "#b9b3ac", muzzle: "#d8d4cd", belly: "#e8e4dc" },                    // grey
+  { fur: "#efe9df", muzzle: "#f7f2e8", belly: "#f7f2e8", saddle: "#8a6a48" }, // white + brown patches
+];
+/** 🧟 rot palettes for the zombie hounds — sickly fur, per-variant */
+const ZOM_COATS: { fur: string; muzzle: string; belly: string }[] = [
+  { fur: "#5e7345", muzzle: "#3f4f33", belly: "#46543a" },
+  { fur: "#4f6340", muzzle: "#3a4a30", belly: "#41503a" },
+  { fur: "#57703f", muzzle: "#3e5134", belly: "#47563b" },
+  { fur: "#55663f", muzzle: "#3c4c33", belly: "#44523c" },
+  { fur: "#5e6b4a", muzzle: "#41503a", belly: "#4a5841" },
+];
+
+export function buildAnimal(kind: AnimalKind3, variant = 0, zom = false): THREE.Group {
   const root = new THREE.Group();
   const body = new THREE.Group();
   root.add(body);
@@ -775,40 +793,96 @@ export function buildAnimal(kind: AnimalKind3): THREE.Group {
     legs: [], head: new THREE.Group(), body,
   };
 
-  const conf = {
-    cow: { c: "#f7f2e8", s: 1.7, headY: 0.95, headZ: 0.85 },
-    chicken: { c: "#fff3d6", s: 0.95, headY: 0.5, headZ: 0.4 },
-    deer: { c: "#c98a4b", s: 1.45, headY: 1.0, headZ: 0.8 },
-    monkey: { c: "#8a5a3a", s: 1.1, headY: 0.75, headZ: 0.55 },
-  }[kind];
-  const dark = kind === "cow" ? "#3a3a3a" : kind === "deer" ? "#8a5a2b" : "#6a4426";
-  const belly = kind === "cow" ? "#f7f2e8" : "#e8d5b0";
+  const coat = kind === "dog" ? (zom ? ZOM_COATS[variant % ZOM_COATS.length] : DOG_COATS[variant % DOG_COATS.length]) : null;
+  // 🐕 the dog shape is built per-variant — non-dog kinds keep their classic conf
+  const conf = kind === "dog"
+    ? { c: coat!.fur, s: 1.06, headY: 0.72, headZ: 0.92 }
+    : {
+        cow: { c: "#f7f2e8", s: 1.7, headY: 0.95, headZ: 0.85 },
+        chicken: { c: "#fff3d6", s: 0.95, headY: 0.5, headZ: 0.4 },
+        deer: { c: "#c98a4b", s: 1.45, headY: 1.0, headZ: 0.8 },
+        monkey: { c: "#8a5a3a", s: 1.1, headY: 0.75, headZ: 0.55 },
+      }[kind];
+  const dark = kind === "cow" ? "#3a3a3a" : kind === "deer" ? "#8a5a2b" : kind === "dog" ? coat!.muzzle : "#6a4426";
+  const belly = kind === "cow" ? "#f7f2e8" : kind === "dog" ? coat!.belly : "#e8d5b0";
 
   const bToon = new Bucket(), bUnlit = new Bucket();
   const legB: Bucket[] = [new Bucket(), new Bucket(), new Bucket(), new Bucket()];
 
-  bToon.add(sphere(0.5, 10, 8), conf.c, false, 0, 0.62, 0, 0, 0, 0, 0.85, 0.75, 1.15);
-  bToon.add(sphere(0.36, 10, 8), belly, false, 0, 0.48, 0.12, 0, 0, 0, 0.7, 0.55, 0.9);
+  if (kind === "dog") {
+    // 🐕 realistic stray silhouette — a LONG deep chest tapering to a tucked
+    // waist, high shoulders, slim legs and a raised curved tail
+    bToon.add(sphere(0.5, 12, 9), conf.c, false, 0, 0.62, -0.04, 0, 0, 0, 0.72, 0.72, 1.5);  // main barrel
+    bToon.add(sphere(0.34, 10, 8), conf.c, false, 0, 0.68, 0.44, 0, 0, 0, 0.98, 0.92, 0.85);  // deep chest
+    bToon.add(sphere(0.2, 8, 6), belly, false, 0, 0.48, 0.08, 0, 0, 0, 0.85, 0.5, 1.25);      // belly line
+    bToon.add(sphere(0.26, 9, 7), conf.c, false, 0, 0.66, -0.5, 0, 0, 0, 0.8, 0.78, 0.7);     // rump
+    if (coat?.saddle) {
+      // shepherd saddle / brown patches lying over the back
+      bToon.add(sphere(0.3, 9, 7), coat.saddle, false, 0, 0.82, -0.06, 0, 0, 0, 0.78, 0.38, 1.2);
+      bToon.add(sphere(0.16, 7, 5), coat.saddle, false, 0, 0.78, 0.34, 0, 0, 0, 0.72, 0.38, 0.7);
+    }
+  } else {
+    bToon.add(sphere(0.5, 10, 8), conf.c, false, 0, 0.62, 0, 0, 0, 0, 0.85, 0.75, 1.15);
+    bToon.add(sphere(0.36, 10, 8), belly, false, 0, 0.48, 0.12, 0, 0, 0, 0.7, 0.55, 0.9);
+  }
 
   const head = new THREE.Group();
   head.position.set(0, conf.headY, conf.headZ);
   body.add(head);
   const hToon = new Bucket(), hUnlit = new Bucket();
-  hToon.add(sphere(0.3, 12, 9), conf.c, false, 0, 0, 0, 0, 0, 0, 0.95, 0.9, 1);
-  hToon.add(sphere(0.16, 8, 6), kind === "cow" ? "#ffc0cb" : belly, false, 0, -0.08, 0.24, 0, 0, 0, 1, 0.75, 0.8);
-  // nostrils + a tiny smile for the furry kinds
-  if (kind !== "chicken") {
-    hToon.add(sphere(0.024, 5, 4), dark, false, -0.055, -0.12, 0.33);
-    hToon.add(sphere(0.024, 5, 4), dark, false, 0.055, -0.12, 0.33);
-    hUnlit.add(torus(0.045, 0.011, Math.PI), SMILE, true, 0, -0.155, 0.3, 0, 0, Math.PI);
-  }
-  // big cartoon eyes with glints
-  for (const s of [-1, 1]) {
-    hUnlit.add(sphere(0.082, 8, 6), "#ffffff", true, s * 0.14, 0.1, 0.22, 0, 0, 0, 1, 1.25, 0.55);
-    hUnlit.add(sphere(0.04, 6, 5), EYE_B, true, s * 0.145, 0.105, 0.272);
-    hUnlit.add(sphere(0.014, 5, 4), GLINT, true, s * 0.16, 0.135, 0.288);
+
+  if (kind === "dog") {
+    // 🐕 a real dog head: rounded skull + long muzzle + black nose
+    hToon.add(sphere(0.26, 12, 9), conf.c, false, 0, 0, 0, 0, 0, 0, 0.94, 0.88, 0.92);
+    hToon.add(sphere(0.14, 9, 7), coat!.muzzle, false, 0, -0.07, 0.24, 0, 0, 0, 0.85, 0.72, 1.7);
+    hToon.add(sphere(0.055, 7, 5), "#241d18", false, 0, -0.03, 0.47);                         // nose
+    hUnlit.add(torus(0.05, 0.01, Math.PI), SMILE, true, 0, -0.19, 0.38, 0, 0, Math.PI);       // mouth
+    if (zom) {
+      // 🧟 blood around the muzzle + a drip
+      hToon.add(sphere(0.075, 7, 5), "#7a1210", false, 0, -0.14, 0.42, 0, 0, 0, 1.2, 0.7, 0.9);
+      hToon.add(sphere(0.022, 5, 4), "#7a1210", false, 0.03, -0.25, 0.44);
+    }
+    // erect pointed ears — one torn when rotten
+    for (const s of [-1, 1]) {
+      const torn = zom && s < 0;
+      hToon.add(cone(torn ? 0.055 : 0.075, torn ? 0.13 : 0.23, 5), torn ? "#3a4230" : dark, false,
+        s * 0.17, 0.26, -0.02, -0.14, 0, s * 0.3);
+    }
+    // warm brown dog eyes… or glowing red coals when the dark owns them
+    for (const s of [-1, 1]) {
+      if (zom) {
+        hUnlit.add(sphere(0.06, 8, 6), "#ff2d18", true, s * 0.13, 0.05, 0.21);
+        hUnlit.add(sphere(0.022, 5, 4), "#ffd0a0", true, s * 0.135, 0.06, 0.26);
+      } else {
+        hUnlit.add(sphere(0.055, 8, 6), "#5a3b1e", true, s * 0.13, 0.06, 0.21);
+        hUnlit.add(sphere(0.014, 5, 4), GLINT, true, s * 0.15, 0.085, 0.25);
+      }
+    }
+  } else {
+    hToon.add(sphere(0.3, 12, 9), conf.c, false, 0, 0, 0, 0, 0, 0, 0.95, 0.9, 1);
+    hToon.add(sphere(0.16, 8, 6), kind === "cow" ? "#ffc0cb" : belly, false, 0, -0.08, 0.24, 0, 0, 0, 1, 0.75, 0.8);
+    // nostrils + a tiny smile for the furry kinds
+    if (kind !== "chicken") {
+      hToon.add(sphere(0.024, 5, 4), dark, false, -0.055, -0.12, 0.33);
+      hToon.add(sphere(0.024, 5, 4), dark, false, 0.055, -0.12, 0.33);
+      hUnlit.add(torus(0.045, 0.011, Math.PI), SMILE, true, 0, -0.155, 0.3, 0, 0, Math.PI);
+    }
+    // big cartoon eyes with glints
+    for (const s of [-1, 1]) {
+      hUnlit.add(sphere(0.082, 8, 6), "#ffffff", true, s * 0.14, 0.1, 0.22, 0, 0, 0, 1, 1.25, 0.55);
+      hUnlit.add(sphere(0.04, 6, 5), EYE_B, true, s * 0.145, 0.105, 0.272);
+      hUnlit.add(sphere(0.014, 5, 4), GLINT, true, s * 0.16, 0.135, 0.288);
+    }
   }
 
+  if (kind === "dog" && zom) {
+    // 🧟 exposed ribs poking through the rotten fur
+    for (const zi of [-0.18, -0.02, 0.14]) {
+      bToon.add(capsule(0.02, 0.3), "#d8d0bc", false, -0.36, 0.6, zi, 0, 0, Math.PI / 2, 1, 1, 1.6);
+    }
+    // a torn patch of hide showing on the flank
+    bToon.add(sphere(0.16, 7, 5), "#2f3a27", false, -0.42, 0.68, 0.28, 0, 0, 0, 0.5, 0.7, 0.9);
+  }
   if (kind === "cow") {
     // curved horns + soft ears
     for (const s of [-1, 1]) {
@@ -858,14 +932,19 @@ export function buildAnimal(kind: AnimalKind3): THREE.Group {
     bToon.add(cone(0.06, 0.26, 5), "#e0d5b8", false, -0.12, 0.8, -0.4, -0.6, 0, 0.5);
     bToon.add(cone(0.06, 0.26, 5), "#e0d5b8", false, 0.12, 0.8, -0.4, -0.6, 0, -0.5);
   }
-  const legOffsets: [number, number][] = [[-0.24, 0.34], [0.24, 0.34], [-0.24, -0.34], [0.24, -0.34]];
-  legOffsets.forEach(([x, z], i) => {
+  const legOff: [number, number][] = kind === "dog"
+    ? [[-0.17, 0.42], [0.17, 0.42], [-0.17, -0.42], [0.17, -0.42]]   // slim dog stance
+    : [[-0.24, 0.34], [0.24, 0.34], [-0.24, -0.34], [0.24, -0.34]];
+  legOff.forEach(([x, z], i) => {
     if (kind === "chicken") legB[i].add(capsule(0.05, 0.3), "#ffb347", false, 0, -0.2, 0);
+    else if (kind === "dog") {
+      legB[i].add(capsule(0.055, 0.32), dark, false, 0, -0.18, 0);
+      legB[i].add(sphere(0.075, 6, 5), dark, false, 0, -0.38, 0.03);  // little paw
+    }
     else legB[i].add(capsule(0.075, 0.3), dark, false, 0, -0.2, 0);
   });
 
-  const legPos: [number, number][] = [[-0.24, 0.34], [0.24, 0.34], [-0.24, -0.34], [0.24, -0.34]];
-  legPos.forEach(([x, z], i) => {
+  legOff.forEach(([x, z], i) => {
     const leg = new THREE.Group();
     leg.position.set(x, 0.5, z);
     const m = legB[i].mesh("toon");
@@ -874,8 +953,8 @@ export function buildAnimal(kind: AnimalKind3): THREE.Group {
     rig.legs.push(leg);
   });
 
-  // animatable tails (cow swish, deer flick, monkey curl)
-  if (kind === "cow" || kind === "deer" || kind === "monkey") {
+  // animatable tails (cow swish, deer flick, monkey curl, dog wag)
+  if (kind === "cow" || kind === "deer" || kind === "monkey" || kind === "dog") {
     const tail = new THREE.Group();
     const tB = new Bucket();
     if (kind === "cow") {
@@ -885,6 +964,11 @@ export function buildAnimal(kind: AnimalKind3): THREE.Group {
     } else if (kind === "deer") {
       tB.add(sphere(0.09, 6, 5), "#fff6e8", false, 0, -0.06, -0.05, 0, 0, 0, 0.75, 1.15, 0.6);
       tail.position.set(0, 0.84, -0.44);
+    } else if (kind === "dog") {
+      // raised, curved dog tail — a happy wag needs something to wag
+      tB.add(capsule(0.042, 0.26), dark, false, 0, 0.1, -0.07, 0.85, 0, 0);
+      tB.add(sphere(0.055, 6, 5), coat!.muzzle, false, 0, 0.26, -0.14);
+      tail.position.set(0, 0.72, -0.52);
     } else {
       const pts: [number, number, number, number][] = [[0, 0.07, -0.06, 0.055], [0, 0.23, -0.1, 0.05], [0, 0.37, -0.06, 0.045], [0, 0.45, 0.06, 0.04], [0, 0.43, 0.18, 0.034]];
       for (const [px, py, pz, r] of pts) tB.add(sphere(r, 6, 5), "#6a4426", false, px, py, pz);
@@ -919,7 +1003,13 @@ export function buildAnimal(kind: AnimalKind3): THREE.Group {
   root.scale.setScalar(conf.s);
   root.userData.rig = rig;
   root.userData.kind = kind;
+  if (zom) root.userData.zom = true;
   return root;
+}
+
+/** 🧟 zombie hound — the night form of a stray. Same bones, rotting flesh. */
+export function buildZombieDog(variant = 0): THREE.Group {
+  return buildAnimal("dog", variant, true);
 }
 
 export function poseAnimal(g: THREE.Object3D, speed: number, t: number, phase = 0) {
@@ -928,6 +1018,7 @@ export function poseAnimal(g: THREE.Object3D, speed: number, t: number, phase = 
   } | undefined;
   if (!rig) return;
   const kind = g.userData.kind as AnimalKind3 | undefined;
+  const zdog = kind === "dog" && g.userData.zom === true; // 🧟 zombie hound posture
 
   // integrated stride phase (same fix as poseCharacter — no phase jumps
   // when the animal speeds up / slows down)
@@ -947,7 +1038,8 @@ export function poseAnimal(g: THREE.Object3D, speed: number, t: number, phase = 
   const hop = Math.abs(Math.cos(st.ph));
   const breath = (1 - graze) * Math.sin(t * 2.1 + phase);
   rig.body.position.y = hop * 0.05 * sp + breath * 0.012;
-  rig.body.rotation.x = sp * 0.09 * (1 - graze) + (kind === "chicken" ? graze * 0.2 : 0);
+  rig.body.rotation.x = sp * 0.09 * (1 - graze) + (kind === "chicken" ? graze * 0.2 : 0)
+    + (zdog ? 0.14 + Math.sin(t * 2.3 + phase) * 0.02 : 0); // 🧟 arched hunt-back
   rig.body.scale.set(1 - breath * 0.008, 1 + breath * 0.014, 1 - breath * 0.008);
 
   // head — stride bob + curious look-around, or dips down to graze / peck
@@ -958,14 +1050,21 @@ export function poseAnimal(g: THREE.Object3D, speed: number, t: number, phase = 
       : Math.pow(Math.max(0, Math.sin(gp * 1.7 - 0.4)), 1.5);        // slow graze
     dip = cyc * (kind === "chicken" ? 0.75 : 0.95) * graze;
   }
-  rig.head.rotation.x = -hop * 0.045 * sp * (1 - graze) + dip;
-  rig.head.rotation.y = (Math.sin(t * 0.55 + phase) * 0.3 + Math.sin(t * 0.23 + phase * 2) * 0.12) * (1 - graze) * (1 - sp * 0.55);
+  rig.head.rotation.x = -hop * 0.045 * sp * (1 - graze) + dip + (zdog ? -0.14 : 0); // 🧟 head low, stalking
+  rig.head.rotation.y = zdog
+    ? Math.sin(t * 3.1 + phase) * 0.2 + Math.sin(t * 7.7 + phase * 3) * 0.05       // twitchy snap-around
+    : (Math.sin(t * 0.55 + phase) * 0.3 + Math.sin(t * 0.23 + phase * 2) * 0.12) * (1 - graze) * (1 - sp * 0.55);
   rig.head.rotation.z = Math.sin(t * 0.9 + phase) * 0.05 * (1 - graze);
 
-  // tail — lazy sway while grazing, happy wag on the move
+  // tail — lazy sway while grazing, happy wag on the move, stiff when rotten
   if (rig.tail) {
-    rig.tail.rotation.y = Math.sin(t * (graze > 0.5 ? 1.3 : 2.6 + sp * 2.4) + phase) * (graze > 0.5 ? 0.22 : 0.28 + sp * 0.2);
-    rig.tail.rotation.x = hop * 0.1 * sp;
+    if (zdog) {
+      rig.tail.rotation.y = Math.sin(t * 1.1 + phase) * 0.06;  // a rigid, slow twitch
+      rig.tail.rotation.x = 0.25;                               // held low & straight
+    } else {
+      rig.tail.rotation.y = Math.sin(t * (graze > 0.5 ? 1.3 : 2.6 + sp * 2.4) + phase) * (graze > 0.5 ? 0.22 : 0.28 + sp * 0.2);
+      rig.tail.rotation.x = hop * 0.1 * sp;
+    }
   }
 
   // chicken wings — folded flutter at rest, rapid flap while running
