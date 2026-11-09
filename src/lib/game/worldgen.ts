@@ -1,4 +1,4 @@
-import { AIRPORT, BUILD_POOL, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, PARLIAMENT, POLICE_STATIONS, ROCK_COUNT, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_POOL, WALL_RADIUS, WORLD_SEED, pickVehicle, stationCage, stationGate } from "./constants";
+import { AIRPORT, BUILD_POOL, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, ROCK_COUNT, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_POOL, WALL_RADIUS, WORLD_SEED, pickVehicle, stationCage, stationGate } from "./constants";
 import { mulberry32, range } from "./rng";
 
 export interface BoxCollider { x: number; z: number; w: number; d: number; /** building height (top y) — lets the chase camera ignore roofs above it */ h?: number } // half extents
@@ -227,20 +227,20 @@ export function terrainHeight(x: number, z: number): number {
   return h * Math.max(0, Math.min(inner, outer));
 }
 
-/* ---------------- town layout (GTA-style grid + Delhi-style central vista) ---------------- */
+/* ---------------- town layout (GTA-style grid + grand central vista) ---------------- */
 export const ROADS = [-270, -202.5, -135, -67.5, 0, 67.5, 135, 202.5, 270]; // road centre lines, both axes — 9×9 grid city
 export const ROAD_W = 14;                          // full width
-/** The MAIN ROAD: x=0 south of the grid — wider, protest march lives here (old-game homage). */
+/** The MAIN ROAD: x=0 south of the grid — wider, the town march strip lives here. */
 export const MAIN_ROAD = { x: 0, z0: -135, z1: 368, w: 24 };
 export const RING_R = 355;                         // ring highway centre radius
 export const RING_W = 12;
-export const AVENUE = { x: 0, z0: -135, z1: -188, w: 24 }; // central vista up to parliament
+export const AVENUE = { x: 0, z0: -135, z1: -188, w: 24 }; // central vista up to the museum
 export const PARK = { x: -33.75, z: -33.75, r: 27 };
 export const MALL = { x: 33.75, z: 47 };
 export const SCHOOL = { x: -33.75, z: 118 };
 export const HOSPITAL = { x: 101.25, z: 106 };
-export const GATE = { x: 0, z: -162 };             // India-Gate-style arch on the vista
-export const PROTEST_CAMP = { x: 0, z: 48 };       // banner arch over the main road
+export const GATE = { x: 0, z: -162 };             // stone memorial arch on the vista
+export const TOWN_SQUARE = { x: 0, z: 48 };        // welcome-banner arch over the main road
 
 /** True while (x,z) sits on the airport plot — runway + apron + buildings + a margin.
  *  Trees, cottages and flowers all keep out of the flight ops area. */
@@ -341,21 +341,21 @@ export function generateWorld(seed = WORLD_SEED): World {
     }
   }
 
-  /* ---- Delhi-style central vista + full parliament district ----
+  /* ---- grand central vista + full museum district ----
    * Built BEFORE the fringe cottages so cottages never spawn on these plots.
-   * Fills the once-empty grounds around Sansad Bhavan: second secretariat row,
-   * flank offices, a vista mall, a national museum, shop arcades and annexe homes. */
+   * Fills the grounds around the CITY MUSEUM rotunda: gallery row, flank
+   * offices, a vista mall, shop arcades and annexe homes. */
   const SANDSTONE = 0xd8c8a4;
-  // North Block / South Block style offices flanking the vista
+  // North Gallery / South Gallery style offices flanking the vista
   push(-28, -170, 11, 16, 13, 0, SANDSTONE, TOWER_ROOF);
   push(28, -170, 11, 16, 13, 0, SANDSTONE, TOWER_ROOF);
-  // second secretariat row beside the podium — Lutyens-style ring around the house
+  // second gallery row beside the podium — a classical ring around the rotunda
   push(-33, -194, 11, 14, 12, 0, SANDSTONE, TOWER_ROOF);
   push(33, -194, 11, 14, 12, 0, SANDSTONE, TOWER_ROOF);
   // outer flank offices
   push(-46, -192, 11, 14, 13, 0, SANDSTONE, TOWER_ROOF);
   push(46, -192, 11, 14, 13, 0, SANDSTONE, TOWER_ROOF);
-  // vista mall (west of the podium) + national museum (east)
+  // vista mall (west of the rotunda) + city gallery (east)
   push(-52, -176, 14, 11, 14, 3, 0xe8e4da, 0x9aa5b1);
   push(52, -174, 14, 11, 12, 0, SANDSTONE, TOWER_ROOF);
   // shop arcades facing the vista court (east + west of the gate)
@@ -378,12 +378,12 @@ export function generateWorld(seed = WORLD_SEED): World {
       HOME_COLS[buildings.length % HOME_COLS.length],
       HOME_ROOFS[buildings.length % HOME_ROOFS.length], 0, -1);
   }
-  // India-Gate-style arch legs (the span is drawn by <VistaGate>)
+  // stone memorial arch legs (the span is drawn by <VistaGate>)
   push(GATE.x - 10.5, GATE.z, 2.6, 2.6, 14, 0, SANDSTONE, TOWER_ROOF);
   push(GATE.x + 10.5, GATE.z, 2.6, 2.6, 14, 0, SANDSTONE, TOWER_ROOF);
-  // protest banner arch poles over the main road (cloth drawn by <ProtestBanner>)
-  push(PROTEST_CAMP.x - 13.5, PROTEST_CAMP.z, 1.5, 1.5, 10.5, 0, 0x8a6b4a, TOWER_ROOF);
-  push(PROTEST_CAMP.x + 13.5, PROTEST_CAMP.z, 1.5, 1.5, 10.5, 0, 0x8a6b4a, TOWER_ROOF);
+  // welcome-banner arch poles over the main road (cloth drawn by <TownBanner>)
+  push(TOWN_SQUARE.x - 13.5, TOWN_SQUARE.z, 1.5, 1.5, 10.5, 0, 0x8a6b4a, TOWER_ROOF);
+  push(TOWN_SQUARE.x + 13.5, TOWN_SQUARE.z, 1.5, 1.5, 10.5, 0, 0x8a6b4a, TOWER_ROOF);
 
   /* ---- outer suburb home blocks (between the new outer road and the ring highway) ----
    * Pushed BEFORE the fringe cottages so cottages never overlap these plots. */
@@ -560,11 +560,11 @@ export function generateWorld(seed = WORLD_SEED): World {
   addTree(MALL.x - 24, MALL.z - 29, 0.8, 0);
   addTree(MALL.x + 24, MALL.z - 29, 0.8, 0);
 
-  /* ---- protest placards along the main road + parliament plaza (old-game homage) ---- */
+  /* ---- town placards along the main road + museum plaza (survival posters) ---- */
   const SLOGANS = [
-    "GIVE OUR VOTES BACK!", "VOTE CHOR GO!", "WE WANT VOTES", "CHAI > CORRUPTION",
-    "KIDS FOR DEMOCRACY", "VOTES FOR ALL", "PARLIAMENT LISTEN!", "MANGO PARTY NOW",
-    "NO VOTE, NO CHILL", "HONK FOR VOTES",
+    "SURVIVE THE NIGHT!", "STAY NEAR THE FIRES", "BARRICADE YOUR STREET", "7 NIGHTS. ONE TOWN.",
+    "FIRES KEEP THEM OUT", "TRUST NO ONE AT DUSK", "MUSEUM IS SAFE ZONE", "FRUIT & WATER STALL",
+    "NO SHOUTING AFTER DARK", "HONK IF YOU'RE HUMAN",
   ];
   const signs: Sign[] = [];
   let si = 0;
@@ -579,7 +579,7 @@ export function generateWorld(seed = WORLD_SEED): World {
       si++;
     }
   }
-  // a proud cluster right on the parliament plaza, clear of the podium and secretariats
+  // a proud cluster right on the museum plaza, clear of the rotunda and galleries
   for (let i = 0; i < 6; i++) {
     signs.push({
       x: (i % 2 === 0 ? -1 : 1) * (13 + (i >> 1) * 3), z: -166 - (i % 3) * 2.4,
@@ -754,7 +754,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     for (let i = 0; i < 4; i++) addFlower(b.x + range(rnd, -3.4, 3.4), b.z + b.fz * (b.d + range(rnd, 1.6, 4.6)));
   }
 
-  /* ---- VoteChor International Airport (south-east, outside the ring highway) ----
+  /* ---- 7Nights International Airport (south-east, outside the ring highway) ----
    * Terminal + control tower + hangar are solid boxes; the runway & apron stay
    * flat and walkable so kids can race the planes. Planes live in the engine. */
   const AP_WALL = 0xe8e6e0;      // terminal shell
@@ -779,7 +779,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   const circles: CircleCollider[] = trees.map(({ x, z, r }) => ({ x, z, r }));
   circles.push({ x: PARK.x - 11, z: PARK.z + 11, r: 8.2 });               // park pond
   circles.push({ x: PARK.x, z: PARK.z, r: 3.6 });                          // fountain
-  circles.push({ x: PARLIAMENT.x, z: PARLIAMENT.z, r: 26 });               // parliament podium (matches the visual base)
+  circles.push({ x: MUSEUM.x, z: MUSEUM.z, r: 26 });                       // museum rotunda podium (matches the visual base)
   for (const s of signs) circles.push({ x: s.x, z: s.z, r: 0.45 });        // placard posts
   // two circles per vehicle (front + rear axle) — a single centre circle let players
   // clip through the hood and boot. The axle spread follows the body style: a 7-long
@@ -810,9 +810,9 @@ export function generateWorld(seed = WORLD_SEED): World {
     rockCi.push(circles.length);
     circles.push({ x: rk.x, z: rk.z, r: 0.8 * rk.s, rock: i });
   });
-  // 🧱 builder pool — dormant circles parked under the parliament podium (r≈0 never
+  // 🧱 builder pool — dormant circles parked under the museum podium (r≈0 never
   // collides). moveCircle() teleports one onto a build spot; reset() brings it back.
-  for (let i = 0; i < BUILD_POOL; i++) circles.push({ x: PARLIAMENT.x, z: PARLIAMENT.z, r: 0.001, build: i });
+  for (let i = 0; i < BUILD_POOL; i++) circles.push({ x: MUSEUM.x, z: MUSEUM.z, r: 0.001, build: i });
   // every circle remembers its array slot — the driven car refreshes its grid cells via this
   for (let i = 0; i < circles.length; i++) circles[i].idx = i;
 

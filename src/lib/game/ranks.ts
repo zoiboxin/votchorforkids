@@ -1,4 +1,4 @@
-/** VoteChor 2.0 — career rank ladder. XP = total points earned across every run. */
+/** 7Nights — career rank ladder. XP = total points earned across every run. */
 
 export interface Rank {
   id: string;
@@ -18,7 +18,7 @@ export const RANKS: readonly Rank[] = [
   { id: "silver",  name: "Silver Chaser",     emoji: "🥈", min: 800,  chip: "from-slate-300/40 to-slate-500/40",   text: "text-slate-100",  bar: "from-slate-300 to-slate-200" },
   { id: "gold",    name: "Gold Hero",         emoji: "🥇", min: 1600, chip: "from-yellow-400/50 to-amber-600/50",  text: "text-yellow-300", bar: "from-yellow-400 to-amber-300" },
   { id: "diamond", name: "Diamond Dash",      emoji: "💎", min: 3000, chip: "from-teal-300/45 to-emerald-500/45",  text: "text-teal-200",   bar: "from-teal-300 to-emerald-300" },
-  { id: "legend",  name: "Parliament Legend", emoji: "🏆", min: 5000, chip: "from-fuchsia-500/45 to-rose-600/45",  text: "text-fuchsia-200",bar: "from-fuchsia-400 to-rose-400" },
+  { id: "legend",  name: "Night Legend", emoji: "🏆", min: 5000, chip: "from-fuchsia-500/45 to-rose-600/45",  text: "text-fuchsia-200",bar: "from-fuchsia-400 to-rose-400" },
 ] as const;
 
 export interface RankInfo {

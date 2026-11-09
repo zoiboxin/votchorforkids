@@ -340,13 +340,13 @@ export function Npcs({ engine }: { engine: GameEngine }) {
       mesh.add(tag);
       map.set(c.id, { mesh, tag });
     });
-    const PROTEST_TAGS = ["✊ GIVE VOTES BACK", "✊ VOTE CHOR GO!", "✊ WE WANT VOTES", "✊ KIDS FOR DEMOCRACY", "✊ CHAI > CORRUPTION", "✊ HONK FOR VOTES"];
+    const TOWN_TAGS = ["🌙 7 NIGHTS STRONG", "🔥 FIRES KEEP US SAFE", "🧟 NOT TODAY, ZOMBIES", "🍰 BAKE SALE AT DAWN", "🧃 JUICE & SURVIVE", "❤ STAND TOGETHER"];
     engine.civs.forEach((c, i) => {
       const mesh = buildCharacter(civLooks[i]);
-      // protest marchers carry a slogan placard tag instead of their name;
-      // vote-scavengers get a teal tag, the join-bot a golden one — living-city cast
+      // main-road walkers carry a fun slogan tag instead of their name;
+      // scavengers get a teal tag, the join-bot a golden one — living-city cast
       const tag = c.protest
-        ? nameTag(PROTEST_TAGS[i % PROTEST_TAGS.length], "rgba(181,67,42,0.85)")
+        ? nameTag(TOWN_TAGS[i % TOWN_TAGS.length], "rgba(46,90,46,0.88)")
         : c.companion
           ? nameTag(`🤖 ${c.name}`, "rgba(176,124,16,0.92)")
           : nameTag(c.name, c.scav ? "rgba(18,118,90,0.88)" : undefined);

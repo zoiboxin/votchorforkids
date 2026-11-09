@@ -1,4 +1,4 @@
-/** VoteChor — daily tasks & streaks.
+/** 7Nights — daily tasks & streaks.
  *
  *  Every local day the game picks 3 tasks (deterministic from the date, so a
  *  reload never re-rolls them). Finishing runs feeds progress into the tasks;
@@ -18,13 +18,13 @@ export interface DailyTaskDef {
 }
 
 export const DAILY_TASK_POOL: readonly DailyTaskDef[] = [
-  { id: "votes",   emoji: "💰", label: (n) => `Bank ₹${n} — scoop 💰 cash piles & loot the fallen`, target: 150, xp: 80 },
+  { id: "votes",   emoji: "💰", label: (n) => `Bank $${n} — scoop 💰 cash piles & loot the fallen`, target: 150, xp: 80 },
   { id: "rescues", emoji: "❤", label: (n) => `Rescue ${n} bubbled friends`,              target: 5,   xp: 70 },
   { id: "runs",    emoji: "🏃", label: (n) => `Finish ${n} runs`,                         target: 3,   xp: 50 },
   { id: "score",   emoji: "⭐", label: (n) => `Bank ${n.toLocaleString()} points`,        target: 1500, xp: 90 },
-  { id: "snacks",  emoji: "🥭", label: (n) => `Munch ${n} snacks`,                        target: 5,   xp: 60 },
+  { id: "snacks",  emoji: "🍎", label: (n) => `Munch ${n} snacks`,                        target: 5,   xp: 60 },
   { id: "powers",  emoji: "✨", label: (n) => `Unleash ${n} super powers`,                target: 2,   xp: 60 },
-  { id: "win",     emoji: "🏆", label: () => `Win a run — save democracy or clean the streets`, target: 1, xp: 120 },
+  { id: "win",     emoji: "🏆", label: () => `Win a run — outlast all 7 nights or be the last one standing`, target: 1, xp: 120 },
 ] as const;
 
 /** flat bonus for completing all 3 tasks of the day */
@@ -78,7 +78,7 @@ function hash(s: string): number {
 
 export function freshDaily(today = dayKey()): DailyState {
   // pick 3 distinct tasks deterministically from the date seed
-  const seed = hash(`votechor-${today}`);
+  const seed = hash(`7nights-${today}`);
   const idx: number[] = [];
   let x = seed;
   while (idx.length < 3) {

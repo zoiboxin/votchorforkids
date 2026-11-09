@@ -251,7 +251,7 @@ export function StatsDialog({ open, onOpenChange }: { open: boolean; onOpenChang
                   <span aria-hidden>{r.won ? "🏆" : "🏃"}</span>
                   <b className="text-yellow-200">{r.score.toLocaleString()}</b>
                   <span className="text-white/55">pts</span>
-                  <span className="ml-auto text-white/60">💰 ₹{r.votes} · ❤ {r.rescues} · {fmtClock(r.timeMs)}</span>
+                  <span className="ml-auto text-white/60">💰 ${r.votes} · ❤ {r.rescues} · {fmtClock(r.timeMs)}</span>
                 </div>
               ))}
             </div>
@@ -341,10 +341,10 @@ export function HistoryDialog({ open, onOpenChange }: { open: boolean; onOpenCha
                       <div className="flex items-center gap-2">
                         <b className="text-yellow-200">{r.score.toLocaleString()}</b>
                         <span className="text-[11px] text-white/55">pts</span>
-                        {r.won && <span className="rounded-full bg-yellow-300/25 px-1.5 text-[9px] font-black uppercase text-yellow-200">Democracy saved</span>}
+                        {r.won && <span className="rounded-full bg-yellow-300/25 px-1.5 text-[9px] font-black uppercase text-yellow-200">Survived it all</span>}
                       </div>
                       <div className="mt-0.5 flex flex-wrap gap-x-2.5 text-[10px] font-bold text-white/60">
-                        <span>💰 ₹{r.votes}</span>
+                        <span>💰 ${r.votes}</span>
                         <span>❤ {r.rescues}</span>
                         <span>⭐ {r.caught} caught</span>
                         <span>⏱ {fmtClock(r.timeMs)}</span>

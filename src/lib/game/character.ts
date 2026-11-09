@@ -1078,7 +1078,7 @@ export function poseAnimal(g: THREE.Object3D, speed: number, t: number, phase = 
 }
 
 /* ------------------------------------------------------------------ */
-/* Props: vote token, food pickup, ballot box, help bubble, name tag   */
+/* Props: cash pile, food pickup, help bubble, name tag               */
 /* ------------------------------------------------------------------ */
 const _bucket = new Bucket();
 
@@ -1096,38 +1096,38 @@ export function voteTokenGeometry(): THREE.BufferGeometry {
 
 /**
  * Merged vertex-coloured food geometry — a distinct hand-modelled mini-food per
- * ITEMS def (mango, samosa, jalebi, laddu, first-aid kit, chai, coconut water).
+ * ITEMS def (apple, chocolate, cake, banana, first-aid kit, juice, power drink).
  * Models stand ~0.5u tall and are rendered via InstancedMesh.
  */
 export function foodGeometry(def: number): THREE.BufferGeometry {
   const kind = ITEMS[def]?.name ?? "";
-  if (kind === "Mango") {
-    // ripe Alphonso — golden ellipsoid with a red blush, stem and a little leaf
-    _bucket.add(sphere(0.27, 12, 10), "#ffb23e", false, 0, 0, 0, 0, 0, 0, 1, 0.92, 0.88);
-    _bucket.add(sphere(0.13, 8, 6), "#ff7f2a", false, 0.11, 0.04, 0.13);
-    _bucket.add(cyl(0.026, 0.036, 0.15, 6), "#6b4a24", false, 0, 0.3, 0);
-    _bucket.add(sphere(0.09, 6, 4), "#4f9e3c", false, 0.13, 0.36, 0, 0, 0, -0.55, 1.7, 0.16, 0.6);
-    _bucket.add(sphere(0.028, 5, 4), "#ffffff", true, -0.1, 0.14, 0.17); // glint
-  } else if (kind === "Samosa") {
-    // crispy triangular pyramid with a toasted stripe and a green chutney dot
-    _bucket.add(cone(0.3, 0.44, 3), "#d9973f", false, 0, 0.05, 0, 0, 0.5, 0, 1, 1, 0.85);
-    _bucket.add(cone(0.24, 0.2, 3), "#b8762e", false, 0, 0.3, 0, 0, 0.5, 0, 1, 1, 0.85); // toasted tip
-    _bucket.add(sphere(0.05, 5, 4), "#5da345", true, 0.14, 0.12, 0.16); // chutney
-    _bucket.add(box(0.34, 0.035, 0.05), "#f4d7a0", true, 0, -0.12, 0.14); // pale seam
-  } else if (kind === "Jalebi") {
-    // glossy orange spiral — two stacked rings + sugar glint
-    _bucket.add(torus(0.24, 0.07, Math.PI * 2), "#ff8c1a", false, 0, 0.06, 0, Math.PI / 2);
-    _bucket.add(torus(0.13, 0.062, Math.PI * 2), "#ffa23e", false, 0.03, 0.1, -0.02, Math.PI / 2);
-    _bucket.add(sphere(0.035, 5, 4), "#ffe0a8", true, 0.2, 0.12, 0.08);
-  } else if (kind === "Laddu") {
-    // motichoor laddu — bumpy boondi sphere with pistachio flecks and silver vark
-    _bucket.add(sphere(0.26, 12, 10), "#f0a72e", false);
-    _bucket.add(sphere(0.062, 6, 5), "#ffc35e", false, 0.14, 0.16, 0.12);
-    _bucket.add(sphere(0.062, 6, 5), "#ffc35e", false, -0.16, 0.1, 0.08);
-    _bucket.add(sphere(0.062, 6, 5), "#ffc35e", false, 0.02, 0.24, -0.1);
-    _bucket.add(sphere(0.062, 6, 5), "#ffc35e", false, -0.06, 0.02, 0.2);
-    _bucket.add(sphere(0.05, 5, 4), "#79b448", false, 0.1, 0.22, 0.1);   // pistachio
-    _bucket.add(box(0.12, 0.01, 0.05), "#e8e8f2", true, -0.1, 0.18, 0.14); // silver vark
+  if (kind === "Apple") {
+    // crisp red apple — a plump sphere with a stem, leaf and a little glint
+    _bucket.add(sphere(0.26, 12, 10), "#e0483a", false, 0, 0, 0, 0, 0, 0, 1, 0.92, 0.95);
+    _bucket.add(cyl(0.026, 0.036, 0.15, 6), "#6b4a24", false, 0, 0.28, 0);
+    _bucket.add(sphere(0.09, 6, 4), "#4f9e3c", false, 0.12, 0.33, 0, 0, 0, -0.55, 1.7, 0.16, 0.6);
+    _bucket.add(sphere(0.03, 5, 4), "#ffffff", true, -0.1, 0.12, 0.17); // glint
+  } else if (kind === "Chocolate") {
+    // dark chocolate bar — studded squares with a torn silver foil wrap
+    _bucket.add(box(0.44, 0.09, 0.3), "#4a2c17", false, 0, 0.045, 0);
+    for (let r = 0; r < 2; r++) for (let c = 0; c < 3; c++) {
+      _bucket.add(box(0.11, 0.035, 0.075), "#5d3a20", false, -0.145 + c * 0.145, 0.1, -0.07 + r * 0.14);
+    }
+    _bucket.add(box(0.16, 0.12, 0.34), "#c8ccd4", true, -0.28, 0.06, 0); // torn foil end
+  } else if (kind === "Cake") {
+    // party cake slice — a strawberry wedge with cream frosting and a cherry
+    _bucket.add(cyl(0.24, 0.24, 0.46, 3), "#f4c17a", false, 0.02, 0.13, 0, 0, 0, Math.PI / 2); // sponge
+    _bucket.add(cyl(0.245, 0.245, 0.2, 3), "#fff4ec", false, 0.02, 0.2, 0, 0, 0, Math.PI / 2); // cream layer
+    _bucket.add(cyl(0.24, 0.24, 0.07, 3), "#f8b9d4", false, 0.02, 0.27, 0, 0, 0, Math.PI / 2); // icing top
+    _bucket.add(sphere(0.07, 8, 6), "#e0483a", false, 0.02, 0.34, 0.05); // cherry
+    _bucket.add(cyl(0.014, 0.014, 0.08, 5), "#6b4a24", false, 0.02, 0.42, 0.05); // cherry stem
+  } else if (kind === "Banana") {
+    // a pair of ripe bananas — curved yellow arcs with brown tips
+    _bucket.add(torus(0.22, 0.06, Math.PI * 0.82), "#ffd24a", false, 0, 0.07, 0, Math.PI / 2, 0, 0);
+    _bucket.add(sphere(0.045, 5, 4), "#7a5a24", true, 0.22, 0.07, 0);
+    _bucket.add(sphere(0.045, 5, 4), "#7a5a24", true, -0.196, 0.07, -0.104);
+    _bucket.add(torus(0.18, 0.055, Math.PI * 0.82), "#ffe07a", false, -0.06, 0.07, 0.09, Math.PI / 2, 0, 0.5);
+    _bucket.add(sphere(0.04, 5, 4), "#7a5a24", true, 0.11, 0.07, 0.09);
   } else if (kind === "First-aid kit") {
     // white case, red cross, carry handle and a latch
     _bucket.add(box(0.42, 0.3, 0.2), "#ffffff", true);
@@ -1135,18 +1135,19 @@ export function foodGeometry(def: number): THREE.BufferGeometry {
     _bucket.add(box(0.045, 0.15, 0.21), "#e0483a", true);
     _bucket.add(torus(0.07, 0.02, Math.PI), "#b8bcc4", true, 0, 0.19, 0, 0, 0, 0); // handle
     _bucket.add(box(0.06, 0.05, 0.02), "#f5c518", true, 0.17, 0.04, 0.1); // latch
-  } else if (kind === "Chai") {
-    // clay kulhad-style cup on a saucer with a handle and milky tea
-    _bucket.add(cyl(0.16, 0.11, 0.18, 12), "#e8e0d0", false, 0, 0.09, 0);
-    _bucket.add(cyl(0.135, 0.135, 0.025, 12), "#b5722f", false, 0, 0.185, 0); // tea
-    _bucket.add(cyl(0.22, 0.24, 0.035, 12), "#f4efe4", false, 0, 0.018, 0); // saucer
-    _bucket.add(torus(0.07, 0.02, Math.PI), "#e8e0d0", false, 0.19, 0.12, 0, 0, 0, Math.PI / 2); // handle
+  } else if (kind === "Juice") {
+    // juice box — orange carton, white cap band and a bent straw
+    _bucket.add(box(0.24, 0.36, 0.24), "#ffa726", false, 0, 0.18, 0);
+    _bucket.add(box(0.26, 0.07, 0.26), "#fff4ec", true, 0, 0.325, 0); // cap band
+    _bucket.add(sphere(0.09, 6, 4), "#ff6b35", false, 0, 0.18, 0.125); // fruit label
+    _bucket.add(cyl(0.022, 0.022, 0.3, 6), "#ff5a8a", false, 0.06, 0.44, 0, 0, 0, 0.18); // straw
   } else {
-    // tender coconut — green husk, chopped white top and a pink straw
-    _bucket.add(sphere(0.24, 12, 10), "#6fa83c", false, 0, 0, 0, 0, 0, 0, 1, 1.12, 1);
-    _bucket.add(cyl(0.09, 0.12, 0.06, 10), "#efe9c8", false, 0, 0.26, 0); // chopped top
-    _bucket.add(cyl(0.024, 0.024, 0.3, 6), "#ff5a8a", false, 0.05, 0.4, 0.02, 0, 0, 0.25); // straw
-    _bucket.add(sphere(0.03, 5, 4), "#ffffff", true, -0.1, 0.16, 0.16); // glint
+    // power drink — teal soda can with a silver lid, pull-tab and a lightning label
+    _bucket.add(cyl(0.13, 0.13, 0.34, 12), "#38e0c8", false, 0, 0.17, 0);
+    _bucket.add(cyl(0.135, 0.135, 0.025, 12), "#c8ccd4", true, 0, 0.345, 0); // lid
+    _bucket.add(box(0.05, 0.012, 0.02), "#8a8f98", true, 0.03, 0.36, 0.02); // pull tab
+    _bucket.add(box(0.055, 0.16, 0.012), "#fff4ec", true, 0, 0.17, 0.132); // label bolt
+    _bucket.add(sphere(0.03, 5, 4), "#ffffff", true, -0.05, 0.24, 0.11); // glint
   }
   return _bucket.mesh("basic")!.geometry;
 }
@@ -1161,41 +1162,11 @@ export function basicVertexMaterial(): THREE.MeshBasicMaterial {
   return basicVC();
 }
 
-export function buildVoteToken(): THREE.Group {
-  const g = new THREE.Group();
-  const gold = new THREE.MeshToonMaterial({ color: GOLD, gradientMap: getGradient() });
-  const gold2 = new THREE.MeshToonMaterial({ color: "#e8b028", gradientMap: getGradient() });
-  const white = new THREE.MeshBasicMaterial({ color: "#ffffff" });
-  const red = new THREE.MeshBasicMaterial({ color: "#e0483a" });
-  g.add(new THREE.Mesh(box(0.5, 0.34, 0.06), gold));
-  const flap = new THREE.Mesh(cone(0.25, 0.2, 4), gold2);
-  flap.position.y = 0.06; flap.rotation.x = Math.PI; flap.scale.set(1, 1, 0.18);
-  g.add(flap);
-  const w = new THREE.Mesh(box(0.2, 0.2, 0.07), white); w.position.set(0, -0.03, 0.01); g.add(w);
-  const star = new THREE.Mesh(cone(0.08, 0.16, 5), red); star.position.set(0, 0.12, 0.05); star.rotation.x = Math.PI / 2;
-  g.add(star);
-  return g;
-}
-
 /** Group-based food model (matches foodGeometry — used for non-instanced spots). */
 export function buildFood(def: number): THREE.Group {
   const g = new THREE.Group();
   const m = new THREE.Mesh(foodGeometry(def), basicVC());
   g.add(m);
-  return g;
-}
-
-export function buildBallotBox(): THREE.Group {
-  const g = new THREE.Group();
-  g.add(new THREE.Mesh(box(1.5, 1.1, 1.0), new THREE.MeshLambertMaterial({ color: "#f8f4e8", transparent: true, opacity: 0.92 })));
-  const slit = new THREE.Mesh(box(0.7, 0.08, 0.1), new THREE.MeshBasicMaterial({ color: "#333333" }));
-  slit.position.set(0, 0.35, 0.5); g.add(slit);
-  const glow = new THREE.Mesh(
-    G("ballotGlow", () => new THREE.CylinderGeometry(1.05, 1.05, 0.03, 24)),
-    new THREE.MeshBasicMaterial({ color: "#f7c948", transparent: true, opacity: 0.4 }),
-  );
-  glow.position.y = -0.53;
-  g.add(glow);
   return g;
 }
 

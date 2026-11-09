@@ -15,7 +15,7 @@ export const MOUNTAIN_OUTER = 700;
 export const GRAVEYARD = { x: -255, z: 215, r: 45 } as const;
 export const SPAWN = { x: 0, z: 6 } as const;
 
-/* ---------- VoteChor International Airport (south-east, outside the ring highway) ----------
+/* ---------- 7Nights International Airport (south-east, outside the ring highway) ----------
    A working airport: the runway is flat & walkable, the terminal / tower / hangar are solid.
    Bot planes taxi out, take off, circle the city and land back — all on their own.       */
 export const AIRPORT = {
@@ -37,21 +37,22 @@ export const JUMP2_COST = 8;         // extra stamina for the mid-air double jum
 export const FLIP_S = 0.55;          // front-flip duration after a double jump
 export const LAND_SQUASH_S = 0.16;   // landing squash-and-stretch duration
 
-/** Parliament + ballot box where stolen votes are delivered. */
-export const PARLIAMENT = { x: 0, z: -196 } as const;
+/** The grand CITY MUSEUM rotunda on the north vista — the town's landmark.
+ *  BALLOT is a legacy plaza point kept for the retired old-game chase mode. */
+export const MUSEUM = { x: 0, z: -196 } as const;
 export const BALLOT = { x: 0, z: -170 } as const;
 
 /* ---------- Police stations (one per city quadrant, with a van gate + jail cage) ---------- */
 export interface StationDef { x: number; z: number; name: string }
 export const POLICE_STATIONS: readonly StationDef[] = [
-  { x: -168.75, z: -168.75, name: "Gulmohar Chowki" },
-  { x: 168.75, z: -168.75, name: "Ring Road Chowki" },
-  { x: -168.75, z: 168.75, name: "Lake View Chowki" },
-  { x: 168.75, z: 168.75, name: "Banyan Chowki" },
+  { x: -168.75, z: -168.75, name: "Oakwood Precinct" },
+  { x: 168.75, z: -168.75, name: "Ring Road Precinct" },
+  { x: -168.75, z: 168.75, name: "Lakeview Precinct" },
+  { x: 168.75, z: 168.75, name: "Old Town Precinct" },
 ];
 /** Where the van stops & the player is released — the block-side facing town. */
 export const stationGate = (s: StationDef) => ({ x: s.x - Math.sign(s.x) * 17, z: s.z - Math.sign(s.z) * 17 });
-/** Fenced evidence cage behind the station — confiscated votes & jailed bots live here. */
+/** Fenced evidence cage behind the station — confiscated loot & jailed bots live here. */
 export const stationCage = (s: StationDef) => ({ x: s.x + Math.sign(s.x) * 14, z: s.z + Math.sign(s.z) * 14 });
 
 export type AgeGroup = "kid" | "teen" | "young" | "old";
@@ -184,8 +185,8 @@ export const HAIR_STYLES: { id: HairStyle; label: string }[] = [
 ];
 
 export const CIVIL_NAMES = [
-  "Chintu", "Pintu", "Babli", "Golu", "Rani", "Munna", "Chotu", "Pinky",
-  "Bholu", "Guddu", "Laddo", "Shona", "Titli", "Pappu", "Bunty", "Jhumri",
+  "Alex", "Bella", "Coco", "Dana", "Emil", "Frida", "Gus", "Hazel",
+  "Iris", "Juno", "Kai", "Luna", "Milo", "Nora", "Otis", "Pip",
 ];
 
 export const defaultAppearance = (): Appearance => ({
@@ -217,7 +218,7 @@ export const OUTFIT_PRESETS: readonly OutfitPreset[] = [
     look: { shirt: "#7bc043", pants: "#444a55", shoe: "#f5f5f5", hair: "#1a1210", hairStyle: "spiky", cap: true, glasses: false, age: "kid" },
   },
   {
-    id: "bollywood", label: "Film Hero", emoji: "🎬",
+    id: "bollywood", label: "Movie Star", emoji: "🎬",
     look: { shirt: "#e91e8c", pants: "#2b3556", shoe: "#e0483a", hair: "#1a1210", hairStyle: "ponytail", cap: false, glasses: false, age: "young", girl: true },
   },
   {
@@ -233,7 +234,7 @@ export const OUTFIT_PRESETS: readonly OutfitPreset[] = [
     look: { shirt: "#00b4d8", pants: "#8a5aa8", shoe: "#111111", hair: "#b03030", hairStyle: "mohawk", cap: false, glasses: true, age: "teen" },
   },
   {
-    id: "dancer", label: "Bhangra King", emoji: "💃",
+    id: "dancer", label: "Dance King", emoji: "💃",
     look: { shirt: "#ff6b35", pants: "#2a6f4f", shoe: "#e0483a", hair: "#e8c15a", hairStyle: "curly", cap: false, glasses: false, age: "young" },
   },
   {
@@ -245,7 +246,7 @@ export const OUTFIT_PRESETS: readonly OutfitPreset[] = [
     look: { shirt: "#e91e8c", pants: "#8a5aa8", shoe: "#f5f5f5", hair: "#b03030", hairStyle: "bun", cap: false, glasses: false, age: "teen", girl: true },
   },
   {
-    id: "dada", label: "Cool Dada", emoji: "🕶️",
+    id: "dada", label: "Cool Dude", emoji: "🕶️",
     look: { shirt: "#00b4d8", pants: "#444a55", shoe: "#111111", hair: "#4a4a58", hairStyle: "afro", cap: false, glasses: true, age: "teen" },
   },
 ];
@@ -274,37 +275,38 @@ export function randomAppearance(rnd: () => number = Math.random): Appearance {
 
 /** Suggested player names for the 🎲 name button. */
 export const NAME_SUGGESTIONS: readonly string[] = [
-  "Chintu", "Pintu", "Babli", "Golu", "Rani", "Munna", "Chotu", "Pinky",
-  "Bholu", "Guddu", "Laddo", "Shona", "Titli", "Bunty", "Jhumri", "Kaalu",
-  "Bijli", "Sheru", "Gudiya", "Pappu",
+  "Alex", "Bella", "Coco", "Dana", "Emil", "Frida", "Gus", "Hazel",
+  "Iris", "Juno", "Kai", "Luna", "Milo", "Nora", "Otis", "Pip",
+  "Quinn", "Remy", "Sage", "Tavi",
 ];
 
 /** Funny strings for the landing-page marquee ticker. */
 export const TICKER_LINES: readonly string[] = [
-  "🗳️ BREAKING: 16 votes missing from Parliament — police baffled!",
-  "🚨 Wanted: one very fast child with pockets full of democracy.",
-  "🐄 Cows block main road again — farmers apologise, cows do not.",
+  "🌙 NIGHT 1 of 7 — the town sleeps with one eye open.",
+  "🚨 Wanted: one very fast kid with pockets full of snacks.",
+  "🍫 Bakery reports: the chocolate shelf is EMPTY. Witnesses saw a sprinting silhouette.",
   "🧟 Graveyard neighbours request quiet after sunset. Zombies disagree.",
-  "🪑 Parliament announces new record: most seats sat upon!",
-  "🍵 Chai stalls report record profits during police chase season.",
-  "🐒 Monkey union demands better mango benefits.",
-  "🏃 Local kid outruns entire police squad — 'it was cardio', says kid.",
-  "⚖️ Court rules: hiding behind a cow is technically legal.",
-  "📻 Poll prediction: 100% chance of running.",
-  "🪪 RTO announces: driving licenses now rain from the sky — collect one and ANY parked car is yours.",
+  "🏛️ Museum announces new exhibit: 'Things That Follow You At Night'. Closing night: forever.",
+  "🧃 Juice stall records record profits during sprint season.",
+  "🐒 Monkey union demands better banana benefits.",
+  "🏃 Local kid outruns the entire zombie horde — 'it was cardio', says kid.",
+  "🔥 Fire marshal rules: hiding behind a campfire is technically legal.",
+  "📻 Night prediction: 100% chance of running.",
+  "🪪 DMV announces: driving licenses now rain from the sky — collect one and ANY parked car is yours.",
   "🚗 Traffic update: a kid was seen doing 90 near the mall… without a license. Scandal!",
 ];
 
-/* ---------- Pickups (collected into pockets, used from the HUD item bar) ---------- */
+/* ---------- Pickups (collected into pockets, used from the HUD item bar) ----------
+ * A universal snack shelf: fruits, chocolate, cake, juice & power drinks.  */
 export interface ItemDef { name: string; emoji: string; hp: number; stamina: number; color: string; msg: string; kind: "fruit" | "kit" | "drink" }
 export const ITEMS: readonly ItemDef[] = [
-  { name: "Mango", emoji: "🥭", hp: 8, stamina: 20, color: "#ffa726", msg: "Sweet mango! Health restored.", kind: "fruit" },
-  { name: "Samosa", emoji: "🥟", hp: 12, stamina: 15, color: "#e0a030", msg: "Crispy samosa. Yum!", kind: "fruit" },
-  { name: "Jalebi", emoji: "🍩", hp: 6, stamina: 30, color: "#ff8c1a", msg: "Sticky jalebi: speedy!", kind: "fruit" },
-  { name: "Laddu", emoji: "🍡", hp: 10, stamina: 25, color: "#f0c040", msg: "Laddu power activated!", kind: "fruit" },
+  { name: "Apple", emoji: "🍎", hp: 8, stamina: 20, color: "#e0483a", msg: "Crisp apple! Health restored.", kind: "fruit" },
+  { name: "Chocolate", emoji: "🍫", hp: 12, stamina: 15, color: "#6b3f24", msg: "Rich chocolate. Yum!", kind: "fruit" },
+  { name: "Cake", emoji: "🍰", hp: 10, stamina: 25, color: "#f8b9d4", msg: "Sweet cake slice: speedy!", kind: "fruit" },
+  { name: "Banana", emoji: "🍌", hp: 6, stamina: 30, color: "#ffd24a", msg: "Banana power activated!", kind: "fruit" },
   { name: "First-aid kit", emoji: "🩹", hp: 45, stamina: 0, color: "#e0483a", msg: "First-aid kit! All patched up.", kind: "kit" },
-  { name: "Chai", emoji: "☕", hp: 4, stamina: 45, color: "#c88a4a", msg: "Chai break! Energy restored.", kind: "drink" },
-  { name: "Coconut water", emoji: "🥥", hp: 8, stamina: 35, color: "#eeeedd", msg: "Coconut water. Hydrated!", kind: "drink" },
+  { name: "Juice", emoji: "🧃", hp: 4, stamina: 45, color: "#ffa726", msg: "Fresh juice! Energy restored.", kind: "drink" },
+  { name: "Power drink", emoji: "🥤", hp: 8, stamina: 35, color: "#38e0c8", msg: "Power drink. Charged up!", kind: "drink" },
 ];
 export const ITEM_COUNT = 30;
 export const PICKUP_RADIUS = 1.9;
@@ -439,7 +441,7 @@ export const POWER_PICKUP_R = 2.2;
 export const POWER_POCKETS = 3;
 /** Alias of POWER_POCKETS kept for the 7Nights engine imports. */
 export const POWER_CARRY = POWER_POCKETS;
-/** 🧱 dormant builder-pool circles parked under the parliament podium (moved onto build spots at runtime). */
+/** 🧱 dormant builder-pool circles parked under the museum podium (moved onto build spots at runtime). */
 export const BUILD_POOL = 26;
 /** Power spawns: mostly deep-jungle treasures, the rest hidden at random mystery spots. */
 export const POWER_JUNGLE_SHARE = 0.7;
@@ -573,8 +575,8 @@ export const TOOL_PICKUP_R = 2.1;
  *  dawn or crumble — so the lobby bleeds down night by night to one winner. */
 export const PLAYERS_TOTAL = 100;
 export const CREW_COUNT = PLAYERS_TOTAL - 1; // 99 AI contestants (you are #100)
-const CREW_FIRSTS = ["Mia", "Ravi", "Zoe", "Kofi", "Anya", "Marco", "Luna", "Chintu", "Pintu", "Bijli", "Laddo", "Golu", "Babli", "Rinku"];
-const CREW_SURNAMES = ["Kaur", "Sharma", "Verma", "Singh", "Iyer", "Khan", "Das"];
+const CREW_FIRSTS = ["Mia", "Ryan", "Zoe", "Kofi", "Anya", "Marco", "Luna", "Sasha", "Theo", "Ines", "Rafa", "Nova", "Elsa", "Dmitri"];
+const CREW_SURNAMES = ["Stone", "Rivera", "Novak", "Hayes", "Okafor", "Lind", "Moreau"];
 /** 99 unique contestant names — the originals first, then first+surname combos. */
 export const CREW_NAMES: readonly string[] = Array.from({ length: CREW_COUNT }, (_, i) =>
   i < 7 ? CREW_FIRSTS[i] : `${CREW_FIRSTS[i % CREW_FIRSTS.length]} ${CREW_SURNAMES[Math.floor(i / CREW_FIRSTS.length) % CREW_SURNAMES.length]}`);
@@ -604,13 +606,13 @@ export const POINTS_WRONG_ACCUSE = -60;
 export const POINTS_BUILD = 30;
 export const POINTS_HARVEST = 15;
 
-/* ---------- 💰 money — votes are gone, cash rules the town ---------- */
+/* ---------- 💰 money — the old vote chase is retired, cash rules the town ---------- */
 export const MONEY_PER_PILE = 25;        // a 💰 cash pile lying around town
 export const CASH_RESPAWN_S = 70;        // scattered cash re-stocks somewhere else
-export const CREW_PURSE: readonly [number, number] = [40, 120]; // ₹ each survivor carries
-export const CIV_PURSE: readonly [number, number] = [10, 60];   // ₹ each townsfolk carries
-export const ZOMBIE_PURSE: readonly [number, number] = [10, 30]; // ₹ dropped by a slain zombie
-export const POINTS_LOOT = 5;            // points per ₹ pickup (money ALSO scores)
+export const CREW_PURSE: readonly [number, number] = [40, 120]; // $ each survivor carries
+export const CIV_PURSE: readonly [number, number] = [10, 60];   // $ each townsfolk carries
+export const ZOMBIE_PURSE: readonly [number, number] = [10, 30]; // $ dropped by a slain zombie
+export const POINTS_LOOT = 5;            // points per $ pickup (money ALSO scores)
 /** Zombies & beasts terrify everyone: bots panic-flee within this range… */
 export const CIV_PANIC_R = 11;
 export const CREW_PANIC_R = 12;

@@ -24,7 +24,7 @@ import {
   type AnimalKind, type Appearance, type Phase, type PolicePerk, type PowerKind, type Side, type ToolKind, type Zone, zoneOf, ZONE_TOAST,
 } from "./constants";
 import { clamp, mulberry32, range } from "./rng";
-import { addDynamicCircle, freeSpot, lineClear, refreshCarCircle, resolve, RING_R, ROADS, scatterSpots, spotNear, terrainHeight, PROTEST_CAMP, type CircleCollider, type World } from "./worldgen";
+import { addDynamicCircle, freeSpot, lineClear, refreshCarCircle, resolve, RING_R, ROADS, scatterSpots, spotNear, terrainHeight, TOWN_SQUARE, type CircleCollider, type World } from "./worldgen";
 import { nightFactor, newBody, stepBody, stepNpc, type Body, type SteerMemory } from "./sim";
 import { sfx, startDrone, stopDrone, setInsects, stopInsects } from "./audio";
 import type { MpEvent } from "@/lib/game/net/client";
@@ -34,7 +34,7 @@ const TAU = Math.PI * 2; // full circle — used to keep the camera yaw wrapped
 export type CopMode = "patrol" | "chase" | "return" | "celebrate";
 export type CivilMode = "wander" | "flee" | "detained" | "rescued";
 
-/* ---------------- bot planes — VoteChor International's random flights ----------------
+/* ---------------- bot planes — 7Nights International's random flights ----------------
  * Purely kinematic state machines: bots taxi out, take off eastwards, circle the
  * whole map at cruise altitude, then come back and land. No collisions — they're
  * sky traffic for kids to spot (and chase across the runway if they like). */
@@ -91,11 +91,11 @@ export interface Npc extends SteerMemory {
   protest?: boolean;
   /** civilian only: id of the police van driving them to the station (unset = no van yet) */
   vanId?: number;
-  /** police side only: this civilian smuggles votes to Parliament for a living */
+  /** police side only (legacy mode): this civilian smuggles loot across town for a living */
   runner?: boolean;
   /** runner only: id of the vote currently smuggled (set while carried) */
   voteId?: number;
-  /** living-city: this bot hunts loose votes & hauls them to the protest camp (protester side) */
+  /** living-city: this bot hunts loose cash piles & hauls them to the town square (legacy side) */
   scav?: boolean;
   /** living-city: seconds left of a human-like loiter pause (chatting, tying a shoe…) */
   pauseT?: number;
@@ -628,7 +628,7 @@ export class GameEngine {
     this.treeHits = new Array(world.trees.length).fill(0);
     this.rockHp = new Array(world.rocks.length).fill(ROCK_HITS);
     this.hideSpots = [
-      { x: PROTEST_CAMP.x, z: PROTEST_CAMP.z },
+      { x: TOWN_SQUARE.x, z: TOWN_SQUARE.z },
       ...POLICE_STATIONS.map((s) => stationGate(s)),
       { x: SPAWN.x + 42, z: SPAWN.z + 18 },
       // 🏕️ the jungle camps shelter the crew at dusk too — bots gather round the safe fires
@@ -910,7 +910,7 @@ export class GameEngine {
     }
     // police side: a slice of the civilians become vote-runners (the player hunts THEM)
     this.assignRunners();
-    // protester side: a slice of the civilians scavenge loose votes & haul them to the camp
+    // legacy side: a slice of the civilians scavenge loose cash & haul it to the town square
     this.assignScavengers();
     // bot planes — staggered so a flight is always somewhere in its cycle
     for (let i = 0; i < PLANE_COUNT; i++) {
@@ -1145,8 +1145,8 @@ export class GameEngine {
 
   /**
    * Protester side: promote a spread of civilians into vote SCAVENGERS — bots that
-   * notice loose votes, grab them and RUN them over to the protest camp on the main
-   * road (the player delivers to Parliament; the bots gather votes into a lively
+   * notice loose cash piles, grab them and RUN them over to the town square on the main
+   * road (the player delivers to the plaza; the bots gather loot into a lively
    * camp market). Stride-picked so they start spread across the whole city.
    */
   private assignScavengers() {
@@ -1701,7 +1701,7 @@ export class GameEngine {
 
   /* ---------------- police side: stop the vote runners ---------------- */
 
-  /** One AI vote-runner tick — seek a vote → smuggle it to Parliament → lay low → repeat. */
+  /** One AI runner tick (legacy police mode) — seek loot → smuggle it to the plaza → lay low → repeat. */
   private stepRunner(c: Npc, dt: number) {
     const p = this.player;
     // 1) an AI cop is chasing them (backup helping the officer) — panic the old way
@@ -1740,14 +1740,14 @@ export class GameEngine {
         const d = dist2(c.x, c.z, v.x, v.z);
         if (d < bd) { bd = d; best = v; }
       }
-      if (!best) { // city is out of loose votes — lurk until one "sneaks back"
+      if (!best) { // city is out of loose loot — lurk until one "sneaks back"
         if (dist2(c.x, c.z, c.tx, c.tz) < 2) { const t = spotNear(this.rnd, this.world, c.x, c.z, 12, 80); c.tx = t.x; c.tz = t.z; }
         stepNpc(c, c.tx, c.tz, c.speed * 0.6, dt, this.world);
         return;
       }
       best.claimBy = c.id;
       stepNpc(c, best.x, best.z, c.speed, dt, this.world);
-      if (bd < 1.5 * 1.5) { // grabbed it — full sprint for Parliament
+      if (bd < 1.5 * 1.5) { // grabbed it — full sprint for the plaza
         best.state = "carried"; best.carrierId = c.id; best.claimBy = undefined;
         c.voteId = best.id;
       }
@@ -1769,9 +1769,9 @@ export class GameEngine {
       if (this.runnerDelivered >= RUNNER_LOSE_DELIVERIES) {
         this.lost = true;
         sfx.caught();
-        this.toast(`🗳️ The runners smuggled ${RUNNER_LOSE_DELIVERIES} votes into Parliament… the shift is lost, Officer!`, "bad");
+        this.toast(`🚨 The runners smuggled ${RUNNER_LOSE_DELIVERIES} loot bags across town… the shift is lost, Officer!`, "bad");
       } else {
-        this.toast(`😠 A runner delivered a vote! (${this.runnerDelivered}/${RUNNER_LOSE_DELIVERIES}) — stop them!`, "bad");
+        this.toast(`😠 A runner delivered a loot bag! (${this.runnerDelivered}/${RUNNER_LOSE_DELIVERIES}) — stop them!`, "bad");
       }
     }
   }
@@ -1802,20 +1802,20 @@ export class GameEngine {
       // hauling: walk the vote over to the protest camp on the main road
       const v = this.votes.find((vv) => vv.id === c.voteId);
       if (!v || v.state !== "carried") { c.voteId = undefined; return; } // vote lost mid-haul
-      if (dist2(c.x, c.z, PROTEST_CAMP.x, PROTEST_CAMP.z) < HAUL_CAMP_R * HAUL_CAMP_R) {
+      if (dist2(c.x, c.z, TOWN_SQUARE.x, TOWN_SQUARE.z) < HAUL_CAMP_R * HAUL_CAMP_R) {
         // release it onto the camp pile — it stays a world pickup anyone can grab
         const a = Math.random() * Math.PI * 2, d = range(this.rnd, 1.6, 4.6);
-        const p = { x: PROTEST_CAMP.x + Math.cos(a) * d, z: PROTEST_CAMP.z + Math.sin(a) * d };
+        const p = { x: TOWN_SQUARE.x + Math.cos(a) * d, z: TOWN_SQUARE.z + Math.sin(a) * d };
         resolve(p, 0.8, this.world);
         v.x = p.x; v.z = p.z; v.state = "world"; v.carrierId = undefined; v.claimBy = undefined;
         c.voteId = undefined;
         c.pauseT = range(this.rnd, 4, 10); // proud of the haul — take a breather
         if (dist2(c.x, c.z, this.player.x, this.player.z) < 55 * 55) {
-          this.toast(`${c.name} hauled a vote to the protest camp! 🏕️`, "info");
+          this.toast(`${c.name} hauled a cash pile to the town square! 🏕️`, "info");
         }
         return;
       }
-      stepNpc(c, PROTEST_CAMP.x, PROTEST_CAMP.z, c.speed * 0.85, dt, this.world); // haul = a bit slower
+      stepNpc(c, TOWN_SQUARE.x, TOWN_SQUARE.z, c.speed * 0.85, dt, this.world); // haul = a bit slower
       return;
     }
     // hunt: the nearest loose vote nobody else claimed (votes already piled at camp stay put)
@@ -1823,7 +1823,7 @@ export class GameEngine {
     for (const v of this.votes) {
       if (v.state !== "world") continue;
       if (v.claimBy !== undefined && v.claimBy !== c.id) continue;
-      if (dist2(v.x, v.z, PROTEST_CAMP.x, PROTEST_CAMP.z) < 25 * 25) continue;
+      if (dist2(v.x, v.z, TOWN_SQUARE.x, TOWN_SQUARE.z) < 25 * 25) continue;
       const d = dist2(c.x, c.z, v.x, v.z);
       if (d < bd) { bd = d; best = v; }
     }
@@ -1862,7 +1862,7 @@ export class GameEngine {
     sfx.caught();
     this.fxQueue.push({ type: "confetti", x: c.x, y: 1.3, z: c.z, hue: 0.58 });
     this.toast(carrying
-      ? `🚓 Busted ${c.name} red-handed! Vote secured — +${pts}! A van is taking them in.`
+      ? `🚓 Busted ${c.name} red-handed! Loot secured — +${pts}! A van is taking them in.`
       : `🚓 Busted ${c.name}! +${pts} — a van is taking them in. (${this.caughtCount}/${BUST_TARGET})`, "good");
     // nearby runners scatter in panic — they lay low for a bit before re-attempting
     for (const o of this.civs) {
@@ -1994,7 +1994,7 @@ export class GameEngine {
     sfx.siren();
     const carried = this.carriedVotes.length;
     this.toast(carried > 0
-      ? `🚔 Caught! Police called a van — you and your ${carried} vote${carried > 1 ? "s" : ""} are going to the station…`
+      ? `🚔 Caught! Police called a van — you and your ${carried} loot bag${carried > 1 ? "s" : ""} are going to the station…`
       : `🚔 Caught for suspicious giggling! A police van is coming to take you in…`, "bad");
   }
 
@@ -2011,14 +2011,14 @@ export class GameEngine {
       sfx.deliver();
       this.fxQueue.push({ type: "confetti", x: BALLOT.x, y: 1.6, z: BALLOT.z, hue: Math.random() });
       const left = TOTAL_VOTES - this.delivered;
-      this.toast(n === 1 ? `Vote delivered! +${POINTS_DELIVER}` : `${n} votes delivered! +${POINTS_DELIVER * n}`, "good");
+      this.toast(n === 1 ? `Loot delivered! +${POINTS_DELIVER}` : `${n} loot bags delivered! +${POINTS_DELIVER * n}`, "good");
       if (left === 0) {
         this.won = true; this.wonAt = Date.now();
         this.points += 500;
         sfx.win();
         this.toast("🏆 ALL VOTES DELIVERED! Democracy saved — you legend!", "good");
       } else if (left <= 3) {
-        this.toast(`Only ${left} votes to go!`, "info");
+        this.toast(`Only ${left} deliveries to go!`, "info");
       }
     }
   }
@@ -2110,7 +2110,7 @@ export class GameEngine {
     this.points = Math.max(0, this.points - CONFISCATE_FINE);
     this.detainedT = DETAIN_SECONDS;
     this.toast(taken > 0
-      ? `⚖️ Locked up at ${st.name}! ${taken} vote${taken > 1 ? "s" : ""} impounded in the cage + ${CONFISCATE_FINE} point fine — steal them back after release!`
+      ? `⚖️ Locked up at ${st.name}! ${taken} cash pile${taken > 1 ? "s" : ""} impounded in the cage + ${CONFISCATE_FINE} point fine — steal them back after release!`
       : `⚖️ Locked up at ${st.name}! ${CONFISCATE_FINE} point fine — behave out there!`, "bad");
   }
 
@@ -3002,7 +3002,7 @@ export class GameEngine {
       this.fxQueue.push({ type: "confetti", x: l.x, y: 1.0, z: l.z, hue: 0.13 });
       if (near && this.botLootCd <= 0) {
         this.botLootCd = 4;
-        this.toast(`💰 ${c.name} scooped ${l.label} (+₹${l.amt}) — race the bots for loot!`, "info");
+        this.toast(`💰 ${c.name} scooped ${l.label} (+$${l.amt}) — race the bots for loot!`, "info");
       }
     } else {
       const pw = this.powers.find((p2) => p2.id === s.id && p2.active);
@@ -3752,7 +3752,7 @@ export class GameEngine {
             "🚕 BONK! A car sent you flying — everything is spinning…",
             "🚌 Ow! Traffic: 1, you: 0. Shake it off, champ!",
             "🚗 Wham! The car won that round — up you get, runner!",
-            "🛺 Oof! Watch the ring road — cars don't brake for vote thieves.",
+            "🛺 Oof! Watch the ring road — cars don't brake for anyone.",
           ];
           this.toast(BONKS[Math.floor(this.rnd() * BONKS.length)], "bad");
         }
@@ -3824,7 +3824,7 @@ export class GameEngine {
           sfx.pickup();
           // 🌐 someone else's world shouldn't still show this pile
           if (this.mp) this.netEmit?.({ t: "pickup", kind: "vote", id: v.id });
-          this.toast(`💰 +₹${MONEY_PER_PILE} — you have ₹${this.money}!`, "good");
+          this.toast(`💰 +$${MONEY_PER_PILE} — you have $${this.money}!`, "good");
         }
       }
       // 💰 dropped loot: purses of the fallen & zombie hoards — race the bots for them!
@@ -3841,7 +3841,7 @@ export class GameEngine {
           if (l.label.includes("'s purse") || l.label.includes("'s pouch")) this.reportCrime("robbery", l.x, l.z);
           // 🌐 loot ids are per-world — the spot identifies it everywhere
           if (this.mp) this.netEmit?.({ t: "pickup", kind: "loot", id: -1, x: l.x, z: l.z });
-          this.toast(`💰 Looted ${l.label}: +₹${l.amt} (₹${this.money} total)!`, "good");
+          this.toast(`💰 Looted ${l.label}: +$${l.amt} ($${this.money} total)!`, "good");
         }
       }
     }
@@ -3982,7 +3982,7 @@ export class GameEngine {
             cop.tx = target.x; cop.tz = target.z; cop.timer = range(this.rnd, 8, 16);
           }
           stepNpc(cop, cop.tx, cop.tz, POLICE_SPEED * 0.6, dt, this.world);
-          // 🐒 Animal Morph — a cow loitering with stolen votes is somehow not suspicious
+          // 🐒 Animal Morph — a cow loitering with stolen loot is somehow not suspicious
           // (7Nights: the police are peaceful townsfolk — the BEAST is the hunter now)
           if (!this.horror && this.side === "protester" && this.morphKind == null && this.invulnT <= 0 && this.detainedT <= 0 && d2p < detect * detect && lineClear(cop.x, cop.z, p.x, p.z, this.world)) {
             cop.mode = "chase"; cop.alertT = ESCAPE_LOST_S; cop.timer = 0;
@@ -4164,14 +4164,14 @@ export class GameEngine {
           const l = this.loot[li];
           if (dist2(c.x, c.z, l.x, l.z) < 1.5 * 1.5 && this.rnd() < dt * 0.9) {
             this.loot.splice(li, 1);
-            if (dist2(c.x, c.z, p.x, p.z) < 26 * 26) this.toast(`👋 ${c.name} scooped up ${l.label} (₹${l.amt}) — should've been quicker!`, "info");
+            if (dist2(c.x, c.z, p.x, p.z) < 26 * 26) this.toast(`👋 ${c.name} scooped up ${l.label} ($${l.amt}) — should've been quicker!`, "info");
             break;
           }
         }
       }
       // police side: vote-runners live in their own state machine (seek → smuggle → lay low)
       if (c.runner && this.side === "police" && (c.mode === "wander" || c.mode === "flee")) { this.stepRunner(c, dt); continue; }
-      // protester side: scavengers gather loose votes & haul them to the protest camp (old game only)
+      // legacy side: scavengers gather loose cash piles & haul them to the town square (old game only)
       if (!this.horror && c.scav && this.side === "protester" && (c.mode === "wander" || c.mode === "flee") && !c.runner) {
         if (c.mode === "wander") { this.stepScavenger(c, dt); continue; }
         // fleeing with a cop on their heels — same panic-run as everyone else (below)
@@ -4289,7 +4289,7 @@ export class GameEngine {
             zb.hoard = (zb.hoard ?? 0) + l.amt;
             this.loot.splice(li, 1);
             if (this.mp) this.netEmit?.({ t: "pickup", kind: "loot", id: -1, x: l.x, z: l.z });
-            if (d2p < 18 * 18 && this.zLootCd <= 0) { this.zLootCd = 5; this.toast(`🧟 A zombie gulped down ${l.label} — ₹${l.amt} in its belly now!`, "info"); }
+            if (d2p < 18 * 18 && this.zLootCd <= 0) { this.zLootCd = 5; this.toast(`🧟 A zombie gulped down ${l.label} — $${l.amt} in its belly now!`, "info"); }
           }
         }
         const fire = this.nearFire(zb.x, zb.z);

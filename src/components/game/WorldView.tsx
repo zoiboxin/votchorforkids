@@ -4,13 +4,13 @@ import { useLayoutEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  AIRPORT, BALLOT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, PARLIAMENT, POLICE_STATIONS, WALL_RADIUS, stationCage, stationGate,
+  AIRPORT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, WALL_RADIUS, stationCage, stationGate,
 } from "@/lib/game/constants";
 import {
-  AVENUE, GATE, generateWorld, HOSPITAL, MALL, MAIN_ROAD, PARK, ROAD_W, ROADS, RING_R, RING_W, SCHOOL, PROTEST_CAMP, terrainHeight,
+  AVENUE, GATE, generateWorld, HOSPITAL, MALL, MAIN_ROAD, PARK, ROAD_W, ROADS, RING_R, RING_W, SCHOOL, TOWN_SQUARE, terrainHeight,
   type World,
 } from "@/lib/game/worldgen";
-import { buildBallotBox, nameTag } from "@/lib/game/character";
+import { nameTag } from "@/lib/game/character";
 import { mulberry32, range } from "@/lib/game/rng";
 import { nightFactor } from "@/lib/game/sim";
 import type { GameEngine } from "@/lib/game/engine";
@@ -90,7 +90,7 @@ function Roads() {
       tmp.position.set(0, 0.07, k); tmp.scale.set(SPAN * 2, ROAD_W, 1); tmp.updateMatrix();
       lane.current.setMatrixAt(i++, tmp.matrix);
     }
-    // the MAIN ROAD (protest march strip) + the central vista to parliament
+    // the MAIN ROAD (town march strip) + the central vista to the museum
     tmp.rotation.set(-Math.PI / 2, 0, 0);
     tmp.position.set(MAIN_ROAD.x, 0.07, (MAIN_ROAD.z0 + MAIN_ROAD.z1) / 2);
     tmp.scale.set(MAIN_ROAD.w, MAIN_ROAD.z1 - MAIN_ROAD.z0, 1); tmp.updateMatrix();
@@ -1260,7 +1260,7 @@ function Landmarks() {
           </mesh>
         ))}
       </group>
-      {/* School — yard, running track, flag, basketball hoop */}
+      {/* School — yard, running track, pennant, basketball hoop */}
       <group position={[SCHOOL.x, 0, SCHOOL.z]}>
         <mesh rotation-x={-Math.PI / 2} position={[0, 0.07, -18]}>
           <circleGeometry args={[14, 40]} />
@@ -1271,7 +1271,7 @@ function Landmarks() {
           <meshLambertMaterial color="#d8734a" />
         </mesh>
         <mesh position={[-10, 3.5, -12]}><cylinderGeometry args={[0.1, 0.12, 7, 6]} /><meshLambertMaterial color="#8a8a98" /></mesh>
-        <mesh position={[-8.9, 6.2, -12]} rotation-y={Math.PI / 2}><planeGeometry args={[2.2, 1.3]} /><meshBasicMaterial color="#ff9933" side={THREE.DoubleSide} /></mesh>
+        <mesh position={[-8.9, 6.2, -12]} rotation-y={Math.PI / 2}><planeGeometry args={[2.2, 1.3]} /><meshBasicMaterial color="#e0483a" side={THREE.DoubleSide} /></mesh>
         <mesh position={[12, 2.5, -10]}><cylinderGeometry args={[0.12, 0.14, 5, 6]} /><meshLambertMaterial color="#3a3f46" /></mesh>
         <mesh position={[12, 4.7, -10.35]}><boxGeometry args={[2.6, 1.7, 0.16]} /><meshLambertMaterial color="#f4f6f8" /></mesh>
         <mesh position={[12, 3.95, -10.7]} rotation-x={Math.PI / 2}><torusGeometry args={[0.55, 0.08, 6, 14]} /><meshLambertMaterial color="#ff6b35" /></mesh>
@@ -1707,14 +1707,10 @@ function Rocks() {
   );
 }
 
-/* ------------------------- parliament + ballot (Delhi Sansad Bhavan style) ------------------------- */
-function Parliament() {
-  const flag = useRef<THREE.Group>(null!);
+/* ------------------------- the grand MUSEUM (classical rotunda on the north vista) ------------------------- */
+function Museum() {
   const cols = useRef<THREE.InstancedMesh>(null!);
-  useFrame((s) => {
-    if (flag.current) flag.current.rotation.y = Math.sin(s.clock.elapsedTime * 3) * 0.2;
-  });
-  // circular colonnade — 18 pillars ringing the house, like the real Sansad Bhavan
+  // circular colonnade — 18 pillars ringing the rotunda, museum-classical
   const colAngles = useMemo(() => Array.from({ length: 18 }, (_, i) => (i / 18) * Math.PI * 2), []);
   useLayoutEffect(() => {
     colAngles.forEach((a, i) => {
@@ -1726,9 +1722,10 @@ function Parliament() {
     });
     cols.current.instanceMatrix.needsUpdate = true;
   }, [colAngles]);
+  const sign = useMemo(() => makeSignTexture("CITY MUSEUM", "#6d5a3a", "#f5efdc"), []);
   return (
-    <group position={[PARLIAMENT.x, 0, PARLIAMENT.z]}>
-      {/* plaza + circular sandstone podium */}
+    <group position={[MUSEUM.x, 0, MUSEUM.z]}>
+      {/* plaza + circular stone podium */}
       <mesh rotation-x={-Math.PI / 2} position={[0, 0.05, 8]}>
         <circleGeometry args={[38, 48]} />
         <meshLambertMaterial color="#cfc4ae" />
@@ -1746,20 +1743,18 @@ function Parliament() {
       {/* drum + green copper dome */}
       <mesh position-y={17.7}><cylinderGeometry args={[15, 15.5, 8, 32]} /><meshLambertMaterial color="#e8e0d0" /></mesh>
       <mesh position-y={23.2} scale={[1, 0.72, 1]}><sphereGeometry args={[12, 24, 16]} /><meshLambertMaterial color="#7fc8a9" /></mesh>
-      {/* tricolour flag */}
-      <mesh position-y={30.4}><cylinderGeometry args={[0.14, 0.14, 6, 6]} /><meshLambertMaterial color="#8a8a98" /></mesh>
-      <group ref={flag} position={[0, 33, 0]}>
-        <mesh position-y={1}><planeGeometry args={[4.6, 0.95]} /><meshBasicMaterial color="#ff9933" side={THREE.DoubleSide} /></mesh>
-        <mesh position-y={0}><planeGeometry args={[4.6, 0.95]} /><meshBasicMaterial color="#ffffff" side={THREE.DoubleSide} /></mesh>
-        <mesh position-y={-1}><planeGeometry args={[4.6, 0.95]} /><meshBasicMaterial color="#1a8f3c" side={THREE.DoubleSide} /></mesh>
-        <mesh position-z={0.03}><circleGeometry args={[0.3, 16]} /><meshBasicMaterial color="#1a3a8f" /></mesh>
-        <mesh position-z={-0.03} rotation-y={Math.PI}><circleGeometry args={[0.3, 16]} /><meshBasicMaterial color="#1a3a8f" /></mesh>
-      </group>
+      {/* rooftop finial — a quiet golden orb instead of any flag */}
+      <mesh position-y={31}><sphereGeometry args={[0.9, 10, 8]} /><meshLambertMaterial color="#d8b45a" /></mesh>
+      {/* museum sign above the front steps */}
+      <mesh position={[0, 6.6, 24.3]} rotation-x={-0.06}>
+        <planeGeometry args={[9, 4.5]} />
+        <meshBasicMaterial map={sign} toneMapped={false} />
+      </mesh>
     </group>
   );
 }
 
-/* ------------------------- protest life on the main road (old-game homage) ------------------------- */
+/* ------------------------- town life on the main road ------------------------- */
 function makeSignTexture(text: string, bg: string, fg: string): THREE.CanvasTexture {
   const c = document.createElement("canvas");
   c.width = 512; c.height = 256;
@@ -1786,7 +1781,7 @@ function makeSignTexture(text: string, bg: string, fg: string): THREE.CanvasText
 const SIGN_BG = ["#e8b13c", "#f5efdc", "#ff8c69"];
 const SIGN_FG = ["#2c3947", "#b5432a", "#7a2d1e"];
 
-function ProtestSigns() {
+function TownSigns() {
   const signs = WORLD.signs;
   const textures = useMemo(
     () => signs.map((s) => makeSignTexture(s.text, SIGN_BG[s.c] ?? SIGN_BG[0], SIGN_FG[s.c] ?? SIGN_FG[0])),
@@ -1807,7 +1802,7 @@ function ProtestSigns() {
   );
 }
 
-/** India-Gate-style sandstone arch over the central vista (legs are real buildings). */
+/** Stone memorial arch over the central vista (legs are real buildings). */
 function VistaGate() {
   return (
     <group position={[GATE.x, 0, GATE.z]}>
@@ -1818,33 +1813,18 @@ function VistaGate() {
   );
 }
 
-/** Big protest banner strung across the MAIN ROAD. */
-function ProtestBanner() {
-  const tex = useMemo(() => makeSignTexture("MAIN ROAD PROTEST — JOIN THE MARCH!", "#b5432a", "#f5efdc"), []);
+/** Big town banner strung across the MAIN ROAD. */
+function TownBanner() {
+  const tex = useMemo(() => makeSignTexture("WELCOME TO OAKHAVEN — SURVIVE ALL 7 NIGHTS!", "#2d5a2e", "#f5efdc"), []);
   const ref = useRef<THREE.Mesh>(null!);
   useFrame((s) => {
     if (ref.current) ref.current.rotation.x = Math.sin(s.clock.elapsedTime * 1.6) * 0.035;
   });
   return (
-    <mesh ref={ref} position={[PROTEST_CAMP.x, 9.3, PROTEST_CAMP.z]} rotation-x={Math.PI / 2}>
+    <mesh ref={ref} position={[TOWN_SQUARE.x, 9.3, TOWN_SQUARE.z]} rotation-x={Math.PI / 2}>
       <planeGeometry args={[26, 2.6]} />
       <meshLambertMaterial map={tex} side={THREE.DoubleSide} />
     </mesh>
-  );
-}
-
-function BallotBox() {
-  const ref = useRef<THREE.Group>(null!);
-  const box = useMemo(() => buildBallotBox(), []);
-  useFrame((s) => {
-    const p = 1 + Math.sin(s.clock.elapsedTime * 2.4) * 0.06;
-    box.scale.set(p, 1 / p, p);
-    if (ref.current) ref.current.position.y = 0.85 + Math.sin(s.clock.elapsedTime * 1.8) * 0.08;
-  });
-  return (
-    <group ref={ref} position={[BALLOT.x, 0.85, BALLOT.z]}>
-      <primitive object={box} />
-    </group>
   );
 }
 
@@ -2592,7 +2572,7 @@ function Env({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
   );
 }
 
-/* ---------------- VoteChor International Airport ----------------
+/* ---------------- 7Nights International Airport ----------------
  * Runway + taxiway + apron slabs with painted markings, a glass-fronted
  * terminal, a control tower with a spinning radar and a windsock. The solid
  * terminal/tower/hangar shells are worldgen buildings — this paints the rest. */
@@ -2610,7 +2590,7 @@ function Airport() {
     for (let i = 0; i < 12; i++) arr.push(AIRPORT.rx0 + 12 + i * ((AIRPORT.rx1 - AIRPORT.rx0 - 24) / 11));
     return arr;
   }, []);
-  const sign = useMemo(() => makeSignTexture("VOTECHOR INTL ✈", "#1d2a4a", "#ffd166"), []);
+  const sign = useMemo(() => makeSignTexture("7NIGHTS INTL ✈", "#1d2a4a", "#ffd166"), []);
   return (
     <group>
       {/* runway slab + markings */}
@@ -2866,11 +2846,10 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
       <Graves />
       <Flowers />
       <Mountains />
-      <Parliament />
-      <BallotBox />
+      <Museum />
       <VistaGate />
-      <ProtestSigns />
-      <ProtestBanner />
+      <TownSigns />
+      <TownBanner />
       <Clouds />
       <Sky clockRef={clockRef} />
       <Fireflies clockRef={clockRef} />

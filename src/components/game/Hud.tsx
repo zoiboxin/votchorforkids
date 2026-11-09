@@ -39,7 +39,7 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
   dot(0, 0, 465 * K, "#7a8f3f");
   dot(0, 0, 405 * K, "#8d8a80");
   dot(-255, 215, 45 * K, "#3a3a46");
-  // VoteChor International — runway strip + apron block (south-east)
+  // 7Nights International — runway strip + apron block (south-east)
   c.fillStyle = "#54565e";
   c.fillRect(S / 2 + 215 * K, S / 2 + (300 - 8) * K, 170 * K, 16 * K);
   c.fillStyle = "#8d8d94";
@@ -83,8 +83,8 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     c.lineWidth = Math.max(1.4, 1.6 * U);
     c.stroke();
   }
-  // parliament
-  c.fillStyle = "#e0483a";
+  // city museum
+  c.fillStyle = "#c9a45c";
   c.fillRect(S / 2 - 4 * U, S / 2 - 196 * K - 3 * U, 8 * U, 6 * U);
   // ballot (big map only — the mini stays clean)
   if (!mini) {
@@ -117,8 +117,8 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     c.stroke();
     dot(cp.x, cp.z, 1.1 * U, "#fb923c", 0.95); // the ever-burning pit
   }
-  /* 🧹 mini map declutter: vans, food, licenses, power gems, votes, loot, police,
-     civilians, vote-runners, animals, crew, co-op souls, dropped arms, builds and
+  /* 🧹 mini map declutter: vans, food, licenses, power gems, cash piles, loot, police,
+     civilians, loot-runners, animals, crew, co-op souls, dropped arms, builds and
      planes are BIG-MAP-ONLY — the corner minimap shows just terrain, landmarks,
      tonight's zombie horde and you. */
   if (!mini) {
@@ -137,7 +137,7 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
       dot(cop.x, cop.z, (chasing ? 3 : 2) * U, chasing ? "#ff4d4d" : "#6aa0ff");
     }
     for (const cv of engine.civs) if (cv.mode === "detained") dot(cv.x, cv.z, 3 * U, "#ff8fa3");
-    // police side: vote-runners stand out — amber specks, carriers glow bright with loot
+    // police side (legacy): loot-runners stand out — amber specks, carriers glow bright
     if (engine.side === "police") {
       for (const cv of engine.civs) {
         if (!cv.runner || cv.mode === "detained") continue;
@@ -250,7 +250,7 @@ const BIG_MAP_S = 440;
 const MAP_LEGEND: [string, string][] = [
   ["#ffffff", "You (arrow = facing)"], ["#f7c948", "💰 Cash piles"], ["#ffd166", "Food"], ["#c084fc", "Power gems (rare!)"],
   ["#38bdf8", "Driving license 🪪"], ["#6aa0ff", "Police"], ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ["#a97b4f", "Animals"], ["#c084fc", "Zombies · night"], ["#1d2a4a", "Police stn"],
-  ["#ffb020", "Vote runner (bright = carrying)"],
+  ["#ffb020", "Loot runner (bright = carrying)"],
   ["#e2e8f0", "Crew survivors (each their color)"], ["#7f1d1d", "Fallen crew ✕"],
   ["#facc15", "Dropped arms"], ["#ffd447", "💰 Loot drops"], ["#92400e", "Barricade"], ["#fb923c", "Campfire"],
   ["#e8b13c", "⛺ Jungle camp (shelter)"],
@@ -1095,7 +1095,7 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
       { t: `🧍 ${alive}/${hud.aliveTotal} alive`, c: "text-white" },
       { t: hud.beastCount > 0 ? `🧟 ${hud.beastCount} hunting` : "🧟 pack asleep", c: hud.beastCount > 0 ? "text-purple-300" : "text-white/70" },
       { t: `❤️ ${hud.hp} hp`, c: hud.hp < 40 ? "text-rose-300" : "text-white" },
-      { t: `💰 ₹${hud.money}`, c: "text-emerald-200" },
+      { t: `💰 $${hud.money}`, c: "text-emerald-200" },
       { t: `📍 ${hud.zone}`, c: "text-sky-200" },
     ];
     return (
@@ -1210,7 +1210,7 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
         </div>
         {hud.money > 0 && (
           <p className="mt-3 text-center text-[11px] text-emerald-300/90">
-            This run: 💰 ₹{hud.money} banked · {hud.rescues} rescued · {hud.points} pts
+            This run: 💰 ${hud.money} banked · {hud.rescues} rescued · {hud.points} pts
           </p>
         )}
       </motion.div>
@@ -1622,7 +1622,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
             aria-label="Money collected"
             title="Cash piles scooped + loot from the fallen"
           >
-            💰 ₹{hud.money}
+            💰 ${hud.money}
           </motion.div>
           {showFps && <FpsCounter />}
           <Button
@@ -1787,8 +1787,8 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
               </div>
               <div className="mt-1 text-xs font-bold text-rose-200/90">
                 {hud.arrest === "locked"
-                  ? "Your votes are impounded in the station cage — steal them back after they let you out the gate!"
-                  : "The van takes you to the nearest police station — your votes get impounded there!"}
+                  ? "Your cash is impounded in the station cage — steal it back after they let you out the gate!"
+                  : "The van takes you to the nearest police station — your cash gets impounded there!"}
               </div>
               <div className="mx-auto mt-3 h-2.5 w-44 overflow-hidden rounded-full bg-white/15">
                 {hud.arrest === "locked" ? (
