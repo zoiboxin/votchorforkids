@@ -122,6 +122,13 @@ export interface Zombie extends SteerMemory {
    * avoidV/avoidT: the prey this shamber gave up reaching (walled in) — skipped
    * for avoidT seconds so the horde re-picks someone it can actually reach. */
   avoidV?: number; avoidT?: number;
+  /* 🌙 idle roam — the horde spreads across the night streets instead of one
+   * grave-yard blob (roamT = seconds left before a fresh wander pick) */
+  roamX?: number; roamZ?: number; roamT?: number;
+  /* 🎯 prey latch — the horde used to re-pick the NEAREST soul every frame, so
+   * fifty hunters funneled onto one victim and butchered the lobby in a pile.
+   * Now each hunter STICKS with its prey until it dies / is walled / too far. */
+  preyId?: number; preyKind?: "crew" | "civ" | "you" | "remote"; preySlot?: number;
 }
 
 /* ---------------- 7 Nights: survivors, tools & builds ---------------- */
@@ -157,13 +164,16 @@ export interface Crew extends SteerMemory {
    * avoidId/avoidT: as a BEAST, this prey is unreachable — hunt someone else. */
   seekBlock?: { kind: "food" | "loot" | "power"; id: number; t: number } | null;
   avoidId?: number; avoidT?: number;
-  /* --- 🏟️ 7-Nights contest roster bookkeeping --- */
+  /* --- 👥 7-Nights contest roster bookkeeping --- */
   /** true dusk→dawn while this contestant is one of the TURNED (a contest zombie) */
   zombieTonight?: boolean;
   /** contestants this contestant's zombie devoured tonight — 0 by dawn = crumble */
   fed?: number;
   /** zombies this contestant fought off (contest stat) */
   cKills?: number;
+  /* 🎯 prey latch (possessed hunters) — same anti-funnel fix as the shamblers:
+   * stick with your victim instead of re-funneling onto the pack's nearest one */
+  preyId?: number; preyKind?: "crew" | "civ" | "you" | "remote"; preySlot?: number;
 }
 
 /** 💰 a dropped stash of money — purses of the fallen, zombie hoards… walk over it! */
@@ -396,6 +406,10 @@ export class GameEngine {
   playerName = "You";
 
   player: Body = newBody(SPAWN.x, SPAWN.z);
+  /** 🎲 where YOU dropped into the contest — random every match (see rollPlayerSpawn).
+   *  Everything that used to orbit the old fixed SPAWN (cop spawns, dizzy respawn,
+   *  the join bot) now orbits THIS point, so no two runs start in the same corner. */
+  playerSpawn = { x: SPAWN.x, z: SPAWN.z };
   input = { f: 0, r: 0, sprint: false, jump: false, turn: 0, yaw: Math.PI, pitch: 0.32, mouseAt: 0 };
   touchMove = { active: false, sprint: false };
   hp = 100; stamina = 100;
@@ -623,6 +637,9 @@ export class GameEngine {
         return { x: cp.x - (cp.x / l) * 3.4, z: cp.z - (cp.z / l) * 3.4 };
       }),
     ];
+    // 🎲 random drop spot FIRST — cops, the join bot & crew all spread around it
+    this.rollPlayerSpawn();
+    this.player.x = this.playerSpawn.x; this.player.z = this.playerSpawn.z;
     this.hud = this.buildHud();
     this.spawnAll();
     // remember where every car is parked (driving scatters them — reset brings them home)
@@ -636,8 +653,44 @@ export class GameEngine {
     }
   }
 
+  /* ---------------- 🔍 night trace: AI forensics for the stuck-horde mystery ----------------
+   * Ring-buffered log lines (console.debug + `window.__vc.engine.trace()`).
+   * Night sampling tracks the exact symptoms the lobby reported: hunters piling
+   * into one cluster, idle zombies blobbing at the graveyard, contestants dying
+   * in the same spot, and bots grinding against walls (blockT). */
+  traceBuf: string[] = [];
+  private traceT = 0;
+  /** deaths logged tonight (position + name) — the "everyone died in one place" detector */
+  private nightDeaths: { x: number; z: number; name: string; cause: string }[] = [];
+  /** one forensic line — console + ring buffer, readable via window.__vc.engine.trace() */
+  trace(msg: string) {
+    const line = `[t${this.elapsed.toFixed(0)}s ${this.phase}${this.horror ? " n" + this.nightNo : ""}] ${msg}`;
+    this.traceBuf.push(line);
+    if (this.traceBuf.length > 240) this.traceBuf.shift();
+    console.debug("%c7Nights", "color:#c084fc;font-weight:bold", line);
+  }
+  /** dump the last `n` trace lines (agent-browser / devtools debugging aid) */
+  dumpTrace(n = 80): string {
+    return this.traceBuf.slice(-n).join("\n");
+  }
+
   /* ---------------- spawning ---------------- */
   private nid() { return this.nextId++; }
+
+  /** 🎲 deterministic random city drop for a contest seat (0..99). Seeded by the
+   *  seat — the SAME answer on every client — so a remote avatar materialises
+   *  exactly where its soul will drop, wherever it's rendered. */
+  spawnSpotFor(slot: number): { x: number; z: number } {
+    const r = mulberry32(0x7e57123 ^ ((slot + 1) * 2654435761));
+    return freeSpot(r, this.world, 14, CITY_RADIUS - 14);
+  }
+  /** 🎲 PUBG-style drop: YOU parachute into a random street every match.
+   *  Multiplayer: your seat slot picks the spot (same on every client). */
+  private rollPlayerSpawn() {
+    if (this.mp && this.mpSlot >= 0) this.playerSpawn = this.spawnSpotFor(this.mpSlot);
+    else this.playerSpawn = freeSpot(this.rnd, this.world, 14, CITY_RADIUS - 14);
+    return this.playerSpawn;
+  }
 
   /**
    * Pick a police spawn far away from the player's spawn point. Used by both the
@@ -647,19 +700,19 @@ export class GameEngine {
    * beats used to cluster every officer within 140u of the map centre.
    */
   private safeCopSpot(): { x: number; z: number } {
-    const avoid = [{ x: SPAWN.x, z: SPAWN.z, r: 90 }];
+    const avoid = [{ x: this.playerSpawn.x, z: this.playerSpawn.z, r: 90 }];
     for (let i = 0; i < 14; i++) {
       const p = freeSpot(this.rnd, this.world, 24, CITY_RADIUS - 14, avoid);
-      if (Math.hypot(p.x - SPAWN.x, p.z - SPAWN.z) >= 90) return p;
+      if (Math.hypot(p.x - this.playerSpawn.x, p.z - this.playerSpawn.z) >= 90) return p;
     }
     // Last resort: walk a wide ring around spawn until a point survives colliders.
     for (let i = 0; i < 18; i++) {
       const a = (i / 18) * Math.PI * 2 + this.rnd() * 0.25;
-      const p = { x: SPAWN.x + Math.cos(a) * 105, z: SPAWN.z + Math.sin(a) * 105 };
+      const p = { x: this.playerSpawn.x + Math.cos(a) * 105, z: this.playerSpawn.z + Math.sin(a) * 105 };
       resolve(p, 0.9, this.world);
-      if (Math.hypot(p.x - SPAWN.x, p.z - SPAWN.z) >= 90) return p;
+      if (Math.hypot(p.x - this.playerSpawn.x, p.z - this.playerSpawn.z) >= 90) return p;
     }
-    return { x: SPAWN.x + 105, z: SPAWN.z };
+    return { x: this.playerSpawn.x + 105, z: this.playerSpawn.z };
   }
 
   /** A free spot at least `minD` units away from the player — where cops walk to when they give up. */
@@ -762,10 +815,9 @@ export class GameEngine {
       c.speed = range(r, 1.5, 2.1);
       c.timer = range(r, 2, 6);
     }
-    // 🤖 the JOIN BOT — when a real player joins, one dedicated bot drops right at
-    // their site: a fellow vote-scavenger beside protesters, a wanted vote-runner
-    // beside the officer (set up in assignScavengers/assignRunners below)
-    const jx = spotNear(r, this.world, SPAWN.x, SPAWN.z, 14, 26);
+    // 🤖 the JOIN BOT — when a real player joins, one dedicated bot drops into
+    // the contest at a random street too (same anti-clump rule as everyone)
+    const jx = freeSpot(r, this.world, 14, CITY_RADIUS - 14);
     this.civs.push({ id: this.nid(), kind: "civilian", x: jx.x, z: jx.z, vx: 0, vz: 0, face: 0, mode: "wander", tx: jx.x, tz: jx.z, timer: range(r, 1, 3), phase: Math.random() * 6, name: "Bijli", speed: 3.15, alertT: 0, companion: true, purse: Math.round(range(r, CIV_PURSE[0], CIV_PURSE[1])) });
     // 🧟 contest zombies never pre-spawn — each dusk the TURNED rise where they stood
     // 👥 the crew — 7 fellow "players" join you for the 7 nights
@@ -1188,7 +1240,10 @@ export class GameEngine {
     this.look = look;
     this.side = look.fac;
     this.policePerk = policeOutfitOf(look.fac === "police" ? look.outfit : "").stats;
-    this.player = newBody(SPAWN.x, SPAWN.z);
+    // 🎲 a fresh match drops you somewhere NEW (cops & crew scatter around it)
+    this.rollPlayerSpawn();
+    this.player = newBody(this.playerSpawn.x, this.playerSpawn.z);
+    this.traceBuf = []; this.traceT = 0; this.nightDeaths = []; // fresh forensics per run
     this.hp = 100; this.stamina = 100; this.stars = 0; this.starTimer = 0; this.chased = false;
     this.crimeReport = null; this.botLootCd = 0;
     this.setPersonalPause(false); this.pauseLog = []; this.spectating = false; this.specName = ""; this.specKey = "";
@@ -1977,13 +2032,13 @@ export class GameEngine {
     this.drive = null; // bail out of the spinning car too
     this.arrest = "free"; this.arrestStation = -1; this.vanNeeded = false;
     this.crimeReport = null; this.botLootCd = 0;
-    this.player.x = SPAWN.x; this.player.z = SPAWN.z; this.player.y = 0;
+    this.player.x = this.playerSpawn.x; this.player.z = this.playerSpawn.z; this.player.y = 0;
     this.player.vx = this.player.vz = 0;
     this.hp = 60;
     this.hurtT = HURT_FLASH_S;
     this.detainedT = 4;
     this.invulnT = 3;
-    this.dropVotes(SPAWN.x + 2, SPAWN.z + 2);
+    this.dropVotes(this.playerSpawn.x + 2, this.playerSpawn.z + 2);
     this.toast("Whoa, everything is spinning… a kind chaiwala helped you.", "bad");
   }
 
@@ -2353,26 +2408,35 @@ export class GameEngine {
 
   /* ================= 7 Nights: the survival-horror storyline ================= */
 
-  /** (Re)spawn the 7-person crew around the player's spawn — same names & colors
-   *  every run, so the accusation mystery stays learnable. Shirt color = identity. */
+  /** (Re)spawn the 99-person crew — Poisson-disc scattered across the WHOLE town
+   *  (min 15u between neighbours), not ringed around the player's drop spot like
+   *  the old 15…87u rings that stacked the full lobby on ~5% of the map. Same
+   *  names & colors every run, so the accusation mystery stays learnable. Shirt
+   *  color = identity. */
   private spawnCrew() {
+    const spots = scatterSpots(this.rnd, this.world, CREW_COUNT, 14, CITY_RADIUS - 14, BOT_SPAWN_GAP);
     for (let i = 0; i < CREW_COUNT; i++) {
-      // 🏟️ 99 contestants scattered across the whole town in widening rings — a full
-      // lobby, not a campfire circle (14 per ring × 7 rings, radii 15…87+jitter)
-      const a = (i % 14) / 14 * Math.PI * 2 + Math.floor(i / 14) * 0.37;
-      const rad = 15 + Math.floor(i / 14) * 12 + (i % 3) * 4;
-      const spot = { x: SPAWN.x + Math.cos(a) * rad, z: SPAWN.z + Math.sin(a) * rad };
-      resolve(spot, 0.5, this.world);
+      const spot = spots[i];
       const look = randomAppearance(this.rnd);
       look.shirt = CREW_COLORS[i % CREW_COLORS.length]; // the color IS the identity — clues depend on it
       this.crew.push({
         id: this.nid(), name: CREW_NAMES[i], color: CREW_COLORS[i % CREW_COLORS.length], colorName: CREW_COLOR_NAMES[i % CREW_COLOR_NAMES.length], look,
-        x: spot.x, z: spot.z, vx: 0, vz: 0, face: a + Math.PI,
+        x: spot.x, z: spot.z, vx: 0, vz: 0, face: this.rnd() * Math.PI * 2,
         alive: true, mode: "wander", tx: spot.x, tz: spot.z,
         timer: range(this.rnd, 2, 6), phase: Math.random() * 6,
         hp: CREW_HP, touchCd: 0, attackAnimT: 0, deathX: 0, deathZ: 0, clue: "", inspected: false,
         purse: Math.round(range(this.rnd, CREW_PURSE[0], CREW_PURSE[1])),
       });
+    }
+    // 🔍 spawn-scatter forensics — the "everyone started in the same place" check
+    if (CREW_COUNT > 0) {
+      let dMin = Infinity, dMax = 0;
+      for (const c of this.crew) {
+        const d = Math.hypot(c.x - this.playerSpawn.x, c.z - this.playerSpawn.z);
+        if (d < dMin) dMin = d;
+        if (d > dMax) dMax = d;
+      }
+      this.trace(`🎲 crew drop: ${CREW_COUNT} seats scattered ${dMin.toFixed(0)}–${dMax.toFixed(0)}u from your drop @ (${this.playerSpawn.x.toFixed(0)},${this.playerSpawn.z.toFixed(0)})`);
     }
   }
 
@@ -2481,6 +2545,8 @@ export class GameEngine {
     for (const i of this.possessed) { const c = this.crew[i]; c.zombieTonight = true; c.fed = 0; }
     sfx.howl();
     if (want > 0) this.toast(`🌙 DUSK — ${want} of ${aliveAll} survivors are TURNING. They must FEED before dawn… or crumble.`, "bad");
+    this.trace(`🌙 dusk n${this.nightNo}: roster ${this.possessed.length} turned of ${aliveAll} alive (${aliveIdx.length} bots + ${this.remotes.filter((r) => r.alive).length} remote + ${this.lost ? 0 : 1} you); nightDeaths cleared`);
+    this.nightDeaths = []; // fresh pile forensics each night
   }
 
   /** Night falls: the TURNED rise from the dirt where they stood — a hungering
@@ -2512,6 +2578,21 @@ export class GameEngine {
       sfx.howl();
       this.toast(`🐕‍🦺 Even the street dogs TURNED — ${hounds} zombie hounds${hounds > 1 ? "" : ""} prowl tonight. They're fast… but frail.`, "bad");
     }
+    // 🔍 horde-drop forensics: how spread out did the pack rise?
+    if (zc > 1) {
+      let dMin = Infinity;
+      for (let i = 0; i < this.zombies.length; i++) {
+        const a = this.zombies[i];
+        for (let j = i + 1; j < this.zombies.length; j++) {
+          const b = this.zombies[j];
+          const d = Math.hypot(a.x - b.x, a.z - b.z);
+          if (d < dMin) dMin = d;
+        }
+      }
+      this.trace(`🌑 night n${this.nightNo}: ${zc} risen + ${hounds} hounds; closest pair ${dMin.toFixed(1)}u apart (risen where they stood, latch = fresh)`);
+    } else {
+      this.trace(`🌑 night n${this.nightNo}: ${zc} risen + ${hounds} hounds`);
+    }
   }
 
   /** Dawn: the contest's reckoning. The turned who never FEED crumble with the
@@ -2536,6 +2617,17 @@ export class GameEngine {
     this.zombies = [];
     this.zRev++;
     this.nightsSurvived = Math.min(NIGHTS_TOTAL, this.nightNo);
+    // 🔍 dawn forensics — the "everyone died in the same place" report card
+    if (this.nightDeaths.length > 0) {
+      let pile = 0, px = 0, pz = 0;
+      for (const d of this.nightDeaths) {
+        let n = 0;
+        for (const o of this.nightDeaths) if (Math.hypot(d.x - o.x, d.z - o.z) < 15) n++;
+        if (n > pile) { pile = n; px = d.x; pz = d.z; }
+      }
+      const civNight = this.nightDeaths.filter((d) => d.cause === "civ").length;
+      this.trace(`🌅 dawn n${this.nightNo}: ${this.nightDeaths.length - civNight} contestants + ${civNight} townsfolk died tonight; biggest single pile = ${pile} bodies within 15u @ (${px.toFixed(0)},${pz.toFixed(0)})${pile >= 5 ? "  ⚠️ still clustered" : " ✓ spread"}`);
+    }
     // 🧱 dawn after night N — the transparent wall slams down one ring tighter
     this.shrinkZone();
     // 🐕 sunrise breaks the hounds' curse — strays shake off the rot; any you
@@ -2602,6 +2694,19 @@ export class GameEngine {
 
   private stepCrew(dt: number) {
     const p = this.player;
+    // 🛖 once per frame — how many hiding souls already crowd each shelter.
+    // The dusk/night hide pass uses this to spread the lobby across EVERY
+    // hideout instead of forty contestants funneling into one doorway that
+    // the pack then butchers in a single pile.
+    const shelterCrowd = new Array(this.hideSpots.length).fill(0);
+    if (this.phase !== "day" && this.phase !== "dawn") {
+      for (const o of this.crew) {
+        if (!o.alive || o.mode === "possessed") continue;
+        for (let hi = 0; hi < this.hideSpots.length; hi++) {
+          if (dist2(o.x, o.z, this.hideSpots[hi].x, this.hideSpots[hi].z) < 7 * 7) shelterCrowd[hi]++;
+        }
+      }
+    }
     for (let i = 0; i < this.crew.length; i++) {
       const c = this.crew[i];
       if (!c.alive) continue;
@@ -2629,44 +2734,81 @@ export class GameEngine {
       }
 
       if (c.mode === "possessed") {
-        // 🩸 THE PACK — each beast hunts the nearest living soul (crew, townsfolk, or you), fears fire, chews barricades
+        // 🩸 THE PACK — each beast hunts a living soul (crew, townsfolk, or you), fears fire, chews barricades
         c.attackAnimT = Math.max(0, c.attackAnimT - dt);
-        let tx = p.x, tz = p.z, td = d2p, victim = -1, victimCiv: Npc | null = null;
-        if (this.detainedT > 0 || this.drive) { td = Infinity; } // can't reach you in the van / the car
+        // nearest-prey scan (crew → townsfolk → real players)
+        let bx = p.x, bz = p.z, bd = d2p, bVictim = -1, bCiv: Npc | null = null, bRemote: RemotePlayer | null = null;
+        if (this.detainedT > 0 || this.drive) { bd = Infinity; } // can't reach you in the van / the car
         for (let j = 0; j < this.crew.length; j++) {
           const o = this.crew[j];
           if (j === i || !o.alive || o.mode === "possessed") continue; // the pack never turns on itself
           if (c.avoidT > 0 && o.id === c.avoidId) continue;            // 🧱 that soul is walled in — hunt reachable prey
           const d = dist2(c.x, c.z, o.x, o.z);
-          if (d < td) { td = d; tx = o.x; tz = o.z; victim = j; victimCiv = null; }
+          if (d < bd) { bd = d; bx = o.x; bz = o.z; bVictim = j; bCiv = null; bRemote = null; }
         }
         // 💀 townsfolk caught out in the dark are prey too
         for (const cv of this.civs) {
           if (cv.dead) continue;
           if (c.avoidT > 0 && cv.id === c.avoidId) continue; // 🧱 skipped — can't be reached
           const d = dist2(c.x, c.z, cv.x, cv.z);
-          if (d < td) { td = d; tx = cv.x; tz = cv.z; victim = -1; victimCiv = cv; }
-        }
-        // 🧱 grinding toward the same prey for 4.5s = they're behind a wall/yard —
-        // blacklist them for 6s so the beast rounds on someone it can reach
-        if ((c.blockT ?? 0) > 4.5) {
-          const blocked = victim >= 0 ? this.crew[victim] : victimCiv;
-          if (blocked) { c.avoidId = blocked.id; c.avoidT = 6; }
-          c.blockT = 0;
+          if (d < bd) { bd = d; bx = cv.x; bz = cv.z; bVictim = -1; bCiv = cv; bRemote = null; }
         }
         // 🌐 real players are prey too — the pack SWOOPS on their avatars (the
         // drama is shared; the actual HP hit lands from the hunter inside THEIR
         // own client, so nobody takes double damage from mirrored packs)
-        let remoteVictim: RemotePlayer | null = null;
         for (const r of this.remotes) {
           if (!r.alive) continue;
           const d = dist2(c.x, c.z, r.x, r.z);
-          if (d < td) { td = d; tx = r.x; tz = r.z; victim = -1; victimCiv = null; remoteVictim = r; }
+          if (d < bd) { bd = d; bx = r.x; bz = r.z; bVictim = -1; bCiv = null; bRemote = r; }
+        }
+        // 🎯 anti-funnel LATCH — the pack used to re-funnel onto the globally
+        // nearest soul every frame, stampeding fifty beasts into one butchering
+        // pile. Now each beast sticks with its marked victim until it dies,
+        // is walled, or someone else gets 2.8× closer.
+        let tx = bx, tz = bz, td = bd, victim = bVictim, victimCiv = bCiv, remoteVictim = bRemote;
+        let latched = false;
+        if (c.preyKind === "crew" && c.preyId !== undefined) {
+          const vi = this.crew.findIndex((o) => o.id === c.preyId);
+          const o = vi >= 0 ? this.crew[vi] : null;
+          if (o && o.alive && o.mode !== "possessed" && !(c.avoidT > 0 && o.id === c.avoidId)) {
+            const d = dist2(c.x, c.z, o.x, o.z);
+            if (d < 95 * 95 && d <= bd * 2.8) { tx = o.x; tz = o.z; td = d; victim = vi; victimCiv = null; remoteVictim = null; latched = true; }
+          }
+        } else if (c.preyKind === "civ" && c.preyId !== undefined) {
+          const cv = this.civs.find((o) => o.id === c.preyId);
+          if (cv && !cv.dead && !(c.avoidT > 0 && cv.id === c.avoidId)) {
+            const d = dist2(c.x, c.z, cv.x, cv.z);
+            if (d < 95 * 95 && d <= bd * 2.8) { tx = cv.x; tz = cv.z; td = d; victim = -1; victimCiv = cv; remoteVictim = null; latched = true; }
+          }
+        } else if (c.preyKind === "remote" && c.preySlot !== undefined) {
+          const r = this.remotes.find((o) => o.slot === c.preySlot);
+          if (r && r.alive) {
+            const d = dist2(c.x, c.z, r.x, r.z);
+            if (d < 95 * 95 && d <= bd * 2.8) { tx = r.x; tz = r.z; td = d; victim = -1; victimCiv = null; remoteVictim = r; latched = true; }
+          }
+        } else if (c.preyKind === "you" && this.detainedT <= 0 && !this.drive) {
+          if (d2p < 95 * 95 && d2p <= bd * 2.8) { tx = p.x; tz = p.z; td = d2p; victim = -1; victimCiv = null; remoteVictim = null; latched = true; }
+        }
+        if (!latched && bd < Infinity) {
+          // mark tonight's soul — whoever won the nearest-scan just now
+          if (bRemote) { c.preyKind = "remote"; c.preySlot = bRemote.slot; c.preyId = undefined; }
+          else if (bCiv) { c.preyKind = "civ"; c.preyId = bCiv.id; c.preySlot = undefined; }
+          else if (bVictim >= 0) { c.preyKind = "crew"; c.preyId = this.crew[bVictim].id; c.preySlot = undefined; }
+          else { c.preyKind = "you"; c.preyId = undefined; c.preySlot = undefined; }
+        }
+        // 🧱 grinding toward the same prey for 4.5s = they're behind a wall/yard —
+        // blacklist them for 6s so the beast rounds on someone it can reach
+        if ((c.blockT ?? 0) > 4.5) {
+          const blockedCrew = victim >= 0 ? this.crew[victim] : null;
+          const blocked = blockedCrew ?? victimCiv;
+          if (blocked) { c.avoidId = blocked.id; c.avoidT = 6; }
+          c.blockT = 0;
+          c.preyKind = undefined; c.preyId = undefined; c.preySlot = undefined; // latch drops with the ban
         }
         const fire = this.nearFire(c.x, c.z);
         if (fire && dist2(fire.x, fire.z, c.x, c.z) < CAMPFIRE_R * CAMPFIRE_R) {
           const dx = c.x - fire.x, dz = c.z - fire.z, dl = Math.hypot(dx, dz) || 1;
-          tx = c.x + (dx / dl) * 12; tz = c.z + (dz / dl) * 12; victim = -1; victimCiv = null;
+          tx = c.x + (dx / dl) * 12; tz = c.z + (dz / dl) * 12; victim = -1; victimCiv = null; remoteVictim = null;
         }
         stepNpc(c, tx, tz, HUNTER_SPEED, dt, this.world);
         // maul barricades that block the path
@@ -2762,7 +2904,7 @@ export class GameEngine {
       // 🌆 dusk & 🌑 night — run to a hideout and shiver there (spread across
       // every shelter + a personal ring slot, never one grinding blob)
       if (c.mode !== "hide") { c.mode = "hide"; c.timer = 0; }
-      const h = this.hideTargetFor(c);
+      const h = this.hideTargetFor(c, shelterCrowd);
       if (dist2(c.x, c.z, h.x, h.z) > 2.4 * 2.4) {
         stepNpc(c, h.x, h.z, CREW_SPEED * 1.3 * ((c.boostT ?? 0) > 0 ? CREW_BOOST_MULT : 1), dt, this.world);
       } else {
@@ -2922,6 +3064,16 @@ export class GameEngine {
     c.mode = "dead";
     c.deathX = c.x; c.deathZ = c.z;
     c.inspected = false;
+    // 🔍 death forensics — track WHERE the lobby is falling. A growing pile at
+    // one spot means hunters are still funneling somewhere they shouldn't.
+    if (this.phase === "dusk" || this.phase === "night") {
+      this.nightDeaths.push({ x: c.x, z: c.z, name: c.name, cause: wall ? "wall" : slain ? "slain" : byYou ? "you" : "beast" });
+      let pile = 0;
+      for (const d of this.nightDeaths) if (Math.hypot(c.x - d.x, c.z - d.z) < 15) pile++;
+      if (pile >= 4 && pile % 4 === 0) {
+        this.trace(`🩸 death pile #${pile}: ${c.name} fell @ (${c.x.toFixed(0)},${c.z.toFixed(0)}) — ${pile} bodies within 15u tonight (cause: ${wall ? "the WALL" : slain ? "slain by hunter" : byYou ? "you" : "the pack"})`);
+      }
+    }
     // 💰 their purse scatters where they fell — risk the night to loot it!
     this.dropLoot(c.deathX, c.deathZ, c.purse, slain ? `${c.name}'s dropped pouch` : `${c.name}'s purse`);
     if (wall) {
@@ -3361,25 +3513,37 @@ export class GameEngine {
    *  the roster is spread across all hideouts id-biased (still local — an id
    *  spot far away loses to the nearest one), and each bot gets a golden-angle
    *  ring slot around its shelter so the crowd forms a circle, not a pile. */
-  private hideTargetFor(c: Crew): { x: number; z: number } {
+  private hideTargetFor(c: Crew, crowd: number[]): { x: number; z: number } {
     // 🧱 shelters beyond the wall are DEAD ground — only aim at hideouts the
-    // shrinking circle still covers (fallback: a spot back toward the middle)
+    // shrinking circle still covers (fallback: dig in where you stand)
     const zR = this.zoneRadius() - 10;
-    const inside = this.hideSpots.filter((h) => Math.hypot(h.x, h.z) < zR);
-    const spots = inside.length ? inside : [{ x: 0, z: 0 }];
-    const mine = spots[c.id % spots.length];
-    let near = spots[0], nd = Infinity;
-    for (const h of spots) {
-      const d = dist2(c.x, c.z, h.x, h.z);
-      if (d < nd) { nd = d; near = h; }
+    let bestHi = -1, bestScore = Infinity;
+    for (let hi = 0; hi < this.hideSpots.length; hi++) {
+      const hs = this.hideSpots[hi];
+      if (Math.hypot(hs.x, hs.z) >= zR) continue;
+      // score = walk distance + crowd tax — every body already huddled there
+      // costs as much as ~8u of walking, so a full lobby NEVER funnels into
+      // one doorway for the pack to harvest in a single pile
+      const cw = crowd[hi] ?? 0;
+      const score = dist2(c.x, c.z, hs.x, hs.z) + cw * cw * 64;
+      if (score < bestScore) { bestScore = score; bestHi = hi; }
     }
-    const dMine = dist2(c.x, c.z, mine.x, mine.z);
-    const dNear = nd;
-    const pick = dMine <= Math.max(38 * 38, dNear * 1.7) ? mine : near;
-    const a = (c.id % 97) * 2.399;              // golden angle — even ring spacing
-    const r = 1.1 + (c.id % 4) * 0.55;          // 3 radii so rings nest, not overlap
-    const spot = { x: pick.x + Math.cos(a) * r, z: pick.z + Math.sin(a) * r };
-    resolve(spot, 0.45, this.world);            // never aim into a wall/tree/car
+    if (bestHi >= 0) {
+      const pick = this.hideSpots[bestHi];
+      const a = (c.id % 97) * 2.399;              // golden angle — even ring spacing
+      const r = 1.1 + (c.id % 5) * 0.7;           // 5 radii so rings nest, not overlap
+      const spot = { x: pick.x + Math.cos(a) * r, z: pick.z + Math.sin(a) * r };
+      resolve(spot, 0.45, this.world);            // never aim into a wall/tree/car
+      return spot;
+    }
+    // 🧱 no shelter left inside the shrinking wall — dig in WHERE YOU STAND
+    // (nudged back inside the wall). The old fallback marched every survivor
+    // to dead centre, where the horde slaughtered the whole endgame in one spot.
+    const d = Math.hypot(c.x, c.z) || 1;
+    const k = Math.max(0, Math.min(1, (zR - 5) / d));
+    const ja = (c.id % 16) * 2.399;
+    const spot = { x: c.x * k + Math.cos(ja) * 1.5, z: c.z * k + Math.sin(ja) * 1.5 };
+    resolve(spot, 0.45, this.world);
     return spot;
   }
 
@@ -4146,21 +4310,44 @@ export class GameEngine {
             const d = dist2(zb.x, zb.z, c.x, c.z);
             if (d < td) { td = d; tx = c.x; tz = c.z; victimCrew = ci; }
           }
-          if (td < ZOMBIE_HUNT_R * ZOMBIE_HUNT_R) {
+          // 🎯 anti-funnel LATCH — the horde used to re-pick the globally nearest
+          // soul EVERY frame, so fifty hunters stampeded whoever the blob smelled
+          // first and butchered the lobby in one pile. Now each beast sticks with
+          // its marked victim until it dies / is walled / way out of reach.
+          let latched = false;
+          if (zb.preyKind === "crew" && zb.preyId !== undefined) {
+            const vi = this.crew.findIndex((cc) => cc.id === zb.preyId);
+            const o = vi >= 0 ? this.crew[vi] : null;
+            if (o && o.alive && !o.zombieTonight && !((zb.avoidT ?? 0) > 0 && zb.avoidV === o.id)) {
+              const d = dist2(zb.x, zb.z, o.x, o.z);
+              if (d < 95 * 95 && d <= td * 3.2) { tx = o.x; tz = o.z; td = d; victimCrew = vi; latched = true; }
+            }
+          } else if (zb.preyKind === "you" && !beastYou && this.detainedT <= 0 && !this.drive) {
+            if (d2p < 95 * 95 && d2p <= td * 3.2) { tx = p.x; tz = p.z; td = d2p; victimCrew = -1; latched = true; }
+          }
+          if (!latched) {
+            // mark tonight's soul — whoever won the nearest-scan just now
+            if (victimCrew >= 0) { zb.preyKind = "crew"; zb.preyId = this.crew[victimCrew].id; }
+            else if (!beastYou && this.detainedT <= 0 && !this.drive && td < Infinity) { zb.preyKind = "you"; zb.preyId = undefined; }
+            else { zb.preyKind = undefined; zb.preyId = undefined; }
+          }
+          if (td < ZOMBIE_HUNT_R * ZOMBIE_HUNT_R || latched) {
             /* 🎯 pack surround (game-ai group movement): far out, each zombie
              * aims for its own golden-angle ring slot around the prey so the
-             * pack encircles instead of all seeking one point; inside 4u the
+             * pack encircles instead of all seeking one point; inside 5u the
              * offset fades to 0 and it's a straight lunge so kills connect.
-             * 🧱 wall/car sliding is all inside stepNpc now (whisker probe +
-             * sidestep watchdog) — no external grind probe needed here. */
+             * The ring is 3u wide now — the old 1.7u packed hunters shoulder to
+             * shoulder on one victim's chest. 🧱 wall/car sliding is all inside
+             * stepNpc (whisker probe + sidestep watchdog). */
             const td1 = Math.sqrt(td);
-            const offR = Math.max(0, Math.min(1.7, (td1 - 4) * 0.4));
+            const offR = Math.max(0, Math.min(3, (td1 - 5) * 0.34));
             const oa = (zb.id % 97) * 2.399;
             stepNpc(zb, tx + Math.cos(oa) * offR, tz + Math.sin(oa) * offR, ZOMBIE_NIGHT_SPEED, dt, this.world);
             // 🧱 4s grinding toward the same prey = they're behind a wall/yard —
             // ban them for 6s so this beast shambles off to prey it can reach
             if ((zb.blockT ?? 0) > 4 && victimCrew >= 0) {
               zb.avoidV = this.crew[victimCrew].id; zb.avoidT = 6; zb.blockT = 0;
+              zb.preyKind = undefined; zb.preyId = undefined; // latch drops with the ban
             }
             // caught a survivor — a few grabs bring them down and the zombie FEEDS
             if (victimCrew >= 0 && zb.touchCd <= 0 && td < 1.5 * 1.5) {
@@ -4176,11 +4363,25 @@ export class GameEngine {
               }
             }
           } else {
-            zb.vx *= 0.95; zb.vz *= 0.95;
-            // 🧱 wedged while drifting (tombstones/walls) → re-pick the haunt spot NOW
-            if ((zb.blockT ?? 0) > 2 || Math.random() < dt * 0.2) {
-              const t = freeSpot(this.rnd, this.world, 4, 34); stepNpc(zb, GRAVEYARD.x + t.x * 0.2, GRAVEYARD.z + t.z * 0.2, ZOMBIE_SPEED * 0.4, dt, this.world);
+            // 🌙 no soul within sniff range — prowl the night streets near HERE.
+            // The old drift dragged every idle shambler to ONE graveyard point,
+            // milling the whole idle horde into a single blob across town.
+            zb.roamT = (zb.roamT ?? 0) - dt;
+            if ((zb.blockT ?? 0) > 2 || zb.roamT <= 0 || (zb.roamX !== undefined && dist2(zb.x, zb.z, zb.roamX, zb.roamZ) < 1.6)) {
+              // fresh wander pick — mostly around here; a quarter drifts to the
+              // graveyard's WIDE haunt area (thematic, but no longer a point-blob)
+              let t = this.rnd() < 0.25
+                ? spotNear(this.rnd, this.world, GRAVEYARD.x, GRAVEYARD.z, 6, GRAVEYARD.r - 4)
+                : spotNear(this.rnd, this.world, zb.x, zb.z, 12, 55);
+              // 🧱 never prowl beyond the shrinking wall — pull the pick back inside
+              const zl = this.zoneRadius() - 8;
+              const tl = Math.hypot(t.x, t.z);
+              if (tl > zl) { const kk = zl / (tl || 1); t = { x: t.x * kk, z: t.z * kk }; }
+              zb.roamX = t.x; zb.roamZ = t.z; zb.roamT = range(this.rnd, 7, 16);
               if ((zb.blockT ?? 0) > 2) zb.blockT = 0; // fresh spot, fresh clock
+            }
+            if (zb.roamX !== undefined && zb.roamZ !== undefined) {
+              stepNpc(zb, zb.roamX, zb.roamZ, ZOMBIE_SPEED * 0.55, dt, this.world);
             }
           }
         }
@@ -4214,6 +4415,32 @@ export class GameEngine {
           b.x += (dx / d) * push; b.z += (dz / d) * push;
         }
       }
+    }
+
+    /* 🔍 night forensics sampler — every 2.5s the trace answers the lobby's
+     * exact complaints: are the zombies piling into ONE cluster? blobbing at
+     * the graveyard? grinding against walls (blockT)? dying in one spot? */
+    this.traceT -= dt;
+    if (night > 0.55 && this.traceT <= 0) {
+      this.traceT = 2.5;
+      const alive = this.zombies.filter((z) => !z.dead);
+      let hunting = 0, grinding = 0;
+      for (const z of alive) {
+        if (z.preyKind) hunting++;
+        if ((z.blockT ?? 0) > 2) grinding++;
+      }
+      // biggest single cluster of hunters (pairwise within 10u — flood-ish count)
+      let cluster = 0, cx = 0, cz = 0;
+      for (const a of alive) {
+        let n = 0;
+        for (const b of alive) if (Math.hypot(a.x - b.x, a.z - b.z) < 10) n++;
+        if (n > cluster) { cluster = n; cx = a.x; cz = a.z; }
+      }
+      const graveBlob = alive.filter((z) => Math.hypot(z.x - GRAVEYARD.x, z.z - GRAVEYARD.z) < 25).length;
+      const grindingCrew = this.crew.filter((c) => c.alive && (c.blockT ?? 0) > 2).length;
+      const possAlive = this.possessed.filter((i) => this.crew[i].alive).length;
+      const hiders = this.crew.filter((c) => c.alive && c.mode === "hide").length;
+      this.trace(`🔍 horde: ${alive.length} up (${hunting} latched · ${alive.length - hunting} prowling) | biggest hunter cluster ${cluster} @ (${cx.toFixed(0)},${cz.toFixed(0)}) | grave-blob ${graveBlob} | grinding z${grinding}/c${grindingCrew} | pack ${possAlive} · hiding ${hiders} | zone ${this.zoneRadius().toFixed(0)}u`);
     }
     for (const an of this.animals) {
       an.timer -= dt;
@@ -4612,11 +4839,16 @@ export class GameEngine {
       if (!r) {
         r = {
           slot: p.slot, name: p.name, look: p.look ?? this.look,
-          x: SPAWN.x, z: SPAWN.z, y: 0, vx: 0, vz: 0, face: 0,
+          // 🎲 a joiner materialises at THEIR seat's drop spot (deterministic per
+          // slot — the same answer on every client), never stacked at the map centre
+          x: 0, z: 0, y: 0, vx: 0, vz: 0, face: 0,
           hp: 100, alive: true, beast: false, drive: false, sprint: false, air: false,
           attackT: 0, points: 0, kills: 0, money: 0, lastSeen: 0,
         };
+        const spot = this.spawnSpotFor(p.slot);
+        r.x = spot.x; r.z = spot.z;
         this.remotes.push(r);
+        this.trace(`🌐 remote slot ${p.slot} (${p.name}) joined — avatar parked at their drop (${spot.x.toFixed(0)},${spot.z.toFixed(0)}) until their client streams in`);
         this.toast(`🌐 ${p.name} joined the 7 nights!`, "good");
       } else {
         r.name = p.name;
