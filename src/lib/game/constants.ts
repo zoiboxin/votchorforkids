@@ -618,6 +618,17 @@ export const CIV_PANIC_R = 11;
 export const CREW_PANIC_R = 12;
 /** …and graveyard zombies SHUFFLE after any living soul (player or townsfolk). */
 export const ZOMBIE_HUNT_R = 26;
+/* 🧟 prey-spread brain — the fix for "every zombie attacks the same player":
+ * a fresh hunt is a weighted-random roll over every living soul within SNIFF
+ * (near smells stronger, but any soul can win the roll), and a soul already
+ * swarmed by SWARM_CAP hunters is heavily discounted so the horde fans out
+ * across the night instead of stampeding one victim in a butchering pile. */
+export const ZOMBIE_SNIFF = 44;      // how far a fresh pick can smell souls
+export const ZOMBIE_SWARM_CAP = 3;   // hunters per victim before re-rolling for fresher prey
+/* 🌳 TIMBER feel — renderer animation timings (tumble + per-chop shudder) */
+export const TREE_FALL_S = 0.95;     // seconds from the last axe blow to flat
+export const TREE_WOBBLE_S = 0.42;   // a hit tree shudders this long
+export const ROCK_BREAK_S = 0.36;    // a smashed boulder crumbles away this long
 
 /* ---------- 🤖 bots forage too — food, money & power gems ---------- */
 export const CREW_SEEK_R = 42;       // a bot walks this far off-path to grab a snack/pile

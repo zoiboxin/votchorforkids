@@ -4,7 +4,7 @@ import { useLayoutEffect, useMemo, useRef } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  AIRPORT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, WALL_RADIUS, stationCage, stationGate,
+  AIRPORT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, TREE_FALL_S, TREE_WOBBLE_S, WALL_RADIUS, stationCage, stationGate,
 } from "@/lib/game/constants";
 import {
   AVENUE, GATE, generateWorld, HOSPITAL, MALL, MAIN_ROAD, PARK, ROAD_W, ROADS, RING_R, RING_W, SCHOOL, TOWN_SQUARE, terrainHeight,
@@ -19,6 +19,15 @@ export const WORLD: World = generateWorld();
 const tmp = new THREE.Object3D();
 tmp.rotation.order = "YXZ"; // lets placeCar rake the windshield around the car's own side axis
 const col = new THREE.Color();
+
+/* 🌳 tree-anim scratch — the chop-shudder & TIMBER-tumble matrix stack */
+const _mSrc = new THREE.Matrix4();
+const _mOut = new THREE.Matrix4();
+const _mPivot = new THREE.Matrix4();
+const _mInv = new THREE.Matrix4();
+const _mRot = new THREE.Matrix4();
+const _mScl = new THREE.Matrix4();
+const _vAxis = new THREE.Vector3();
 
 /* ------------------------- ground & zones ------------------------- */
 function Disc({ r, color, y, x = 0, z = 0 }: { r: number; color: string; y: number; x?: number; z?: number }) {
@@ -355,33 +364,132 @@ function Forest({ engine }: { engine: GameEngine }) {
 
   // 7Nights fell pass — scale felled trees' instances to 0 (or restore on reset).
   // Only reruns when engine.fellVersion bumps; no per-chop geometry rebuilds.
+  const putInst = (mesh: THREE.InstancedMesh, inst: number, src: Float32Array | null) => {
+    const arr = mesh.instanceMatrix.array as Float32Array;
+    const off = inst * 16;
+    if (!src) arr.fill(0, off, off + 16);
+    else arr.set(src.subarray(off, off + 16), off);
+  };
   const applyFelled = () => {
     const st = snap.current;
     if (!st.trunks || !st.tiers || !st.blobs) return;
-    const put = (mesh: THREE.InstancedMesh, inst: number, gone: boolean, src: Float32Array) => {
-      const arr = mesh.instanceMatrix.array as Float32Array;
-      const off = inst * 16;
-      if (gone) arr.fill(0, off, off + 16);
-      else arr.set(src.subarray(off, off + 16), off);
-    };
     for (let i = 0; i < WORLD.trees.length; i++) {
       const gone = engine.felled.has(i);
-      put(trunks.current, i, gone, st.trunks);
+      putInst(trunks.current, i, gone ? null : st.trunks);
       const t0 = share.tier0[i];
-      if (t0 >= 0) for (let k = 0; k < 3; k++) put(tiers.current, t0 + k, gone, st.tiers);
+      if (t0 >= 0) for (let k = 0; k < 3; k++) putInst(tiers.current, t0 + k, gone ? null : st.tiers);
       const b0 = share.blob0[i];
-      if (b0 >= 0) for (let k = 0; k < 5; k++) put(blobs.current, b0 + k, gone, st.blobs);
+      if (b0 >= 0) for (let k = 0; k < 5; k++) putInst(blobs.current, b0 + k, gone ? null : st.blobs);
     }
     trunks.current.instanceMatrix.needsUpdate = true;
     tiers.current.instanceMatrix.needsUpdate = true;
     blobs.current.instanceMatrix.needsUpdate = true;
   };
 
+  /* 🪓🌲 juice pass — a chopped tree SHUDDERS away from the axe, a felled tree
+   * tips over and TUMBLES down (accelerating, like real timber) instead of
+   * popping out of existence. Both animate the tree's own instances around the
+   * trunk-base pivot, straight from the pristine snapshot matrices. */
+  const chopVer = useRef(-1);
+  const wobbling = useRef(new Map<number, { end: number; dx: number; dz: number }>());
+  const falling = useRef(new Set<number>());
+
+  /** Re-pose one tree (trunk + its canopy share) with a lean about the trunk
+   * base, an overall squash, leaning toward tip (dx,dz). src=null → zeroed. */
+  const poseTree = (i: number, lean: number, scl: number, dx: number, dz: number) => {
+    const st = snap.current;
+    if (!st.trunks || !st.tiers || !st.blobs) return;
+    const t = WORLD.trees[i];
+    _mPivot.makeTranslation(t.x, 0, t.z);
+    _mInv.makeTranslation(-t.x, 0, -t.z);
+    _vAxis.set(dz, 0, -dx).normalize(); // +lean tips the crown toward (dx,dz)
+    _mRot.makeRotationAxis(_vAxis, lean);
+    _mScl.makeScale(scl, scl, scl);
+    const apply = (mesh: THREE.InstancedMesh, inst: number, src: Float32Array) => {
+      const off = inst * 16;
+      _mSrc.fromArray(src, off);
+      _mOut.multiplyMatrices(_mPivot, _mRot).multiply(_mScl).multiply(_mInv).multiply(_mSrc);
+      (mesh.instanceMatrix.array as Float32Array).set(_mOut.elements, off);
+    };
+    apply(trunks.current, i, st.trunks);
+    const t0 = share.tier0[i];
+    if (t0 >= 0) for (let k = 0; k < 3; k++) apply(tiers.current, t0 + k, st.tiers);
+    const b0 = share.blob0[i];
+    if (b0 >= 0) for (let k = 0; k < 5; k++) apply(blobs.current, b0 + k, st.blobs);
+  };
+
   useFrame((s) => {
     WIND.value = s.clock.elapsedTime;
+    // 🪓 per-chop shudder — the last-struck tree leans away from the axe and
+    // springs back with a damped wobble
+    if (engine.chopVersion !== chopVer.current) {
+      chopVer.current = engine.chopVersion;
+      if (engine.lastChop.i >= 0 && !engine.felled.has(engine.lastChop.i)) {
+        wobbling.current.set(engine.lastChop.i, {
+          end: s.clock.elapsedTime + TREE_WOBBLE_S,
+          dx: engine.lastChop.dx, dz: engine.lastChop.dz,
+        });
+      }
+    }
     if (engine.fellVersion !== lastFell.current) {
       lastFell.current = engine.fellVersion;
       applyFelled();
+      // newly felled trees join the tumble until they flatten (reset empties it)
+      falling.current.clear();
+      for (const i of engine.felled) {
+        const ft = engine.fellTimes.get(i);
+        if (ft !== undefined && engine.elapsed - ft < TREE_FALL_S) falling.current.add(i);
+      }
+    }
+    // per-frame anim pass — only while something is actually moving
+    let dirty = false;
+    for (const [i, wob] of wobbling.current) {
+      if (s.clock.elapsedTime >= wob.end) {
+        wobbling.current.delete(i);
+        const st = snap.current;
+        if (st.trunks && !engine.felled.has(i)) {
+          putInst(trunks.current, i, st.trunks);
+          const t0 = share.tier0[i];
+          if (t0 >= 0) for (let k = 0; k < 3; k++) putInst(tiers.current, t0 + k, st.tiers);
+          const b0 = share.blob0[i];
+          if (b0 >= 0) for (let k = 0; k < 5; k++) putInst(blobs.current, b0 + k, st.blobs);
+        }
+        dirty = true;
+        continue;
+      }
+      const k = 1 - (wob.end - s.clock.elapsedTime) / TREE_WOBBLE_S; // 0→1
+      poseTree(i, Math.sin(k * Math.PI * 3.5) * 0.055 * (1 - k), 1, wob.dx, wob.dz);
+      dirty = true;
+    }
+    for (const i of falling.current) {
+      const ft = engine.fellTimes.get(i);
+      const age = ft === undefined ? TREE_FALL_S : engine.elapsed - ft;
+      if (age >= TREE_FALL_S) {
+        falling.current.delete(i);
+        const st = snap.current;
+        if (st.trunks) {
+          putInst(trunks.current, i, null);
+          const t0 = share.tier0[i];
+          if (t0 >= 0) for (let k = 0; k < 3; k++) putInst(tiers.current, t0 + k, null);
+          const b0 = share.blob0[i];
+          if (b0 >= 0) for (let k = 0; k < 5; k++) putInst(blobs.current, b0 + k, null);
+        }
+        dirty = true;
+        continue;
+      }
+      const k = age / TREE_FALL_S; // 0→1
+      // real timber accelerates: slow lean, then whoosh — plus a tiny tremble
+      const lean = 1.42 * k * k + Math.sin(k * 24) * 0.018 * (1 - k);
+      const dir = engine.fellDir.get(i) ?? 0;
+      // the last 15% sinks the whole tree into the stump as it settles
+      const scl = k > 0.85 ? Math.max(0.001, 1 - (k - 0.85) / 0.15) : 1;
+      poseTree(i, lean, scl, Math.sin(dir), Math.cos(dir));
+      dirty = true;
+    }
+    if (dirty) {
+      trunks.current.instanceMatrix.needsUpdate = true;
+      tiers.current.instanceMatrix.needsUpdate = true;
+      blobs.current.instanceMatrix.needsUpdate = true;
     }
   });
 
@@ -1676,13 +1784,14 @@ function MountainTerrain() {
   return <mesh geometry={geo} material={mat} frustumCulled={false} position-y={-0.02} />;
 }
 
-/* --------- 🔨 breakable boulders — the hammer's food, hidden once smashed --------- */
-function Rocks() {
+/* --------- 🔨 breakable boulders — companion stones for the smashable
+ * RocksView boulders; the whole group hides once the boulder is smashed --------- */
+function Rocks({ engine }: { engine: GameEngine }) {
   const refs = useRef<(THREE.Group | null)[]>([]);
   useFrame(() => {
     WORLD.rocks.forEach((rk, i) => {
       const g = refs.current[i];
-      if (g) g.visible = rk.s > 0;
+      if (g) g.visible = rk.s > 0 && !engine.brokenRocks.has(i);
     });
   });
   return (
@@ -2823,7 +2932,7 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
       <Ring a={DEEP_JUNGLE_RADIUS} b={JUNGLE_RADIUS} color="#1e5630" y={0.031} />
       <Ring a={JUNGLE_RADIUS} b={WALL_RADIUS + 4} color="#232b20" y={0.032} />
       <MountainTerrain />
-      <Rocks />
+      <Rocks engine={engine} />
       <Disc r={GRAVEYARD.r} color="#3a3a46" y={0.06} x={GRAVEYARD.x} z={GRAVEYARD.z} />
       <Roads />
       <Airport />

@@ -759,6 +759,11 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
     // torso twists into the blow, left arm swings for balance
     body.rotation.y += Math.sin(sw * Math.PI) * -0.3;
     arms[0].rotation.x = _ground.a0x + Math.sin(sw * Math.PI) * 0.55;
+    // 💥 weight — the whole body dips into the strike and the eyes lock on:
+    // sells the impact of every axe chop / hammer smash / claw swipe
+    const strikeK = Math.min(1, sw / 0.35);
+    body.position.y -= Math.sin(strikeK * Math.PI) * 0.07;
+    head.rotation.x += Math.sin(sw * Math.PI) * 0.24;
   }
 }
 

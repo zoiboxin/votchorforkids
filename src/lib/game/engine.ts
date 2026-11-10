@@ -18,7 +18,8 @@ import {
   TREE_HITS, WOOD_PER_TREE, WIN_BONUS, PLAYERS_TOTAL, ZOMBIE_CREW_DMG, ZOMBIE_HP,
   ZONE_DRAIN_BASE, ZONE_DRAIN_STEP, ZONE_GRACE_S, ZONE_RADII,
   MONEY_PER_PILE, CASH_RESPAWN_S, CREW_PURSE, CIV_PURSE, ZOMBIE_PURSE, POINTS_LOOT,
-  CIV_PANIC_R, CREW_PANIC_R, ZOMBIE_HUNT_R,
+  CIV_PANIC_R, CREW_PANIC_R, ZOMBIE_HUNT_R, ZOMBIE_SNIFF, ZOMBIE_SWARM_CAP,
+  TREE_FALL_S, TREE_WOBBLE_S, ROCK_BREAK_S,
   CREW_SEEK_R, CREW_EAT_R, CREW_BOOST_S, CREW_BOOST_MULT,
   CRIME_SEE_R, CRIME_CIV_SEE_R, CRIME_REPORT_RANGE, CRIME_REPORT_T, WARRANT_DETECT, CRIME_STAR_MURDER, CRIME_STAR_MINOR,
   type AnimalKind, type Appearance, type Phase, type PolicePerk, type PowerKind, type Side, type ToolKind, type Zone, zoneOf, ZONE_TOAST,
@@ -129,6 +130,9 @@ export interface Zombie extends SteerMemory {
    * fifty hunters funneled onto one victim and butchered the lobby in a pile.
    * Now each hunter STICKS with its prey until it dies / is walled / too far. */
   preyId?: number; preyKind?: "crew" | "civ" | "you" | "remote"; preySlot?: number;
+  /** ⏱️ attention-recheck cooldown — a closer soul can steal a latched hunter,
+   * but the steal roll runs on this cadence so chases don't thrash every frame */
+  pickT?: number;
 }
 
 /* ---------------- 7 Nights: survivors, tools & builds ---------------- */
@@ -204,7 +208,10 @@ export interface Build {
 }
 export interface Animal { id: number; kind: AnimalKind; x: number; z: number; vx: number; vz: number; face: number; tx: number; tz: number; timer: number; phase: number; resting: boolean;
   /* 🐕 dogs: night turns every stray into a rotting hound */
-  zombie?: boolean; hp?: number; barkT?: number; touchCd?: number; dead?: boolean; }
+  zombie?: boolean; hp?: number; barkT?: number; touchCd?: number; dead?: boolean;
+  /* 🎯 hound prey latch — same diverse-pick brain as the shamblers (crew id /
+   * townsfolk id they're chasing, plus the attention-recheck cadence) */
+  preyCrew?: number; preyCiv?: number; pickT?: number; }
 export interface ItemEnt { id: number; def: number; x: number; z: number; active: boolean; respawn: number }
 export interface VoteEnt { id: number; x: number; z: number; state: "world" | "carried" | "delivered"; /** runner only: which runner holds this vote */ carrierId?: number; /** police side: a runner-delivered vote sneaks back into the city after this timer */ respawnT?: number; /** AI vote-claim ticket: the bot currently walking to grab it (spread bots across the map) */ claimBy?: number }
 /** A rare super-power gem glowing somewhere in the jungle (or a mystery spot). */
@@ -568,6 +575,19 @@ export class GameEngine {
   brokenRocks = new Set<number>();
   /** bump whenever felled/brokenRocks change — lets renderers invalidate cheaply */
   fellVersion = 0;
+  /* --- 🪓 TIMBER feel — per-hit animation state the renderers read --- */
+  /** bumped on every axe blow — the last-struck tree shudders (WorldView) */
+  chopVersion = 0;
+  /** the tree just struck + the swing direction (it shudders AWAY from the axe) */
+  lastChop = { i: -1, dx: 0, dz: 1 };
+  /** bumped on every hammer blow — the last-struck boulder jiggles (RocksView) */
+  rockVersion = 0;
+  lastRock = -1;
+  /** tree idx → engine.elapsed when it fell (+ tip-over direction) — the tumble */
+  fellTimes = new Map<number, number>();
+  fellDir = new Map<number, number>();
+  /** boulder idx → engine.elapsed when it smashed — the crumble-away */
+  rockBreakAt = new Map<number, number>();
   attackCd = 0;
   accuseCd = 0;
   /** who the spirit possessed THIS night (crew indices — a PACK hunts at night) */
@@ -1287,6 +1307,8 @@ export class GameEngine {
     this.treeHits = new Array(this.world.trees.length).fill(0);
     this.rockHp = new Array(this.world.rocks.length).fill(ROCK_HITS);
     this.felled.clear(); this.brokenRocks.clear(); this.fellVersion++;
+    this.fellTimes.clear(); this.fellDir.clear(); this.rockBreakAt.clear();
+    this.lastChop = { i: -1, dx: 0, dz: 1 }; this.lastRock = -1;
     for (const te of this.toolEnts) { te.active = true; te.respawn = 0; }
     this.crew = [];
     this.spawnCrew();
@@ -2790,11 +2812,31 @@ export class GameEngine {
           if (d2p < 95 * 95 && d2p <= bd * 2.8) { tx = p.x; tz = p.z; td = d2p; victim = -1; victimCiv = null; remoteVictim = null; latched = true; }
         }
         if (!latched && bd < Infinity) {
-          // mark tonight's soul — whoever won the nearest-scan just now
-          if (bRemote) { c.preyKind = "remote"; c.preySlot = bRemote.slot; c.preyId = undefined; }
-          else if (bCiv) { c.preyKind = "civ"; c.preyId = bCiv.id; c.preySlot = undefined; }
-          else if (bVictim >= 0) { c.preyKind = "crew"; c.preyId = this.crew[bVictim].id; c.preySlot = undefined; }
-          else { c.preyKind = "you"; c.preyId = undefined; c.preySlot = undefined; }
+          // 🎯 diverse mark — weighted random over living souls (not always the
+          // nearest one); souls already swarmed are discounted so the PACK
+          // spreads across the lobby exactly like the shambler horde does
+          const pick = this.pickDiversePrey(c, {
+            avoidId: c.avoidId, avoidT: c.avoidT, excludeCi: i,
+            includeYou: this.detainedT <= 0 && !this.drive,
+            includeCivs: true, includeRemotes: true,
+            sniff: 70, cap: ZOMBIE_SWARM_CAP, farHunt: false,
+          });
+          if (pick && pick.kind === "remote") {
+            const r = this.remotes.find((o) => o.slot === pick.slot);
+            if (r) { c.preyKind = "remote"; c.preySlot = pick.slot; c.preyId = undefined; remoteVictim = r; victimCiv = null; victim = -1; tx = r.x; tz = r.z; td = dist2(c.x, c.z, tx, tz); }
+          } else if (pick && pick.kind === "civ" && pick.civ) {
+            c.preyKind = "civ"; c.preyId = pick.civ.id; c.preySlot = undefined;
+            victim = -1; victimCiv = pick.civ; remoteVictim = null;
+            tx = pick.civ.x; tz = pick.civ.z; td = dist2(c.x, c.z, tx, tz);
+          } else if (pick && pick.kind === "crew") {
+            c.preyKind = "crew"; c.preyId = this.crew[pick.ci].id; c.preySlot = undefined;
+            victim = pick.ci; victimCiv = null; remoteVictim = null;
+            tx = this.crew[pick.ci].x; tz = this.crew[pick.ci].z; td = dist2(c.x, c.z, tx, tz);
+          } else if (pick) {
+            c.preyKind = "you"; c.preyId = undefined; c.preySlot = undefined;
+            victim = -1; victimCiv = null; remoteVictim = null;
+            tx = p.x; tz = p.z; td = dist2(c.x, c.z, tx, tz);
+          }
         }
         // 🧱 grinding toward the same prey for 4.5s = they're behind a wall/yard —
         // blacklist them for 6s so the beast rounds on someone it can reach
@@ -3271,7 +3313,7 @@ export class GameEngine {
     const fx = -Math.sin(this.input.yaw), fz = -Math.cos(this.input.yaw);
     if (kind === "axe") {
       const ti = this.nearestTree(fx, fz);
-      if (ti >= 0) { this.chopTree(ti); return; }
+      if (ti >= 0) { this.chopTree(ti, fx, fz); return; }
     }
     if (kind === "hammer") {
       const ri = this.nearestRock(fx, fz);
@@ -3312,11 +3354,16 @@ export class GameEngine {
     return best;
   }
 
-  private chopTree(i: number) {
+  private chopTree(i: number, dx = 0, dz = 1) {
     const t = this.world.trees[i];
     this.treeHits[i] = (this.treeHits[i] ?? 0) + 1;
     sfx.chop();
     this.fxQueue.push({ type: "confetti", x: t.x, y: 1.6, z: t.z, hue: 0.09 });
+    // 🪓 the struck tree SHUDDERS away from the axe — renderers read lastChop +
+    // chopVersion and shake exactly that trunk & canopy (damped, then settled)
+    this.lastChop = { i, dx, dz };
+    this.chopVersion++;
+    this.addShake(0.16); // 💥 LIGHT — steel biting wood
     if (this.treeHits[i] >= TREE_HITS) {
       this.felled.add(i);
       this.fellVersion++;
@@ -3325,6 +3372,11 @@ export class GameEngine {
       this.points += POINTS_HARVEST;
       sfx.smash();
       this.toast(`🪓 TIMBER! +${WOOD_PER_TREE} wood (🪵 ${this.res.wood})`, "good");
+      // 🌳 TIMBER! the trunk tips over AWAY from the chopper and tumbles down —
+      // the stump pops in only once the fall finishes (renderer reads fellTimes)
+      this.fellTimes.set(i, this.elapsed);
+      this.fellDir.set(i, Math.atan2(dx, dz));
+      this.addShake(0.5); // 💥 BIG — a whole tree just came down
     }
   }
 
@@ -3333,6 +3385,10 @@ export class GameEngine {
     this.rockHp[i] = (this.rockHp[i] ?? ROCK_HITS) - 1;
     sfx.smash();
     this.fxQueue.push({ type: "confetti", x: rk.x, y: 1.1, z: rk.z, hue: 0.62 });
+    // 🔨 the struck boulder JIGGLES under the hammer — renderers read lastRock
+    this.lastRock = i;
+    this.rockVersion++;
+    this.addShake(0.2); // 💥 LIGHT-MED — stone ringing
     if (this.rockHp[i] <= 0) {
       this.brokenRocks.add(i);
       this.fellVersion++;
@@ -3340,7 +3396,102 @@ export class GameEngine {
       this.res.rock += ROCK_PER_BOULDER;
       this.points += POINTS_HARVEST;
       this.toast(`🔨 CRACK! +${ROCK_PER_BOULDER} stone (🪨 ${this.res.rock})`, "good");
+      // 🪨 the boulder CRUMBLES — it sinks, shrinks and rolls apart (RocksView)
+      this.rockBreakAt.set(i, this.elapsed);
+      this.addShake(0.45); // 💥 BIG — the boulder splits apart
     }
+  }
+
+  /* ---------------- 🧟 horde prey-spread brain ---------------- */
+  /** 🎯 how many night hunters (shamblers, hounds, the possessed pack) are
+   *  latched onto each crew id RIGHT NOW — rebuilt once per night frame so
+   *  fresh prey picks can discount souls that are already getting swarmed. */
+  private preyLoad = new Map<number, number>();
+  private rebuildPreyLoad() {
+    this.preyLoad.clear();
+    for (const zb of this.zombies) {
+      if (zb.dead || zb.preyKind !== "crew" || zb.preyId === undefined) continue;
+      this.preyLoad.set(zb.preyId, (this.preyLoad.get(zb.preyId) ?? 0) + 1);
+    }
+    for (const c of this.crew) {
+      if (!c.alive || c.mode !== "possessed") continue;
+      if (c.preyKind === "crew" && c.preyId !== undefined) {
+        this.preyLoad.set(c.preyId, (this.preyLoad.get(c.preyId) ?? 0) + 1);
+      }
+    }
+    for (const an of this.animals) {
+      if (!an.zombie || an.dead || an.preyCrew === undefined) continue;
+      this.preyLoad.set(an.preyCrew, (this.preyLoad.get(an.preyCrew) ?? 0) + 1);
+    }
+  }
+
+  /**
+   * 🎯 DIVERSE PREY PICK — the fix for "every zombie attacks the same player".
+   * The old fresh-pick always chose the globally NEAREST soul, so whenever a
+   * latch broke the whole horde funneled onto one victim in a stampede.
+   * A fresh pick is now a weighted-random roll over every living soul:
+   *   • nearby souls smell stronger (weight 1/(d+8)) but ANY soul can win;
+   *   • souls already swarmed by ≥ cap hunters are heavily discounted, so the
+   *     horde spreads out and "finds another player" on its own;
+   *   • with farHunt, a 1-in-6 roll catches a DISTANT scent and latches a prowl
+   *     toward it — hunters roam the night instead of circling one corpse pile.
+   */
+  private pickDiversePrey(
+    self: { x: number; z: number },
+    o: {
+      avoidId?: number; avoidT?: number;
+      excludeCi?: number;                                  // the pack never hunts itself
+      includeYou: boolean; includeCivs: boolean; includeRemotes: boolean;
+      sniff: number;                                       // pick radius (0 = whole map)
+      cap: number;                                         // swarm cap before a soul is discounted
+      farHunt: boolean;                                    // may catch a far scent?
+    },
+  ): { kind: "crew" | "civ" | "remote" | "you"; ci: number; civ: Npc | null; slot: number } | null {
+    const avoid = (o.avoidT ?? 0) > 0 ? o.avoidId : undefined;
+    const far = o.farHunt && this.rnd() < 0.17;
+    const sniff2 = far ? Infinity : o.sniff * o.sniff;
+    const cands: { kind: "crew" | "civ" | "remote" | "you"; ci: number; civ: Npc | null; slot: number; w: number }[] = [];
+    for (let ci = 0; ci < this.crew.length; ci++) {
+      const c = this.crew[ci];
+      if (ci === o.excludeCi || !c.alive || c.zombieTonight || c.mode === "possessed") continue;
+      if (avoid !== undefined && c.id === avoid) continue; // 🧱 walled-in prey — skip
+      const d2 = dist2(self.x, self.z, c.x, c.z);
+      if (d2 > sniff2) continue;
+      let w = 1 / (Math.sqrt(d2) + 8);
+      if ((this.preyLoad.get(c.id) ?? 0) >= o.cap) w *= 0.05; // swarmed — look elsewhere
+      cands.push({ kind: "crew", ci, civ: null, slot: -1, w });
+    }
+    if (o.includeCivs) {
+      for (const cv of this.civs) {
+        if (cv.dead) continue;
+        if (avoid !== undefined && cv.id === avoid) continue;
+        const d2 = dist2(self.x, self.z, cv.x, cv.z);
+        if (d2 > sniff2) continue;
+        cands.push({ kind: "civ", ci: -1, civ: cv, slot: -1, w: 1 / (Math.sqrt(d2) + 8) });
+      }
+    }
+    if (o.includeRemotes) {
+      for (const r of this.remotes) {
+        if (!r.alive) continue;
+        const d2 = dist2(self.x, self.z, r.x, r.z);
+        if (d2 > sniff2) continue;
+        cands.push({ kind: "remote", ci: -1, civ: null, slot: r.slot, w: 1 / (Math.sqrt(d2) + 8) });
+      }
+    }
+    if (o.includeYou) {
+      const d2 = dist2(self.x, self.z, this.player.x, this.player.z);
+      if (d2 <= sniff2) cands.push({ kind: "you", ci: -1, civ: null, slot: -1, w: 1 / (Math.sqrt(d2) + 8) });
+    }
+    if (!cands.length) return null;
+    // weighted roll — near prey are LIKELY, far prey are POSSIBLE
+    let total = 0;
+    for (const c of cands) total += c.w;
+    let r = this.rnd() * total;
+    for (const c of cands) {
+      r -= c.w;
+      if (r <= 0) return c;
+    }
+    return cands[cands.length - 1];
   }
 
   /* ---------------- tools & building ---------------- */
@@ -4267,6 +4418,9 @@ export class GameEngine {
     this.groanT -= dt;
     this.zLootCd = Math.max(0, this.zLootCd - dt);
     this.botLootCd = Math.max(0, this.botLootCd - dt);
+    // 🎯 swarm census — one pass so diverse prey picks can discount victims that
+    // already have enough hunters on them (see pickDiversePrey)
+    if (night > 0.55) this.rebuildPreyLoad();
     for (const zb of this.zombies) {
       if (zb.dead) continue; // slain — stays down until the next night rises
       zb.touchCd = Math.max(0, zb.touchCd - dt);
@@ -4300,36 +4454,74 @@ export class GameEngine {
           const dx = zb.x - fire!.x, dz = zb.z - fire!.z, dl = Math.hypot(dx, dz) || 1;
           stepNpc(zb, zb.x + (dx / dl) * 9, zb.z + (dz / dl) * 9, ZOMBIE_SPEED, dt, this.world);
         } else {
-          // 🧟 hunt the NEAREST living contestant — you OR any survivor still human
-          let tx = p.x, tz = p.z, td = d2p, victimCrew = -1;
+          // 🧟 hunt the living — you OR any survivor still human. The fresh pick
+          // is a weighted-random roll (see pickDiversePrey): nearby souls smell
+          // stronger, swarmed souls are skipped, distant scents get chased —
+          // the horde spreads across the night instead of ganging up on one.
+          let victimCrew = -1;
+          let tx = p.x, tz = p.z, td = d2p;
           if (beastYou || this.detainedT > 0 || this.drive) { td = Infinity; } // beasts are invisible to shamblers
-          for (let ci = 0; ci < this.crew.length; ci++) {
-            const c = this.crew[ci];
-            if (!c.alive || c.zombieTonight) continue; // the turned hunt the living, not their own
-            if ((zb.avoidT ?? 0) > 0 && c.id === zb.avoidV) continue; // 🧱 that prey is walled in — shamble to someone reachable
-            const d = dist2(zb.x, zb.z, c.x, c.z);
-            if (d < td) { td = d; tx = c.x; tz = c.z; victimCrew = ci; }
-          }
-          // 🎯 anti-funnel LATCH — the horde used to re-pick the globally nearest
-          // soul EVERY frame, so fifty hunters stampeded whoever the blob smelled
-          // first and butchered the lobby in one pile. Now each beast sticks with
-          // its marked victim until it dies / is walled / way out of reach.
           let latched = false;
+          // 🎯 LATCH — each beast sticks with its marked victim until it dies /
+          // is walled / is way out of reach (95u). When the latch breaks the
+          // re-pick is DIVERSE (weighted random), never "globally nearest".
           if (zb.preyKind === "crew" && zb.preyId !== undefined) {
             const vi = this.crew.findIndex((cc) => cc.id === zb.preyId);
             const o = vi >= 0 ? this.crew[vi] : null;
             if (o && o.alive && !o.zombieTonight && !((zb.avoidT ?? 0) > 0 && zb.avoidV === o.id)) {
               const d = dist2(zb.x, zb.z, o.x, o.z);
-              if (d < 95 * 95 && d <= td * 3.2) { tx = o.x; tz = o.z; td = d; victimCrew = vi; latched = true; }
+              if (d < 95 * 95) { tx = o.x; tz = o.z; td = d; victimCrew = vi; latched = true; }
             }
           } else if (zb.preyKind === "you" && !beastYou && this.detainedT <= 0 && !this.drive) {
-            if (d2p < 95 * 95 && d2p <= td * 3.2) { tx = p.x; tz = p.z; td = d2p; victimCrew = -1; latched = true; }
+            if (d2p < 95 * 95) { tx = p.x; tz = p.z; td = d2p; victimCrew = -1; latched = true; }
+          }
+          // 👀 a much closer soul can steal a latched hunter's attention — but
+          // only an under-swarmed one, and only every 0.6s (cheap, no thrash)
+          zb.pickT = (zb.pickT ?? 0) - dt;
+          if (latched && td > 13 * 13 && (zb.pickT ?? 0) <= 0 && !beastYou && this.detainedT <= 0 && !this.drive) {
+            zb.pickT = 0.6;
+            const steal = this.pickDiversePrey(zb, {
+              avoidId: zb.avoidV, avoidT: zb.avoidT,
+              includeYou: true, includeCivs: false, includeRemotes: false,
+              sniff: 13, cap: ZOMBIE_SWARM_CAP, farHunt: false,
+            });
+            if (steal) {
+              if (steal.kind === "crew") {
+                victimCrew = steal.ci;
+                zb.preyKind = "crew"; zb.preyId = this.crew[steal.ci].id;
+                tx = this.crew[steal.ci].x; tz = this.crew[steal.ci].z;
+                td = dist2(zb.x, zb.z, tx, tz);
+              } else {
+                victimCrew = -1;
+                zb.preyKind = "you"; zb.preyId = undefined;
+                tx = p.x; tz = p.z; td = d2p;
+              }
+            }
           }
           if (!latched) {
-            // mark tonight's soul — whoever won the nearest-scan just now
-            if (victimCrew >= 0) { zb.preyKind = "crew"; zb.preyId = this.crew[victimCrew].id; }
-            else if (!beastYou && this.detainedT <= 0 && !this.drive && td < Infinity) { zb.preyKind = "you"; zb.preyId = undefined; }
-            else { zb.preyKind = undefined; zb.preyId = undefined; }
+            // 🎯 fresh mark — weighted random over every living soul in sniff
+            // range (swarmed souls discounted); 1-in-6 catches a far scent and
+            // this beast goes FINDING that player across the night
+            const pick = this.pickDiversePrey(zb, {
+              avoidId: zb.avoidV, avoidT: zb.avoidT,
+              includeYou: !beastYou && this.detainedT <= 0 && !this.drive,
+              includeCivs: false, includeRemotes: false,
+              sniff: ZOMBIE_SNIFF, cap: ZOMBIE_SWARM_CAP, farHunt: true,
+            });
+            if (pick) {
+              zb.preyKind = pick.kind === "crew" ? "crew" : "you";
+              zb.preyId = pick.kind === "crew" ? this.crew[pick.ci].id : undefined;
+              if (pick.kind === "crew") {
+                victimCrew = pick.ci;
+                tx = this.crew[pick.ci].x; tz = this.crew[pick.ci].z;
+                td = dist2(zb.x, zb.z, tx, tz);
+              } else {
+                victimCrew = -1; tx = p.x; tz = p.z; td = d2p;
+              }
+              latched = true;
+            } else {
+              zb.preyKind = undefined; zb.preyId = undefined;
+            }
           }
           if (td < ZOMBIE_HUNT_R * ZOMBIE_HUNT_R || latched) {
             /* 🎯 pack surround (game-ai group movement): far out, each zombie
@@ -4458,22 +4650,82 @@ export class GameEngine {
           const dx = an.x - fire.x, dz = an.z - fire.z, dl = Math.hypot(dx, dz) || 1;
           stepNpc(an, an.x + (dx / dl) * 8, an.z + (dz / dl) * 8, ZOMDOG_SPEED * 0.7, dt, this.world);
         } else {
-          // hunt the NEAREST living thing — you, a survivor, or a townsfolk
-          let tx = p.x, tz = p.z;
-          let td = (this.detainedT > 0 || this.drive || (this.youPossessed && this.phase === "night")) ? Infinity : d2p;
+          // 🧟 hunt the living — weighted-random over nearby souls (you, a
+          // survivor, a townsfolk) so the hound pack fans out like the horde
           let victimCrew = -1, victimCiv: Npc | null = null;
-          for (let ci = 0; ci < this.crew.length; ci++) {
-            const c = this.crew[ci];
-            if (!c.alive || c.zombieTonight) continue; // the turned hunt the living, not their own kind
-            const d = dist2(an.x, an.z, c.x, c.z);
-            if (d < td) { td = d; tx = c.x; tz = c.z; victimCrew = ci; victimCiv = null; }
+          let tx = p.x, tz = p.z;
+          const youOk = !(this.detainedT > 0 || this.drive || (this.youPossessed && this.phase === "night"));
+          let td = youOk ? d2p : Infinity;
+          let latched = false;
+          // 🎯 hound LATCH — stick with the marked soul until it dies or is way
+          // out of reach (80u); a broken latch re-picks DIVERSELY, never nearest
+          if (an.preyCrew !== undefined) {
+            const vi = this.crew.findIndex((cc) => cc.id === an.preyCrew);
+            const o = vi >= 0 ? this.crew[vi] : null;
+            if (o && o.alive && !o.zombieTonight) {
+              const d = dist2(an.x, an.z, o.x, o.z);
+              if (d < 80 * 80) { td = d; tx = o.x; tz = o.z; victimCrew = vi; victimCiv = null; latched = true; }
+            }
+          } else if (an.preyCiv !== undefined) {
+            const cv = this.civs.find((o) => o.id === an.preyCiv);
+            if (cv && !cv.dead) {
+              const d = dist2(an.x, an.z, cv.x, cv.z);
+              if (d < 80 * 80) { td = d; tx = cv.x; tz = cv.z; victimCrew = -1; victimCiv = cv; latched = true; }
+            }
           }
-          for (const cv of this.civs) {
-            if (cv.dead) continue;
-            const d = dist2(an.x, an.z, cv.x, cv.z);
-            if (d < td) { td = d; tx = cv.x; tz = cv.z; victimCiv = cv; victimCrew = -1; }
+          // 👀 closer-soul steal — same cadence trick as the shamblers
+          an.pickT = (an.pickT ?? 0) - dt;
+          if (latched && td > 12 * 12 && (an.pickT ?? 0) <= 0) {
+            an.pickT = 0.6;
+            const steal = this.pickDiversePrey(an, {
+              includeYou: youOk, includeCivs: true, includeRemotes: false,
+              sniff: 12, cap: ZOMBIE_SWARM_CAP, farHunt: false,
+            });
+            if (steal && steal.kind === "crew") {
+              an.preyCrew = this.crew[steal.ci].id; an.preyCiv = undefined;
+              victimCrew = steal.ci; victimCiv = null;
+              tx = this.crew[steal.ci].x; tz = this.crew[steal.ci].z;
+              td = dist2(an.x, an.z, tx, tz);
+            } else if (steal && steal.kind === "civ" && steal.civ) {
+              an.preyCiv = steal.civ.id; an.preyCrew = undefined;
+              victimCrew = -1; victimCiv = steal.civ;
+              tx = steal.civ.x; tz = steal.civ.z;
+              td = dist2(an.x, an.z, tx, tz);
+            } else if (steal && steal.kind === "you") {
+              an.preyCrew = undefined; an.preyCiv = undefined;
+              victimCrew = -1; victimCiv = null;
+              tx = p.x; tz = p.z; td = d2p;
+            }
           }
-          if (td < ZOMDOG_SENSE * ZOMDOG_SENSE) {
+          if (!latched) {
+            // 🎯 fresh mark — weighted random over every living thing in scent
+            // range; swarmed souls discounted, 1-in-6 catches a far scent
+            const pick = this.pickDiversePrey(an, {
+              includeYou: youOk, includeCivs: true, includeRemotes: false,
+              sniff: ZOMDOG_SENSE, cap: ZOMBIE_SWARM_CAP, farHunt: true,
+            });
+            if (pick && pick.kind === "crew") {
+              an.preyCrew = this.crew[pick.ci].id; an.preyCiv = undefined;
+              victimCrew = pick.ci; victimCiv = null;
+              tx = this.crew[pick.ci].x; tz = this.crew[pick.ci].z;
+              td = dist2(an.x, an.z, tx, tz);
+              latched = true;
+            } else if (pick && pick.kind === "civ" && pick.civ) {
+              an.preyCiv = pick.civ.id; an.preyCrew = undefined;
+              victimCrew = -1; victimCiv = pick.civ;
+              tx = pick.civ.x; tz = pick.civ.z;
+              td = dist2(an.x, an.z, tx, tz);
+              latched = true;
+            } else if (pick) { // "you"
+              an.preyCrew = undefined; an.preyCiv = undefined;
+              victimCrew = -1; victimCiv = null;
+              tx = p.x; tz = p.z; td = d2p;
+              latched = true;
+            } else {
+              an.preyCrew = undefined; an.preyCiv = undefined;
+            }
+          }
+          if (td < ZOMDOG_SENSE * ZOMDOG_SENSE || latched) {
             /* 🎯 pack surround — golden-angle ring slots, straight lunge inside 3u */
             const td1 = Math.sqrt(td);
             const offR = Math.max(0, Math.min(1.4, (td1 - 3) * 0.4));

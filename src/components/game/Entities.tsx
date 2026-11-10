@@ -4,8 +4,8 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  ANIMAL_SET, ATTACK_CD, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, SHIRT_COLORS, SKIN_TONES,
-  TOTAL_VOTES, ZONE_WALL_H, FARM_RADIUS, JUNGLE_RADIUS, type AnimalKind, type Appearance,
+  ANIMAL_SET, ATTACK_CD, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, ROCK_BREAK_S, SHIRT_COLORS, SKIN_TONES,
+  TOTAL_VOTES, TREE_FALL_S, ZONE_WALL_H, FARM_RADIUS, JUNGLE_RADIUS, type AnimalKind, type Appearance,
 } from "@/lib/game/constants";
 import type { GameEngine } from "@/lib/game/engine";
 import { nightFactor } from "@/lib/game/sim";
@@ -864,13 +864,19 @@ export function Shadows({ engine }: { engine: GameEngine }) {
 /* Confetti                                                            */
 /* ------------------------------------------------------------------ */
 const N_CONF = 260;
+/* 🪵🪨 harvest chips — fx.hue picks the debris palette: tree chops & barricade
+ * splinters burst WOOD, smashed boulders burst STONE, everything else festive */
+const WOOD_CHIPS = ["#a97b4f", "#8a5a33", "#6b4a2a", "#5aa348", "#2f9e55"];
+const STONE_CHIPS = ["#9b9ba3", "#7d7d86", "#b9b9c0", "#6e6e76", "#8d8d95"];
+const FESTIVE = ["#ff6b8a", "#ffd166", "#6bd68a", "#7bc4ff", "#c77dff"];
+const fxColor = new THREE.Color();
 export function Confetti({ engine }: { engine: GameEngine }) {
   const mesh = useRef<THREE.InstancedMesh>(null!);
   const parts = useMemo(() => Array.from({ length: N_CONF }, () => ({
     x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0, rx: Math.random() * 3, rz: Math.random() * 3,
   })), []);
   const colors = useMemo(() => {
-    const palette = [new THREE.Color("#ff6b8a"), new THREE.Color("#ffd166"), new THREE.Color("#6bd68a"), new THREE.Color("#7bc4ff"), new THREE.Color("#c77dff")];
+    const palette = FESTIVE.map((c) => new THREE.Color(c));
     return Array.from({ length: N_CONF }, (_, i) => palette[i % palette.length]);
   }, []);
 
@@ -878,18 +884,26 @@ export function Confetti({ engine }: { engine: GameEngine }) {
 
   useFrame((_, dt0) => {
     const dt = Math.min(0.05, dt0);
-    // drain fx queue
+    // drain fx queue — recolor freshly spawned chips to match what was hit
+    let recolored = false;
     for (const fx of engine.fxQueue.splice(0)) {
+      const pal = fx.hue <= 0.15 ? WOOD_CHIPS : fx.hue >= 0.59 && fx.hue <= 0.68 ? STONE_CHIPS : null;
       let spawned = 0;
-      for (const pt of parts) {
+      for (let idx = 0; idx < parts.length && spawned < 70; idx++) {
+        const pt = parts[idx];
         if (pt.life > 0) continue;
         const a = Math.random() * Math.PI * 2, sp = 2 + Math.random() * 4;
         pt.x = fx.x; pt.y = fx.y; pt.z = fx.z;
         pt.vx = Math.cos(a) * sp; pt.vz = Math.sin(a) * sp; pt.vy = 4 + Math.random() * 5;
         pt.life = 1.4 + Math.random() * 0.8;
-        if (++spawned >= 70) break;
+        if (pal && mesh.current) {
+          mesh.current.setColorAt(idx, fxColor.set(pal[(Math.random() * pal.length) | 0]));
+          recolored = true;
+        }
+        spawned++;
       }
     }
+    if (recolored && mesh.current?.instanceColor) mesh.current.instanceColor.needsUpdate = true;
     let any = false;
     for (let i = 0; i < N_CONF; i++) {
       const pt = parts[i];
@@ -1205,10 +1219,71 @@ export function RocksView({ engine }: { engine: GameEngine }) {
       return m;
     });
   }, [engine]);
-  useFrame(() => {
-    for (let i = 0; i < meshes.length; i++) {
-      const vis = !engine.brokenRocks.has(i);
-      if (meshes[i].visible !== vis) meshes[i].visible = vis;
+  // pristine transforms — the jiggle & crumble passes restore from these
+  const base = useMemo(
+    () => meshes.map((m) => ({ px: m.position.x, py: m.position.y, pz: m.position.z, rx: m.rotation.x, ry: m.rotation.y, rz: m.rotation.z })),
+    [meshes],
+  );
+  const jigVer = useRef(-1);
+  const jiggles = useRef(new Map<number, number>());  // rock idx → jiggle end (clock s)
+  const crumbles = useRef(new Map<number, number>()); // rock idx → crumble start (clock s)
+  const brkVer = useRef(-1);
+  useFrame((s) => {
+    const now = s.clock.elapsedTime;
+    // 🔨 hammer blow — the struck boulder RINGS: a quick rocking jiggle
+    if (engine.rockVersion !== jigVer.current) {
+      jigVer.current = engine.rockVersion;
+      if (engine.lastRock >= 0 && !engine.brokenRocks.has(engine.lastRock)) {
+        jiggles.current.set(engine.lastRock, now + 0.34);
+      }
+    }
+    // version bump → sync broken/intact state (new crumbles + reset restores)
+    if (engine.fellVersion !== brkVer.current) {
+      brkVer.current = engine.fellVersion;
+      for (let i = 0; i < meshes.length; i++) {
+        if (engine.brokenRocks.has(i)) {
+          if (meshes[i].visible && !crumbles.current.has(i)) crumbles.current.set(i, now);
+        } else {
+          crumbles.current.delete(i);
+          jiggles.current.delete(i);
+          const b = base[i];
+          meshes[i].visible = true;
+          meshes[i].position.set(b.px, b.py, b.pz);
+          meshes[i].rotation.set(b.rx, b.ry, b.rz);
+          meshes[i].scale.set(1, 0.72, 1);
+        }
+      }
+    }
+    for (const [i, end] of jiggles.current) {
+      if (engine.brokenRocks.has(i)) { jiggles.current.delete(i); continue; }
+      if (now >= end) {
+        jiggles.current.delete(i);
+        const b = base[i];
+        meshes[i].rotation.set(b.rx, b.ry, b.rz);
+        meshes[i].scale.set(1, 0.72, 1);
+        continue;
+      }
+      const k = (end - now) / 0.34;                        // 1 → 0, damped
+      const sh = Math.sin(now * 57) * 0.06 * k;
+      const b = base[i];
+      meshes[i].rotation.set(b.rx + sh, b.ry + sh * 0.55, b.rz - sh * 0.8);
+      const sq = 1 + Math.sin(now * 44) * 0.05 * k;        // squash-and-stretch ring
+      meshes[i].scale.set(1 / sq, 0.72 * sq, 1 / sq);
+    }
+    for (const [i, t0] of crumbles.current) {
+      const k = (now - t0) / ROCK_BREAK_S;
+      if (k >= 1) {
+        crumbles.current.delete(i);
+        meshes[i].visible = false;
+        continue;
+      }
+      const e = k * k;                                     // accelerating collapse
+      const sc = Math.max(0.001, 1 - e);
+      const b = base[i];
+      meshes[i].visible = true;
+      meshes[i].scale.set(sc, 0.72 * sc * sc, sc);
+      meshes[i].position.y = b.py - e * 0.45;              // sinks into rubble
+      meshes[i].rotation.y = b.ry + e * 1.3;               // rolls as it goes
     }
   });
   return <>{meshes.map((m, i) => <primitive object={m} key={i} />)}</>;
@@ -1232,20 +1307,36 @@ export function Stumps({ engine }: { engine: GameEngine }) {
     return out;
   }, []);
   const ver = useRef(-1);
+  const slotTree = useRef<number[]>([]); // pool slot → tree idx (for the fall check)
   useFrame(() => {
-    if (ver.current === engine.fellVersion) return; // rebuild only when a tree falls
-    ver.current = engine.fellVersion;
-    let k = 0;
-    for (const i of engine.felled) {
-      if (k >= MAX_STUMPS) break;
-      const t = engine.world.trees[i];
-      const g = pool[k];
-      g.visible = true;
-      g.position.set(t.x, terrainHeight(t.x, t.z) + 0.3, t.z);
-      g.scale.setScalar(t.s * 0.9);
-      k++;
+    if (ver.current !== engine.fellVersion) {
+      ver.current = engine.fellVersion;
+      slotTree.current = [];
+      let k = 0;
+      for (const i of engine.felled) {
+        if (k >= MAX_STUMPS) break;
+        const t = engine.world.trees[i];
+        const g = pool[k];
+        g.visible = true;
+        g.position.set(t.x, terrainHeight(t.x, t.z) + 0.3, t.z);
+        g.scale.setScalar(t.s * 0.9);
+        slotTree.current[k] = i;
+        k++;
+      }
+      for (; k < MAX_STUMPS; k++) if (pool[k].visible) pool[k].visible = false;
     }
-    for (; k < MAX_STUMPS; k++) if (pool[k].visible) pool[k].visible = false;
+    // 🌳 TIMBER — a stump stays hidden while its tree is still mid-tumble;
+    // it pops in only once the falling trunk has settled (or sunk away)
+    for (let k = 0; k < slotTree.current.length; k++) {
+      const g = pool[k];
+      const ft = engine.fellTimes.get(slotTree.current[k]);
+      if (ft === undefined) continue;
+      if (engine.elapsed - ft < TREE_FALL_S + 0.06) {
+        if (g.visible) g.visible = false; // mid-fall — keep the ground clear
+      } else if (!g.visible) {
+        g.visible = true; // settled — stump pops in
+      }
+    }
   });
   return <>{pool.map((g, i) => <primitive object={g} key={i} />)}</>;
 }
