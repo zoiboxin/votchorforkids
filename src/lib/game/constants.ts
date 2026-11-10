@@ -438,7 +438,9 @@ export const POWER_COUNT = 6;        // very rare — only 6 gems in the whole w
 export const POWER_RESPAWN_S = 80;   // a long absence keeps them feeling special
 export const POWER_PICKUP_R = 2.2;
 /** How many power gems the player can carry at once — each fires ONCE (G / slot tap). */
-export const POWER_POCKETS = 3;
+/** 🎒 ONE power pocket — each gem is single-use and only ONE can be carried
+ *  at a time (collect → unleash with G → hunt the next one). */
+export const POWER_POCKETS = 1;
 /** Alias of POWER_POCKETS kept for the 7Nights engine imports. */
 export const POWER_CARRY = POWER_POCKETS;
 /** 🧱 dormant builder-pool circles parked under the museum podium (moved onto build spots at runtime). */

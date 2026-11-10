@@ -2,7 +2,7 @@ import {
   AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, BUST_CARRY_BONUS, BUST_POINTS, BUST_TARGET, CARRY_RADIUS, CAR_ACCEL, CAR_BRAKE, CAR_COAST, CAR_ENTER_R, CAR_HIT_CD, CAR_HIT_DMG, CAR_REV_SPEED, CAR_STEER, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
   CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, CONFISCATE_FINE, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
-  ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HAUL_CAMP_R, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
+  ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HAUL_CAMP_R, HURT_FLASH_S, ITEMS, INV_SLOTS, ITEM_COUNT,
   DEEP_JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER,
   ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
@@ -86,6 +86,9 @@ export interface Npc extends SteerMemory {
   name: string; speed: number; alertT: number;
   /** cop only: id of the civilian being chased (unset = hunting the player) */
   targetCiv?: number;
+  /** 👮 cop only: id of a CONTESTANT bot who committed a witnessed crime —
+   *  the law chases bots exactly like it chases the player */
+  targetCrew?: number;
   /** cop only: cooldown before this cop may arrest another civilian */
   copCd?: number;
   /** main-road marcher: stays on the protest strip instead of roaming the city */
@@ -178,6 +181,39 @@ export interface Crew extends SteerMemory {
   /* 🎯 prey latch (possessed hunters) — same anti-funnel fix as the shamblers:
    * stick with your victim instead of re-funneling onto the pack's nearest one */
   preyId?: number; preyKind?: "crew" | "civ" | "you" | "remote"; preySlot?: number;
+  /* --- 🤖 human-like day jobs — bots behave like real players now ---
+   * chop/mine (harvest), duel (hit another player & loot the drop),
+   * license (hunt a 🪪 card), drive (joyride a stolen car). While no job is
+   * active the bot falls back to the classic forage/roam behavior. */
+  job?: BotJob | null;
+  /** 🪪 this bot is carrying a driving-license card it plucked off the street */
+  holdsLic?: boolean;
+  /** 🚗 DriveState while this bot is behind the wheel (kinematic joyride) */
+  drive?: DriveState | null;
+  /** 🚗 seconds left of the current joyride (parks & hops out at 0) */
+  driveT?: number;
+  /** 🚗 seconds spent crawling (walled) while driving — 3s parks the car */
+  driveStuck?: number;
+  /** 🤖 cooldown before this bot considers a NEW daylight job */
+  jobCd?: number;
+  /** 🎯 sticky dusk shelter index — assigned ONCE per dusk so 99 contestants
+   *  don't re-pick the nearest hideout every frame and pile into one doorway */
+  hideHi?: number;
+}
+
+/** A daylight "human player" activity a contestant bot can be doing. */
+export interface BotJob {
+  kind: "chop" | "mine" | "duel" | "license" | "drive";
+  /** seconds left before the bot drops the job and picks a new activity */
+  t: number;
+  /** chop → tree index · mine → rock index · duel → crew id · license → license ent id · drive → car index */
+  tgt: number;
+  /** swing / re-eval cooldown */
+  cd: number;
+  /** duel: punches landed */
+  hits: number;
+  /** walk/drive destination (duel re-reads the live victim instead) */
+  tx: number; tz: number;
 }
 
 /** 💰 a dropped stash of money — purses of the fallen, zombie hoards… walk over it! */
@@ -461,6 +497,17 @@ export class GameEngine {
   private carHome: { x: number; z: number; rot: number }[] = [];            // parked spots — reset() restores them
   private carAxles = new Map<number, [CircleCollider, CircleCollider]>();  // car idx → its two live colliders
   private driveMsgT = 0;   // throttles "you need a license" / "park first" toasts
+
+  /* --- 🤖 bots acting like real players ---
+   * goodieClaims: per-frame map goodieKey → crewId; each loose snack/pile/gem
+   * can only be TARGETED by one bot at a time, so the foragers spread across
+   * the map instead of all beelining the same nearest pile.
+   * botDriven: car indices currently being joyridden by bot drivers — the
+   * renderer re-stamps these fleet instances every frame. */
+  private goodieClaims = new Map<string, number>();
+  botDriven = new Set<number>();
+  private invOnceT = 0;  // throttles the "one of each item only" toast
+  private toolOnceT = 0; // throttles the "you already own this tool" toast
 
   /* --- rare super powers --- */
   activePower: PowerKind | null = null;
@@ -1268,6 +1315,7 @@ export class GameEngine {
     this.crimeReport = null; this.botLootCd = 0;
     this.setPersonalPause(false); this.pauseLog = []; this.spectating = false; this.specName = ""; this.specKey = "";
     this.inv = []; this.hurtT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0; this.powerFullT = 0;
+    this.invOnceT = 0; this.toolOnceT = 0; this.botDriven.clear();
     this.flipT = 0; this.squashT = 0; this.faintT = 0; this.carHitCd = 0;
     this.activePower = null; this.powerT = 0; this.powerPockets = []; this.morphKind = null; this.blinkCd = 0;
     for (const pw of this.powers) { pw.active = true; pw.respawn = 0; }
@@ -1419,6 +1467,14 @@ export class GameEngine {
         this.driveMsgT = 3;
         sfx.alert();
         this.toast("🪪 You need a DRIVING LICENSE! Hunt the glowing blue cards — they sparkle on the map.", "info");
+      }
+      return;
+    }
+    // 🤖 a bot joyrider owns this car right now — go find your own
+    if (this.botDriven.has(ci) || this.crew.some((o) => o.drive && o.drive.ci === ci)) {
+      if (this.driveMsgT <= 0) {
+        this.driveMsgT = 2.5;
+        this.toast("🤖 Someone is driving that car — find another ride!", "info");
       }
       return;
     }
@@ -1950,7 +2006,7 @@ export class GameEngine {
     if (this.won || this.lost) return;
     let seen = false;
     for (const cop of this.cops) {
-      const already = cop.mode === "chase" && cop.targetCiv == null;
+      const already = cop.mode === "chase" && cop.targetCiv == null && cop.targetCrew == null;
       const watched = dist2(cop.x, cop.z, x, z) < CRIME_SEE_R * CRIME_SEE_R && lineClear(cop.x, cop.z, x, z, this.world);
       if (already || watched) {
         seen = true;
@@ -2716,19 +2772,25 @@ export class GameEngine {
 
   private stepCrew(dt: number) {
     const p = this.player;
-    // 🛖 once per frame — how many hiding souls already crowd each shelter.
-    // The dusk/night hide pass uses this to spread the lobby across EVERY
-    // hideout instead of forty contestants funneling into one doorway that
+    // 🛖 once per frame — how many hiding souls already crowd each shelter,
+    // AND how many bots are ASSIGNED to each shelter this dusk (sticky picks).
+    // The dusk/night hide pass uses both to spread the lobby across EVERY
+    // hideout instead of ninety contestants funneling into one doorway that
     // the pack then butchers in a single pile.
     const shelterCrowd = new Array(this.hideSpots.length).fill(0);
+    const shelterAssigned = new Array(this.hideSpots.length).fill(0);
     if (this.phase !== "day" && this.phase !== "dawn") {
       for (const o of this.crew) {
         if (!o.alive || o.mode === "possessed") continue;
+        if (o.hideHi !== undefined && o.hideHi >= 0 && o.hideHi < this.hideSpots.length) shelterAssigned[o.hideHi]++;
         for (let hi = 0; hi < this.hideSpots.length; hi++) {
           if (dist2(o.x, o.z, this.hideSpots[hi].x, this.hideSpots[hi].z) < 7 * 7) shelterCrowd[hi]++;
         }
       }
     }
+    // 🎯 per-frame goodie claims — each loose snack/cash pile/gem can only be
+    // TARGETED by one forager at a time (cleared & re-claimed every frame)
+    this.goodieClaims.clear();
     for (let i = 0; i < this.crew.length; i++) {
       const c = this.crew[i];
       if (!c.alive) continue;
@@ -2757,6 +2819,7 @@ export class GameEngine {
 
       if (c.mode === "possessed") {
         // 🩸 THE PACK — each beast hunts a living soul (crew, townsfolk, or you), fears fire, chews barricades
+        if (c.drive) this.endBotDrive(c); // 🚗 the turning never finishes a joyride
         c.attackAnimT = Math.max(0, c.attackAnimT - dt);
         // nearest-prey scan (crew → townsfolk → real players)
         let bx = p.x, bz = p.z, bd = d2p, bVictim = -1, bCiv: Npc | null = null, bRemote: RemotePlayer | null = null;
@@ -2895,8 +2958,11 @@ export class GameEngine {
       }
 
       if (this.phase === "day" || this.phase === "dawn") {
-        // ☀️ daylight — forage for snacks/cash/gems like everyone else, loiter, tag along
+        // ☀️ daylight — LIVE like a human player: forage snacks/cash/gems, chop
+        // trees, smash boulders, scrap with other players & loot the drop,
+        // hunt a 🪪 driving license, joyride a car… then roam & loiter.
         c.mode = "wander";
+        c.hideHi = undefined; // 🌤️ dawn — shelters forgotten until the next dusk rush
         const spd = CREW_SPEED * ((c.boostT ?? 0) > 0 ? CREW_BOOST_MULT : 1);
         // 🫨 just saw a crime (or got punched) — bolt from that spot first
         if ((c.fearT ?? 0) > 0) {
@@ -2904,7 +2970,9 @@ export class GameEngine {
           stepNpc(c, c.x + (dx / dl) * 12, c.z + (dz / dl) * 12, spd * 1.5, dt, this.world);
           continue;
         }
-        // 🎯 walking to a rumored snack / cash pile / gem?
+        // 🚗 behind the wheel — the joyride brain owns this bot
+        if (c.drive) { this.stepBotDrive(c, dt); continue; }
+        // 🎯 walking to a claimed snack / cash pile / gem? Finishing what we started.
         if (c.seek) {
           const gone =
             (c.seek.kind === "food" && !this.items.find((it) => it.id === c.seek!.id && it.active)) ||
@@ -2917,14 +2985,27 @@ export class GameEngine {
             c.seekBlock = { kind: c.seek.kind, id: c.seek.id, t: 8 };
             c.seek = null;
           } else {
+            this.goodieClaims.set(this.goodieKey(c.seek), c.id); // held while we walk
             stepNpc(c, c.seek.x, c.seek.z, spd * 1.12, dt, this.world);
             if (dist2(c.x, c.z, c.seek.x, c.seek.z) < CREW_EAT_R * CREW_EAT_R) this.botCollect(c);
             continue;
           }
         }
+        // 🤖 human-like day job — picked every few seconds when idle
+        c.jobCd = Math.max(0, (c.jobCd ?? 0) - dt);
+        if (c.job && !this.stepCrewJob(c, dt, spd)) {
+          c.job = null;
+          c.jobCd = range(this.rnd, 4, 9);
+        } else if (!c.job && (c.jobCd ?? 0) <= 0) {
+          c.job = this.pickCrewJob(c, i);
+          if (!c.job) c.jobCd = range(this.rnd, 4, 9); // nothing appealing — forage for a while
+        }
+        if (c.job) continue;
         // 🔍 eyeball the street — race the player & the zombies for loose goodies
+        // (🎯 claimed goodies are SKIPPED — one forager per pile, no clumping)
         c.seek = this.nearestGoodie(c);
         if (c.seek) {
+          this.goodieClaims.set(this.goodieKey(c.seek), c.id);
           stepNpc(c, c.seek.x, c.seek.z, spd * 1.12, dt, this.world);
           if (dist2(c.x, c.z, c.seek.x, c.seek.z) < CREW_EAT_R * CREW_EAT_R) this.botCollect(c);
           continue;
@@ -2945,8 +3026,10 @@ export class GameEngine {
 
       // 🌆 dusk & 🌑 night — run to a hideout and shiver there (spread across
       // every shelter + a personal ring slot, never one grinding blob)
+      if (c.drive) this.endBotDrive(c); // 🚗 nobody hides inside a car — park & run
+      c.job = null; c.seek = null; c.jobCd = 0; // night erases daylight plans
       if (c.mode !== "hide") { c.mode = "hide"; c.timer = 0; }
-      const h = this.hideTargetFor(c, shelterCrowd);
+      const h = this.hideTargetFor(c, shelterCrowd, shelterAssigned);
       if (dist2(c.x, c.z, h.x, h.z) > 2.4 * 2.4) {
         stepNpc(c, h.x, h.z, CREW_SPEED * 1.3 * ((c.boostT ?? 0) > 0 ? CREW_BOOST_MULT : 1), dt, this.world);
       } else {
@@ -2993,26 +3076,33 @@ export class GameEngine {
   }
 
   /** 🤖 nearest loose food / cash pile / power gem within a bot's forage range
-   *  (null = nothing). 🧱 Skips goodies the bot blacklisted as unreachable. */
+   *  (null = nothing). 🧱 Skips goodies the bot blacklisted as unreachable.
+   *  🎯 ALSO skips goodies another bot already targeted THIS frame (goodie
+   *  claims) — the crowd used to pick the SAME nearest pile and merge into
+   *  one grinding blob; now each forager walks to its OWN prize. */
   private nearestGoodie(c: Crew): Crew["seek"] {
     const skip = c.seekBlock;
+    const free = (key: string) => {
+      const own = this.goodieClaims.get(key);
+      return own === undefined || own === c.id;
+    };
     let best: Crew["seek"] = null, bd = CREW_SEEK_R * CREW_SEEK_R;
     for (const it of this.items) {
       if (!it.active) continue;
       if (skip && skip.kind === "food" && skip.id === it.id) continue;
       const d = dist2(c.x, c.z, it.x, it.z);
-      if (d < bd) { bd = d; best = { kind: "food", id: it.id, x: it.x, z: it.z }; }
+      if (d < bd && free(`food:${it.id}`)) { bd = d; best = { kind: "food", id: it.id, x: it.x, z: it.z }; }
     }
     for (const l of this.loot) {
       if (skip && skip.kind === "loot" && skip.id === l.id) continue;
       const d = dist2(c.x, c.z, l.x, l.z);
-      if (d < bd) { bd = d; best = { kind: "loot", id: l.id, x: l.x, z: l.z }; }
+      if (d < bd && free(`loot:${l.id}`)) { bd = d; best = { kind: "loot", id: l.id, x: l.x, z: l.z }; }
     }
     for (const pw of this.powers) {
       if (!pw.active) continue;
       if (skip && skip.kind === "power" && skip.id === pw.id) continue;
       const d = dist2(c.x, c.z, pw.x, pw.z);
-      if (d < bd) { bd = d; best = { kind: "power", id: pw.id, x: pw.x, z: pw.z }; }
+      if (d < bd && free(`power:${pw.id}`)) { bd = d; best = { kind: "power", id: pw.id, x: pw.x, z: pw.z }; }
     }
     return best;
   }
@@ -3060,6 +3150,450 @@ export class GameEngine {
     }
   }
 
+  /* ---------------- 🤖 bots behaving like REAL human players ----------------
+   * Daylight jobs: chop trees · smash boulders · scrap with other contestants
+   * and loot the drop · hunt a 🪪 driving license · joyride a car. Plus the
+   * law now answers bot crimes: a witnessing cop CHASES the offender bot and
+   * confiscates half their purse on catch. */
+
+  /** Composite key for the per-frame goodie claim map. */
+  private goodieKey(s: { kind: "food" | "loot" | "power"; id: number }): string {
+    return `${s.kind}:${s.id}`;
+  }
+
+  /** How many contestant bots currently hold a 🪪 card (keeps cards in play). */
+  private botHeldLicenses(): number {
+    let n = 0;
+    for (const o of this.crew) if (o.alive && o.holdsLic) n++;
+    return n;
+  }
+
+  /** Nearest parked car a bot driver may take (player's ride & bot rides excluded). */
+  private nearestBotCar(x: number, z: number, maxD: number): number {
+    let best = -1, bd = maxD * maxD;
+    for (let i = 0; i < this.world.cars.length; i++) {
+      if (this.botDriven.has(i) || this.drive?.ci === i) continue;
+      const car = this.world.cars[i];
+      const d = dist2(x, z, car.x, car.z);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  /** Nearest standing tree within `maxD` of a point (no swing arc — bots walk up). */
+  private nearestBotTree(x: number, z: number, maxD: number): number {
+    let best = -1, bd = maxD * maxD;
+    for (let i = 0; i < this.world.trees.length; i++) {
+      if (this.felled.has(i)) continue;
+      const t = this.world.trees[i];
+      const d = dist2(x, z, t.x, t.z);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  /** Nearest intact boulder within `maxD` of a point. */
+  private nearestBotRock(x: number, z: number, maxD: number): number {
+    let best = -1, bd = maxD * maxD;
+    for (let i = 0; i < this.world.rocks.length; i++) {
+      if (this.brokenRocks.has(i)) continue;
+      const rk = this.world.rocks[i];
+      const d = dist2(x, z, rk.x, rk.z);
+      if (d < bd) { bd = d; best = i; }
+    }
+    return best;
+  }
+
+  /** A healthy nearby contestant to scrap with (bots never pick on the dying). */
+  private pickDuelVictim(c: Crew, i: number, maxD: number): number {
+    let best = -1, bd = maxD * maxD;
+    for (let j = 0; j < this.crew.length; j++) {
+      const o = this.crew[j];
+      if (j === i || !o.alive || o.mode === "possessed") continue;
+      if ((o.hp ?? 0) < 30) continue; // pick on someone your own size
+      const d = dist2(c.x, c.z, o.x, o.z);
+      if (d < bd) { bd = d; best = j; }
+    }
+    return best;
+  }
+
+  /** 🤖 Roll a new daylight activity when a bot goes idle. null = plain
+   *  foraging & roaming (the default hustle). Weights keep foraging dominant:
+   *  ~10% chop · ~8% mine · ~9% duel · ~7% license hunt · joyrides for
+   *  license-holders. Deforestation/hill-smashing caps keep the world intact. */
+  private pickCrewJob(c: Crew, i: number): BotJob | null {
+    const r = this.rnd();
+    const mk = (kind: BotJob["kind"], tgt: number, t: number, tx: number, tz: number): BotJob =>
+      ({ kind, tgt, t, cd: 0, hits: 0, tx, tz });
+    // 🚗 holding a license? A joyride is IRRESISTIBLE
+    if (c.holdsLic && r < 0.62) {
+      const ci = this.nearestBotCar(c.x, c.z, 130);
+      if (ci >= 0) {
+        const car = this.world.cars[ci];
+        return mk("drive", ci, range(this.rnd, 14, 22), car.x, car.z);
+      }
+      // no car worth the walk — toss the card back into circulation
+      c.holdsLic = false;
+      this.placeDroppedLicense(c.x, c.z);
+      return null;
+    }
+    if (r < 0.16) { // 🪓 lumberjack shift
+      if (this.felled.size < this.world.trees.length * 0.3) {
+        const ti = this.nearestBotTree(c.x, c.z, 85);
+        if (ti >= 0) {
+          const t = this.world.trees[ti];
+          return mk("chop", ti, range(this.rnd, 14, 26), t.x, t.z);
+        }
+      }
+      return null;
+    }
+    if (r < 0.24) { // 🔨 quarry shift
+      if (this.brokenRocks.size < this.world.rocks.length * 0.4) {
+        const ri = this.nearestBotRock(c.x, c.z, 85);
+        if (ri >= 0) {
+          const rk = this.world.rocks[ri];
+          return mk("mine", ri, range(this.rnd, 12, 22), rk.x, rk.z);
+        }
+      }
+      return null;
+    }
+    if (r < 0.33) { // 🥊 street scuffle — hit another player, then loot the drop
+      const vi = this.pickDuelVictim(c, i, 55);
+      if (vi >= 0) {
+        const v = this.crew[vi];
+        return mk("duel", v.id, range(this.rnd, 10, 18), v.x, v.z);
+      }
+      return null;
+    }
+    if (r < 0.40 && !c.holdsLic && this.botHeldLicenses() < 3) { // 🪪 hunt a card
+      let bestId = -1, bd = 150 * 150;
+      for (const lc of this.licenses) {
+        if (!lc.active) continue;
+        const d = dist2(c.x, c.z, lc.x, lc.z);
+        if (d < bd) { bd = d; bestId = lc.id; }
+      }
+      if (bestId >= 0) {
+        const lc = this.licenses.find((l) => l.id === bestId)!;
+        return mk("license", bestId, range(this.rnd, 16, 30), lc.x, lc.z);
+      }
+    }
+    return null; // plain forage & roam
+  }
+
+  /** 🤖 Run one frame of the bot's current job. Returns false when the job is
+   *  finished/invalid — the caller drops it and falls back to foraging. */
+  private stepCrewJob(c: Crew, dt: number, spd: number): boolean {
+    const j = c.job!;
+    j.t -= dt;
+    j.cd = Math.max(0, j.cd - dt);
+    if (j.t <= 0) return false;
+    const near = dist2(c.x, c.z, this.player.x, this.player.z) < 34 * 34;
+    switch (j.kind) {
+      case "chop": {
+        const t = this.world.trees[j.tgt];
+        if (!t || this.felled.has(j.tgt)) return false;
+        const d = dist2(c.x, c.z, t.x, t.z);
+        if (d > 2.5 * 2.5) { stepNpc(c, t.x, t.z, spd, dt, this.world); return true; }
+        c.face = Math.atan2(t.x - c.x, t.z - c.z);
+        if (j.cd <= 0) {
+          j.cd = 0.72;
+          this.chopTreeBot(j.tgt, t.x - c.x, t.z - c.z, c, near);
+        }
+        return true;
+      }
+      case "mine": {
+        const rk = this.world.rocks[j.tgt];
+        if (!rk || this.brokenRocks.has(j.tgt)) return false;
+        const d = dist2(c.x, c.z, rk.x, rk.z);
+        if (d > 2.6 * 2.6) { stepNpc(c, rk.x, rk.z, spd, dt, this.world); return true; }
+        c.face = Math.atan2(rk.x - c.x, rk.z - c.z);
+        if (j.cd <= 0) {
+          j.cd = 0.85;
+          this.smashRockBot(j.tgt, c, near);
+        }
+        return true;
+      }
+      case "duel": {
+        const vi = this.crew.findIndex((o) => o.id === j.tgt);
+        const v = vi >= 0 ? this.crew[vi] : null;
+        if (!v || !v.alive || v.mode === "possessed") return false;
+        const d = dist2(c.x, c.z, v.x, v.z);
+        if (d > 2.2 * 2.2) { stepNpc(c, v.x, v.z, spd * 1.08, dt, this.world); return true; }
+        c.face = Math.atan2(v.x - c.x, v.z - c.z);
+        if (j.cd <= 0) {
+          j.cd = 1.05;
+          j.hits++;
+          c.attackAnimT = 0.45; // the swing
+          v.hp -= 9;
+          v.attackAnimT = 0.45; // the flinch
+          v.fearT = 3.5; v.fearX = c.x; v.fearZ = c.z; // the victim bolts
+          v.seek = null; v.job = null;
+          sfx.stab();
+          this.fxQueue.push({ type: "confetti", x: v.x, y: 1.2, z: v.z, hue: 0.98 });
+          if (v.hp <= 0) {
+            // 🩸 a scuffle gone too far — that's MURDER, and the law reacts
+            this.killCrew(vi, false, -1, false, false);
+            this.reportBotCrime(c, "murder", v.x, v.z);
+            const last = this.loot[this.loot.length - 1];
+            if (last) c.seek = { kind: "loot", id: last.id, x: last.x, z: last.z }; // loot the body
+            return false;
+          }
+          if (j.hits >= 2) {
+            // 🥊 the victim caves — cash shakes loose, the winner scoops it
+            const amt = Math.min(v.purse, Math.round(range(this.rnd, 10, 25)));
+            if (amt > 0) {
+              v.purse -= amt;
+              this.dropLoot(v.x, v.z, amt, `${v.name}'s shaken loose cash`);
+              const last = this.loot[this.loot.length - 1];
+              if (last) c.seek = { kind: "loot", id: last.id, x: last.x, z: last.z };
+            }
+            this.reportBotCrime(c, "assault", v.x, v.z);
+            return false;
+          }
+        }
+        return true;
+      }
+      case "license": {
+        const lc = this.licenses.find((l) => l.id === j.tgt);
+        if (!lc || !lc.active) { c.holdsLic = false; return false; } // someone beat us to it
+        const d = dist2(c.x, c.z, lc.x, lc.z);
+        if (d > 1.8 * 1.8) { stepNpc(c, lc.x, lc.z, spd * 1.1, dt, this.world); return true; }
+        // 🪪 plucked a driving license off the street — now hunt a car!
+        lc.active = false;
+        c.holdsLic = true;
+        if (near && this.botLootCd <= 0) {
+          this.botLootCd = 4;
+          this.toast(`🪪 ${c.name} grabbed a driving license — they're hunting a car!`, "info");
+        }
+        return false; // next roll (likely a joyride)
+      }
+      case "drive": {
+        const ci = j.tgt;
+        const car = this.world.cars[ci];
+        if (!car || this.botDriven.has(ci) || this.drive?.ci === ci) return false; // taken
+        const d = dist2(c.x, c.z, car.x, car.z);
+        if (d > 3.1 * 3.1) { stepNpc(c, car.x, car.z, spd * 1.15, dt, this.world); return true; }
+        this.startBotDrive(c, ci);
+        return false; // the joyride brain takes over next frame
+      }
+    }
+    return false;
+  }
+
+  /** 🪓 Bot chop — same shudder/timber animation as the player's swing, but the
+   *  wood goes to the bot's own pockets (i.e. nowhere — no player resources). */
+  private chopTreeBot(i: number, dx: number, dz: number, by: Crew, near: boolean) {
+    const t = this.world.trees[i];
+    this.treeHits[i] = (this.treeHits[i] ?? 0) + 1;
+    if (near) { sfx.chop(); this.addShake(0.12); }
+    this.fxQueue.push({ type: "confetti", x: t.x, y: 1.6, z: t.z, hue: 0.09 });
+    const dl = Math.hypot(dx, dz) || 1;
+    this.lastChop = { i, dx: dx / dl, dz: dz / dl }; // shudder away from the chopper
+    this.chopVersion++;
+    if (this.treeHits[i] >= TREE_HITS) {
+      this.felled.add(i);
+      this.fellVersion++;
+      this.world.circles[i].r = 0.24; // only the stump blocks now
+      this.fellTimes.set(i, this.elapsed);
+      this.fellDir.set(i, Math.atan2(dx / dl, dz / dl));
+      if (near) {
+        this.addShake(0.35);
+        this.toast(`🪓 ${by.name} felled a tree — the bots work the jungle too!`, "info");
+      }
+    }
+  }
+
+  /** 🔨 Bot quarry — same crack/crumble animation the player's hammer gets. */
+  private smashRockBot(i: number, by: Crew, near: boolean) {
+    const rk = this.world.rocks[i];
+    this.rockHp[i] = (this.rockHp[i] ?? ROCK_HITS) - 1;
+    if (near) { sfx.smash(); this.addShake(0.14); }
+    this.fxQueue.push({ type: "confetti", x: rk.x, y: 1.1, z: rk.z, hue: 0.62 });
+    this.lastRock = i;
+    this.rockVersion++;
+    if (this.rockHp[i] <= 0) {
+      this.brokenRocks.add(i);
+      this.fellVersion++;
+      this.world.circles[this.world.rockCi[i]].r = 0.06; // rubble
+      this.rockBreakAt.set(i, this.elapsed);
+      if (near) {
+        this.addShake(0.3);
+        this.toast(`🔨 ${by.name} cracked a boulder apart!`, "info");
+      }
+    }
+  }
+
+  /* --- 🚗 bot joyrides — kinematic drive over the same car physics the player gets --- */
+
+  private startBotDrive(c: Crew, ci: number) {
+    const car = this.world.cars[ci];
+    if (!car) return;
+    c.job = null;
+    c.drive = { ci, x: car.x, z: car.z, rot: car.rot, v: 0, c: car.c, t: car.t, vx: car.x, vz: car.z, vrot: car.rot, spin: 0, hitT: 0, steerVis: 0, steer: 0, pedal: 0, lastDir: 1 };
+    this.botDriven.add(ci);
+    // 🛣️ cruise waypoint — bots tour the streets like any joyrider
+    const spot = spotNear(this.rnd, this.world, car.x, car.z, 70, 160);
+    c.tx = spot.x; c.tz = spot.z;
+    c.driveT = range(this.rnd, 9, 18);
+    c.driveStuck = 0;
+    if (dist2(c.x, c.z, this.player.x, this.player.z) < 40 * 40 && this.botLootCd <= 0) {
+      this.botLootCd = 5;
+      this.toast(`🚗 ${c.name} hopped into a ${VEHICLE_LABELS[car.t % VEHICLE_LABELS.length]} — bots drive now!`, "info");
+    }
+  }
+
+  /** One step of a bot-driven car — the same integration, body resolution and
+   *  collider sync the player's car uses; steering comes from a waypoint. */
+  private stepBotDrive(c: Crew, dt: number) {
+    const d = c.drive!;
+    const ti = d.t % VEHICLE_TOP.length;
+    c.driveT = (c.driveT ?? 0) - dt;
+    const arrived = dist2(d.x, d.z, c.tx, c.tz) < 9 * 9;
+    const nightish = this.phase !== "day" && this.phase !== "dawn";
+    const done = (c.driveT ?? 0) <= 0 || arrived || nightish;
+    // steer toward the waypoint; slow down for tight turns like a careful driver
+    const want = Math.atan2(c.tx - d.x, c.tz - d.z);
+    let dd = want - d.rot;
+    dd = Math.atan2(Math.sin(dd), Math.cos(dd));
+    const steerT = Math.max(-1, Math.min(1, dd));
+    d.steer += (steerT - d.steer) * (1 - Math.exp(-dt * 10));
+    const pedalT = done ? -1 : Math.abs(dd) > 1.5 ? 0.3 : 1;
+    d.pedal += (pedalT - d.pedal) * (1 - Math.exp(-dt * 10));
+    if (done && Math.abs(d.v) < 0.7) { this.endBotDrive(c); return; }
+    const maxF = 13.5; // bots cruise at city speed — no Mario kart
+    if (d.pedal > 0.01) d.v += CAR_ACCEL * dt * d.pedal;
+    else if (d.pedal < -0.01) d.v -= (d.v > 0.5 ? CAR_BRAKE : CAR_ACCEL * 0.55) * dt * -d.pedal;
+    else d.v -= Math.sign(d.v) * Math.min(Math.abs(d.v), CAR_COAST * dt);
+    if (d.v > maxF) d.v = maxF + (d.v - maxF) * Math.exp(-dt * 4);
+    if (d.v < -CAR_REV_SPEED) d.v = -CAR_REV_SPEED;
+    const sp = Math.abs(d.v);
+    const grip = (0.5 + 0.5 * Math.min(1, sp / 5)) * (1 - 0.28 * Math.min(1, sp / VEHICLE_TOP[ti])) * VEHICLE_STEER[ti];
+    const slices = Math.max(1, Math.ceil((Math.abs(d.v) * dt) / 0.35));
+    const sdt = dt / slices;
+    if (Math.abs(d.v) > 0.35) d.lastDir = d.v > 0 ? 1 : -1;
+    let scrape = 0;
+    for (let s = 0; s < slices; s++) {
+      d.rot -= d.steer * CAR_STEER * grip * sdt * d.lastDir;
+      d.x += Math.sin(d.rot) * d.v * sdt;
+      d.z += Math.cos(d.rot) * d.v * sdt;
+      scrape += this.resolveCarBody(d);
+    }
+    if (scrape > 0.004) { d.v *= Math.exp(-dt * 12); d.hitT = 0.35; }
+    const rr = Math.hypot(d.x, d.z);
+    if (rr > WALL_RADIUS) { d.x *= WALL_RADIUS / rr; d.z *= WALL_RADIUS / rr; }
+    // 🧱 walled in while crawling? 3s of going-nowhere parks the joyride
+    c.driveStuck = sp < 1.2 && !done ? (c.driveStuck ?? 0) + dt : 0;
+    if ((c.driveStuck ?? 0) > 3) { this.endBotDrive(c); return; }
+    // smoothed visual pose — same easing the player's car gets (no stutter)
+    d.hitT = Math.max(0, d.hitT - dt);
+    const kp = 1 - Math.exp(-dt * 90);
+    const kr = 1 - Math.exp(-dt * 90);
+    const pvx = d.vx, pvz = d.vz;
+    d.vx += (d.x - d.vx) * kp;
+    d.vz += (d.z - d.vz) * kp;
+    let vdr = d.rot - d.vrot;
+    vdr = Math.atan2(Math.sin(vdr), Math.cos(vdr));
+    d.vrot += vdr * kr;
+    d.spin -= (Math.hypot(d.vx - pvx, d.vz - pvz) * Math.sign(d.v || 1)) / 0.46;
+    d.steerVis += (-d.steer * Math.min(1, Math.abs(d.v) / 5) * 0.42 * Math.sign(d.v || 1) - d.steerVis) * (1 - Math.exp(-dt * 10));
+    this.syncCarColliders(d);
+    // the driver rides inside — glue the body to the car
+    c.x = d.x; c.z = d.z;
+    c.vx = Math.sin(d.rot) * d.v; c.vz = Math.cos(d.rot) * d.v;
+    c.face = d.rot;
+  }
+
+  /** Park & hop out — the car stays where the bot left it, and any 🪪 card in
+   *  the driver's pocket is tossed back onto the street for the next racer. */
+  private endBotDrive(c: Crew) {
+    const d = c.drive;
+    if (!d) return;
+    c.drive = null;
+    c.driveT = undefined;
+    c.driveStuck = undefined;
+    c.job = null;
+    this.botDriven.delete(d.ci);
+    // step out on the door side; resolve nudges clear of walls & the car itself
+    c.x = d.x + Math.cos(d.rot) * 2.3;
+    c.z = d.z - Math.sin(d.rot) * 2.3;
+    resolve(c, 0.4, this.world);
+    c.vx = 0; c.vz = 0;
+    if (c.holdsLic) {
+      c.holdsLic = false;
+      this.placeDroppedLicense(c.x, c.z);
+    }
+    if (dist2(c.x, c.z, this.player.x, this.player.z) < 34 * 34) {
+      this.toast(`${c.name} parked the car and wandered off.`, "info");
+    }
+  }
+
+  /* --- 👮 the law answers BOT crimes too — a witnessing cop gives chase --- */
+
+  /** A bot committed a crime in the open: the nearest cop who SAW it (or heard
+   *  the scuffle — brawls are LOUD) chases that contestant (targetCrew),
+   *  exactly like a player chase. Cops too far to see still hear it within
+   *  CRIME_REPORT_RANGE and go investigate. */
+  private reportBotCrime(offender: Crew, kind: "assault" | "murder" | "robbery", x: number, z: number) {
+    if (this.phase !== "day" && this.phase !== "dawn") return; // night has no law
+    if (!offender.alive || offender.mode === "possessed") return;
+    const hearR = Math.max(CRIME_SEE_R, 42) * (kind === "murder" ? 1.6 : 1); // screams carry
+    let nearest: Npc | null = null, nd = CRIME_REPORT_RANGE * CRIME_REPORT_RANGE;
+    for (const cop of this.cops) {
+      if (cop.mode === "chase") continue;
+      const d2c = dist2(cop.x, cop.z, x, z);
+      const watched = d2c < CRIME_SEE_R * CRIME_SEE_R && lineClear(cop.x, cop.z, x, z, this.world);
+      const heard = d2c < hearR * hearR;
+      if (watched || heard) {
+        cop.mode = "chase";
+        cop.targetCrew = offender.id;
+        cop.targetCiv = undefined;
+        cop.alertT = ESCAPE_LOST_S;
+        cop.timer = 0;
+        if (dist2(x, z, this.player.x, this.player.z) < 60 * 60) {
+          sfx.alert();
+          this.toast(kind === "murder"
+            ? `🚨 Police responded to a MURDER — ${offender.name} is being chased!`
+            : `🚨 Police broke up a fight — ${offender.name} is being chased!`, "info");
+        }
+        return;
+      }
+      if (d2c < nd) { nd = d2c; nearest = cop; }
+    }
+    // nobody close enough — the nearest officer walks over to investigate
+    if (nearest && kind === "murder") {
+      nearest.mode = "chase";
+      nearest.targetCrew = offender.id;
+      nearest.targetCiv = undefined;
+      nearest.alertT = ESCAPE_LOST_S;
+      nearest.timer = 0;
+    }
+  }
+
+  /** 👮 A chasing cop caught the offender bot — half the purse is confiscated
+   *  ON THE SPOT (dropped as loot anyone can grab), the bot bolts. */
+  private catchCrewBot(cop: Npc, idx: number) {
+    const c = this.crew[idx];
+    cop.mode = "celebrate";
+    cop.timer = 2.5;
+    cop.targetCrew = undefined;
+    cop.copCd = CIV_COP_CD;
+    const roam = spotNear(this.rnd, this.world, cop.x, cop.z, 40, 120);
+    cop.tx = roam.x; cop.tz = roam.z;
+    if (!c || !c.alive) return;
+    if (c.drive) this.endBotDrive(c); // dragged out of the driver's seat
+    const fine = Math.min(c.purse, Math.max(8, Math.round(c.purse * 0.5)));
+    if (fine > 0) {
+      c.purse -= fine;
+      this.dropLoot(c.x, c.z, fine, `${c.name}'s confiscated cash`);
+    }
+    c.fearT = 4; c.fearX = cop.x; c.fearZ = cop.z; // run from the law!
+    c.seek = null; c.job = null;
+    if (dist2(c.x, c.z, this.player.x, this.player.z) < 60 * 60) {
+      sfx.caught();
+      this.toast(`🚔 Police caught ${c.name} — ${fine > 0 ? `$${fine} confiscated` : "let off with a warning"}!`, "info");
+    }
+  }
+
   /** 💰 drop a stash of money where someone fell — first one there pockets it. */
   private dropLoot(x: number, z: number, amt: number, label: string) {
     if (amt <= 0) return;
@@ -3101,6 +3635,13 @@ export class GameEngine {
   private killCrew(idx: number, slain: boolean, killerIdx = -1, quiet = false, byYou = false, wall = false) {
     const c = this.crew[idx];
     if (!c.alive) return;
+    // 🚗 the driver's seat is no protection — park first so the body lands right
+    if (c.drive) this.endBotDrive(c);
+    // 🪪 a license in the fallen's pocket hits the dirt with them
+    if (c.holdsLic) {
+      c.holdsLic = false;
+      this.placeDroppedLicense(c.x, c.z);
+    }
     c.alive = false;
     c.hp = 0;
     c.mode = "dead";
@@ -3496,19 +4037,22 @@ export class GameEngine {
 
   /* ---------------- tools & building ---------------- */
 
-  /** Pocket a tool — same kinds stack (players can collect multiple!). */
+  /** Pocket a tool — each KIND only once (a second axe stays on the ground). */
   private addTool(kind: ToolKind, x: number, z: number) {
     const def = TOOLS.find((t) => t.kind === kind)!;
-    let slot = this.tools.find((s) => s.kind === kind);
-    if (slot) slot.count = Math.min(9, slot.count + 1);
-    else {
-      this.tools.push({ kind, count: 1 });
-      slot = this.tools[this.tools.length - 1];
+    if (this.tools.some((s) => s.kind === kind)) {
+      if (this.toolOnceT <= 0) {
+        this.toolOnceT = 5;
+        this.toast(`${def.emoji} You already own a ${def.name} — one is all you get!`, "info");
+      }
+      return;
     }
+    const slot = { kind, count: 1 };
+    this.tools.push(slot);
     if (this.held < 0) this.held = this.tools.indexOf(slot); // first tool auto-equips
     sfx.pickup();
     this.fxQueue.push({ type: "confetti", x, y: 1.2, z, hue: 0.08 });
-    this.toast(`${def.emoji} ${def.name} picked up (x${slot.count}) — ${def.tip}`, "good");
+    this.toast(`${def.emoji} ${def.name} picked up — ${def.tip}`, "good");
   }
 
   /** Equip a belt slot (−1 = bare hands). Called by the HUD belt & the G wheel. */
@@ -3661,31 +4205,52 @@ export class GameEngine {
 
   /** 🌆🧱 personal dusk shelter — the old code sent EVERY bot on the street to
    *  the single nearest hideout, where they piled into one grinding blob. Now:
-   *  the roster is spread across all hideouts id-biased (still local — an id
-   *  spot far away loses to the nearest one), and each bot gets a golden-angle
-   *  ring slot around its shelter so the crowd forms a circle, not a pile. */
-  private hideTargetFor(c: Crew, crowd: number[]): { x: number; z: number } {
+   *  the pick is STICKY per dusk (chosen once, kept all night) + the roster is
+   *  spread across all hideouts with a per-shelter capacity tax, and each bot
+   *  gets a golden-angle ring slot around its shelter so the crowd forms a
+   *  circle, not a pile. */
+  private hideTargetFor(c: Crew, crowd: number[], assigned: number[]): { x: number; z: number } {
     // 🧱 shelters beyond the wall are DEAD ground — only aim at hideouts the
     // shrinking circle still covers (fallback: dig in where you stand)
     const zR = this.zoneRadius() - 10;
-    let bestHi = -1, bestScore = Infinity;
-    for (let hi = 0; hi < this.hideSpots.length; hi++) {
-      const hs = this.hideSpots[hi];
-      if (Math.hypot(hs.x, hs.z) >= zR) continue;
-      // score = walk distance + crowd tax — every body already huddled there
-      // costs as much as ~8u of walking, so a full lobby NEVER funnels into
-      // one doorway for the pack to harvest in a single pile
-      const cw = crowd[hi] ?? 0;
-      const score = dist2(c.x, c.z, hs.x, hs.z) + cw * cw * 64;
-      if (score < bestScore) { bestScore = score; bestHi = hi; }
-    }
-    if (bestHi >= 0) {
-      const pick = this.hideSpots[bestHi];
+    const ringSpot = (hi: number) => {
+      const pick = this.hideSpots[hi];
       const a = (c.id % 97) * 2.399;              // golden angle — even ring spacing
       const r = 1.1 + (c.id % 5) * 0.7;           // 5 radii so rings nest, not overlap
       const spot = { x: pick.x + Math.cos(a) * r, z: pick.z + Math.sin(a) * r };
       resolve(spot, 0.45, this.world);            // never aim into a wall/tree/car
       return spot;
+    };
+    // 🎯 sticky pick — the shelter chosen when dusk broke stays chosen all
+    // night. Re-scoring every frame is what funneled the lobby into whichever
+    // doorway led the race (everyone beelined the SAME nearest one while the
+    // rest sat empty).
+    if (c.hideHi !== undefined && c.hideHi >= 0 && c.hideHi < this.hideSpots.length) {
+      const hs = this.hideSpots[c.hideHi];
+      if (Math.hypot(hs.x, hs.z) < zR) return ringSpot(c.hideHi);
+      c.hideHi = undefined; // swallowed by the shrinking wall — pick again
+    }
+    let bestHi = -1, bestScore = Infinity;
+    for (let hi = 0; hi < this.hideSpots.length; hi++) {
+      const hs = this.hideSpots[hi];
+      if (Math.hypot(hs.x, hs.z) >= zR) continue;
+      // 🎯 8-seat hard cap — a FULL shelter is not an option, period. The old
+      // score-tax lost to raw cross-map walk distance (360k beats any tax), so
+      // distant bots still piled into the least-bad full doorway. Now they
+      // spill into the dig-in-where-you-stand fallback and spread along the
+      // ground instead of stacking 13-deep at one hideout.
+      if ((assigned[hi] ?? 0) >= 8) continue;
+      // score = walk distance + crowd tax + assignment tax — every body
+      // huddled there OR already headed there costs real walking
+      const cw = crowd[hi] ?? 0;
+      const asg = assigned[hi] ?? 0;
+      const score = dist2(c.x, c.z, hs.x, hs.z) + cw * cw * 64 + asg * asg * 320;
+      if (score < bestScore) { bestScore = score; bestHi = hi; }
+    }
+    if (bestHi >= 0) {
+      c.hideHi = bestHi; // 🎯 sticky — this shelter is MINE until dawn
+      assigned[bestHi] = (assigned[bestHi] ?? 0) + 1;
+      return ringSpot(bestHi);
     }
     // 🧱 no shelter left inside the shrinking wall — dig in WHERE YOU STAND
     // (nudged back inside the wall). The old fallback marched every survivor
@@ -4016,35 +4581,47 @@ export class GameEngine {
       }
       if (dist2(p.x, p.z, it.x, it.z) < PICKUP_RADIUS * PICKUP_RADIUS) {
         const d = ITEMS[it.def];
-        let slot = this.inv.find((s) => s.def === it.def);
+        const slot = this.inv.find((s) => s.def === it.def);
         if (slot) {
-          if (slot.count >= INV_STACK) continue; // stack full — leave it on the ground
-          slot.count++;
-        } else {
-          if (this.inv.length >= INV_SLOTS) {
-            if (this.pocketFullT <= 0) {
-              this.pocketFullT = 6;
-              this.toast("🎒 Pockets full! Eat something to make room (press 1-8).", "info");
-            }
-            continue; // no free slot — leave it on the ground
+          // 🎒 ONE of each item — a second of the same snack stays on the ground
+          // (eat it to free the slot, then that kind can be collected again)
+          if (this.invOnceT <= 0) {
+            this.invOnceT = 5;
+            this.toast(`🎒 One ${d.name} is enough — each item can be carried only once!`, "info");
           }
-          this.inv.push({ def: it.def, count: 1 });
-          slot = this.inv[this.inv.length - 1];
+          continue;
         }
+        if (this.inv.length >= INV_SLOTS) {
+          if (this.pocketFullT <= 0) {
+            this.pocketFullT = 6;
+            this.toast("🎒 Pockets full! Eat something to make room (press 1-8).", "info");
+          }
+          continue; // no free slot — leave it on the ground
+        }
+        this.inv.push({ def: it.def, count: 1 });
         it.active = false; it.respawn = ITEM_RESPAWN_S;
         const n = this.inv.findIndex((s) => s.def === it.def) + 1;
         sfx.pickup();
         if (this.mp) this.netEmit?.({ t: "pickup", kind: "item", id: it.id });
-        this.toast(`${d.emoji} ${d.name} pocketed (x${slot.count}) — tap the bag or press ${n} to use!`, "good");
+        this.toast(`${d.emoji} ${d.name} pocketed — tap the bag or press ${n} to use!`, "good");
       }
     }
 
-    /* --- 🪓 7Nights arms: walk over a glowing tool to pocket it (stacks!) --- */
+    /* --- 🪓 7Nights arms: walk over a glowing tool to pocket it (ONE of each!) --- */
     if (this.detainedT <= 0 && !(this.youPossessed && this.phase === "night")) {
       for (const te of this.toolEnts) {
         if (!te.active) {
           te.respawn -= dt;
           if (te.respawn <= 0) te.active = true;
+          continue;
+        }
+        // 🎒 each TOOL can be collected exactly once — owning an axe blocks a second
+        if (this.tools.some((s) => s.kind === te.kind)) {
+          if (this.toolOnceT <= 0) {
+            this.toolOnceT = 5;
+            const td = TOOLS.find((t2) => t2.kind === te.kind)!;
+            this.toast(`${td.emoji} You already own a ${td.name} — each tool can be picked up only once!`, "info");
+          }
           continue;
         }
         if (dist2(p.x, p.z, te.x, te.z) < TOOL_PICKUP_R * TOOL_PICKUP_R) {
@@ -4167,6 +4744,26 @@ export class GameEngine {
           break;
         }
         case "chase": {
+          // 👮 chasing a CONTESTANT bot who broke the law in broad daylight
+          if (cop.targetCrew != null) {
+            const bi = this.crew.findIndex((cc) => cc.id === cop.targetCrew);
+            const b = bi >= 0 ? this.crew[bi] : null;
+            if (!b || !b.alive || b.mode === "possessed" || this.phase === "night" || this.phase === "dusk") {
+              cop.mode = "return"; cop.timer = 0; cop.targetCrew = undefined; cop.copCd = CIV_COP_CD;
+              break;
+            }
+            stepNpc(cop, b.x, b.z, POLICE_SPRINT, dt, this.world);
+            const d2b = dist2(cop.x, cop.z, b.x, b.z);
+            if (d2b < 1.9 * 1.9) {
+              this.catchCrewBot(cop, bi);
+            } else {
+              cop.alertT = d2b < 42 * 42 ? ESCAPE_LOST_S : cop.alertT - dt;
+              if (cop.alertT <= 0) {
+                cop.mode = "return"; cop.timer = 0; cop.targetCrew = undefined; cop.copCd = CIV_COP_CD;
+              }
+            }
+            break;
+          }
           // chasing a civilian bot — old-game cops caught anyone suspicious
           if (cop.targetCiv != null) {
             const c = this.civs.find((cc) => cc.id === cop.targetCiv);
@@ -4242,7 +4839,7 @@ export class GameEngine {
     /* --- escape sweep: player got far / out of reach → police give up & go back --- */
     if (this.chased && this.detainedT <= 0) {
       let anyChase = false;
-      for (const cop of this.cops) if (cop.mode === "chase" && cop.targetCiv == null) { anyChase = true; break; }
+      for (const cop of this.cops) if (cop.mode === "chase" && cop.targetCiv == null && cop.targetCrew == null) { anyChase = true; break; }
       if (!anyChase) {
         this.clearWanted("🎉 You escaped! The police went back — wanted badge cleared. Play on!");
         // send every heading-home cop to a spot far away from the player
@@ -4418,6 +5015,8 @@ export class GameEngine {
     this.groanT -= dt;
     this.zLootCd = Math.max(0, this.zLootCd - dt);
     this.botLootCd = Math.max(0, this.botLootCd - dt);
+    this.invOnceT = Math.max(0, this.invOnceT - dt);
+    this.toolOnceT = Math.max(0, this.toolOnceT - dt);
     // 🎯 swarm census — one pass so diverse prey picks can discount victims that
     // already have enough hunters on them (see pickDiversePrey)
     if (night > 0.55) this.rebuildPreyLoad();
@@ -4560,9 +5159,10 @@ export class GameEngine {
             // milling the whole idle horde into a single blob across town.
             zb.roamT = (zb.roamT ?? 0) - dt;
             if ((zb.blockT ?? 0) > 2 || zb.roamT <= 0 || (zb.roamX !== undefined && dist2(zb.x, zb.z, zb.roamX, zb.roamZ) < 1.6)) {
-              // fresh wander pick — mostly around here; a quarter drifts to the
-              // graveyard's WIDE haunt area (thematic, but no longer a point-blob)
-              let t = this.rnd() < 0.25
+              // fresh wander pick — rarely near the graveyard's WIDE haunt area
+              // (thematic flavor; the old 25% odds marched a third of the idle
+              // horde into one blob across town every night)
+              let t = this.rnd() < 0.08
                 ? spotNear(this.rnd, this.world, GRAVEYARD.x, GRAVEYARD.z, 6, GRAVEYARD.r - 4)
                 : spotNear(this.rnd, this.world, zb.x, zb.z, 12, 55);
               // 🧱 never prowl beyond the shrinking wall — pull the pick back inside

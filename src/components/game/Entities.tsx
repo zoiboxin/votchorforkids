@@ -989,7 +989,8 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
       const turned = c.alive && c.zombieTonight && engine.phase === "night";
       v.blood.visible = near && !c.alive;
       if (v.blood.visible) v.blood.position.set(c.deathX, 0.04, c.deathZ);
-      if (!near || turned) {
+      // 🚗 behind the wheel — the car body IS their body now
+      if (!near || turned || (c.alive && c.drive)) {
         v.mesh.visible = false;
         return;
       }

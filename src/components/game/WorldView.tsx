@@ -1010,6 +1010,17 @@ function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutabl
     const d = engine.drive;
     const P = partsOf(R);
     let dirty = false;
+    // 🤖 bot joyriders move their fleet cars — re-stamp those instances too
+    // (the parked fleet is stamped once, so a bot-driven car must follow its
+    // world entry every frame or it would drive while its mesh stays parked)
+    if (engine.botDriven.size > 0) {
+      for (const ci of engine.botDriven) {
+        const c = WORLD.cars[ci];
+        if (!c) continue;
+        placeCar(P, ci, c.x, terrainHeight(c.x, c.z), c.z, c.rot, c.c, c.t, false);
+      }
+      dirty = true;
+    }
     if (d) {
       const c = WORLD.cars[d.ci];
       if (d.ci !== drvCi.current) { drvCi.current = d.ci; drvY.current = terrainHeight(d.vx, d.vz); } // new ride — snap
