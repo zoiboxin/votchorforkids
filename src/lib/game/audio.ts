@@ -134,6 +134,19 @@ export const sfx = {
   zdog: () => { tone(88, 0.7, "sawtooth", 0.24, 56); tone(126, 0.5, "square", 0.09, 72, 0.1); noise(0.55, 0.11, 240, 0.08); },
   // dawn bell — relief
   bell: () => { tone(660, 0.7, "sine", 0.3, 659); tone(990, 0.5, "sine", 0.12, undefined, 0.02); },
+  /* ------- 🌲 deep-jungle night — the scary set ------- */
+  // owl — the classic two-note "hoo-HOO" drifting through the trees
+  owl: () => { tone(486, 0.28, "sine", 0.16, 442); tone(418, 0.5, "sine", 0.18, 396, 0.34); noise(0.5, 0.014, 900, 0.3); },
+  // distant big-cat growl — a low rolling rumble that makes you stop walking
+  growl: () => { tone(82, 1.1, "sawtooth", 0.17, 58); tone(110, 0.9, "square", 0.05, 74, 0.12); noise(1.0, 0.07, 180, 0.05); },
+  // twig snap — something just stepped on a branch behind you
+  snap: () => { noise(0.045, 0.3, 1500); tone(1900, 0.03, "square", 0.1, 700); },
+  // crow caw — two harsh flat rasps
+  caw: () => { tone(620, 0.14, "sawtooth", 0.14, 480); tone(575, 0.18, "sawtooth", 0.12, 430, 0.2); },
+  // wolf howl — long rising-falling glide, very different from the zombie wail
+  wolfHowl: () => { tone(294, 0.5, "sine", 0.15, 523); tone(523, 1.1, "sine", 0.15, 349, 0.5); tone(349, 0.5, "sine", 0.08, 294, 1.5); noise(1.6, 0.02, 600, 0.3); },
+  // spectral chime — the ghost stag fades from sight
+  chime: () => { [1244, 1568, 1976].forEach((f, i) => tone(f, 0.8, "sine", 0.07, f * 0.985, i * 0.09, true)); noise(0.6, 0.015, 3000, 0.1); },
   // angry crowd drags the accused away
   mob: () => { tone(200, 0.3, "sawtooth", 0.2, 260); noise(0.35, 0.16, 400, 0.05); tone(180, 0.3, "square", 0.14, 240, 0.18); },
 };

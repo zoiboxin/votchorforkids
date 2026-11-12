@@ -781,13 +781,16 @@ const DOG_COATS: { fur: string; muzzle: string; belly: string; saddle?: string }
   { fur: "#b9b3ac", muzzle: "#d8d4cd", belly: "#e8e4dc" },                    // grey
   { fur: "#efe9df", muzzle: "#f7f2e8", belly: "#f7f2e8", saddle: "#8a6a48" }, // white + brown patches
 ];
-/** 🧟 rot palettes for the zombie hounds — sickly fur, per-variant */
+/** 🧟 rot palettes for the zombie hounds — sickly but READABLE in the dark.
+ *  The first pass used near-black rot greens that vanished into the night
+ *  fog (player: "can not see them") — these sit two steps lighter so the
+ *  moonlit silhouette + red eyes read from a full street away.          */
 const ZOM_COATS: { fur: string; muzzle: string; belly: string }[] = [
-  { fur: "#5e7345", muzzle: "#3f4f33", belly: "#46543a" },
-  { fur: "#4f6340", muzzle: "#3a4a30", belly: "#41503a" },
-  { fur: "#57703f", muzzle: "#3e5134", belly: "#47563b" },
-  { fur: "#55663f", muzzle: "#3c4c33", belly: "#44523c" },
-  { fur: "#5e6b4a", muzzle: "#41503a", belly: "#4a5841" },
+  { fur: "#8aa86a", muzzle: "#5e7345", belly: "#6d854f" },
+  { fur: "#7d9a5f", muzzle: "#55683e", belly: "#64794a" },
+  { fur: "#91a873", muzzle: "#627449", belly: "#6f8753" },
+  { fur: "#84a068", muzzle: "#5a6d44", belly: "#69804f" },
+  { fur: "#8ca26f", muzzle: "#5f7148", belly: "#70855a" },
 ];
 
 export function buildAnimal(kind: AnimalKind3, variant = 0, zom = false): THREE.Group {
@@ -854,10 +857,11 @@ export function buildAnimal(kind: AnimalKind3, variant = 0, zom = false): THREE.
         s * 0.17, 0.26, -0.02, -0.14, 0, s * 0.3);
     }
     // warm brown dog eyes… or glowing red coals when the dark owns them
+    // (🧟 oversized 2× — the eyes are the only thing that reads at 40u in fog)
     for (const s of [-1, 1]) {
       if (zom) {
-        hUnlit.add(sphere(0.06, 8, 6), "#ff2d18", true, s * 0.13, 0.05, 0.21);
-        hUnlit.add(sphere(0.022, 5, 4), "#ffd0a0", true, s * 0.135, 0.06, 0.26);
+        hUnlit.add(sphere(0.095, 8, 6), "#ff3020", true, s * 0.13, 0.05, 0.21);
+        hUnlit.add(sphere(0.038, 5, 4), "#ffd8b0", true, s * 0.14, 0.062, 0.262);
       } else {
         hUnlit.add(sphere(0.055, 8, 6), "#5a3b1e", true, s * 0.13, 0.06, 0.21);
         hUnlit.add(sphere(0.014, 5, 4), GLINT, true, s * 0.15, 0.085, 0.25);

@@ -366,14 +366,42 @@ export const ZOMBIE_TOUCH_CD = 1.2;
 export const GRAVEYARD_CENTER = GRAVEYARD;
 
 /* ---------- Animals ---------- */
-export type AnimalKind = "cow" | "chicken" | "deer" | "monkey" | "dog";
+export type AnimalKind = "cow" | "chicken" | "deer" | "monkey" | "dog"
+  /* 🌲 polyfork GLB wildlife — the jungle is ALIVE now (see public/models/CREDITS.md) */
+  | "wolf" | "bear" | "fox" | "owl" | "crow" | "rabbit"
+  /* 👻 night-only spirit of the deep jungle */
+  | "stag";
 export const ANIMAL_SET: { kind: AnimalKind; count: number; zone: "farm" | "jungle" | "city" }[] = [
   { kind: "dog", count: 9, zone: "city" },
   { kind: "cow", count: 5, zone: "farm" },
   { kind: "chicken", count: 7, zone: "farm" },
   { kind: "deer", count: 4, zone: "jungle" },
   { kind: "monkey", count: 4, zone: "jungle" },
+  // 🌲 the new wildlife — polyfork low-poly models, loaded from /public/models
+  { kind: "wolf", count: 3, zone: "jungle" },
+  { kind: "fox", count: 4, zone: "jungle" },
+  { kind: "bear", count: 2, zone: "jungle" },
+  { kind: "owl", count: 3, zone: "jungle" },
+  { kind: "crow", count: 4, zone: "jungle" },
+  { kind: "rabbit", count: 5, zone: "jungle" },
+  { kind: "stag", count: 1, zone: "jungle" },   // 👻 the spectral stag — night only
 ];
+
+/** Per-kind wildlife motion table (u/s). Flee = panic dash away from you,
+ *  walk = graze-wander speed. `spookR` = how close you may get before panicking. */
+export const WILDLIFE: Record<string, { flee: number; walk: number; spookR: number }> = {
+  cow: { flee: 2.4, walk: 1.1, spookR: 4.5 },
+  chicken: { flee: 4.6, walk: 1.6, spookR: 6 },
+  deer: { flee: 6.2, walk: 1.8, spookR: 6 },
+  monkey: { flee: 5, walk: 1.8, spookR: 6 },
+  wolf: { flee: 6.2, walk: 1.7, spookR: 7 },    // bold by day — watches you before trotting off
+  fox: { flee: 6.8, walk: 1.9, spookR: 7.5 },   // quick, curious
+  bear: { flee: 4.4, walk: 1.2, spookR: 8 },    // huge, unhurried — do not test it
+  owl: { flee: 5.2, walk: 0.9, spookR: 5.5 },   // ground-roosting, dumpy hop-flee
+  crow: { flee: 7.0, walk: 1.3, spookR: 7 },    // pecks around, bursts away
+  rabbit: { flee: 7.4, walk: 1.4, spookR: 8.5 },// tiny + twitchy — gone before you see it
+  stag: { flee: 5.6, walk: 1.1, spookR: 6.5 },  // 👻 glides — vanishes if pressed
+};
 
 /* ---------- 🐕 street dogs & 🧟 zombie hounds ----------
  * Friendly strays roam the city by day — curious, they amble up to you and

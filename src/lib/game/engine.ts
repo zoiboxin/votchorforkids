@@ -10,6 +10,7 @@ import {
   AIRPORT, PLANE_COUNT, POWER_CARRY,
   WALL_RADIUS, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
   ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, DOG_SPEED, ZOMDOG_DMG, ZOMDOG_HP, ZOMDOG_SENSE, ZOMDOG_SPEED, ZOMDOG_TOUCH_CD, POINTS_KILL_ZOMDOG, BOT_SPAWN_GAP, policeOutfitOf, randomAppearance, stationCage, stationGate,
+  WILDLIFE,
   ACCUSE_RADIUS, ATTACK_CD, ATTACK_RANGE, BARRICADE_COST, BARRICADE_HP, CAMPFIRE_COST, CAMPFIRE_R, CLAW_DMG,
   CREW_COLORS, CREW_COLOR_NAMES, CREW_COUNT, CREW_HP, CREW_NAMES, CREW_SPEED, HANDS_DMG, HUNTER_DMG, HUNTER_HP, HUNTER_SPEED,
   HUNTER_TOUCH_CD, NIGHTS_TOTAL, PHASE_DAY_S, PHASE_DAWN_S, PHASE_DUSK_S, PHASE_NIGHT_S,
@@ -28,6 +29,7 @@ import { clamp, mulberry32, range } from "./rng";
 import { addDynamicCircle, freeSpot, lineClear, refreshCarCircle, resolve, RING_R, ROADS, scatterSpots, spotNear, terrainHeight, TOWN_SQUARE, type CircleCollider, type World } from "./worldgen";
 import { nightFactor, newBody, stepBody, stepNpc, type Body, type SteerMemory } from "./sim";
 import { sfx, startDrone, stopDrone, setInsects, stopInsects } from "./audio";
+import { preloadModels } from "./models";
 import type { MpEvent } from "@/lib/game/net/client";
 
 const TAU = Math.PI * 2; // full circle — used to keep the camera yaw wrapped
@@ -473,6 +475,13 @@ export class GameEngine {
   civs: Npc[] = [];
   zombies: Zombie[] = [];
   animals: Animal[] = [];
+  /** 🌲 jungle night ambience director — countdown to the next owl / growl /
+   *  twig-snap / howl while you're in the trees after dark (0 = idle, day) */
+  private ambT = 0;
+  /** 🐺 wolf pack howl cadence — one lonesome call every so often at night */
+  private wolfT = 0;
+  /** 🧟 hound wail cadence — distant zombie-hound howls after nightfall */
+  private howlT = 0;
   planes: PlaneState[] = [];
   items: ItemEnt[] = [];
   traffic: TrafficCar[] = [];
@@ -689,6 +698,9 @@ export class GameEngine {
     this.look = look;
     this.rawToast = toast;
     this.side = look.fac;
+    // 🌲 start fetching the polyfork wildlife GLBs right away — by the time you
+    // reach the jungle they should be parsed and ready to spawn
+    preloadModels();
     this.policePerk = policeOutfitOf(look.fac === "police" ? look.outfit : "").stats;
     // snapshot every static collider radius so reset() can un-fell trees & un-smash rocks
     this.circleR0 = world.circles.map((c) => c.r);
@@ -2650,6 +2662,9 @@ export class GameEngine {
       an.hp = ZOMDOG_HP;
       an.resting = false;
       an.touchCd = 0;
+      // 💥 a visible red burst marks the TURN — even across the street you
+      // watch your friendly stray fall apart into something that hunts you
+      this.fxQueue.push({ type: "confetti", x: an.x, y: 0.8, z: an.z, hue: 0.0 });
       hounds++;
     }
     if (hounds > 0) {
@@ -4323,6 +4338,37 @@ export class GameEngine {
       const inJ = z === "Jungle" ? 0.72 : z === "Deep Jungle" ? 0.95 : 0;
       setInsects(inJ === 0 ? 0 : Math.min(1.15, inJ + nf * 0.35 + (this.phase === "night" ? 0.12 : this.phase === "dusk" ? 0.08 : 0)));
     }
+    // 🌲 THE JUNGLE AFTER DARK — a horror soundscape director. While YOU walk
+    // the trees at night: owls hoot, something huge growls, twigs snap right
+    // behind you, crows rasp, wolves answer each other. Step into the open and
+    // the chorus cuts out — the silence is part of the scare.
+    {
+      const nf = nightFactor(this.clock);
+      const inJungle = z === "Jungle" || z === "Deep Jungle";
+      if (inJungle && nf > 0.4) {
+        this.ambT -= dt;
+        if (this.ambT <= 0) {
+          this.ambT = range(this.rnd, 5.5, 14);
+          const roll = this.rnd();
+          if (roll < 0.3) sfx.owl();
+          else if (roll < 0.52) sfx.growl();
+          else if (roll < 0.72) sfx.snap();
+          else if (roll < 0.86) sfx.caw();
+          else sfx.wolfHowl();
+        }
+      } else this.ambT = 0;
+      // 🐺 the pack answers the moon — a far-off howl every so often, wherever
+      // you are, so the jungle always sounds alive (and haunted) at night
+      if (nf > 0.5) {
+        this.wolfT -= dt;
+        if (this.wolfT <= 0) { this.wolfT = range(this.rnd, 16, 38); sfx.wolfHowl(); }
+      } else this.wolfT = 0;
+      // 🧟 hounds out there — distant rotting wails keep the night tense
+      if (this.phase === "night" && this.animals.some((a) => a.zombie && !a.dead)) {
+        this.howlT -= dt;
+        if (this.howlT <= 0) { this.howlT = range(this.rnd, 11, 24); sfx.howl(); }
+      } else this.howlT = 0;
+    }
 
     // 🏕️ camp discovery — walking up to a lonely jungle camp is worth a line
     for (let ci = 0; ci < this.world.camps.length; ci++) {
@@ -5377,15 +5423,72 @@ export class GameEngine {
       }
 
       const isDog = an.kind === "dog";
-      const fleeR = an.kind === "cow" ? 4.5 : 6;
+      const wild = WILDLIFE[an.kind];
+      const fleeR = wild ? wild.spookR : 6;
+      const arrived = dist2(an.x, an.z, an.tx, an.tz) < 2;
+      // 👻 THE SPECTRAL STAG — the deep jungle's night spirit. It sleeps inside
+      // the mist by day (the renderer fades it out); after dark it glides
+      // between the trees, and if you press too close it VANISHES with a chime.
+      // (Checked BEFORE the generic flee — the vanish is its signature move.)
+      if (an.kind === "stag") {
+        const night = nightFactor(this.clock);
+        if (night < 0.35) {
+          // sleeping in the spirit realm — no motion, renderer hides it
+          an.resting = true; an.vx = 0; an.vz = 0;
+          continue;
+        }
+        if (d2p < 5.5 * 5.5) {
+          // too close — it dissolves and re-forms deeper in the jungle
+          const spot = freeSpot(this.rnd, this.world, DEEP_JUNGLE_RADIUS + 8, JUNGLE_RADIUS - 40);
+          this.fxQueue.push({ type: "confetti", x: an.x, y: 1.6, z: an.z, hue: 0.48 });
+          an.x = spot.x; an.z = spot.z; an.tx = spot.x; an.tz = spot.z;
+          an.vx = 0; an.vz = 0; an.resting = false; an.timer = range(this.rnd, 3, 7);
+          sfx.chime();
+          this.toast("👻 The spectral stag dissolved into mist before your eyes…", "info");
+          continue;
+        }
+        if (an.timer <= 0 || (arrived && !an.resting)) {
+          an.resting = false;
+          const spot = this.grazeSpot(an, false);
+          if (spot) { an.tx = spot.x; an.tz = spot.z; }
+          an.timer = range(this.rnd, 6, 14);
+        }
+        if (!an.resting) stepNpc(an, an.tx, an.tz, WILDLIFE.stag.walk, dt, this.world);
+        continue;
+      }
       if (!isDog && this.morphKind == null && d2p < fleeR * fleeR) {
         an.resting = false; // panic overrides grazing
         const dx = an.x - p.x, dz = an.z - p.z, d = Math.hypot(dx, dz) || 1;
-        const fs = an.kind === "cow" ? 2.4 : an.kind === "chicken" ? 4.6 : an.kind === "deer" ? 6.2 : 5;
+        const fs = wild ? wild.flee : 5;
         stepNpc(an, an.x + (dx / d) * 8, an.z + (dz / d) * 8, fs, dt, this.world);
         continue;
       }
-      const arrived = dist2(an.x, an.z, an.tx, an.tz) < 2;
+      // 🐺 wolves — harmless grazers by day, but after dark they remember they
+      // are predators: a wolf within earshot stalks you through the trees,
+      // circling just outside arm's reach and howling to call the pack.
+      if (an.kind === "wolf" && nightFactor(this.clock) > 0.55 && !this.drive && this.detainedT <= 0) {
+        an.barkT = Math.max(0, (an.barkT ?? 0) - dt);
+        const hunt = d2p < 30 * 30;
+        if (hunt && d2p > 7.5 * 7.5) {
+          // stalk — close the gap to the circle distance
+          stepNpc(an, p.x, p.z, 2.6, dt, this.world);
+        } else if (hunt) {
+          // too close — back off a step (it keeps its distance… for now)
+          const dx = an.x - p.x, dz = an.z - p.z, d = Math.hypot(dx, dz) || 1;
+          stepNpc(an, an.x + (dx / d) * 6, an.z + (dz / d) * 6, 2.2, dt, this.world);
+        } else {
+          // out of earshot — regular graze cycle
+          if (an.timer <= 0 || (arrived && !an.resting)) {
+            an.resting = !an.resting;
+            if (!an.resting) { const spot = this.grazeSpot(an, false); if (spot) { an.tx = spot.x; an.tz = spot.z; } an.timer = range(this.rnd, 5, 11); }
+            else { an.tx = an.x; an.tz = an.z; an.timer = range(this.rnd, 2.5, 6); }
+          }
+          if (!an.resting) stepNpc(an, an.tx, an.tz, WILDLIFE.wolf.walk, dt, this.world);
+        }
+        // the call — one long howl when it has your scent, quieter pacing otherwise
+        if (hunt && an.barkT <= 0 && d2p < 22 * 22) { an.barkT = range(this.rnd, 6, 13); sfx.wolfHowl(); }
+        continue;
+      }
       if (isDog) {
         /* 🐕 friendly strays — dogs DON'T fear you: they amble up to say hello,
          * bark a wagging welcome, then wander off to sniff the next corner */
@@ -5431,7 +5534,7 @@ export class GameEngine {
         }
       }
       if (!an.resting) {
-        stepNpc(an, an.tx, an.tz, an.kind === "cow" ? 1.1 : an.kind === "chicken" ? 1.6 : 1.8, dt, this.world);
+        stepNpc(an, an.tx, an.tz, wild ? wild.walk : 1.8, dt, this.world);
       }
     }
 

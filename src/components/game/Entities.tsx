@@ -5,8 +5,9 @@ import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
   ANIMAL_SET, ATTACK_CD, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, ROCK_BREAK_S, SHIRT_COLORS, SKIN_TONES,
-  TOTAL_VOTES, TREE_FALL_S, ZONE_WALL_H, FARM_RADIUS, JUNGLE_RADIUS, type AnimalKind, type Appearance,
+  TOTAL_VOTES, TREE_FALL_S, ZONE_WALL_H, FARM_RADIUS, JUNGLE_RADIUS, WILDLIFE, type AnimalKind, type Appearance,
 } from "@/lib/game/constants";
+import { preloadModels, onModelsReady, spawnModel } from "@/lib/game/models";
 import type { GameEngine } from "@/lib/game/engine";
 import { nightFactor } from "@/lib/game/sim";
 import { mulberry32 } from "@/lib/game/rng";
@@ -487,40 +488,125 @@ export function Zombies({ engine }: { engine: GameEngine }) {
 /* ------------------------------------------------------------------ */
 /* Animals                                                             */
 /* ------------------------------------------------------------------ */
+/* 🐾 Two body pipelines:                                          */
+/*  • procedural kinds (cow/chicken/deer/monkey + the dog pair) come
+ *    from character.ts buckets, posed by poseAnimal every frame.   */
+/*  • polyfork GLB kinds (wolf/bear/fox/owl/crow/rabbit/stag — see
+ *    public/models/CREDITS.md) are skinned meshes with baked clips:
+ *    a real AnimationMixer cross-fades Idle → Walk → Run, and the
+ *    birds take wing (Fly) when they bolt.                          */
+const GLB_KINDS = new Set(["wolf", "bear", "fox", "owl", "crow", "rabbit", "stag"]);
+
+/** soft radial glow sprite — the hound's hell-light, the stag's spirit-mist */
+function makeGlowSprite(color: string, scale: number): THREE.Sprite {
+  const cv = document.createElement("canvas");
+  cv.width = cv.height = 64;
+  const g = cv.getContext("2d")!;
+  const grad = g.createRadialGradient(32, 32, 2, 32, 32, 31);
+  grad.addColorStop(0, "rgba(255,255,255,0.9)");
+  grad.addColorStop(0.35, color);
+  grad.addColorStop(1, "rgba(0,0,0,0)");
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(cv);
+  const mat = new THREE.SpriteMaterial({
+    map: tex, color: 0xffffff, transparent: true, opacity: 0.8,
+    blending: THREE.AdditiveBlending, depthWrite: false,
+  });
+  const sp = new THREE.Sprite(mat);
+  sp.scale.setScalar(scale);
+  sp.frustumCulled = false;
+  sp.renderOrder = 5;
+  return sp;
+}
+
+interface AnimalRig {
+  obj: THREE.Group;
+  kind: string;
+  /** GLB pipeline: mixer + clip lookup for the baked animations */
+  mixer?: THREE.AnimationMixer;
+  clips?: Record<string, THREE.AnimationClip>;
+  current?: THREE.AnimationAction;
+  /** halo sprite (hound hell-light / stag spirit-mist) */
+  halo?: THREE.Sprite;
+}
+
 export function Animals({ engine }: { engine: GameEngine }) {
-  const views = useMemo(() => {
-    const map = new Map<number, THREE.Object3D>();
-    // per-kind variant counter — each stray dog gets its own coat & the
-    // matching rot-palette for its zombie form
-    const counters = new Map<string, number>();
-    engine.animals.forEach((a) => {
-      const vi = counters.get(a.kind) ?? 0;
-      counters.set(a.kind, vi + 1);
-      if (a.kind === "dog") {
-        // 🐕 strays carry BOTH bodies — the friendly stray by day, the
-        // rotting red-eyed hound at night; useFrame swaps visibility
-        const wrap = new THREE.Group();
-        const norm = buildAnimal("dog", vi);
-        const zom = buildZombieDog(vi);
-        zom.visible = false;
-        wrap.add(norm, zom);
-        wrap.userData.dogParts = { norm, zom };
-        map.set(a.id, wrap);
-      } else {
-        map.set(a.id, buildAnimal(a.kind));
+  const holder = useRef<THREE.Group>(null!);
+  const rigs = useRef<Map<number, AnimalRig>>(new Map());
+  const [, bump] = useState(0);
+  const [, tick] = useState(0);
+
+  // 🌲 GLBs stream in during play — rebuild any missing species when ready
+  useEffect(() => {
+    preloadModels(); // idempotent safety net (the engine already kicked it off)
+    const off = onModelsReady(() => bump((v) => v + 1));
+    const iv = setInterval(() => tick((v) => v + 1), 700); // poll until all species land
+    const stop = setTimeout(() => clearInterval(iv), 30000);
+    return () => { off(); clearInterval(iv); clearTimeout(stop); };
+  }, []);
+
+  // build a rig per animal (idempotent — existing rigs are kept)
+  for (const a of engine.animals) {
+    if (rigs.current.has(a.id)) continue;
+    if (a.kind === "dog") {
+      // 🐕 strays carry BOTH bodies — the friendly stray by day, the rotting
+      // red-eyed hound at night; useFrame swaps visibility + lights the halo
+      const wrap = new THREE.Group();
+      const norm = buildAnimal("dog", a.id % 5);
+      const zom = buildZombieDog(a.id % 5);
+      zom.visible = false;
+      wrap.add(norm, zom);
+      wrap.userData.dogParts = { norm, zom };
+      const halo = makeGlowSprite("rgba(255,45,20,0.75)", 2.1);
+      halo.position.y = 0.85;
+      halo.visible = false;
+      wrap.add(halo);
+      rigs.current.set(a.id, { obj: wrap, kind: "dog", halo });
+    } else if (GLB_KINDS.has(a.kind)) {
+      const spawned = spawnModel(a.kind);
+      if (!spawned) continue; // still loading — the poll retries
+      const rig: AnimalRig = { obj: spawned.root, kind: a.kind, mixer: spawned.mixer, clips: spawned.clips };
+      if (a.kind === "stag") {
+        // 👻 the spirit stag breathes cold cyan mist
+        const halo = makeGlowSprite("rgba(120,240,255,0.55)", 4.2);
+        halo.position.y = 1.6;
+        rig.halo = halo;
+        spawned.root.add(halo);
       }
-    });
-    return map;
-  }, [engine]);
-  useFrame((s) => {
+      rigs.current.set(a.id, rig);
+    } else {
+      const vi = engine.animals.filter((o) => o.kind === a.kind).findIndex((o) => o.id === a.id);
+      rigs.current.set(a.id, { obj: buildAnimal(a.kind as "cow", Math.max(0, vi)), kind: a.kind });
+    }
+  }
+
+  useFrame((s, dtRaw) => {
+    const dt = Math.min(0.05, dtRaw);
     const t = s.clock.elapsedTime;
     const cam = s.camera.position;
+    const nf = nightFactor(engine.clock);
     for (const a of engine.animals) {
-      const m = views.get(a.id)!;
-      if (a.dead) { m.visible = false; continue; } // the hound lies where it fell
+      const rig = rigs.current.get(a.id);
+      if (!rig) continue;
+      const m = rig.obj;
+      if (a.dead) { m.visible = false; if (rig.halo) rig.halo.visible = false; continue; }
       const dx = a.x - cam.x, dz = a.z - cam.z;
-      if (dx * dx + dz * dz > CULL_SQ) { m.visible = false; continue; }
-      m.visible = true;
+      const inCull = dx * dx + dz * dz < CULL_SQ;
+      // 👻 the spectral stag exists only after dark
+      const stagVis = a.kind !== "stag" || nf > 0.35;
+      m.visible = inCull && stagVis;
+      if (rig.halo) {
+        rig.halo.visible = m.visible && (a.kind === "stag" ? true : !!a.zombie);
+        if (rig.halo.visible) {
+          const mat = rig.halo.material as THREE.SpriteMaterial;
+          const pulse = a.kind === "stag"
+            ? 0.35 + 0.2 * Math.sin(t * 1.7 + a.phase)
+            : 0.5 + 0.22 * Math.sin(t * 6.2 + a.phase);
+          mat.opacity = (a.kind === "stag" ? Math.min(0.9, Math.max(0, (nf - 0.3) * 2.4)) * pulse : pulse * 0.85);
+        }
+      }
+      if (!m.visible) continue;
       m.position.set(a.x, 0, a.z);
       let dd = a.face - m.rotation.y;
       dd = Math.atan2(Math.sin(dd), Math.cos(dd));
@@ -531,12 +617,35 @@ export function Animals({ engine }: { engine: GameEngine }) {
         parts.norm.visible = !a.zombie;
         parts.zom.visible = !!a.zombie;
         poseAnimal(active, Math.hypot(a.vx, a.vz), t, a.phase);
-      } else {
-        poseAnimal(m, Math.hypot(a.vx, a.vz), t, a.phase);
+        continue;
       }
+      if (rig.mixer && rig.clips) {
+        // 🎬 baked-clip state machine: Idle when resting, Run (birds Fly) when
+        // panicking, Walk while ambling — soft 0.22 s cross-fades
+        const speed = Math.hypot(a.vx, a.vz);
+        const walk = WILDLIFE[a.kind]?.walk ?? 1.8;
+        const want = speed < 0.25 || a.resting ? "idle"
+          : speed > walk + 1.5 ? (a.kind === "owl" || a.kind === "crow" ? "fly" : "run")
+          : "walk";
+        const next = rig.clips[want];
+        if (next && rig.current?.getClip() !== next) {
+          const prev = rig.current;
+          rig.current = rig.mixer.clipAction(next);
+          rig.current.reset().fadeIn(0.22).play();
+          if (prev) prev.fadeOut(0.22);
+        }
+        rig.mixer.update(dt);
+      }
+      // procedural fallback pose (unused while a mixer owns the body)
+      if (!rig.mixer) poseAnimal(m, Math.hypot(a.vx, a.vz), t, a.phase);
     }
   });
-  return <>{[...views.values()].map((m, i) => <primitive object={m} key={i} />)}</>;
+
+  return (
+    <group ref={holder}>
+      {[...rigs.current.values()].map((r, i) => <primitive object={r.obj} key={i} />)}
+    </group>
+  );
 }
 
 /* ------------------------------------------------------------------ */
@@ -743,8 +852,12 @@ export function Licenses({ engine }: { engine: GameEngine }) {
 /* ------------------------------------------------------------------ */
 const dummy = new THREE.Object3D();
 const camV1 = new THREE.Vector3(); // scratch for the driving chase-cam glide
-/** Shadow-blob radius multiplier per animal kind — matches buildAnimal conf.s. */
-const ANIMAL_SCALES: Record<string, number> = { cow: 1.7, chicken: 0.95, deer: 1.45, monkey: 1.1, dog: 1.05 };
+/** Shadow-blob radius multiplier per animal kind — procedural conf.s and the
+ *  polyfork GLB wildlife heights (see public/models/CREDITS.md). */
+const ANIMAL_SCALES: Record<string, number> = {
+  cow: 1.7, chicken: 0.95, deer: 1.45, monkey: 1.1, dog: 1.05,
+  wolf: 1.3, bear: 1.65, fox: 1.0, owl: 0.75, crow: 0.6, rabbit: 0.55, stag: 1.9,
+};
 
 export function Pickups({ engine }: { engine: GameEngine }) {
   const { voteMesh, foodMeshes, defs } = useMemo(() => {
@@ -828,7 +941,7 @@ export function Shadows({ engine }: { engine: GameEngine }) {
   const mesh = useMemo(() => {
     const geo = new THREE.PlaneGeometry(1, 1);
     geo.rotateX(-Math.PI / 2);
-    const m = new THREE.InstancedMesh(geo, shadowMaterial(), 64);
+    const m = new THREE.InstancedMesh(geo, shadowMaterial(), 128);
     m.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
     m.frustumCulled = false;
     m.renderOrder = 1;
@@ -838,7 +951,7 @@ export function Shadows({ engine }: { engine: GameEngine }) {
   useFrame(() => {
     let i = 0;
     const put = (x: number, z: number, r: number, lift = 0) => {
-      if (i >= 64) return;
+      if (i >= 128) return;
       dummy.position.set(x, 0.1, z);
       dummy.rotation.set(0, 0, 0);
       dummy.scale.setScalar(r * 2 * Math.max(0.55, 1 - lift * 0.1));
