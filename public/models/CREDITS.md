@@ -13,6 +13,7 @@ Licensed **CC BY 4.0**.
 | `crow-base.glb` | Crow | 2,996 |
 | `forest-rabbit-ea2da0.glb` | Forest Rabbit | 2,074 |
 | `spectral-stag-d19dc1.glb` | Crystal-Antlered Spectral Stag | 2,726 |
+| `forest-deer-fe648d.glb` | Forest Deer (Nature & Forest kit) | — |
 | `alpine-ibex-2a288a.glb` | Alpine Ibex (Alpine & Snow kit) | — |
 | `mountain-hare-d9c64c.glb` | Mountain Hare (Alpine & Snow kit) | — |
 | `pig-868bda.glb` | Pig (Cozy Farm kit) | — |

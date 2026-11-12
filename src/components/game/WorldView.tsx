@@ -14,6 +14,7 @@ import { nameTag } from "@/lib/game/character";
 import { mulberry32, range } from "@/lib/game/rng";
 import { nightFactor } from "@/lib/game/sim";
 import { isKitType, kitWheelR, makeKitCar } from "@/lib/game/cars/kit";
+import { createAsset as createTruck } from "@/lib/game/cars/kit/ranger-pickup-truck-97057d.mjs";
 import type { GameEngine } from "@/lib/game/engine";
 
 export const WORLD: World = generateWorld();
@@ -244,6 +245,15 @@ function Buildings() {
 const TRUNK_COLS = ["#8a5a33", "#7a4a28", "#6e4123", "#96683c"];
 const PINE_COLS = ["#2f9e55", "#37a45c", "#2a8a4e", "#46b06a", "#2d9450"];
 const ROUND_COLS = ["#58b368", "#6cbf6f", "#4aa85e", "#7ac74f", "#63b568"];
+/* 🌲 nature & forest kit — the new species palettes */
+const BIRCH_COLS = ["#a8c96a", "#b8d47a", "#9cc262", "#c4dc86"];   // airy light greens
+const OAK_COLS = ["#6f9e4a", "#5e8c40", "#7ba654", "#557f38"];      // deep spreading greens
+const MAPLE_COLS = ["#d98e3a", "#c96a30", "#e0a94e", "#b8542e", "#8fb04e"]; // autumn golds
+const BIRCH_BARK = ["#e8e4d8", "#dcd8c9", "#f0ede4"];               // that white birch bark
+
+/** Branch-posing scratch — needs default XYZ euler order (the shared `tmp`
+ *  runs YXZ for the car code, which would tilt branches the wrong way). */
+const tmpB = new THREE.Object3D();
 
 /** Shared wind-clock uniform + GPU sway injected into foliage materials. */
 const WIND = { value: 0 };
@@ -275,25 +285,42 @@ function Forest({ engine }: { engine: GameEngine }) {
   const trunks = useRef<THREE.InstancedMesh>(null!);
   const tiers = useRef<THREE.InstancedMesh>(null!);
   const blobs = useRef<THREE.InstancedMesh>(null!);
+  const branchs = useRef<THREE.InstancedMesh>(null!);
+  // Per-species instance budgets: pine 3 tiers · young pine 2 · round 5 blobs ·
+  // birch 2 · oak 4 · maple 4 · dead snag 3 branches & no canopy.
   const n = useMemo(() => {
-    let pine = 0;
-    for (const t of WORLD.trees) if (t.kind === 0) pine++;
-    return { pine, round: WORLD.trees.length - pine };
+    const c = [0, 0, 0, 0, 0, 0, 0];
+    for (const t of WORLD.trees) c[t.kind]++;
+    return {
+      c,
+      tiers: c[0] * 3 + c[5] * 2,
+      blobs: c[1] * 5 + c[2] * 2 + c[3] * 4 + c[4] * 4,
+      branches: c[6] * 3,
+    };
   }, []);
-  // First foliage-pool instance per tree (-1 = none): pine tiers pack 3 per tree,
-  // round blobs pack 5 — lets a chop zero/restore exactly that tree's share.
+  // First foliage-pool instance per tree (-1 = none) + how many slots it owns —
+  // lets a chop zero/restore exactly that tree's share, whatever its species.
   const share = useMemo(() => {
     const tier0 = new Int32Array(WORLD.trees.length).fill(-1);
+    const tierN = new Int32Array(WORLD.trees.length);
     const blob0 = new Int32Array(WORLD.trees.length).fill(-1);
-    let ti = 0, bi = 0;
+    const blobN = new Int32Array(WORLD.trees.length);
+    const br0 = new Int32Array(WORLD.trees.length).fill(-1);
+    const brN = new Int32Array(WORLD.trees.length);
+    let ti = 0, bi = 0, bri = 0;
     for (let i = 0; i < WORLD.trees.length; i++) {
-      if (WORLD.trees[i].kind === 0) { tier0[i] = ti; ti += 3; }
-      else { blob0[i] = bi; bi += 5; }
+      const k = WORLD.trees[i].kind;
+      if (k === 0) { tier0[i] = ti; tierN[i] = 3; ti += 3; }
+      else if (k === 5) { tier0[i] = ti; tierN[i] = 2; ti += 2; }
+      else if (k === 1) { blob0[i] = bi; blobN[i] = 5; bi += 5; }
+      else if (k === 2) { blob0[i] = bi; blobN[i] = 2; bi += 2; }
+      else if (k === 3 || k === 4) { blob0[i] = bi; blobN[i] = 4; bi += 4; }
+      else if (k === 6) { br0[i] = bri; brN[i] = 3; bri += 3; }
     }
-    return { tier0, blob0 };
+    return { tier0, tierN, blob0, blobN, br0, brN };
   }, []);
   // Pristine instance matrices — a felled tree can pop back on engine reset.
-  const snap = useRef<{ trunks?: Float32Array; tiers?: Float32Array; blobs?: Float32Array }>({});
+  const snap = useRef<{ trunks?: Float32Array; tiers?: Float32Array; blobs?: Float32Array; branches?: Float32Array }>({});
   const lastFell = useRef(-1);
 
   useLayoutEffect(() => {
@@ -304,21 +331,30 @@ function Forest({ engine }: { engine: GameEngine }) {
       { y: 6.5, rad: 1.98, h: 2.85, shade: 1.0 },
       { y: 8.15, rad: 1.42, h: 2.35, shade: 1.08 },
     ];
-    let ti = 0, bi = 0;
+    // 🌲 young pines share the tier pool with just two small cones
+    const YOUNG_TIERS = [
+      { y: 2.05, rad: 1.05, h: 2.0, shade: 0.93 },
+      { y: 3.45, rad: 0.7, h: 1.45, shade: 1.06 },
+    ];
+    let ti = 0, bi = 0, bri = 0;
     WORLD.trees.forEach((t, i) => {
       const rot = t.x * 0.7 + t.z * 1.3;
       const hm = range(r, 0.9, 1.14); // per-tree height variety
       const deep = Math.hypot(t.x, t.z) > DEEP_JUNGLE_RADIUS ? 0.66 : 1; // deep-jungle canopy reads darker
+      const barkCol = t.kind === 2
+        ? BIRCH_BARK[i % BIRCH_BARK.length]                    // birch's pale papery bark
+        : t.kind === 6 ? "#54443a"                             // dead snag's grey-bark
+        : TRUNK_COLS[i % TRUNK_COLS.length];
       tmp.rotation.set(0, rot, 0);
       tmp.scale.set(t.s, t.s, t.s);
       tmp.position.set(t.x, 1.6 * t.s, t.z);
       tmp.updateMatrix();
       trunks.current.setMatrixAt(i, tmp.matrix);
-      trunks.current.setColorAt(i, col.set(TRUNK_COLS[i % TRUNK_COLS.length]).multiplyScalar(deep ? 0.85 : 1));
+      trunks.current.setColorAt(i, col.set(barkCol).multiplyScalar(deep ? 0.85 : 1));
 
-      if (t.kind === 0) {
+      if (t.kind === 0 || t.kind === 5) {
         const g = col.set(PINE_COLS[Math.floor(r() * PINE_COLS.length)]).clone();
-        for (const tier of TIERS) {
+        for (const tier of t.kind === 0 ? TIERS : YOUNG_TIERS) {
           tmp.rotation.set(0, rot, 0);
           tmp.scale.set(tier.rad * t.s, tier.h * t.s * hm, tier.rad * t.s);
           tmp.position.set(t.x, tier.y * t.s * hm, t.z);
@@ -327,8 +363,23 @@ function Forest({ engine }: { engine: GameEngine }) {
           tiers.current.setColorAt(ti, col.copy(g).multiplyScalar(tier.shade * deep));
           ti++;
         }
+      } else if (t.kind === 6) {
+        // 🌲 dead snag — crooked bare branches reach out of the trunk
+        for (let k = 0; k < 3; k++) {
+          const a = rot + k * 2.09 + r() * 0.7;
+          const el = 0.5 + r() * 0.4;                           // elevation above the horizon
+          tmpB.rotation.set(0, -a, -(Math.PI / 2 - el));        // XYZ order: tilt then aim
+          tmpB.position.set(t.x + Math.cos(a) * 0.42 * t.s, (2.35 + 0.62 * k) * t.s * hm, t.z + Math.sin(a) * 0.42 * t.s);
+          tmpB.scale.set(t.s, t.s, t.s);
+          tmpB.updateMatrix();
+          branchs.current.setMatrixAt(bri, tmpB.matrix);
+          branchs.current.setColorAt(bri, col.set("#4e4036").multiplyScalar(deep ? 0.85 : 1));
+          bri++;
+        }
       } else {
-        const g = col.set(ROUND_COLS[Math.floor(r() * ROUND_COLS.length)]).clone();
+        // blob-canopy families: 1 round broadleaf · 2 birch · 3 oak · 4 maple
+        const pal = t.kind === 2 ? BIRCH_COLS : t.kind === 3 ? OAK_COLS : t.kind === 4 ? MAPLE_COLS : ROUND_COLS;
+        const g = col.set(pal[Math.floor(r() * pal.length)]).clone();
         const put = (dx: number, dy: number, dz: number, rad: number, shade: number) => {
           tmp.rotation.set(0, rot, 0);
           tmp.scale.setScalar(rad * t.s);
@@ -338,11 +389,26 @@ function Forest({ engine }: { engine: GameEngine }) {
           blobs.current.setColorAt(bi, col.copy(g).multiplyScalar(shade * deep));
           bi++;
         };
-        put(0, 5.1, 0, 2.5, 1);        // main puffy crown
-        put(0, 6.75, 0, 1.72, 1.09);   // topknot
-        for (let k = 0; k < 3; k++) {  // side puffs
-          const a = rot + (k * Math.PI * 2) / 3;
-          put(Math.cos(a) * 1.6, 4.35, Math.sin(a) * 1.6, 1.58, 0.9);
+        if (t.kind === 1) {
+          put(0, 5.1, 0, 2.5, 1);        // main puffy crown
+          put(0, 6.75, 0, 1.72, 1.09);   // topknot
+          for (let k = 0; k < 3; k++) {  // side puffs
+            const a = rot + (k * Math.PI * 2) / 3;
+            put(Math.cos(a) * 1.6, 4.35, Math.sin(a) * 1.6, 1.58, 0.9);
+          }
+        } else if (t.kind === 2) {
+          put(0, 5.35, 0, 1.85, 1);      // airy birch crown — light & slender
+          put(0.35, 6.35, 0.2, 1.15, 1.12);
+        } else if (t.kind === 3) {
+          put(0, 5.0, 0, 2.6, 1);        // the oak's wide spreading crown
+          put(1.5, 4.5, 0.6, 1.7, 0.92);
+          put(-1.4, 4.4, -0.9, 1.65, 0.95);
+          put(0.2, 6.5, -0.3, 1.5, 1.1);
+        } else {
+          put(0, 5.2, 0, 2.3, 1);        // maple — rounder, warm autumn crown
+          put(1.35, 4.6, -0.7, 1.5, 0.9);
+          put(-1.3, 4.5, 0.8, 1.5, 0.94);
+          put(0, 6.6, 0, 1.35, 1.12);
         }
       }
     });
@@ -351,15 +417,19 @@ function Forest({ engine }: { engine: GameEngine }) {
     trunks.current.count = WORLD.trees.length;
     tiers.current.count = ti;
     blobs.current.count = bi;
+    branchs.current.count = bri;
     trunks.current.instanceMatrix.needsUpdate = true;
     tiers.current.instanceMatrix.needsUpdate = true;
     blobs.current.instanceMatrix.needsUpdate = true;
+    branchs.current.instanceMatrix.needsUpdate = true;
     if (trunks.current.instanceColor) trunks.current.instanceColor.needsUpdate = true;
     if (tiers.current.instanceColor) tiers.current.instanceColor.needsUpdate = true;
     if (blobs.current.instanceColor) blobs.current.instanceColor.needsUpdate = true;
+    if (branchs.current.instanceColor) branchs.current.instanceColor.needsUpdate = true;
     snap.current.trunks = (trunks.current.instanceMatrix.array as Float32Array).slice();
     snap.current.tiers = (tiers.current.instanceMatrix.array as Float32Array).slice();
     snap.current.blobs = (blobs.current.instanceMatrix.array as Float32Array).slice();
+    snap.current.branches = (branchs.current.instanceMatrix.array as Float32Array).slice();
     lastFell.current = -1; // force the fell pass to re-apply after a rebuild
   }, [n]);
 
@@ -371,20 +441,45 @@ function Forest({ engine }: { engine: GameEngine }) {
     if (!src) arr.fill(0, off, off + 16);
     else arr.set(src.subarray(off, off + 16), off);
   };
+  /** Restore every instance of tree i from the pristine snapshot. */
+  const restoreTree = (i: number) => {
+    const st = snap.current;
+    if (!st.trunks || !st.tiers || !st.blobs || !st.branches) return;
+    putInst(trunks.current, i, st.trunks);
+    const t0 = share.tier0[i];
+    if (t0 >= 0) for (let k = 0; k < share.tierN[i]; k++) putInst(tiers.current, t0 + k, st.tiers);
+    const b0 = share.blob0[i];
+    if (b0 >= 0) for (let k = 0; k < share.blobN[i]; k++) putInst(blobs.current, b0 + k, st.blobs);
+    const r0 = share.br0[i];
+    if (r0 >= 0) for (let k = 0; k < share.brN[i]; k++) putInst(branchs.current, r0 + k, st.branches);
+  };
+  /** Zero every instance of tree i (felled timber that has settled). */
+  const zeroTree = (i: number) => {
+    putInst(trunks.current, i, null);
+    const t0 = share.tier0[i];
+    if (t0 >= 0) for (let k = 0; k < share.tierN[i]; k++) putInst(tiers.current, t0 + k, null);
+    const b0 = share.blob0[i];
+    if (b0 >= 0) for (let k = 0; k < share.blobN[i]; k++) putInst(blobs.current, b0 + k, null);
+    const r0 = share.br0[i];
+    if (r0 >= 0) for (let k = 0; k < share.brN[i]; k++) putInst(branchs.current, r0 + k, null);
+  };
   const applyFelled = () => {
     const st = snap.current;
-    if (!st.trunks || !st.tiers || !st.blobs) return;
+    if (!st.trunks || !st.tiers || !st.blobs || !st.branches) return;
     for (let i = 0; i < WORLD.trees.length; i++) {
       const gone = engine.felled.has(i);
       putInst(trunks.current, i, gone ? null : st.trunks);
       const t0 = share.tier0[i];
-      if (t0 >= 0) for (let k = 0; k < 3; k++) putInst(tiers.current, t0 + k, gone ? null : st.tiers);
+      if (t0 >= 0) for (let k = 0; k < share.tierN[i]; k++) putInst(tiers.current, t0 + k, gone ? null : st.tiers);
       const b0 = share.blob0[i];
-      if (b0 >= 0) for (let k = 0; k < 5; k++) putInst(blobs.current, b0 + k, gone ? null : st.blobs);
+      if (b0 >= 0) for (let k = 0; k < share.blobN[i]; k++) putInst(blobs.current, b0 + k, gone ? null : st.blobs);
+      const r0 = share.br0[i];
+      if (r0 >= 0) for (let k = 0; k < share.brN[i]; k++) putInst(branchs.current, r0 + k, gone ? null : st.branches);
     }
     trunks.current.instanceMatrix.needsUpdate = true;
     tiers.current.instanceMatrix.needsUpdate = true;
     blobs.current.instanceMatrix.needsUpdate = true;
+    branchs.current.instanceMatrix.needsUpdate = true;
   };
 
   /* 🪓🌲 juice pass — a chopped tree SHUDDERS away from the axe, a felled tree
@@ -399,7 +494,7 @@ function Forest({ engine }: { engine: GameEngine }) {
    * base, an overall squash, leaning toward tip (dx,dz). src=null → zeroed. */
   const poseTree = (i: number, lean: number, scl: number, dx: number, dz: number) => {
     const st = snap.current;
-    if (!st.trunks || !st.tiers || !st.blobs) return;
+    if (!st.trunks || !st.tiers || !st.blobs || !st.branches) return;
     const t = WORLD.trees[i];
     _mPivot.makeTranslation(t.x, 0, t.z);
     _mInv.makeTranslation(-t.x, 0, -t.z);
@@ -414,9 +509,11 @@ function Forest({ engine }: { engine: GameEngine }) {
     };
     apply(trunks.current, i, st.trunks);
     const t0 = share.tier0[i];
-    if (t0 >= 0) for (let k = 0; k < 3; k++) apply(tiers.current, t0 + k, st.tiers);
+    if (t0 >= 0) for (let k = 0; k < share.tierN[i]; k++) apply(tiers.current, t0 + k, st.tiers);
     const b0 = share.blob0[i];
-    if (b0 >= 0) for (let k = 0; k < 5; k++) apply(blobs.current, b0 + k, st.blobs);
+    if (b0 >= 0) for (let k = 0; k < share.blobN[i]; k++) apply(blobs.current, b0 + k, st.blobs);
+    const r0 = share.br0[i];
+    if (r0 >= 0) for (let k = 0; k < share.brN[i]; k++) apply(branchs.current, r0 + k, st.branches);
   };
 
   useFrame((s) => {
@@ -447,14 +544,7 @@ function Forest({ engine }: { engine: GameEngine }) {
     for (const [i, wob] of wobbling.current) {
       if (s.clock.elapsedTime >= wob.end) {
         wobbling.current.delete(i);
-        const st = snap.current;
-        if (st.trunks && !engine.felled.has(i)) {
-          putInst(trunks.current, i, st.trunks);
-          const t0 = share.tier0[i];
-          if (t0 >= 0) for (let k = 0; k < 3; k++) putInst(tiers.current, t0 + k, st.tiers);
-          const b0 = share.blob0[i];
-          if (b0 >= 0) for (let k = 0; k < 5; k++) putInst(blobs.current, b0 + k, st.blobs);
-        }
+        if (snap.current.trunks && !engine.felled.has(i)) restoreTree(i);
         dirty = true;
         continue;
       }
@@ -467,14 +557,7 @@ function Forest({ engine }: { engine: GameEngine }) {
       const age = ft === undefined ? TREE_FALL_S : engine.elapsed - ft;
       if (age >= TREE_FALL_S) {
         falling.current.delete(i);
-        const st = snap.current;
-        if (st.trunks) {
-          putInst(trunks.current, i, null);
-          const t0 = share.tier0[i];
-          if (t0 >= 0) for (let k = 0; k < 3; k++) putInst(tiers.current, t0 + k, null);
-          const b0 = share.blob0[i];
-          if (b0 >= 0) for (let k = 0; k < 5; k++) putInst(blobs.current, b0 + k, null);
-        }
+        if (snap.current.trunks) zeroTree(i);
         dirty = true;
         continue;
       }
@@ -491,6 +574,7 @@ function Forest({ engine }: { engine: GameEngine }) {
       trunks.current.instanceMatrix.needsUpdate = true;
       tiers.current.instanceMatrix.needsUpdate = true;
       blobs.current.instanceMatrix.needsUpdate = true;
+      branchs.current.instanceMatrix.needsUpdate = true;
     }
   });
 
@@ -511,11 +595,15 @@ function Forest({ engine }: { engine: GameEngine }) {
       <instancedMesh ref={trunks} args={[undefined, undefined, WORLD.trees.length]} material={trunkMat}>
         <cylinderGeometry args={[0.34, 0.52, 3.2, 5]} />
       </instancedMesh>
-      <instancedMesh ref={tiers} args={[undefined, undefined, Math.max(1, n.pine * 3)]} material={pineMat}>
+      <instancedMesh ref={tiers} args={[undefined, undefined, Math.max(1, n.tiers)]} material={pineMat}>
         <coneGeometry args={[1, 1, 6]} />
       </instancedMesh>
-      <instancedMesh ref={blobs} args={[undefined, undefined, Math.max(1, n.round * 5)]} material={blobMat}>
+      <instancedMesh ref={blobs} args={[undefined, undefined, Math.max(1, n.blobs)]} material={blobMat}>
         <sphereGeometry args={[1, 6, 4]} />
+      </instancedMesh>
+      {/* dead-snag branches share the trunk material (bare wood, no wind sway) */}
+      <instancedMesh ref={branchs} args={[undefined, undefined, Math.max(1, n.branches)]} material={trunkMat}>
+        <cylinderGeometry args={[0.07, 0.15, 1.8, 5]} />
       </instancedMesh>
     </>
   );
@@ -2729,6 +2817,19 @@ function Camps({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutab
     const scorchGeo = new THREE.CircleGeometry(1.2, 20);
     const emberGeo = new THREE.CircleGeometry(0.46, 14);
     const poolGeo = new THREE.CircleGeometry(4.4, 26);
+    // 🌲 nature & forest kit — camp furniture geometries
+    const tripLegGeo = new THREE.CylinderGeometry(0.045, 0.055, 2.47, 5);
+    const chainGeo = new THREE.CylinderGeometry(0.02, 0.02, 0.5, 4);
+    const potGeo = new THREE.CylinderGeometry(0.2, 0.17, 0.26, 8);
+    const tableTopGeo = new THREE.BoxGeometry(2.0, 0.09, 0.8);
+    const benchTopGeo = new THREE.BoxGeometry(1.9, 0.07, 0.3);
+    const furnLegGeo = new THREE.BoxGeometry(0.09, 0.76, 0.09);
+    const leanPostGeo = new THREE.CylinderGeometry(0.06, 0.07, 1.75, 5);
+    const leanRoofGeo = new THREE.BoxGeometry(2.9, 0.07, 2.5);
+    const outBodyGeo = new THREE.BoxGeometry(1.05, 2.05, 0.95);
+    const outRoofGeo = new THREE.BoxGeometry(1.25, 0.08, 1.2);
+    const outDoorGeo = new THREE.BoxGeometry(0.62, 1.55, 0.06);
+    const moonGeo = new THREE.TorusGeometry(0.09, 0.024, 5, 10, Math.PI);
     // shared materials
     const tentMats = CAMP_CANVAS_HEX.map((h) => new THREE.MeshLambertMaterial({ color: h }));
     const doorMat = new THREE.MeshLambertMaterial({ color: "#43301f" });
@@ -2742,6 +2843,11 @@ function Camps({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutab
     const scorchMat = new THREE.MeshBasicMaterial({ color: "#241812" });
     const emberMat = new THREE.MeshBasicMaterial({ color: "#ff5a1f" });
     const poolMat = new THREE.MeshBasicMaterial({ map: glowTex, color: 0xff8c3a, transparent: true, opacity: 0.3, depthWrite: false, blending: THREE.AdditiveBlending });
+    // 🌲 camp furniture materials
+    const woodMat = new THREE.MeshLambertMaterial({ color: "#8a6a42" });
+    const woodDarkMat = new THREE.MeshLambertMaterial({ color: "#5e4630" });
+    const ironMat = new THREE.MeshLambertMaterial({ color: "#2e3238" });
+    const canvasMat = new THREE.MeshLambertMaterial({ color: "#7a8c5a" });
 
     return WORLD.camps.map((cp, ci) => {
       const g = new THREE.Group();
@@ -2810,6 +2916,96 @@ function Camps({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutab
         bulb.position.copy(cage.position);
         bulb.name = "lbulb";
         g.add(bulb);
+      }
+
+      /* ----- 🌲 nature & forest kit: cook tripod over the fire ----- */
+      {
+        const tripod = new THREE.Group();
+        for (let li = 0; li < 3; li++) {
+          const a = (li / 3) * Math.PI * 2 + 0.4;
+          const leg = new THREE.Mesh(tripLegGeo, barkMat);
+          leg.position.set(Math.cos(a) * 0.45, 1.15, Math.sin(a) * 0.45);
+          leg.rotation.set(0, -a, -(Math.PI / 2 - 1.196)); // lean the +Y leg out to the base ring
+          tripod.add(leg);
+        }
+        const chain = new THREE.Mesh(chainGeo, ironMat);
+        chain.position.set(0, 2.05, 0);
+        tripod.add(chain);
+        const pot = new THREE.Mesh(potGeo, ironMat);
+        pot.position.set(0, 1.68, 0);
+        tripod.add(pot);
+        g.add(tripod);
+      }
+
+      /* 🌲 picnic tables on the open side of the glade */
+      for (const pc of cp.kit.picnic) {
+        const tg = new THREE.Group();
+        tg.position.set(pc.dx, 0, pc.dz);
+        tg.rotation.y = pc.rot;
+        const top = new THREE.Mesh(tableTopGeo, woodMat);
+        top.position.y = 0.76;
+        tg.add(top);
+        for (const bx of [-0.62, 0.62]) {
+          const bench = new THREE.Mesh(benchTopGeo, woodMat);
+          bench.position.set(bx, 0.44, 0);
+          tg.add(bench);
+        }
+        for (const lx of [-0.85, 0.85]) for (const lz of [-0.3, 0.3]) {
+          const leg = new THREE.Mesh(furnLegGeo, woodDarkMat);
+          leg.position.set(lx, 0.38, lz);
+          tg.add(leg);
+        }
+        g.add(tg);
+      }
+
+      /* 🌲 lean-to shelter — canvas roof slanted over a log frame */
+      if (cp.kit.leanTo) {
+        const lg = new THREE.Group();
+        lg.position.set(cp.kit.leanTo.dx, 0, cp.kit.leanTo.dz);
+        lg.rotation.y = cp.kit.leanTo.rot;
+        for (const px of [-1.25, 1.25]) {
+          const front = new THREE.Mesh(leanPostGeo, barkMat);
+          front.position.set(px, 0.85, 1.1);
+          lg.add(front);
+          const back = new THREE.Mesh(leanPostGeo, barkMat);
+          back.position.set(px, 0.5, -1.0);
+          back.scale.y = 0.62;
+          lg.add(back);
+        }
+        const roof = new THREE.Mesh(leanRoofGeo, canvasMat);
+        roof.position.set(0, 1.35, 0.05);
+        roof.rotation.x = 0.33;
+        lg.add(roof);
+        g.add(lg);
+      }
+
+      /* 🌲 the privy — every camp deserves its privacy */
+      if (cp.kit.outhouse) {
+        const og = new THREE.Group();
+        og.position.set(cp.kit.outhouse.dx, 0, cp.kit.outhouse.dz);
+        og.rotation.y = cp.kit.outhouse.rot;
+        const body = new THREE.Mesh(outBodyGeo, woodMat);
+        body.position.y = 1.02;
+        og.add(body);
+        const roof = new THREE.Mesh(outRoofGeo, woodDarkMat);
+        roof.position.set(0, 2.12, -0.04);
+        roof.rotation.x = 0.16;
+        og.add(roof);
+        const door = new THREE.Mesh(outDoorGeo, woodDarkMat);
+        door.position.set(0, 1.0, 0.5);
+        og.add(door);
+        const moon = new THREE.Mesh(moonGeo, new THREE.MeshLambertMaterial({ color: "#e8dcc0" }));
+        moon.position.set(0, 1.62, 0.55);
+        moon.rotation.z = 2.4;
+        og.add(moon);
+        g.add(og);
+      }
+
+      /* 🌲 water barrel by the glade's edge */
+      if (cp.kit.barrel) {
+        const b = new THREE.Mesh(barrelGeo, barrelMat);
+        b.position.set(cp.kit.barrel.dx, 0.48, cp.kit.barrel.dz);
+        g.add(b);
       }
 
       /* ----- the fire pit ----- */
@@ -3642,6 +3838,584 @@ function AlpineDecor() {
   );
 }
 
+/* ------------------------- 🌲 nature & forest kit — the wild band -------------------------
+ * Everything the Nature & Forest kit adds beyond the trees: the forest floor
+ * (ferns, grass tufts, toadstools, bushes, wildflowers, stumps, fallen logs,
+ * cattail reeds, lily pads, path stones), jungle ponds with docks, boats & a
+ * plank bridge over the creek, winding dirt trails, and the landmarks — log
+ * cabins, the ranger station & its pickup, the fire lookout tower, rock spires,
+ * trail kiosks, signposts & lantern posts that glow after dark. */
+
+const FLOOR_Y = 0.034; // jungle ring ground level — props sit a hair above it
+
+function ForestFloor() {
+  const fronds = useRef<THREE.InstancedMesh>(null!);
+  const blades = useRef<THREE.InstancedMesh>(null!);
+  const stems = useRef<THREE.InstancedMesh>(null!);
+  const caps = useRef<THREE.InstancedMesh>(null!);
+  const puffs = useRef<THREE.InstancedMesh>(null!);
+  const petals = useRef<THREE.InstancedMesh>(null!);
+  const stumpsM = useRef<THREE.InstancedMesh>(null!);
+  const logsM = useRef<THREE.InstancedMesh>(null!);
+  const reedStems = useRef<THREE.InstancedMesh>(null!);
+  const reedHeads = useRef<THREE.InstancedMesh>(null!);
+  const padsM = useRef<THREE.InstancedMesh>(null!);
+  const stonesM = useRef<THREE.InstancedMesh>(null!);
+
+  const FERN_C = ["#3f7a3a", "#4f8a44", "#356e32"];
+  const TUFT_C = ["#7aa848", "#8cb455", "#6a9840"];
+  const CAP_C = ["#c44536", "#d8864a"];
+  const BUSH_C = ["#3e7c3e", "#2f6e34"];
+  const WILD_C = ["#e05a8a", "#e8c94e", "#b07ae0", "#f2f0e0"];
+
+  useLayoutEffect(() => {
+    let k = 0;
+    // ferns — three arched fronds each
+    for (const f of WORLD.ferns) {
+      for (let j = 0; j < 3; j++) {
+        const a = f.rot + (j * Math.PI * 2) / 3;
+        tmp.position.set(f.x + Math.cos(a) * 0.3 * f.s, FLOOR_Y + 0.42 * f.s, f.z + Math.sin(a) * 0.3 * f.s);
+        tmpB.rotation.set(0, -a, -(Math.PI / 2 - 0.9)); // arched outward
+        tmp.scale.set(0.14 * f.s, 1.15 * f.s, 0.42 * f.s);
+        tmp.quaternion.setFromEuler(tmpB.rotation);
+        tmp.updateMatrix();
+        fronds.current.setMatrixAt(k, tmp.matrix);
+        fronds.current.setColorAt(k, col.set(FERN_C[f.c]).multiplyScalar(0.9 + 0.14 * j));
+        k++;
+      }
+    }
+    fronds.current.count = k;
+    fronds.current.instanceMatrix.needsUpdate = true;
+    if (fronds.current.instanceColor) fronds.current.instanceColor.needsUpdate = true;
+    // grass tufts — three blades each
+    k = 0;
+    for (const f of WORLD.tufts) {
+      for (let j = 0; j < 3; j++) {
+        const a = f.rot + (j * Math.PI * 2) / 3 + j * 0.5;
+        tmp.position.set(f.x + Math.cos(a) * 0.14 * f.s, FLOOR_Y + 0.34 * f.s, f.z + Math.sin(a) * 0.14 * f.s);
+        tmp.quaternion.setFromEuler(tmpB.rotation.set((j - 1) * 0.16, -a, (j % 2 ? 0.14 : -0.12)));
+        tmp.scale.set(0.06 * f.s, 0.75 * f.s, 0.06 * f.s);
+        tmp.updateMatrix();
+        blades.current.setMatrixAt(k, tmp.matrix);
+        blades.current.setColorAt(k, col.set(TUFT_C[f.c]).multiplyScalar(0.9 + 0.12 * j));
+        k++;
+      }
+    }
+    blades.current.count = k;
+    blades.current.instanceMatrix.needsUpdate = true;
+    if (blades.current.instanceColor) blades.current.instanceColor.needsUpdate = true;
+    // toadstools — cream stems + spotted caps
+    k = 0;
+    for (const f of WORLD.shrooms) {
+      tmp.rotation.set(0, f.rot, 0);
+      tmp.scale.setScalar(f.s);
+      tmp.position.set(f.x, FLOOR_Y + 0.2 * f.s, f.z);
+      tmp.updateMatrix();
+      stems.current.setMatrixAt(k, tmp.matrix);
+      tmp.position.set(f.x, FLOOR_Y + 0.42 * f.s, f.z);
+      tmp.scale.set(0.32 * f.s, 0.2 * f.s, 0.32 * f.s);
+      tmp.updateMatrix();
+      caps.current.setMatrixAt(k, tmp.matrix);
+      caps.current.setColorAt(k, col.set(CAP_C[f.c]));
+      k++;
+    }
+    stems.current.count = k; caps.current.count = k;
+    stems.current.instanceMatrix.needsUpdate = true;
+    caps.current.instanceMatrix.needsUpdate = true;
+    if (caps.current.instanceColor) caps.current.instanceColor.needsUpdate = true;
+    // round bushes — three blob puffs each
+    k = 0;
+    for (const f of WORLD.bushes) {
+      for (let j = 0; j < 3; j++) {
+        const a = f.rot + (j * Math.PI * 2) / 3;
+        tmp.rotation.set(0, 0, 0);
+        tmp.scale.setScalar((0.62 + (j === 0 ? 0.35 : 0)) * f.s);
+        tmp.position.set(f.x + Math.cos(a) * 0.5 * f.s, FLOOR_Y + (j === 0 ? 0.72 : 0.5) * f.s, f.z + Math.sin(a) * 0.5 * f.s);
+        tmp.updateMatrix();
+        puffs.current.setMatrixAt(k, tmp.matrix);
+        puffs.current.setColorAt(k, col.set(BUSH_C[f.c]).multiplyScalar(0.88 + 0.16 * j));
+        k++;
+      }
+    }
+    puffs.current.count = k;
+    puffs.current.instanceMatrix.needsUpdate = true;
+    if (puffs.current.instanceColor) puffs.current.instanceColor.needsUpdate = true;
+    // wildflower patches — four tiny blooms each
+    k = 0;
+    for (const f of WORLD.wilds) {
+      for (let j = 0; j < 4; j++) {
+        const a = f.rot + (j * Math.PI * 2) / 4 + j * 0.35;
+        tmp.rotation.set(0, 0, 0);
+        tmp.scale.setScalar(0.14 * f.s);
+        tmp.position.set(f.x + Math.cos(a) * 0.5 * f.s, FLOOR_Y + 0.3 * f.s, f.z + Math.sin(a) * 0.5 * f.s);
+        tmp.updateMatrix();
+        petals.current.setMatrixAt(k, tmp.matrix);
+        petals.current.setColorAt(k, col.set(WILD_C[(f.c + j) % WILD_C.length]));
+        k++;
+      }
+    }
+    petals.current.count = k;
+    petals.current.instanceMatrix.needsUpdate = true;
+    if (petals.current.instanceColor) petals.current.instanceColor.needsUpdate = true;
+    // old stumps + fallen logs
+    k = 0;
+    for (const f of WORLD.stumps) {
+      tmp.rotation.set(0, f.rot, 0);
+      tmp.scale.set(f.s, f.s * 0.8, f.s);
+      tmp.position.set(f.x, FLOOR_Y + 0.32 * f.s, f.z);
+      tmp.updateMatrix();
+      stumpsM.current.setMatrixAt(k++, tmp.matrix);
+    }
+    stumpsM.current.count = k;
+    stumpsM.current.instanceMatrix.needsUpdate = true;
+    k = 0;
+    for (const f of WORLD.logs) {
+      tmp.rotation.set(Math.PI / 2, 0, f.rot);
+      tmp.scale.set(f.s, f.s, f.s);
+      tmp.position.set(f.x, FLOOR_Y + 0.34 * f.s, f.z);
+      tmp.updateMatrix();
+      logsM.current.setMatrixAt(k++, tmp.matrix);
+    }
+    logsM.current.count = k;
+    logsM.current.instanceMatrix.needsUpdate = true;
+    // cattail reeds — stalk + brown head
+    k = 0;
+    for (const f of WORLD.reeds) {
+      tmp.rotation.set(0, f.rot, 0);
+      tmp.scale.set(f.s, f.s, f.s);
+      tmp.position.set(f.x, FLOOR_Y + 0.55 * f.s, f.z);
+      tmp.updateMatrix();
+      reedStems.current.setMatrixAt(k, tmp.matrix);
+      tmp.rotation.set(0, f.rot, 0.06);
+      tmp.position.set(f.x, FLOOR_Y + 1.15 * f.s, f.z);
+      tmp.updateMatrix();
+      reedHeads.current.setMatrixAt(k, tmp.matrix);
+      k++;
+    }
+    reedStems.current.count = k; reedHeads.current.count = k;
+    reedStems.current.instanceMatrix.needsUpdate = true;
+    reedHeads.current.instanceMatrix.needsUpdate = true;
+    // lily pads — flat discs floating on the ponds
+    k = 0;
+    for (const f of WORLD.pads) {
+      tmp.rotation.set(0, f.rot, 0);
+      tmp.scale.set(f.s, f.s, f.s);
+      tmp.position.set(f.x, 0.085, f.z);
+      tmp.updateMatrix();
+      padsM.current.setMatrixAt(k++, tmp.matrix);
+    }
+    padsM.current.count = k;
+    padsM.current.instanceMatrix.needsUpdate = true;
+    // path stones — round (c=0) or slab (c=1)
+    k = 0;
+    for (const f of WORLD.stones) {
+      if (f.c === 0) {
+        tmp.rotation.set(f.rot * 0.3, f.rot, 0);
+        tmp.scale.set(0.5 * f.s, 0.34 * f.s, 0.44 * f.s);
+      } else {
+        tmp.rotation.set(0, f.rot, 0);
+        tmp.scale.set(0.62 * f.s, 0.12 * f.s, 0.44 * f.s);
+      }
+      tmp.position.set(f.x, FLOOR_Y + (f.c === 0 ? 0.16 : 0.06) * f.s, f.z);
+      tmp.updateMatrix();
+      stonesM.current.setMatrixAt(k++, tmp.matrix);
+    }
+    stonesM.current.count = k;
+    stonesM.current.instanceMatrix.needsUpdate = true;
+  }, []);
+
+  return (
+    <>
+      {/* fern fronds */}
+      <instancedMesh ref={fronds} args={[undefined, undefined, Math.max(1, WORLD.ferns.length * 3)]}>
+        <coneGeometry args={[1, 1, 4]} />
+        <meshLambertMaterial flatShading />
+      </instancedMesh>
+      {/* grass blades */}
+      <instancedMesh ref={blades} args={[undefined, undefined, Math.max(1, WORLD.tufts.length * 3)]}>
+        <coneGeometry args={[1, 1, 4]} />
+        <meshLambertMaterial />
+      </instancedMesh>
+      {/* toadstool stems + caps */}
+      <instancedMesh ref={stems} args={[undefined, undefined, Math.max(1, WORLD.shrooms.length)]}>
+        <cylinderGeometry args={[0.07, 0.1, 0.42, 5]} />
+        <meshLambertMaterial color="#e8dcc0" />
+      </instancedMesh>
+      <instancedMesh ref={caps} args={[undefined, undefined, Math.max(1, WORLD.shrooms.length)]}>
+        <sphereGeometry args={[1, 7, 5]} />
+        <meshLambertMaterial flatShading />
+      </instancedMesh>
+      {/* bush puffs */}
+      <instancedMesh ref={puffs} args={[undefined, undefined, Math.max(1, WORLD.bushes.length * 3)]}>
+        <sphereGeometry args={[1, 6, 4]} />
+        <meshLambertMaterial flatShading />
+      </instancedMesh>
+      {/* wildflower blooms */}
+      <instancedMesh ref={petals} args={[undefined, undefined, Math.max(1, WORLD.wilds.length * 4)]}>
+        <sphereGeometry args={[1, 6, 4]} />
+        <meshLambertMaterial />
+      </instancedMesh>
+      {/* stumps & fallen logs */}
+      <instancedMesh ref={stumpsM} args={[undefined, undefined, Math.max(1, WORLD.stumps.length)]}>
+        <cylinderGeometry args={[0.42, 0.5, 0.8, 7]} />
+        <meshLambertMaterial color="#6e5438" />
+      </instancedMesh>
+      <instancedMesh ref={logsM} args={[undefined, undefined, Math.max(1, WORLD.logs.length)]}>
+        <cylinderGeometry args={[0.3, 0.36, 2.6, 7]} />
+        <meshLambertMaterial color="#5e4630" />
+      </instancedMesh>
+      {/* cattail stems & heads */}
+      <instancedMesh ref={reedStems} args={[undefined, undefined, Math.max(1, WORLD.reeds.length)]}>
+        <cylinderGeometry args={[0.035, 0.05, 1.15, 4]} />
+        <meshLambertMaterial color="#5e8a44" />
+      </instancedMesh>
+      <instancedMesh ref={reedHeads} args={[undefined, undefined, Math.max(1, WORLD.reeds.length)]}>
+        <cylinderGeometry args={[0.07, 0.07, 0.42, 5]} />
+        <meshLambertMaterial color="#6e4a2c" />
+      </instancedMesh>
+      {/* lily pads */}
+      <instancedMesh ref={padsM} args={[undefined, undefined, Math.max(1, WORLD.pads.length)]}>
+        <cylinderGeometry args={[0.52, 0.52, 0.05, 9]} />
+        <meshLambertMaterial color="#4e9a52" />
+      </instancedMesh>
+      {/* path stones */}
+      <instancedMesh ref={stonesM} args={[undefined, undefined, Math.max(1, WORLD.stones.length)]}>
+        <dodecahedronGeometry args={[1, 0]} />
+        <meshLambertMaterial color="#9a948c" flatShading />
+      </instancedMesh>
+    </>
+  );
+}
+
+/** Winding dirt trails — one flattened strip per polyline segment. */
+function Trails() {
+  const segs = useMemo(() => {
+    const out: { x: number; z: number; rot: number; len: number }[] = [];
+    for (const pts of WORLD.trails) {
+      for (let i = 0; i < pts.length - 1; i++) {
+        const a = pts[i], b = pts[i + 1];
+        const dx = b.x - a.x, dz = b.z - a.z;
+        out.push({ x: (a.x + b.x) / 2, z: (a.z + b.z) / 2, rot: Math.PI / 2 - Math.atan2(dz, dx), len: Math.hypot(dx, dz) });
+      }
+    }
+    return out;
+  }, []);
+  return (
+    <>
+      {segs.map((s, i) => (
+        <mesh key={i} position={[s.x, 0.045, s.z]} rotation={[-Math.PI / 2, 0, s.rot]}>
+          <planeGeometry args={[3.6, s.len + 0.6]} />
+          <meshLambertMaterial color="#8a6a48" />
+        </mesh>
+      ))}
+    </>
+  );
+}
+
+/** 🌲 jungle ponds — dark water, muddy banks, the creek & its plank bridge,
+ *  the dock with its moored canoe, and the rowboat pulled up on the bank. */
+function JunglePonds() {
+  const bridge = WORLD.bridges[0];
+  const dock = WORLD.docks[0];
+  const p0 = WORLD.ponds[0];
+  const creek = p0?.creek;
+  return (
+    <>
+      {WORLD.ponds.map((p, i) => (
+        <group key={i}>
+          <mesh rotation-x={-Math.PI / 2} position={[p.x, 0.07, p.z]}>
+            <circleGeometry args={[p.r, 30]} />
+            <meshLambertMaterial color="#3d7086" />
+          </mesh>
+          <mesh rotation-x={-Math.PI / 2} position={[p.x, 0.058, p.z]}>
+            <ringGeometry args={[p.r - 0.2, p.r + 1.4, 30]} />
+            <meshLambertMaterial color="#8a7a58" />
+          </mesh>
+        </group>
+      ))}
+      {/* the little creek that feeds the first pond */}
+      {p0 && creek !== undefined && (
+        <group position={[p0.x + Math.cos(creek) * (p0.r + 5.6), 0.05, p0.z + Math.sin(creek) * (p0.r + 5.6)]} rotation-y={Math.PI / 2 - creek}>
+          <mesh rotation-x={-Math.PI / 2}>
+            <planeGeometry args={[2.6, 13]} />
+            <meshLambertMaterial color="#3d7086" />
+          </mesh>
+        </group>
+      )}
+      {/* 🌉 plank bridge across the creek */}
+      {bridge && (
+        <group position={[bridge.x, 0, bridge.z]} rotation-y={bridge.rot}>
+          {[-2.7, -1.9, -1.1, -0.3, 0.5, 1.3, 2.1, 2.9].map((z, i) => (
+            <mesh key={i} position={[0, 0.44 + Math.sin((z / 3.4) * Math.PI * 0.5) * 0.16, z]} rotation-x={Math.PI / 2}>
+              <cylinderGeometry args={[0.34, 0.34, 2.3, 7]} />
+              <meshLambertMaterial color={i % 2 ? "#8a6a44" : "#7a5c3a"} />
+            </mesh>
+          ))}
+          {[-1.05, 1.05].map((x) => (
+            <mesh key={x} position={[x, 0.75, 0]}>
+              <boxGeometry args={[0.09, 0.34, 6.4]} />
+              <meshLambertMaterial color="#5e4630" />
+            </mesh>
+          ))}
+        </group>
+      )}
+      {/* 🐾 plank dock reaching into the second pond */}
+      {dock && (
+        <group position={[dock.x, 0, dock.z]} rotation-y={dock.rot}>
+          {[0, 1, 2, 3].map((i) => (
+            <mesh key={i} position={[0, 0.4, -1.8 + i * 1.2]}>
+              <boxGeometry args={[1.9, 0.1, 0.95]} />
+              <meshLambertMaterial color={i % 2 ? "#8a6a44" : "#7a5c3a"} />
+            </mesh>
+          ))}
+          {[[-0.8, -1.9], [0.8, -1.9], [-0.8, 0.5], [0.8, 0.5], [-0.8, 2.2], [0.8, 2.2]].map(([x, z], i) => (
+            <mesh key={i} position={[x, 0.12, z]}>
+              <cylinderGeometry args={[0.11, 0.13, 0.85, 5]} />
+              <meshLambertMaterial color="#4e3a26" />
+            </mesh>
+          ))}
+          <mesh position={[0.85, 0.95, 2.0]}>
+            <cylinderGeometry args={[0.08, 0.09, 1.15, 5]} />
+            <meshLambertMaterial color="#5e4630" />
+          </mesh>
+        </group>
+      )}
+      {/* 🛶 moored boats — canoe by the dock, rowboat on the creek bank */}
+      {WORLD.boats.map((b, i) => (
+        <group key={i} position={[b.x, b.kind === 0 ? 0.16 : 0.1, b.z]} rotation-y={b.rot}>
+          {b.kind === 0 ? (
+            <>
+              <mesh position-y={0.2}><boxGeometry args={[0.95, 0.42, 2.7]} /><meshLambertMaterial color="#4a6a3a" /></mesh>
+              <mesh position-y={0.42}><boxGeometry args={[0.72, 0.08, 2.45]} /><meshLambertMaterial color="#2e4a28" /></mesh>
+              {[-0.7, 0.3].map((z) => (
+                <mesh key={z} position={[0, 0.48, z]}><boxGeometry args={[0.85, 0.06, 0.22]} /><meshLambertMaterial color="#7a5c3a" /></mesh>
+              ))}
+            </>
+          ) : (
+            <>
+              <mesh position-y={0.22}><boxGeometry args={[1.2, 0.5, 2.1]} /><meshLambertMaterial color="#7a5230" /></mesh>
+              <mesh position-y={0.48}><boxGeometry args={[0.95, 0.08, 1.85]} /><meshLambertMaterial color="#4e3a26" /></mesh>
+              <mesh position={[0, 0.5, 0.2]}><boxGeometry args={[1.05, 0.07, 0.24]} /><meshLambertMaterial color="#8a6a44" /></mesh>
+              <mesh position={[0.62, 0.55, -0.5]} rotation-z={0.5}><boxGeometry args={[0.07, 1.5, 0.16]} /><meshLambertMaterial color="#5e4630" /></mesh>
+            </>
+          )}
+        </group>
+      ))}
+    </>
+  );
+}
+
+/* ------------------------- 🌲 jungle landmarks -------------------------
+ * Log cabins deep in the woods, the ranger station (with antenna) & its
+ * pickup, the fire lookout tower up on a mountain shoulder, rock spires,
+ * trail kiosks, signposts & night-glowing lantern posts, chopping blocks
+ * and firewood stacks. */
+
+function RangerTruck({ x, z, rot }: { x: number; z: number; rot: number }) {
+  const obj = useMemo(() => {
+    const t = createTruck({ colorway: "ranger-green" });
+    t.scale.setScalar(1.05);
+    return t;
+  }, []);
+  return <primitive object={obj} position={[x, 0, z]} rotation-y={rot} />;
+}
+
+function JungleLandmarks({ engine }: { engine: GameEngine }) {
+  const lanternMats = useRef<THREE.MeshBasicMaterial[]>([]);
+  const glowMats = useRef<THREE.SpriteMaterial[]>([]);
+  const spireData = useMemo(() => {
+    const out: { x: number; y: number; z: number; s: number; rot: number }[] = [];
+    for (const sp of WORLD.spires) {
+      const y = Math.hypot(sp.x, sp.z) > MOUNTAIN_INNER ? terrainHeight(sp.x, sp.z) : 0;
+      out.push({ x: sp.x, y, z: sp.z, s: sp.s, rot: sp.rot });
+    }
+    return out;
+  }, []);
+  const glowTex = useMemo(() => campGlowTexture(), []);
+
+  useFrame(() => {
+    const nf = nightFactor(engine.clock);
+    for (const m of lanternMats.current) m.opacity = 0.25 + 0.75 * nf;
+    for (const m of glowMats.current) m.opacity = 0.85 * nf;
+  });
+
+  return (
+    <>
+      {/* 🪵 log cabins — porch to the city, logs & stone chimney */}
+      {WORLD.cabins.map((c, i) => (
+        <group key={i} position={[c.x, 0, c.z]} rotation-y={Math.PI / 2 - c.rot}>
+          <mesh position-y={1.15}><boxGeometry args={[4.4, 2.3, 3.4]} /><meshLambertMaterial color="#7a5230" /></mesh>
+          {[0.5, 1.15, 1.8].map((y) => (
+            <mesh key={y} position={[0, y, 1.73]}><boxGeometry args={[4.5, 0.24, 0.1]} /><meshLambertMaterial color="#5e3e22" /></mesh>
+          ))}
+          {[0.5, 1.15, 1.8].map((y) => (
+            <mesh key={`b${y}`} position={[0, y, -1.73]}><boxGeometry args={[4.5, 0.24, 0.1]} /><meshLambertMaterial color="#5e3e22" /></mesh>
+          ))}
+          <mesh position={[0, 2.95, 0]} rotation-y={Math.PI / 2}><cylinderGeometry args={[0.02, 2.4, 3.4, 3]} /><meshLambertMaterial color="#4e3a26" flatShading /></mesh>
+          <mesh position={[0, 2.62, 0]}><boxGeometry args={[4.6, 0.14, 3.5]} /><meshLambertMaterial color="#3a2c1e" /></mesh>
+          <mesh position={[-1.2, 0.95, 1.72]}><boxGeometry args={[0.85, 1.9, 0.1]} /><meshLambertMaterial color="#3a2a1a" /></mesh>
+          <mesh position={[1.1, 1.5, 1.72]}><boxGeometry args={[0.7, 0.7, 0.08]} /><meshLambertMaterial color="#1c2a34" /></mesh>
+          <mesh position={[1.55, 2.4, -0.6]}><boxGeometry args={[0.75, 2.9, 0.75]} /><meshLambertMaterial color="#8d8d90" /></mesh>
+          {/* porch platform + posts */}
+          <mesh position={[0, 0.16, 2.35]}><boxGeometry args={[4.0, 0.12, 1.7]} /><meshLambertMaterial color="#5e4630" /></mesh>
+          {[-1.7, 1.7].map((x) => (
+            <mesh key={x} position={[x, 1.0, 3.0]}><cylinderGeometry args={[0.09, 0.11, 2, 5]} /><meshLambertMaterial color="#5e4630" /></mesh>
+          ))}
+          <mesh position={[0, 2.15, 2.35]}><boxGeometry args={[4.2, 0.1, 1.9]} /><meshLambertMaterial color="#4e3a26" /></mesh>
+        </group>
+      ))}
+      {/* 🏕️ ranger station — cabin + antenna mast + notice sign */}
+      {WORLD.ranger && (
+        <group position={[WORLD.ranger.x, 0, WORLD.ranger.z]} rotation-y={Math.PI / 2 - WORLD.ranger.rot}>
+          <mesh position-y={1.3}><boxGeometry args={[5.2, 2.6, 4]} /><meshLambertMaterial color="#6e5a3a" /></mesh>
+          {[0.55, 1.35, 2.1].map((y) => (
+            <mesh key={y} position={[0, y, 2.03]}><boxGeometry args={[5.3, 0.26, 0.1]} /><meshLambertMaterial color="#54442a" /></mesh>
+          ))}
+          <mesh position={[0, 3.3, 0]} rotation-y={Math.PI / 2}><cylinderGeometry args={[0.02, 2.7, 4, 3]} /><meshLambertMaterial color="#443626" flatShading /></mesh>
+          <mesh position={[0, 2.9, 0]}><boxGeometry args={[5.4, 0.14, 4.1]} /><meshLambertMaterial color="#332818" /></mesh>
+          <mesh position={[0, 1.05, 2.02]}><boxGeometry args={[0.95, 2.1, 0.1]} /><meshLambertMaterial color="#2e2014" /></mesh>
+          <mesh position={[1.5, 1.6, 2.02]}><boxGeometry args={[0.8, 0.8, 0.08]} /><meshLambertMaterial color="#1c2a34" /></mesh>
+          <mesh position={[2.2, 3.6, -1.2]}><cylinderGeometry args={[0.05, 0.07, 2.6, 5]} /><meshLambertMaterial color="#3a3a40" /></mesh>
+          <mesh position={[2.2, 4.95, -1.2]}><sphereGeometry args={[0.12, 6, 5]} /><meshLambertMaterial color="#c9403a" /></mesh>
+          {/* RANGER notice board */}
+          <mesh position={[-2.8, 1.5, 1.6]} rotation-x={-0.08}><boxGeometry args={[1.4, 1.0, 0.08]} /><meshLambertMaterial color="#8a6a44" /></mesh>
+          <mesh position={[-2.8, 1.5, 1.66]} rotation-x={-0.08}><planeGeometry args={[1.15, 0.75]} /><meshLambertMaterial color="#e8dcc0" /></mesh>
+        </group>
+      )}
+      {/* 🚙 the ranger's pickups */}
+      {WORLD.trucks.map((t, i) => <RangerTruck key={i} x={t.x} z={t.z} rot={t.rot} />)}
+      {/* 🗼 fire lookout tower — legs, braces, glass cab & cap roof */}
+      {WORLD.lookout && (
+        <group position={[WORLD.lookout.x, terrainHeight(WORLD.lookout.x, WORLD.lookout.z), WORLD.lookout.z]}>
+          {[[-2.1, 2.1], [2.1, 2.1], [-2.1, -2.1], [2.1, -2.1]].map(([x, z], i) => (
+            <mesh key={i} position={[x * 0.82, 3.2, z * 0.82]} rotation-z={x * z > 0 ? -0.14 : 0.14} rotation-x={x * z > 0 ? 0.14 : -0.14}>
+              <cylinderGeometry args={[0.16, 0.22, 7, 5]} /><meshLambertMaterial color="#5e4630" />
+            </mesh>
+          ))}
+          {[3.2, 5.8].map((y) => (
+            <mesh key={y} position-y={y} rotation-y={Math.PI / 4}><boxGeometry args={[3.9, 0.12, 3.9]} /><meshLambertMaterial color="#4e3a26" /></mesh>
+          ))}
+          <mesh position-y={6.9}><boxGeometry args={[3.4, 0.16, 3.4]} /><meshLambertMaterial color="#5e4630" /></mesh>
+          <mesh position-y={7.9}><boxGeometry args={[2.9, 1.8, 2.9]} /><meshLambertMaterial color="#6e5a3a" /></mesh>
+          <mesh position-y={8.35}><boxGeometry args={[3.0, 0.7, 3.0]} /><meshLambertMaterial color="#1c2a34" /></mesh>
+          <mesh position-y={9.35} rotation-y={Math.PI / 4}><coneGeometry args={[2.4, 1.3, 4]} /><meshLambertMaterial color="#8d3a2e" /></mesh>
+        </group>
+      )}
+      {/* 🗿 rock spires — two stacked needles each */}
+      <instancedMesh
+        ref={(m) => { if (m) { spireData.forEach((s, i) => { tmp.rotation.set(0, s.rot, 0.08); tmp.scale.set(s.s, s.s * 2.6, s.s); tmp.position.set(s.x, s.y + s.s * 1.3, s.z); tmp.updateMatrix(); m.setMatrixAt(i, tmp.matrix); }); m.count = spireData.length; m.instanceMatrix.needsUpdate = true; } }}
+        args={[undefined, undefined, Math.max(1, spireData.length)]}
+      >
+        <coneGeometry args={[1, 1, 6]} />
+        <meshLambertMaterial color="#7d7a74" flatShading />
+      </instancedMesh>
+      {/* 🗺️ trail map kiosks at every trailhead */}
+      {WORLD.kiosks.map((k, i) => (
+        <group key={i} position={[k.x, 0, k.z]} rotation-y={k.rot}>
+          {[-0.65, 0.65].map((x) => (
+            <mesh key={x} position={[x, 0.85, 0]}><cylinderGeometry args={[0.07, 0.09, 1.7, 5]} /><meshLambertMaterial color="#5e4630" /></mesh>
+          ))}
+          <mesh position={[0, 1.85, 0]} rotation-x={-0.22}><boxGeometry args={[1.7, 0.09, 1.15]} /><meshLambertMaterial color="#7a5c3a" /></mesh>
+          <mesh position={[0, 1.95, 0]} rotation-x={-0.22}><boxGeometry args={[1.5, 0.8, 0.06]} /><meshLambertMaterial color="#e8dcc0" /></mesh>
+          <mesh position={[0, 2.5, -0.1]} rotation-x={-0.22}><boxGeometry args={[1.9, 0.07, 1.3]} /><meshLambertMaterial color="#4e3a26" /></mesh>
+        </group>
+      ))}
+      {/* trail signposts & lantern posts — the lanterns wake at dusk */}
+      {WORLD.trailPosts.map((tp, i) => (
+        <group key={i} position={[tp.x, 0, tp.z]} rotation-y={tp.rot}>
+          <mesh position-y={1.25}><cylinderGeometry args={[0.07, 0.09, 2.5, 5]} /><meshLambertMaterial color="#5e4630" /></mesh>
+          {tp.lantern ? (
+            <>
+              <mesh position={[0.28, 2.42, 0]}><boxGeometry args={[0.4, 0.06, 0.06]} /><meshLambertMaterial color="#3a3a3e" /></mesh>
+              <mesh position={[0.48, 2.28, 0]}><boxGeometry args={[0.2, 0.26, 0.2]} /><meshLambertMaterial color="#2e3238" /></mesh>
+              <mesh position={[0.48, 2.28, 0]}>
+                <sphereGeometry args={[0.09, 6, 5]} />
+                <meshBasicMaterial color="#ffd66b" transparent opacity={0.9} ref={(m) => { if (m) lanternMats.current.push(m as THREE.MeshBasicMaterial); }} />
+              </mesh>
+              <sprite position={[0.48, 2.3, 0]} scale={1.5}>
+                <spriteMaterial map={glowTex} color="#ffbe5a" transparent opacity={0} depthWrite={false} blending={THREE.AdditiveBlending} ref={(m) => { if (m) glowMats.current.push(m); }} />
+              </sprite>
+            </>
+          ) : (
+            <>
+              <mesh position={[0, 2.05, 0.22]}><boxGeometry args={[0.55, 0.4, 0.08]} /><meshLambertMaterial color="#8a6a44" /></mesh>
+              <mesh position={[0, 2.05, 0.27]}><planeGeometry args={[0.42, 0.28]} /><meshLambertMaterial color="#e8dcc0" /></mesh>
+            </>
+          )}
+        </group>
+      ))}
+      {/* 🪓 chopping blocks & 🔥 firewood stacks */}
+      {WORLD.chopBlocks.map((cb, i) => (
+        <group key={i} position={[cb.x, 0, cb.z]} rotation-y={cb.rot}>
+          <mesh position-y={0.3}><cylinderGeometry args={[0.34, 0.4, 0.6, 7]} /><meshLambertMaterial color="#5e4630" /></mesh>
+          <mesh position={[0.1, 0.72, 0]} rotation-z={0.9}><boxGeometry args={[0.5, 0.1, 0.14]} /><meshLambertMaterial color="#9a9490" /></mesh>
+          <mesh position={[0.1, 0.62, 0]} rotation-z={0.9}><cylinderGeometry args={[0.05, 0.05, 0.7, 5]} /><meshLambertMaterial color="#5e4630" /></mesh>
+        </group>
+      ))}
+      {WORLD.firewood.map((fw, i) => (
+        <group key={i} position={[fw.x, 0, fw.z]} rotation-y={fw.rot}>
+          {[0, 1, 2].map((row) => (
+            <mesh key={row} position={[0, 0.2 + row * 0.34, 0]} rotation-x={Math.PI / 2}>
+              <cylinderGeometry args={[0.16, 0.16, 1.3, 6]} />
+              <meshLambertMaterial color={row % 2 ? "#7a5c3a" : "#6e4e30"} />
+            </mesh>
+          ))}
+          {[-0.5, 0.5].map((x) => (
+            <mesh key={x} position={[x, 0.5, 0]}><boxGeometry args={[0.1, 1.1, 0.1]} /><meshLambertMaterial color="#4e3a26" /></mesh>
+          ))}
+        </group>
+      ))}
+    </>
+  );
+}
+
+/* ------------------------- 🌲 farm & park extras ------------------------- */
+function NatureExtras() {
+  return (
+    <>
+      {/* 🪵 open woodsheds — back & side walls, slanted roof, log pile inside */}
+      {WORLD.woodsheds.map((ws, i) => (
+        <group key={i} position={[ws.x, 0, ws.z]} rotation-y={ws.rot}>
+          <mesh position={[0, 1.1, -1.1]}><boxGeometry args={[3.2, 2.2, 0.16]} /><meshLambertMaterial color="#6e5438" /></mesh>
+          {[-1.5, 1.5].map((x) => (
+            <mesh key={x} position={[x, 1.1, 0]}><boxGeometry args={[0.16, 2.2, 2.1]} /><meshLambertMaterial color="#5e4630" /></mesh>
+          ))}
+          <mesh position={[0, 2.4, 0.2]} rotation-x={-0.18}><boxGeometry args={[3.6, 0.1, 2.7]} /><meshLambertMaterial color="#4e3a26" /></mesh>
+          {[-0.8, 0, 0.8].map((x, j) => (
+            <mesh key={x} position={[x, 0.28, -0.55]} rotation-x={Math.PI / 2}>
+              <cylinderGeometry args={[0.24, 0.24, 0.9, 7]} />
+              <meshLambertMaterial color={j % 2 ? "#8a6a44" : "#7a5c3a"} />
+            </mesh>
+          ))}
+        </group>
+      ))}
+      {/* 🛒 wooden hand carts leaning on the farmhouses */}
+      {WORLD.handcarts.map((hc, i) => (
+        <group key={i} position={[hc.x, 0, hc.z]} rotation-y={hc.rot}>
+          <mesh position={[0, 0.62, 0]} rotation-z={-0.06}><boxGeometry args={[0.95, 0.3, 1.5]} /><meshLambertMaterial color="#8a6a44" /></mesh>
+          {[-0.55, 0.55].map((x) => (
+            <mesh key={x} position={[x, 0.42, 0.35]} rotation-z={Math.PI / 2}>
+              <cylinderGeometry args={[0.42, 0.42, 0.08, 10]} /><meshLambertMaterial color="#4e3a26" />
+            </mesh>
+          ))}
+          {[-0.3, 0.3].map((x) => (
+            <mesh key={x} position={[x, 0.6, 1.15]} rotation-x={0.25}><cylinderGeometry args={[0.05, 0.05, 0.9, 5]} /><meshLambertMaterial color="#5e4630" /></mesh>
+          ))}
+        </group>
+      ))}
+      {/* 🏠 birdhouse posts */}
+      {WORLD.birdhouses.map((bh, i) => (
+        <group key={i} position={[bh.x, 0, bh.z]}>
+          <mesh position-y={1.1}><cylinderGeometry args={[0.06, 0.08, 2.2, 5]} /><meshLambertMaterial color="#5e4630" /></mesh>
+          <mesh position-y={2.3}><boxGeometry args={[0.34, 0.3, 0.3]} /><meshLambertMaterial color="#8a6a44" /></mesh>
+          <mesh position-y={2.56} rotation-y={Math.PI / 4}><boxGeometry args={[0.4, 0.12, 0.4]} /><meshLambertMaterial color="#4e3a26" /></mesh>
+          <mesh position={[0, 2.3, 0.16]} rotation-x={Math.PI / 2}><cylinderGeometry args={[0.05, 0.05, 0.03, 8]} /><meshLambertMaterial color="#1a120c" /></mesh>
+        </group>
+      ))}
+    </>
+  );
+}
+
 export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObject<number>; engine: GameEngine }) {
   return (
     <>
@@ -3678,6 +4452,11 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
       <Camps engine={engine} clockRef={clockRef} />
       <Graves clockRef={clockRef} />
       <AlpineDecor />
+      <Trails />
+      <ForestFloor />
+      <JunglePonds />
+      <JungleLandmarks engine={engine} />
+      <NatureExtras />
       <Flowers />
       <Mountains />
       <Museum />

@@ -117,7 +117,26 @@ export function refreshCarCircle(world: World, gi: number): void {
  * 6 barn                                    7 police station (white, flat roof, garage)
  */
 export interface Building extends BoxCollider { h: number; color: number; roof: number; kind: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7; awn: number; fz: 1 | -1 }
-export interface Tree { x: number; z: number; r: number; s: number; kind: 0 | 1 }
+/** 🌲 tree species — nature & forest kit grew the forest from 2 kinds to 7:
+ *  0 pine (3 stacked cone tiers)       1 round broadleaf (5 blob puffs)
+ *  2 birch (white bark, airy canopy)   3 oak (wide spreading crown)
+ *  4 maple (warm autumn crown)         5 young pine (2 small tiers)
+ *  6 dead snag (bare trunk + crooked branches) */
+export interface Tree { x: number; z: number; r: number; s: number; kind: 0 | 1 | 2 | 3 | 4 | 5 | 6 }
+
+/** Weighted species roll for a biome mix table — keeps the forest VARIED,
+ *  not cloned (every biome gets its own recipe, still fully deterministic). */
+function treeKindRoll(r: () => number, mix: [Tree["kind"], number][]): Tree["kind"] {
+  let x = r();
+  for (const [k, w] of mix) { x -= w; if (x <= 0) return k; }
+  return mix[mix.length - 1][0];
+}
+
+/** biome recipes — outer jungle mixes everything, the deep band stays dark &
+ *  claustrophobic, the farm ring favours birches & autumn maples. */
+const OUTER_TREE_MIX: [Tree["kind"], number][] = [[0, 0.36], [1, 0.23], [2, 0.14], [3, 0.11], [4, 0.08], [5, 0.04], [6, 0.04]];
+const DEEP_TREE_MIX: [Tree["kind"], number][] = [[1, 0.5], [0, 0.24], [6, 0.07], [3, 0.07], [2, 0.06], [4, 0.04], [5, 0.02]];
+const FARM_TREE_MIX: [Tree["kind"], number][] = [[2, 0.32], [4, 0.28], [3, 0.2], [1, 0.12], [0, 0.08]];
 export interface Flower { x: number; z: number; c: number; s: number }
 export interface Car {
   x: number; z: number; rot: number; c: number;
@@ -146,7 +165,25 @@ export interface Camp {
   crates: { dx: number; dz: number; rot: number }[];
   /** lantern pole — glows warm at dusk */
   pole: { dx: number; dz: number } | null;
+  /** 🌲 nature & forest kit — the camp comforts (cook tripod over the fire,
+   *  picnic tables, a lean-to shelter, maybe an outhouse & a water barrel) */
+  kit: {
+    picnic: { dx: number; dz: number; rot: number }[];
+    leanTo: { dx: number; dz: number; rot: number } | null;
+    outhouse: { dx: number; dz: number; rot: number } | null;
+    barrel: { dx: number; dz: number } | null;
+  };
 }
+
+/* ---------------- 🌲 nature & forest kit — the wild band grows up ----------------
+ * Forest floor (ferns, tufts, toadstools, bushes, wildflowers, stumps, fallen
+ * logs — all steppable), jungle ponds with docks & boats, winding dirt trails
+ * with signposts & lantern posts, log cabins, a ranger station with its pickup,
+ * a fire lookout tower, rock spires and a plank bridge over the creek. */
+export interface Pond { x: number; z: number; r: number; /** angle of the little creek that feeds it (bridge crosses there) */ creek?: number }
+/** decorative scatter prop — never solid, always a joy to walk through */
+export interface FloorProp { x: number; z: number; rot: number; s: number; c: number }
+export interface TrailPost { x: number; z: number; rot: number; lantern: boolean }
 
 export interface World {
   buildings: Building[];
@@ -168,6 +205,34 @@ export interface World {
   windmills: { x: number; z: number; rot: number }[];
   /** 🏕️ jungle camps — lit glades that double as night shelters (beasts & zombies shy from fire) */
   camps: Camp[];
+  /* 🌲 nature & forest kit — the wild band */
+  ponds: Pond[];
+  ferns: FloorProp[];
+  tufts: FloorProp[];
+  shrooms: FloorProp[];
+  bushes: FloorProp[];
+  wilds: FloorProp[];
+  stumps: FloorProp[];
+  logs: FloorProp[];
+  reeds: FloorProp[];
+  pads: FloorProp[];
+  stones: FloorProp[];
+  spires: FloorProp[];
+  cabins: { x: number; z: number; rot: number }[];
+  ranger: { x: number; z: number; rot: number } | null;
+  lookout: { x: number; z: number } | null;
+  trucks: { x: number; z: number; rot: number }[];
+  bridges: { x: number; z: number; rot: number; s: number }[];
+  docks: { x: number; z: number; rot: number }[];
+  boats: { x: number; z: number; rot: number; kind: 0 | 1 }[];
+  kiosks: { x: number; z: number; rot: number }[];
+  trailPosts: TrailPost[];
+  trails: { x: number; z: number }[][];
+  birdhouses: { x: number; z: number }[];
+  handcarts: { x: number; z: number; rot: number }[];
+  chopBlocks: { x: number; z: number; rot: number }[];
+  firewood: { x: number; z: number; rot: number }[];
+  woodsheds: { x: number; z: number; rot: number }[];
   /** 🗺️ spatial hash over boxes+circles — makes resolve() O(neighbours) instead of O(world) */
   grid: ColliderGrid;
 }
@@ -693,7 +758,7 @@ export function generateWorld(seed = WORLD_SEED): World {
 
   /* ---- central park trees + landmark trees ---- */
   const trees: Tree[] = [];
-  const addTree = (x: number, z: number, s: number, kind: 0 | 1) =>
+  const addTree = (x: number, z: number, s: number, kind: Tree["kind"]) =>
     trees.push({ x, z, r: 0.7 * s, s, kind });
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2 + Math.PI / 8;
@@ -791,25 +856,68 @@ export function generateWorld(seed = WORLD_SEED): World {
       crates.push({ dx: Math.cos(ka) * kd, dz: Math.sin(ka) * kd, rot: range(rnd, 0, Math.PI * 2) });
     }
     const pa = baseRot + Math.PI / 3 + range(rnd, -0.4, 0.4), pd = 2.9;
+    // 🌲 nature & forest kit — every camp gains cook-fire comforts: a picnic
+    // table on the open side, a lean-to or an outhouse at the glade's edge,
+    // and often a water barrel. The tripod over the fire is drawn in <Camps>.
+    const kit: Camp["kit"] = { picnic: [], leanTo: null, outhouse: null, barrel: null };
+    const picnicN = 1 + (rnd() < 0.45 ? 1 : 0);
+    for (let pi = 0; pi < picnicN; pi++) {
+      const pra = baseRot + Math.PI + (pi === 0 ? 0 : Math.PI * 0.62) + range(rnd, -0.3, 0.3);
+      const prd = range(rnd, 5.2, 6.0);
+      kit.picnic.push({ dx: Math.cos(pra) * prd, dz: Math.sin(pra) * prd, rot: -pra + Math.PI / 2 });
+    }
+    if (camps.length % 2 === 0) {
+      const la = baseRot + Math.PI * 0.72 + range(rnd, -0.2, 0.2), ld = range(rnd, 5.8, 6.5);
+      kit.leanTo = { dx: Math.cos(la) * ld, dz: Math.sin(la) * ld, rot: Math.atan2(-Math.cos(la), -Math.sin(la)) };
+    }
+    if (camps.length % 3 === 1) {
+      const oa = baseRot - Math.PI * 0.7 + range(rnd, -0.2, 0.2), od = range(rnd, 6.0, 6.8);
+      kit.outhouse = { dx: Math.cos(oa) * od, dz: Math.sin(oa) * od, rot: Math.atan2(-Math.cos(oa), -Math.sin(oa)) };
+    }
+    if (rnd() < 0.65) {
+      const ba = baseRot + Math.PI * 1.32 + range(rnd, -0.3, 0.3), bd = range(rnd, 3.2, 3.9);
+      kit.barrel = { dx: Math.cos(ba) * bd, dz: Math.sin(ba) * bd };
+    }
     camps.push({
       x, z, rot: baseRot, tents, logs, crates,
       pole: { dx: Math.cos(pa) * pd, dz: Math.sin(pa) * pd },
+      kit,
     });
+  }
+
+  /* ---- 🌲 jungle ponds — dark forest pools with docks, boats & reeds ----
+   * Two lonely ponds deep in the outer jungle band: water blobs with lily pads
+   * and cattail reeds, one with a plank dock and a moored canoe, one with a
+   * rowboat pulled up on the bank. The park pond stays the city's pond — these
+   * belong to the wild. Collider circles block swimmers. */
+  const ponds: Pond[] = [];
+  let pn = 0;
+  while (pn < 2 && pn < 40) {
+    const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 486, 556);
+    const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 30) continue;
+    if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 46)) continue;    // not in a camp glade
+    if (ponds.some((p) => Math.hypot(p.x - x, p.z - z) < 130)) continue;      // spread apart
+    ponds.push({ x, z, r: range(rnd, 6.5, 8.5) });
+    pn++;
   }
 
   /* ---- jungle forest (outer ring) + DEEP jungle (denser, darker band hugging the mountains) ----
    * The map grew: the outer jungle band is now 465 → 545 and the deep band 545 → 610.
    * The deep band is where rare gems & rocks hide: nearly double tree density, bigger
    * canopies and mostly round dark crowns so it reads visually darker than the regular
-   * jungle ring. Trees keep out of the ⛰️ mountain band (that's rock country)
-   * and out of the 🏕️ camp glades. */
+   * jungle ring. Trees keep out of the ⛰️ mountain band (that's rock country),
+   * out of the 🏕️ camp glades — and OUT of the new 🌲 ponds.
+   * 🌲 nature & forest kit: 7 species now (see OUTER_TREE_MIX / DEEP_TREE_MIX) —
+   * birches, oaks, maples, young pines and dead snags join the pines & broadleafs. */
   let n = 0;
   while (n < 560) {
     const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 472, DEEP_JUNGLE_RADIUS);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
     if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 10.5)) continue; // keep camp glades clear
-    addTree(x, z, range(rnd, 0.85, 1.55), rnd() < 0.75 ? 0 : 1);
+    if (ponds.some((p) => Math.hypot(p.x - x, p.z - z) < p.r + 3.4)) continue; // 🌲 pond banks stay open
+    addTree(x, z, range(rnd, 0.85, 1.55), treeKindRoll(rnd, OUTER_TREE_MIX));
     n++;
   }
   n = 0;
@@ -818,7 +926,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
     if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 10.5)) continue; // keep camp glades clear
-    addTree(x, z, range(rnd, 1.1, 1.95), rnd() < 0.28 ? 0 : 1); // big dark round canopies dominate
+    addTree(x, z, range(rnd, 1.1, 1.95), treeKindRoll(rnd, DEEP_TREE_MIX)); // dark round canopies still dominate
     n++;
   }
 
@@ -855,8 +963,305 @@ export function generateWorld(seed = WORLD_SEED): World {
     if (Math.abs(Math.hypot(x, z) - RAILWAY.R) < 5.5) continue; // 🚂 the branch line stays clear
     if (fields.some((f) => Math.abs(x - f.x) < f.w + 3 && Math.abs(z - f.z) < f.d + 3)) continue;
     if (buildings.some((b) => Math.abs(x - b.x) < b.w + 3 && Math.abs(z - b.z) < b.d + 3)) continue;
-    addTree(x, z, range(rnd, 0.8, 1.3), rnd() < 0.5 ? 0 : 1);
+    addTree(x, z, range(rnd, 0.8, 1.3), treeKindRoll(rnd, FARM_TREE_MIX)); // 🌲 birches & maples shade the lanes
     n++;
+  }
+
+  /* ---- 🌲 nature & forest kit — the wild band grows its undergrowth ----
+   * Forest-floor scatter (ferns, grass tufts, toadstools, bushes, wildflower
+   * patches, old stumps, fallen logs — all steppable), the landmark kit (log
+   * cabins deep in the woods, a ranger station by the pond with its pickup
+   * parked outside, a fire lookout tower on a mountain shoulder, rock spires),
+   * winding dirt trails with signposts, lanterns & map kiosks, plank docks,
+   * moored boats and a bridge over the creek. Everything is deterministic. */
+  const ferns: FloorProp[] = [];
+  const tufts: FloorProp[] = [];
+  const shrooms: FloorProp[] = [];
+  const bushes: FloorProp[] = [];
+  const wilds: FloorProp[] = [];
+  const stumps: FloorProp[] = [];
+  const logs: FloorProp[] = [];
+  const spires: FloorProp[] = [];
+  const cabins: { x: number; z: number; rot: number }[] = [];
+  let lookout: { x: number; z: number } | null = null;
+  const trucks: { x: number; z: number; rot: number }[] = [];
+  const bridges: { x: number; z: number; rot: number; s: number }[] = [];
+  const docks: { x: number; z: number; rot: number }[] = [];
+  const boats: { x: number; z: number; rot: number; kind: 0 | 1 }[] = [];
+  const reeds: FloorProp[] = [];
+  const pads: FloorProp[] = [];
+  const kiosks: { x: number; z: number; rot: number }[] = [];
+  const trailPosts: TrailPost[] = [];
+  const stones: FloorProp[] = [];
+  const birdhouses: { x: number; z: number }[] = [];
+  const handcarts: { x: number; z: number; rot: number }[] = [];
+  const chopBlocks: { x: number; z: number; rot: number }[] = [];
+  const firewood: { x: number; z: number; rot: number }[] = [];
+  const woodsheds: { x: number; z: number; rot: number }[] = [];
+
+  /** distance from a point to a segment — trails & creeks keep the scatter honest */
+  const segDist = (px: number, pz: number, a: { x: number; z: number }, b: { x: number; z: number }) => {
+    const dx = b.x - a.x, dz = b.z - a.z;
+    const L2 = dx * dx + dz * dz || 1;
+    let t = ((px - a.x) * dx + (pz - a.z) * dz) / L2;
+    t = Math.max(0, Math.min(1, t));
+    return Math.hypot(px - (a.x + dx * t), pz - (a.z + dz * t));
+  };
+  const trailPts: { x: number; z: number }[][] = [];
+  const trailDist = (x: number, z: number) => {
+    let d = Infinity;
+    for (const tr of trailPts) for (let i = 0; i < tr.length - 1; i++) d = Math.min(d, segDist(x, z, tr[i], tr[i + 1]));
+    return d;
+  };
+
+  /* winding dirt trails — two paths from the farm ring down into the deep
+   * jungle, the way a ranger would cut them: gentle wobble, no shortcuts */
+  n = 0;
+  while (trailPts.length < 2 && n++ < 300) {
+    const a0 = range(rnd, 0, Math.PI * 2);
+    const wob = range(rnd, 0.1, 0.22), drift = range(rnd, -0.12, 0.12);
+    const pts: { x: number; z: number }[] = [];
+    let ok = true;
+    for (let k = 0; k <= 12; k++) {
+      const t = k / 12;
+      const rr = 452 + t * range(rnd, 116, 132);
+      const a = a0 + Math.sin(t * 5.0 + a0 * 3.1) * wob + t * drift;
+      const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+      if (inAirportPlot(x, z)) { ok = false; break; }
+      if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 12) { ok = false; break; }
+      if (fields.some((f) => Math.abs(x - f.x) < f.w + 4 && Math.abs(z - f.z) < f.d + 4)) { ok = false; break; }
+      if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 7.5)) { ok = false; break; }
+      if (ponds.some((p) => Math.hypot(p.x - x, p.z - z) < p.r + 6)) { ok = false; break; }
+      pts.push({ x, z });
+    }
+    if (ok && trailPts.every((tp) => Math.hypot(tp[0].x - pts[0].x, tp[0].z - pts[0].z) > 140)) trailPts.push(pts);
+  }
+  // trail furniture: a map kiosk at every trailhead, signposts mid-path,
+  // lantern posts deeper out (they glow at night — your way home), and
+  // round & slab path stones edging the route
+  for (const pts of trailPts) {
+    const head = pts[0];
+    const headA = Math.atan2(head.z, head.x);
+    kiosks.push({ x: head.x + Math.cos(headA) * 3.4, z: head.z + Math.sin(headA) * 3.4, rot: Math.PI / 2 - (headA + Math.PI) });
+    for (let k = 0; k < pts.length; k++) {
+      const p = pts[k];
+      const a = pts[Math.max(0, k - 1)], b = pts[Math.min(pts.length - 1, k + 1)];
+      const dx = b.x - a.x, dz = b.z - a.z, L = Math.hypot(dx, dz) || 1;
+      const perp = { x: -dz / L, z: dx / L };
+      if (k === 6) trailPosts.push({ x: p.x + perp.x * 1.5, z: p.z + perp.z * 1.5, rot: Math.PI / 2 - headA, lantern: false });
+      else if (k === 2 || k === 4 || k === 8 || k === 10)
+        trailPosts.push({ x: p.x + perp.x * 1.8, z: p.z + perp.z * 1.8, rot: Math.PI / 2 - (headA + Math.PI), lantern: true });
+      if (k < pts.length - 1) {
+        const side = k % 2 === 0 ? 1 : -1;
+        stones.push({ x: p.x + perp.x * 1.9 * side + dx * 0.18, z: p.z + perp.z * 1.9 * side + dz * 0.18, rot: range(rnd, 0, 6.283), s: range(rnd, 0.75, 1.25), c: (stones.length + k) % 2 });
+        stones.push({ x: p.x + perp.x * 2.3 * -side - dx * 0.1, z: p.z + perp.z * 2.3 * -side - dz * 0.1, rot: range(rnd, 0, 6.283), s: range(rnd, 0.7, 1.2), c: (stones.length + k + 1) % 2 });
+      }
+    }
+  }
+
+  /** every scatter prop must clear the landmarks, water, paths & tree trunks */
+  const clearOf = (x: number, z: number, pad: number) => {
+    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + pad) return false;
+    if (inAirportPlot(x, z)) return false;
+    if (buildings.some((b) => Math.abs(x - b.x) < b.w + pad && Math.abs(z - b.z) < b.d + pad)) return false;
+    if (fields.some((f) => Math.abs(x - f.x) < f.w + pad && Math.abs(z - f.z) < f.d + pad)) return false;
+    if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 8.5)) return false;
+    if (ponds.some((p) => Math.hypot(p.x - x, p.z - z) < p.r + pad)) return false;
+    if (trailDist(x, z) < 2.4) return false;
+    if (trees.some((t) => Math.hypot(t.x - x, t.z - z) < 1.9)) return false;
+    if (cabins.some((c2) => Math.hypot(c2.x - x, c2.z - z) < 5)) return false;
+    return true;
+  };
+
+  // ferns carpet the deep jungle floor
+  n = 0;
+  while (n < 90 && n < 2000) {
+    const a = range(rnd, 0, Math.PI * 2), rr = range(rnd, DEEP_JUNGLE_RADIUS - 4, JUNGLE_RADIUS - 6);
+    const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+    if (!clearOf(x, z, 1.6)) continue;
+    ferns.push({ x, z, rot: range(rnd, 0, 6.283), s: range(rnd, 0.8, 1.5), c: Math.floor(rnd() * 3) });
+    n++;
+  }
+  // grass tufts everywhere the wilds reach
+  n = 0;
+  while (n < 140 && n < 3000) {
+    const a = range(rnd, 0, Math.PI * 2), rr = range(rnd, 420, JUNGLE_RADIUS - 8);
+    const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+    if (!clearOf(x, z, 1.4)) continue;
+    tufts.push({ x, z, rot: range(rnd, 0, 6.283), s: range(rnd, 0.7, 1.35), c: Math.floor(rnd() * 3) });
+    n++;
+  }
+  // toadstools — the deep jungle's poison-fairies
+  n = 0;
+  while (n < 46 && n < 1500) {
+    const a = range(rnd, 0, Math.PI * 2), rr = range(rnd, DEEP_JUNGLE_RADIUS - 2, JUNGLE_RADIUS - 6);
+    const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+    if (!clearOf(x, z, 1.5)) continue;
+    shrooms.push({ x, z, rot: range(rnd, 0, 6.283), s: range(rnd, 0.6, 1.2), c: Math.floor(rnd() * 2) });
+    n++;
+  }
+  // round bushes — outer jungle & the farm hedgerows
+  n = 0;
+  while (n < 64 && n < 2000) {
+    const a = range(rnd, 0, Math.PI * 2), rr = range(rnd, 420, 560);
+    const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+    if (!clearOf(x, z, 2.1)) continue;
+    bushes.push({ x, z, rot: range(rnd, 0, 6.283), s: range(rnd, 0.8, 1.6), c: Math.floor(rnd() * 2) });
+    n++;
+  }
+  // wildflower patches — town verges & the farm lanes
+  n = 0;
+  while (n < 26 && n < 1200) {
+    const a = range(rnd, 0, Math.PI * 2), rr = range(rnd, 30, 386);
+    const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+    if (ROADS.some((o) => Math.abs(x - o) < 7.5 || Math.abs(z - o) < 7.5)) continue;
+    if (Math.abs(x) < 13 && z > MAIN_ROAD.z0 - 3 && z < MAIN_ROAD.z1 + 3) continue;
+    if (Math.abs(rr - RING_R) < 9) continue;
+    if (buildings.some((b) => Math.abs(x - b.x) < b.w + 1.8 && Math.abs(z - b.z) < b.d + 1.8)) continue;
+    wilds.push({ x, z, rot: range(rnd, 0, 6.283), s: range(rnd, 0.7, 1.2), c: Math.floor(rnd() * 3) });
+    n++;
+  }
+  n = 0;
+  while (n < 34 && n < 1200) {
+    const a = range(rnd, 0, Math.PI * 2), rr = range(rnd, CITY_RADIUS + 8, FARM_RADIUS - 10);
+    const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+    if (!clearOf(x, z, 1.6)) continue;
+    wilds.push({ x, z, rot: range(rnd, 0, 6.283), s: range(rnd, 0.7, 1.25), c: Math.floor(rnd() * 3) });
+    n++;
+  }
+  // old stumps & fallen logs — the forest remembers its dead wood
+  n = 0;
+  while (n < 26 && n < 1200) {
+    const a = range(rnd, 0, Math.PI * 2), rr = range(rnd, 472, 552);
+    const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+    if (!clearOf(x, z, 2.1)) continue;
+    stumps.push({ x, z, rot: range(rnd, 0, 6.283), s: range(rnd, 0.8, 1.3), c: 0 });
+    n++;
+  }
+  n = 0;
+  while (n < 30 && n < 1200) {
+    const a = range(rnd, 0, Math.PI * 2), rr = range(rnd, 472, JUNGLE_RADIUS - 10);
+    const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+    if (!clearOf(x, z, 2.3)) continue;
+    logs.push({ x, z, rot: range(rnd, 0, 6.283), s: range(rnd, 0.8, 1.4), c: 0 });
+    n++;
+  }
+  // 🪵 log cabins — three homesteads deep in the dark band, porches to the city
+  n = 0;
+  while (cabins.length < 3 && n++ < 400) {
+    const a = range(rnd, 0, Math.PI * 2), rr = range(rnd, 548, 600);
+    const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+    if (!clearOf(x, z, 4.2)) continue;
+    if (cabins.some((c2) => Math.hypot(c2.x - x, c2.z - z) < 120)) continue;
+    cabins.push({ x, z, rot: Math.atan2(-z, -x) });
+  }
+  // 🗼 fire lookout tower — on a gentle mountain shoulder, legs on even ground
+  n = 0;
+  while (!lookout && n++ < 300) {
+    const a = range(rnd, 0, Math.PI * 2), rr = range(rnd, MOUNTAIN_INNER + 8, MOUNTAIN_INNER + 46);
+    const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+    const h = terrainHeight(x, z);
+    if (h < 1.2 || h > 9) continue;
+    let mn = 99, mx = -99;
+    for (const [ox, oz] of [[2.4, 2.4], [-2.4, 2.4], [2.4, -2.4], [-2.4, -2.4]] as const) {
+      const hh = terrainHeight(x + ox, z + oz);
+      mn = Math.min(mn, hh); mx = Math.max(mx, hh);
+    }
+    if (mx - mn > 2.6) continue;
+    lookout = { x, z };
+  }
+  // 🗿 rock spires — mountain crags & deep-jungle needles
+  n = 0;
+  while (n < 14 && n < 800) {
+    const onMtn = n % 2 === 0;
+    const a = range(rnd, 0, Math.PI * 2);
+    const rr = onMtn ? range(rnd, MOUNTAIN_INNER + 4, MOUNTAIN_OUTER - 6) : range(rnd, DEEP_JUNGLE_RADIUS + 4, JUNGLE_RADIUS - 6);
+    const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+    if (onMtn && (terrainHeight(x, z) < 1 || terrainHeight(x, z) > 12)) continue;
+    if (!clearOf(x, z, 2.2)) continue;
+    spires.push({ x, z, rot: range(rnd, 0, 6.283), s: range(rnd, 1.1, 2.2), c: n % 2 });
+    n++;
+  }
+  // 🏕️ ranger station — by the first pond when there is one, deep jungle otherwise
+  let rangerPos: { x: number; z: number; rot: number } | null = null;
+  if (ponds.length > 0) {
+    const p0 = ponds[0];
+    const aOut = Math.atan2(p0.z, p0.x);
+    const rx = p0.x + Math.cos(aOut) * (p0.r + 14), rz = p0.z + Math.sin(aOut) * (p0.r + 14);
+    if (clearOf(rx, rz, 4.5)) rangerPos = { x: rx, z: rz, rot: Math.atan2(-rz, -rx) };
+  }
+  let rTries = 0;
+  while (!rangerPos && rTries++ < 300) {
+    const a = range(rnd, 0, Math.PI * 2), rr = range(rnd, 490, 545);
+    const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+    if (!clearOf(x, z, 4.5)) continue;
+    rangerPos = { x, z, rot: Math.atan2(-z, -x) };
+  }
+  // 🚙 the ranger's pickup — parked outside the station, another abandoned by the first cabin
+  if (rangerPos) trucks.push({ x: rangerPos.x + Math.cos(rangerPos.rot) * 2.2 + Math.sin(rangerPos.rot) * 7.4, z: rangerPos.z + Math.sin(rangerPos.rot) * 2.2 - Math.cos(rangerPos.rot) * 7.4, rot: rangerPos.rot + Math.PI / 2 + 0.18 });
+  if (cabins.length > 0) trucks.push({ x: cabins[0].x + Math.cos(cabins[0].rot) * 6.4, z: cabins[0].z + Math.sin(cabins[0].rot) * 6.4, rot: cabins[0].rot - 0.5 });
+  // pond dressing: a creek feeds the first pond (a plank bridge crosses it),
+  // the other pond gets a plank dock with a moored canoe, plus reeds & pads
+  if (ponds[0]) {
+    const ca = range(rnd, 0, Math.PI * 2);
+    ponds[0].creek = ca;
+    const bx = ponds[0].x + Math.cos(ca) * (ponds[0].r + 1.7);
+    const bz = ponds[0].z + Math.sin(ca) * (ponds[0].r + 1.7);
+    bridges.push({ x: bx, z: bz, rot: -ca, s: ponds[0].r / 7 });
+    const ra = ca + 1.15;
+    boats.push({ x: ponds[0].x + Math.cos(ra) * (ponds[0].r + 1.5), z: ponds[0].z + Math.sin(ra) * (ponds[0].r + 1.5), rot: Math.PI / 2 - (ra + Math.PI), kind: 1 });
+  }
+  const dockPond = ponds[1] ?? ponds[0];
+  if (dockPond) {
+    const da = Math.atan2(dockPond.z, dockPond.x) + Math.PI;
+    const bx = dockPond.x + Math.cos(da) * (dockPond.r + 1.1);
+    const bz = dockPond.z + Math.sin(da) * (dockPond.r + 1.1);
+    docks.push({ x: bx + Math.cos(da) * 1.7, z: bz + Math.sin(da) * 1.7, rot: Math.PI / 2 - da });
+    boats.push({ x: bx + Math.cos(da) * 5.0 + Math.cos(da + Math.PI / 2) * 1.35, z: bz + Math.sin(da) * 5.0 + Math.sin(da + Math.PI / 2) * 1.35, rot: Math.PI / 2 - da + 0.08, kind: 0 });
+  }
+  // cattail reeds ring every pond bank (the park pond too) & lily pads drift inside
+  for (const p of ponds) {
+    for (let i = 0; i < 12; i++) {
+      const a = (i / 12) * Math.PI * 2 + p.x * 0.31 + range(rnd, -0.2, 0.2);
+      const rr = p.r + range(rnd, -0.6, 0.9);
+      reeds.push({ x: p.x + Math.cos(a) * rr, z: p.z + Math.sin(a) * rr, rot: range(rnd, 0, 6.283), s: range(rnd, 0.75, 1.3), c: Math.floor(rnd() * 2) });
+    }
+    for (let i = 0; i < 7; i++) {
+      const a = (i / 7) * Math.PI * 2 + p.z * 0.17 + range(rnd, -0.3, 0.3);
+      const rr = p.r * range(rnd, 0.28, 0.6);
+      pads.push({ x: p.x + Math.cos(a) * rr, z: p.z + Math.sin(a) * rr, rot: range(rnd, 0, 6.283), s: range(rnd, 0.7, 1.25), c: 0 });
+    }
+  }
+  for (let i = 0; i < 10; i++) {
+    const a = (i / 10) * Math.PI * 2 + i * 1.7;
+    reeds.push({ x: PARK.x - 11 + Math.cos(a) * (8.2 + range(rnd, -0.5, 0.7)), z: PARK.z + 11 + Math.sin(a) * (8.2 + range(rnd, -0.5, 0.7)), rot: range(rnd, 0, 6.283), s: range(rnd, 0.7, 1.2), c: Math.floor(rnd() * 2) });
+  }
+  for (let i = 0; i < 6; i++) {
+    const a = (i / 6) * Math.PI * 2 + 0.5;
+    const rr = 8.2 * range(rnd, 0.3, 0.55);
+    pads.push({ x: PARK.x - 11 + Math.cos(a) * rr, z: PARK.z + 11 + Math.sin(a) * rr, rot: range(rnd, 0, 6.283), s: range(rnd, 0.7, 1.1), c: 0 });
+  }
+  // 🪵 open woodsheds — one per barnyard, stacked with split logs
+  for (const [bx, bz] of BARN_BASE) {
+    const a = Math.atan2(bz, bx);
+    const wx = bx + Math.cos(a + 0.9) * 16, wz = bz + Math.sin(a + 0.9) * 16;
+    if (fields.some((f) => Math.abs(wx - f.x) < f.w + 2 && Math.abs(wz - f.z) < f.d + 2)) continue;
+    woodsheds.push({ x: wx, z: wz, rot: a + Math.PI });
+  }
+  // 🛒 hand carts lean against two farmhouses
+  handcarts.push({ x: FARMKIT.farmhouses[1].x + 6, z: FARMKIT.farmhouses[1].z + 5, rot: 0.6 });
+  handcarts.push({ x: FARMKIT.farmhouses[2].x - 6, z: FARMKIT.farmhouses[2].z + 4, rot: -0.4 });
+  // 🏠 birdhouse posts — the park & every farmstead hang a bird box
+  birdhouses.push({ x: PARK.x + 14, z: PARK.z - 10 }, { x: PARK.x - 13, z: PARK.z + 14 });
+  for (const fh of FARMKIT.farmhouses) birdhouses.push({ x: fh.x + 4.5, z: fh.z - 4.5 });
+  // 🪓 chopping blocks & 🔥 firewood — at the cabins and the first camps
+  for (const c2 of cabins) {
+    chopBlocks.push({ x: c2.x + Math.cos(c2.rot) * 3.4, z: c2.z + Math.sin(c2.rot) * 3.4, rot: c2.rot });
+    firewood.push({ x: c2.x - Math.sin(c2.rot) * 3.8, z: c2.z + Math.cos(c2.rot) * 3.8, rot: c2.rot + 0.3 });
+  }
+  for (const cp of camps.slice(0, 3)) {
+    chopBlocks.push({ x: cp.x + 4.4, z: cp.z - 3.6, rot: range(rnd, 0, 6.283) });
+    firewood.push({ x: cp.x - 4.8, z: cp.z + 3.2, rot: range(rnd, 0, 6.283) });
   }
 
   /* ---- 🍎 farmstead orchards — apple & plum trees shade every farmhouse yard ---- */
@@ -998,10 +1403,33 @@ export function generateWorld(seed = WORLD_SEED): World {
   for (const ok of GRAVEKIT.oaks) circles.push({ x: ok.x, z: ok.z, r: 0.5 });             // twisted dead oaks
   for (const fp of GRAVEKIT.fencePosts) circles.push({ x: fp.x, z: fp.z, r: 0.28 });      // wrought-iron fence posts
   for (const gp of GRAVEKIT.gatePillars) circles.push({ x: gp.x, z: gp.z, r: 0.45 });     // gate pillars
+  /* ---- 🌲 nature & forest kit — the wild band's solid furniture ---- */
+  for (const c2 of cabins) boxes.push({ x: c2.x, z: c2.z, w: 2.9, d: 2.9, h: 4.2 });       // log cabins
+  if (rangerPos) boxes.push({ x: rangerPos.x, z: rangerPos.z, w: 3.4, d: 2.9, h: 4.6 });   // ranger station
+  if (lookout) for (const [lx, lz] of [[2.1, 2.1], [-2.1, 2.1], [2.1, -2.1], [-2.1, -2.1]] as const)
+    circles.push({ x: lookout.x + lx, z: lookout.z + lz, r: 0.5 });                          // lookout tower legs
+  for (const tr of trucks) circles.push({ x: tr.x, z: tr.z, r: 1.55 });                     // parked ranger pickups
+  for (const sp of spires) circles.push({ x: sp.x, z: sp.z, r: 0.75 * sp.s });              // rock spires
+  for (const k of kiosks) circles.push({ x: k.x, z: k.z, r: 0.85 });                        // trail map kiosks
+  for (const tp of trailPosts) circles.push({ x: tp.x, z: tp.z, r: 0.22 });                 // signpost & lantern posts
+  for (const bh of birdhouses) circles.push({ x: bh.x, z: bh.z, r: 0.16 });                 // birdhouse posts
+  for (const hc of handcarts) circles.push({ x: hc.x, z: hc.z, r: 0.7 });                   // wooden hand carts
+  for (const cb of chopBlocks) circles.push({ x: cb.x, z: cb.z, r: 0.5 });                  // chopping blocks
+  for (const fw of firewood) circles.push({ x: fw.x, z: fw.z, r: 0.75 });                   // firewood stacks
+  for (const ws of woodsheds) boxes.push({ x: ws.x, z: ws.z, w: 2.6, d: 1.7, h: 3.4 });     // open woodsheds
+  // 🌲 jungle ponds — the deep middle blocks waders; banks, docks & bridges stay walkable
+  for (const p of ponds) circles.push({ x: p.x, z: p.z, r: p.r * 0.62 });
+  // 🌲 camp kit — picnic tables, lean-to, outhouse & water barrel are solid
+  for (const cp of camps) {
+    for (const pc of cp.kit.picnic) circles.push({ x: cp.x + pc.dx, z: cp.z + pc.dz, r: 0.95 });
+    if (cp.kit.leanTo) circles.push({ x: cp.x + cp.kit.leanTo.dx, z: cp.z + cp.kit.leanTo.dz, r: 1.5 });
+    if (cp.kit.outhouse) circles.push({ x: cp.x + cp.kit.outhouse.dx, z: cp.z + cp.kit.outhouse.dz, r: 0.85 });
+    if (cp.kit.barrel) circles.push({ x: cp.x + cp.kit.barrel.dx, z: cp.z + cp.kit.barrel.dz, r: 0.5 });
+  }
   // every circle remembers its array slot — the driven car refreshes its grid cells via this
   for (let i = 0; i < circles.length; i++) circles[i].idx = i;
 
-  return { buildings, trees, rocks, rockCi, flowers, boxes, circles, cars, lamps, benches, fields, silos, umbrellas, signs, windmills, camps, grid: buildColliderGrid(boxes, circles) };
+  return { buildings, trees, rocks, rockCi, flowers, boxes, circles, cars, lamps, benches, fields, silos, umbrellas, signs, windmills, camps, ponds, ferns, tufts, shrooms, bushes, wilds, stumps, logs, reeds, pads, stones, spires, cabins, ranger: rangerPos, lookout, trucks, bridges, docks, boats, kiosks, trailPosts, trails: trailPts, birdhouses, handcarts, chopBlocks, firewood, woodsheds, grid: buildColliderGrid(boxes, circles) };
 }
 
 /**

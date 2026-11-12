@@ -22,6 +22,8 @@ const FILES = {
   crow: "/models/crow-base.glb",
   rabbit: "/models/forest-rabbit-ea2da0.glb",
   stag: "/models/spectral-stag-d19dc1.glb",
+  // 🌲 nature & forest kit — the jungle deer becomes the real polyfork Forest Deer
+  deer: "/models/forest-deer-fe648d.glb",
   // 🏔️ alpine & snow kit — the mountain band gains its own wildlife
   ibex: "/models/alpine-ibex-2a288a.glb",
   hare: "/models/mountain-hare-d9c64c.glb",
@@ -40,6 +42,7 @@ export type ModelKind = keyof typeof FILES;
 /** Height-normalize then per-kind artistic scale (world units). */
 const TARGET_H: Record<ModelKind, number> = {
   wolf: 1.0, bear: 1.5, fox: 0.72, owl: 0.55, crow: 0.5, rabbit: 0.5, stag: 2.1,
+  deer: 1.7,
   ibex: 1.15, hare: 0.45, pig: 0.75, sheep: 0.8, goat: 0.85, duck: 0.45,
   cat: 0.5, spider: 1.25,
 };

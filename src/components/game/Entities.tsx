@@ -541,6 +541,8 @@ export function Zombies({ engine }: { engine: GameEngine }) {
  *    a real AnimationMixer cross-fades Idle → Walk → Run, and the
  *    birds take wing (Fly) when they bolt.                          */
 const GLB_KINDS = new Set(["wolf", "bear", "fox", "owl", "crow", "rabbit", "stag",
+  // 🌲 nature & forest kit — the deer trades its procedural body for the polyfork Forest Deer
+  "deer",
   // 🏔️ alpine & snow · 🚜 cozy farm · 🎃 halloween night — polyfork GLB species
   "ibex", "hare", "pig", "sheep", "goat", "duck", "cat", "spider"]);
 
