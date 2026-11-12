@@ -115,6 +115,8 @@ export interface Npc extends SteerMemory {
   fearX?: number; fearZ?: number;
   /** 🧟 slain by the night (lies still; the town refills at dawn) */
   dead?: boolean;
+  /** ⏱️ seconds since the fall — the renderer plays fall → lie → sink → gone */
+  deadT?: number;
   /** true while this bot's death has already dropped its loot */
   looted?: boolean;
 }
@@ -124,6 +126,8 @@ export interface Zombie extends SteerMemory {
   owner?: number;
   /** 💰 purses this zombie swallowed off the dirt — spills back when it falls or at dawn */
   hoard?: number;
+  /** ⏱️ seconds since it was cut down — the body falls, then sinks into the dirt */
+  deadT?: number;
   /* 🧱 stuck memory (chk/side/block) lives in SteerMemory — stepNpc writes it.
    * avoidV/avoidT: the prey this shamber gave up reaching (walled in) — skipped
    * for avoidT seconds so the horde re-picks someone it can actually reach. */
@@ -152,6 +156,8 @@ export interface Crew extends SteerMemory {
   /** 0.45s animation timer — the beast's claw swipe when it mauls someone */
   attackAnimT: number;
   deathX: number; deathZ: number;
+  /** ⏱️ seconds since they fell — the renderer plays fall → lie → sink → gone */
+  deathT?: number;
   /** the mystery clue their body carries (filled when they die) */
   clue: string;
   /** true once the player inspected the body */
@@ -246,7 +252,7 @@ export interface Build {
 }
 export interface Animal { id: number; kind: AnimalKind; x: number; z: number; vx: number; vz: number; face: number; tx: number; tz: number; timer: number; phase: number; resting: boolean;
   /* 🐕 dogs: night turns every stray into a rotting hound */
-  zombie?: boolean; hp?: number; barkT?: number; touchCd?: number; dead?: boolean;
+  zombie?: boolean; hp?: number; barkT?: number; touchCd?: number; dead?: boolean; deadT?: number;
   /* 🎨 coat variant index + 🍼 baby flag — every creature is an individual */
   variant?: number; baby?: boolean;
   /* 🎯 hound prey latch — same diverse-pick brain as the shamblers (crew id /
@@ -293,7 +299,9 @@ export interface DriveState {
   lastDir: 1 | -1;
 }
 
-export interface Fx { type: "confetti"; x: number; y: number; z: number; hue: number }
+/** 🎇 world FX — confetti = physical chips (harvest/hits), soul = a rising wisp
+ *  burst that plays when a beast of the night is CUT DOWN (the kill finisher) */
+export interface Fx { type: "confetti" | "soul"; x: number; y: number; z: number; hue: number }
 
 /** A car cruising the ring highway — the engine owns the position, the renderer just reads it. */
 export interface TrafficCar {
@@ -319,6 +327,8 @@ export type ArrestState = "free" | "called" | "riding" | "locked";
 export interface HudData {
   hp: number; stamina: number; stars: number; carried: number; delivered: number; total: number;
   points: number; rescues: number; support: number; zone: Zone; clock: number; night: number;
+  /** 🧟 zombies YOU cut down — drives the ⚔️ FINISHER flash */
+  kills: number;
   detained: boolean; detainLeft: number; prompt: string; policeNear: boolean;
   civilians: number; police: number; won: boolean; elapsed: number;
   inv: { def: number; count: number }[]; hurt: boolean; sprinting: boolean; exhausted: boolean;
@@ -410,6 +420,16 @@ const dist2 = (ax: number, az: number, bx: number, bz: number) => (ax - bx) * (a
 
 /** 👀 free cam: seconds before the camera drifts to another living soul */
 const SPEC_SWAP_S = 12;
+
+/** ⚔️ kill finisher: seconds of the player's 360° spin flourish after cutting a
+ *  beast of the night down (zombie / hound / possessed contestant) */
+export const FINISHER_S = 0.9;
+
+/** 🩸 corpse choreography (seconds): fall time, how long the body rests before
+ *  the ground reclaims it, and when it is fully gone from the world */
+export const FALL_S = 0.75;
+export const CORPSE_LIE_S = 11;
+export const CORPSE_SINK_S = 2.4;
 
 /** Index of the road line closest to a coordinate. */
 const nearestRoadIdx = (v: number): number => {
@@ -588,6 +608,10 @@ export class GameEngine {
   pauseLog: { msg: string; kind: "info" | "good" | "bad" }[] = [];
   /** 👀 free-cam spectate — dead souls channel-surf the living town */
   spectating = false;
+  /** ⚔️ kill finisher — seconds left of the player's 360° spin flourish */
+  finisherT = 0;
+  /** 🩸 seconds since the player died — the death fall plays before the recap opens */
+  deathT = 0;
   /** 👀 the name of the soul the free cam is currently riding behind */
   specName = "";
   private specKey = "";
@@ -1385,6 +1409,8 @@ export class GameEngine {
     this.netScores.clear();
     for (const r of this.remotes) { r.beast = false; r.alive = true; r.hp = 100; }
     this.zombies = []; this.zRev++; // the dirt is empty — the contest fills it at dusk
+    for (const an of this.animals) { an.dead = false; an.deadT = 0; an.zombie = false; an.hp = undefined; } // 🐕 a fresh week — every stray lives again
+    this.finisherT = 0; this.deathT = 0; // ⚔️🩸 death juice rewinds
     stopDrone(); stopInsects(); // 🦗 the chorus falls silent with the light
     // 🪪 the license is NO LONGER a freebie: every survivor must physically hunt
     // down a glowing 🪪 card (or be handed one by a teammate) before any car starts
@@ -2796,6 +2822,7 @@ export class GameEngine {
   private die() {
     if (this.won || this.lost) return;
     this.lost = true;
+    this.deathT = 0; // 🎬 the death fall starts — the recap waits until the body settles
     stopDrone(); stopInsects(); // 🦗 the chorus falls silent with the light
     sfx.lose();
     const place = this.crew.filter((c) => c.alive).length + this.remotes.filter((r) => r.alive).length + 1;
@@ -2827,7 +2854,7 @@ export class GameEngine {
     this.goodieClaims.clear();
     for (let i = 0; i < this.crew.length; i++) {
       const c = this.crew[i];
-      if (!c.alive) continue;
+      if (!c.alive) { c.deathT = (c.deathT ?? 0) + dt; continue; } // ⏱️ the corpse choreography clock runs
       c.phase += dt;
       c.touchCd = Math.max(0, c.touchCd - dt);
       c.boostT = Math.max(0, (c.boostT ?? 0) - dt); // ⚡ gem rush decays in real time
@@ -3096,6 +3123,8 @@ export class GameEngine {
             if (d2p < 26 * 26) sfx.stab();
             if (zb.hp <= 0 && zb.owner != null) {
               zb.dead = true;
+              zb.deadT = 0; // ⏱️ the body falls & sinks away
+              this.fxQueue.push({ type: "soul", x: zb.x, y: 1.0, z: zb.z, hue: 0.45 }); // 🌫️ the rotten soul lifts free
               const oi = this.crew.findIndex((cc) => cc.id === zb.owner);
               if (oi >= 0 && this.crew[oi].alive) {
                 this.crew[oi].cKills = (this.crew[oi].cKills ?? 0) + 1;
@@ -3643,6 +3672,7 @@ export class GameEngine {
   private killCiv(c: Npc, by: "zombie" | "beast" | "player" | "wall") {
     if (c.dead) return;
     c.dead = true;
+    c.deadT = 0; // ⏱️ fall → lie → sink → gone
     c.mode = "wander"; // frozen while dead — the renderer lays the body down
     c.vx = 0; c.vz = 0;
     if (!c.looted) {
@@ -3680,6 +3710,7 @@ export class GameEngine {
     c.hp = 0;
     c.mode = "dead";
     c.deathX = c.x; c.deathZ = c.z;
+    c.deathT = 0; // ⏱️ the fall animation starts now
     c.inspected = false;
     // 🔍 death forensics — track WHERE the lobby is falling. A growing pile at
     // one spot means hunters are still funneling somewhere they shouldn't.
@@ -3737,6 +3768,10 @@ export class GameEngine {
     this.kills++;
     this.points += POINTS_KILL_BEAST;
     this.killCrew(idx, true);
+    const vc = this.crew[idx];
+    this.finisherT = FINISHER_S; // ⚔️ the spin-slash finisher plays — the spell is broken
+    this.addShake(0.32); // 💥 MEDIUM — the kill lands
+    this.fxQueue.push({ type: "soul", x: vc.deathX, y: 1.1, z: vc.deathZ, hue: 0.45 }); // 🌫️ the stolen soul lifts free
     const packLeft = this.possessed.filter((i) => this.crew[i].alive).length;
     if (this.phase === "night" && packLeft === 0 && !this.youPossessed && this.mpBeastSlots.length === 0) {
       this.phase = "dawn";
@@ -3803,8 +3838,12 @@ export class GameEngine {
         this.fxQueue.push({ type: "confetti", x: zb.x, y: 1.1, z: zb.z, hue: 0.35 });
         if (zb.hp <= 0) {
           zb.dead = true;
+          zb.deadT = 0; // ⏱️ the body falls & sinks into the dirt
           this.kills++;
           this.points += POINTS_KILL_ZOMBIE;
+          this.finisherT = FINISHER_S; // ⚔️ the spin-slash finisher plays
+          this.addShake(0.32); // 💥 MEDIUM — the kill lands
+          this.fxQueue.push({ type: "soul", x: zb.x, y: 1.0, z: zb.z, hue: 0.45 }); // 🌫️ the rotten soul lifts free
           sfx.scream();
           this.dropLoot(zb.x, zb.z, range(this.rnd, ZOMBIE_PURSE[0], ZOMBIE_PURSE[1]) + (zb.hoard ?? 0), "the zombie's hoard");
           zb.hoard = 0; // its takings hit the dirt — no double-dip at dawn
@@ -3833,8 +3872,12 @@ export class GameEngine {
       this.fxQueue.push({ type: "confetti", x: bestDog.x, y: 0.9, z: bestDog.z, hue: 0.35 });
       if (bestDog.hp <= 0) {
         bestDog.dead = true;      // lies where it fell; a fresh stray wanders in at dawn
+        bestDog.deadT = 0;        // ⏱️ fall → sink → gone
         bestDog.zombie = false;
         this.points += POINTS_KILL_ZOMDOG;
+        this.finisherT = FINISHER_S; // ⚔️ the finisher plays
+        this.addShake(0.26); // 💥 the hound drops
+        this.fxQueue.push({ type: "soul", x: bestDog.x, y: 0.7, z: bestDog.z, hue: 0.45 }); // 🌫️ the feral soul lifts free
         sfx.scream();
         this.dropLoot(bestDog.x, bestDog.z, range(this.rnd, 4, 14), "the hound's scavenged purse");
         this.toast("🐕‍🦺 The zombie hound falls! +25 — another one prowls the dark…", "good");
@@ -4412,6 +4455,8 @@ export class GameEngine {
     this.driveMsgT = Math.max(0, this.driveMsgT - dt);
     this.attackCd = Math.max(0, this.attackCd - dt);
     this.accuseCd = Math.max(0, this.accuseCd - dt);
+    this.finisherT = Math.max(0, this.finisherT - dt); // ⚔️ the finisher spin winds down
+    if (this.lost) this.deathT += dt; // 🩸 the death fall plays while the town moves on
     if (this.detainedT > 0) {
       // the clock only runs once the player is locked up at the station (or dizzy-stunned) —
       // while the van is being called or riding, time itself is frozen
@@ -4920,7 +4965,7 @@ export class GameEngine {
     for (const c of this.civs) {
       c.phase += dt;
       // 🧟💀 a fallen townsfolk lies still until dawn refills the town
-      if (c.dead) continue;
+      if (c.dead) { c.deadT = (c.deadT ?? 0) + dt; continue; } // ⏱️ the corpse choreography clock runs
       if ((c.panicT ?? 0) > 0) c.panicT = (c.panicT ?? 0) - dt;
       // 🫨 an attacker / crime scene spooked this townsfolk — flee that spot at any hour
       if ((c.panicT ?? 0) > 0 && c.fearX !== undefined) {
@@ -5078,6 +5123,7 @@ export class GameEngine {
 
     /* --- zombies (graveyard) — they rise at night, fear fire, and can be SLAIN --- */
     this.groanT -= dt;
+    // 🩸 the fallen get their corpse clock ticked here (dead ones skip all logic)
     this.zLootCd = Math.max(0, this.zLootCd - dt);
     this.botLootCd = Math.max(0, this.botLootCd - dt);
     this.invOnceT = Math.max(0, this.invOnceT - dt);
@@ -5086,7 +5132,7 @@ export class GameEngine {
     // already have enough hunters on them (see pickDiversePrey)
     if (night > 0.55) this.rebuildPreyLoad();
     for (const zb of this.zombies) {
-      if (zb.dead) continue; // slain — stays down until the next night rises
+      if (zb.dead) { zb.deadT = (zb.deadT ?? 0) + dt; continue; } // ⏱️ slain — the body falls & sinks; a fresh shambler rises next dusk
       zb.touchCd = Math.max(0, zb.touchCd - dt);
       zb.avoidT = Math.max(0, (zb.avoidT ?? 0) - dt); // 🧱 walled-in prey ban decays
       const d2p = dist2(zb.x, zb.z, p.x, p.z);
@@ -5302,6 +5348,7 @@ export class GameEngine {
     for (const an of this.animals) {
       an.timer -= dt;
       const d2p = dist2(an.x, an.z, p.x, p.z);
+      if (an.dead) { an.deadT = (an.deadT ?? 0) + dt; continue; } // 🪦 fallen — the body sinks away till dawn's fresh stray
 
       /* 🧟 ZOMBIE HOUNDS — every stray turns at nightfall (see beginNight).
        * Faster than shamblers, they run down the living: you, the survivors,
@@ -5773,6 +5820,7 @@ export class GameEngine {
       held: this.held,
       youPossessed: this.youPossessed,
       beastCount: this.zombies.filter((z) => !z.dead).length, // contest: how many risen hunters roam
+      kills: this.kills,
       crewAlive: this.crew.filter((c) => c.alive).length,
       aliveTotal: PLAYERS_TOTAL,
       remotesAlive: this.remotes.filter((r) => r.alive).length,
@@ -5840,6 +5888,7 @@ export class GameEngine {
     c.hp = 0;
     c.mode = "dead";
     c.deathX = c.x; c.deathZ = c.z;
+    c.deathT = 0; // ⏱️ the fall animation starts here too
     c.clue = clue;
     c.inspected = false;
     if (loot) this.loot.push({ id: this.nid(), x: loot.x, z: loot.z, amt: Math.round(loot.amt), label: loot.label, bob: Math.random() * 6 });

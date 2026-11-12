@@ -9,6 +9,7 @@ import {
 } from "@/lib/game/constants";
 import { preloadModels, onModelsReady, spawnModel } from "@/lib/game/models";
 import type { GameEngine } from "@/lib/game/engine";
+import { FALL_S, FINISHER_S, CORPSE_LIE_S, CORPSE_SINK_S } from "@/lib/game/engine";
 import { nightFactor } from "@/lib/game/sim";
 import { mulberry32 } from "@/lib/game/rng";
 import {
@@ -116,7 +117,7 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     const heldKind = !beast && !morphing && !engine.drive && engine.held >= 0 && engine.tools[engine.held]
       ? engine.tools[engine.held].kind as HeldToolKind : null;
     if (heldRef.current !== heldKind) { setHeldTool(mesh, heldKind); heldRef.current = heldKind; }
-    mesh.visible = !engine.lost && !engine.playerInVan && !morphing && !engine.drive && !beast; // 🩸 the dark takes the body too
+    mesh.visible = (!engine.lost || engine.deathT < 3.4) && !engine.playerInVan && !morphing && !engine.drive && !beast; // 🩸 the dark takes the body too — after one final fall
     beastMesh.visible = beast && !engine.lost && !engine.playerInVan && !engine.drive;
     if (beastMesh.visible) {
       beastMesh.position.set(p.x, p.y, p.z);
@@ -144,6 +145,24 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       faint: engine.faintT > 0 ? engine.faintT / FAINT_S : 0,
       swing,
     });
+    // 🩸 DEATH — the body folds to the dirt where it stands, rests a beat, then
+    // the dark reclaims it (the recap menu waits for this to play out first)
+    if (engine.lost) {
+      const dT = engine.deathT;
+      const fall = Math.min(1, dT / 0.85);
+      const ez = fall * fall * (3 - 2 * fall);
+      const sinkD = Math.max(0, dT - 2.2) / 1.2;
+      mesh.position.set(p.x, p.y * (1 - ez) + 0.34 * ez - 2.0 * sinkD, p.z);
+      mesh.rotation.x = -ez * Math.PI / 2.05;
+    } else if (engine.finisherT > 0) {
+      // ⚔️ KILL FINISHER — a full 360° spin flourish with a small power punch,
+      // played the instant a zombie / hound / possessed beast is cut down
+      const fin = 1 - engine.finisherT / FINISHER_S;
+      mesh.rotation.y += fin * Math.PI * 2;
+      mesh.scale.setScalar(1 + 0.13 * Math.sin(fin * Math.PI));
+    } else if (mesh.scale.x !== 1) {
+      mesh.scale.setScalar(1); // back to normal once the flourish is spent
+    }
 
     // 🐒 animal disguise body mirrors the player's motion (walk, jump and all)
     const mk = engine.morphKind;
@@ -383,9 +402,17 @@ export function Npcs({ engine }: { engine: GameEngine }) {
           for (const b of rig.brows) b.visible = close && !n.dead;
         }
         if (n.dead) {
-          // 🧟💀 a fallen townsfolk lies still where the night took them
-          v.mesh.position.set(n.x, 0.34, n.z);
-          v.mesh.rotation.x = -Math.PI / 2.1;
+          // 🧟💀 a fallen townsfolk — folds to the dirt, lies a while, then the
+          // ground quietly reclaims them (the city refills at dawn)
+          const dT = n.deadT ?? CORPSE_LIE_S + CORPSE_SINK_S; // no timer yet = already settled
+          const gone = dT > CORPSE_LIE_S + CORPSE_SINK_S;
+          v.mesh.visible = !gone;
+          if (gone) { if (v.tag) v.tag.visible = false; continue; }
+          const fall = Math.min(1, dT / 0.55);
+          const ez = fall * fall * (3 - 2 * fall);
+          const sinkD = Math.max(0, dT - CORPSE_LIE_S) / CORPSE_SINK_S;
+          v.mesh.position.set(n.x, 0.34 * ez - 2.0 * sinkD, n.z);
+          v.mesh.rotation.x = -ez * Math.PI / 2.1;
           poseCharacter(v.mesh, 0, t, { phase: n.phase, detained: true });
           if (v.bubble) v.bubble.visible = false;
           if (v.tag) v.tag.visible = false;
@@ -470,6 +497,23 @@ export function Zombies({ engine }: { engine: GameEngine }) {
       if (!m) continue;
       const vis = night > 0.4;
       const dx = z.x - cam.x, dz = z.z - cam.z;
+      if (z.dead) {
+        // 🗡️🔪 KILL FINISHER — the slain shambler topples face-first, rests a
+        // beat, then the hungry dirt pulls it under (gone until next dusk)
+        const dT = z.deadT ?? 0;
+        if (dT > 1.5 + CORPSE_SINK_S || !vis || dx * dx + dz * dz > CULL_SQ) { m.visible = false; continue; }
+        m.visible = true;
+        const fall = Math.min(1, dT / 0.5);
+        const ez = fall * fall * (3 - 2 * fall);
+        const sinkD = Math.max(0, dT - 1.5) / CORPSE_SINK_S;
+        m.position.set(z.x, -1.85 * sinkD, z.z);
+        let dd = z.face - m.rotation.y;
+        dd = Math.atan2(Math.sin(dd), Math.cos(dd));
+        m.rotation.y += dd * 0.2;
+        m.rotation.x = -ez * Math.PI / 2.05;
+        m.rotation.z = 0;
+        continue;
+      }
       m.visible = vis && dx * dx + dz * dz < CULL_SQ;
       if (!m.visible) continue;
       // rise from the grave as night falls (fully out at night >= 0.55)
@@ -479,6 +523,7 @@ export function Zombies({ engine }: { engine: GameEngine }) {
       let dd = z.face - m.rotation.y;
       dd = Math.atan2(Math.sin(dd), Math.cos(dd));
       m.rotation.y += dd * 0.12;
+      m.rotation.x = 0; m.rotation.z = 0; // a risen shambler stands tall again
       poseCharacter(m, Math.hypot(z.vx, z.vz), t, { phase: z.phase, zombie: true });
     }
   });
@@ -598,9 +643,22 @@ export function Animals({ engine }: { engine: GameEngine }) {
       const rig = rigs.current.get(a.id);
       if (!rig) continue;
       const m = rig.obj;
-      if (a.dead) { m.visible = false; if (rig.halo) rig.halo.visible = false; continue; }
       const dx = a.x - cam.x, dz = a.z - cam.z;
       const inCull = dx * dx + dz * dz < CULL_SQ;
+      if (a.dead) {
+        // 🪦 the fallen — tips over onto its side and sinks into the earth;
+        // a fresh stray always wanders back in at dawn
+        if (rig.halo) rig.halo.visible = false;
+        const dT = a.deadT ?? CORPSE_SINK_S + 1;
+        if (dT > 1.3 + CORPSE_SINK_S || !inCull) { m.visible = false; continue; }
+        m.visible = true;
+        const fall = Math.min(1, dT / 0.45);
+        const ez = fall * fall * (3 - 2 * fall);
+        const sinkD = Math.max(0, dT - 1.3) / CORPSE_SINK_S;
+        m.position.set(a.x, -1.1 * sinkD, a.z);
+        m.rotation.z = ez * Math.PI / 2.15; // tip over sideways
+        continue;
+      }
       // 👻 the spectral stag exists only after dark
       const stagVis = a.kind !== "stag" || nf > 0.35;
       m.visible = inCull && stagVis;
@@ -618,6 +676,7 @@ export function Animals({ engine }: { engine: GameEngine }) {
       }
       if (!m.visible) continue;
       m.position.set(a.x, 0, a.z);
+      m.rotation.z = 0; // back on all fours
       // 🍼 babies are little — one scale bump, every frame is idempotent
       const bs = a.baby ? 0.55 : 1;
       if (m.scale.x !== bs) m.scale.setScalar(bs);
@@ -974,8 +1033,8 @@ export function Shadows({ engine }: { engine: GameEngine }) {
     const p = engine.player;
     put(p.x, p.z, 0.64, p.y);
     for (const c of engine.cops) put(c.x, c.z, 0.6);
-    for (const c of engine.civs) put(c.x, c.z, 0.6);
-    if (nightFactor(engine.clock) > 0.4) for (const z of engine.zombies) put(z.x, z.z, 0.6);
+    for (const c of engine.civs) if (!c.dead) put(c.x, c.z, 0.6); // the fallen sink away — no ghost shadows
+    if (nightFactor(engine.clock) > 0.4) for (const z of engine.zombies) if (!z.dead) put(z.x, z.z, 0.6);
     for (let k = 0; k < engine.animals.length; k++) {
       const a = engine.animals[k];
       put(a.x, a.z, 0.7 * (ANIMAL_SCALES[kinds[k]] ?? 1));
@@ -995,11 +1054,15 @@ const N_CONF = 260;
 const WOOD_CHIPS = ["#a97b4f", "#8a5a33", "#6b4a2a", "#5aa348", "#2f9e55"];
 const STONE_CHIPS = ["#9b9ba3", "#7d7d86", "#b9b9c0", "#6e6e76", "#8d8d95"];
 const FESTIVE = ["#ff6b8a", "#ffd166", "#6bd68a", "#7bc4ff", "#c77dff"];
+/* 🌫️ kill-finisher soul wisps — a rotten, luminous burst that RISES instead of
+ * falling when a beast of the night is cut down (fx.type === "soul") */
+const SOUL_WISP = ["#8dffb0", "#b78cff", "#63e8d8", "#d8ff8f", "#e6fff2"];
 const fxColor = new THREE.Color();
 export function Confetti({ engine }: { engine: GameEngine }) {
   const mesh = useRef<THREE.InstancedMesh>(null!);
   const parts = useMemo(() => Array.from({ length: N_CONF }, () => ({
     x: 0, y: 0, z: 0, vx: 0, vy: 0, vz: 0, life: 0, rx: Math.random() * 3, rz: Math.random() * 3,
+    g: 12, // gravity: confetti falls (12), soul wisps RISE (negative)
   })), []);
   const colors = useMemo(() => {
     const palette = FESTIVE.map((c) => new THREE.Color(c));
@@ -1013,15 +1076,21 @@ export function Confetti({ engine }: { engine: GameEngine }) {
     // drain fx queue — recolor freshly spawned chips to match what was hit
     let recolored = false;
     for (const fx of engine.fxQueue.splice(0)) {
-      const pal = fx.hue <= 0.15 ? WOOD_CHIPS : fx.hue >= 0.59 && fx.hue <= 0.68 ? STONE_CHIPS : null;
+      const soul = fx.type === "soul"; // 🌫️ a beast of the night fell — its soul lifts
+      const pal = soul
+        ? SOUL_WISP
+        : fx.hue <= 0.15 ? WOOD_CHIPS : fx.hue >= 0.59 && fx.hue <= 0.68 ? STONE_CHIPS : null;
+      const want = soul ? 34 : 70;
       let spawned = 0;
-      for (let idx = 0; idx < parts.length && spawned < 70; idx++) {
+      for (let idx = 0; idx < parts.length && spawned < want; idx++) {
         const pt = parts[idx];
         if (pt.life > 0) continue;
-        const a = Math.random() * Math.PI * 2, sp = 2 + Math.random() * 4;
+        const a = Math.random() * Math.PI * 2, sp = soul ? 0.7 + Math.random() * 1.6 : 2 + Math.random() * 4;
         pt.x = fx.x; pt.y = fx.y; pt.z = fx.z;
-        pt.vx = Math.cos(a) * sp; pt.vz = Math.sin(a) * sp; pt.vy = 4 + Math.random() * 5;
-        pt.life = 1.4 + Math.random() * 0.8;
+        pt.vx = Math.cos(a) * sp; pt.vz = Math.sin(a) * sp;
+        pt.vy = soul ? 1.5 + Math.random() * 2.1 : 4 + Math.random() * 5; // souls drift UP
+        pt.g = soul ? -1.3 : 12;
+        pt.life = soul ? 1.7 + Math.random() * 1.0 : 1.4 + Math.random() * 0.8;
         if (pal && mesh.current) {
           mesh.current.setColorAt(idx, fxColor.set(pal[(Math.random() * pal.length) | 0]));
           recolored = true;
@@ -1036,10 +1105,10 @@ export function Confetti({ engine }: { engine: GameEngine }) {
       if (pt.life <= 0) continue;
       any = true;
       pt.life -= dt;
-      pt.vy -= 12 * dt;
+      pt.vy -= pt.g * dt; // confetti tumbles down · soul wisps float up
       pt.x += pt.vx * dt; pt.y += pt.vy * dt; pt.z += pt.vz * dt;
       pt.vx *= 0.99; pt.vz *= 0.99;
-      const s = pt.life > 0 ? 0.16 : 0;
+      const s = pt.life > 0 ? (pt.g < 0 ? 0.12 : 0.16) : 0;
       tmpM.position.set(pt.x, Math.max(0.05, pt.y), pt.z);
       tmpM.rotation.set(pt.rx + pt.life * 8, 0, pt.rz + pt.life * 6);
       tmpM.scale.set(s, s * 1.8, s * 0.4);
@@ -1113,8 +1182,15 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
       // 🧟 a TURNED contestant at night is walking the dirt as their zombie —
       // the human body sinks away; dawn (or death) brings it back
       const turned = c.alive && c.zombieTonight && engine.phase === "night";
-      v.blood.visible = near && !c.alive;
-      if (v.blood.visible) v.blood.position.set(c.deathX, 0.04, c.deathZ);
+      // 🩸 the blood pool blooms as the body lands, then fades as the ground reclaims it
+      const dTb = c.alive ? 0 : (c.deathT ?? CORPSE_LIE_S + CORPSE_SINK_S);
+      const bodyGone = dTb > CORPSE_LIE_S + CORPSE_SINK_S;
+      v.blood.visible = near && !c.alive && !bodyGone && dTb > 0.35;
+      if (v.blood.visible) {
+        v.blood.position.set(c.deathX, 0.04, c.deathZ);
+        (v.blood.material as THREE.MeshBasicMaterial).opacity =
+          0.75 * Math.min(1, (dTb - 0.35) / 0.6) * (1 - Math.max(0, (dTb - CORPSE_LIE_S) / CORPSE_SINK_S));
+      }
       // 🚗 behind the wheel — the car body IS their body now
       if (!near || turned || (c.alive && c.drive)) {
         v.mesh.visible = false;
@@ -1138,17 +1214,26 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
         }
         if (v.tag) v.tag.visible = close && !namesHidden;
       } else {
-        // a body on the ground — lie still, tag says their name one last time
-        v.mesh.position.set(c.deathX, 0.34, c.deathZ);
-        v.mesh.rotation.y = c.face;
-        v.mesh.rotation.x = -Math.PI / 2.1;
-        v.mesh.rotation.z = 0;
-        const rig = v.mesh.userData.rig as { lids: THREE.Object3D[]; brows: THREE.Object3D[] } | undefined;
-        if (rig) {
-          for (const l of rig.lids) l.visible = false;
-          for (const b of rig.brows) b.visible = false;
+        // 🎬 the corpse choreography — the body FOLDS to the dirt (smoothstep
+        // fall), rests so the clue can be inspected, then sinks away and the
+        // world forgets it. No more eternal body piles.
+        const gone = dTb > CORPSE_LIE_S + CORPSE_SINK_S;
+        v.mesh.visible = !gone;
+        if (!gone) {
+          const fall = Math.min(1, dTb / FALL_S);
+          const ez = fall * fall * (3 - 2 * fall);
+          const sinkD = Math.max(0, dTb - CORPSE_LIE_S) / CORPSE_SINK_S;
+          v.mesh.position.set(c.deathX, 0.34 * ez - 2.0 * sinkD, c.deathZ);
+          v.mesh.rotation.y = c.face;
+          v.mesh.rotation.x = -ez * Math.PI / 2.1;
+          v.mesh.rotation.z = 0;
+          const rig = v.mesh.userData.rig as { lids: THREE.Object3D[]; brows: THREE.Object3D[] } | undefined;
+          if (rig) {
+            for (const l of rig.lids) l.visible = false;
+            for (const b of rig.brows) b.visible = false;
+          }
+          if (v.tag) v.tag.visible = d2 < DETAIL_SQ && !namesHidden && sinkD <= 0;
         }
-        if (v.tag) v.tag.visible = d2 < DETAIL_SQ && !namesHidden;
       }
     });
   });
@@ -1482,9 +1567,13 @@ export function RemotesView({ engine }: { engine: GameEngine }) {
     [slotKey, engine.remotes],
   );
 
-  useFrame((s) => {
+  // 🎬 renderer-side fall clocks for remote corpses (slot → seconds since death)
+  const deadT = useRef(new Map<number, number>());
+
+  useFrame((s, dt0) => {
     const t = s.clock.elapsedTime;
     const cam = s.camera.position;
+    const dt = Math.min(0.05, dt0);
     engine.remotes.forEach((r) => {
       const v = rigs.find((x) => x.slot === r.slot);
       if (!v) return;
@@ -1495,16 +1584,24 @@ export function RemotesView({ engine }: { engine: GameEngine }) {
       const dx = r.x - cam.x, dz = r.z - cam.z;
       const d2 = dx * dx + dz * dz;
       if (!r.alive) {
-        // their light went out — lie where their stream last placed them
-        body.visible = d2 < CULL_SQ;
+        // 🎬 their light went out — the body folds to the dirt, then the ground
+        // takes it (same choreography as the bots; timer runs renderer-side)
+        const dT = (deadT.current.get(r.slot) ?? 0) + dt;
+        deadT.current.set(r.slot, dT);
+        const gone = dT > 2 + CORPSE_SINK_S;
+        body.visible = !gone && d2 < CULL_SQ;
         if (body.visible) {
-          body.position.set(r.x, 0.34, r.z);
-          body.rotation.set(-Math.PI / 2.1, r.face, 0);
+          const fall = Math.min(1, dT / 0.6);
+          const ez = fall * fall * (3 - 2 * fall);
+          const sinkD = Math.max(0, dT - 2) / CORPSE_SINK_S;
+          body.position.set(r.x, 0.34 * ez - 2.0 * sinkD, r.z);
+          body.rotation.set(-ez * Math.PI / 2.1, r.face, 0);
         }
         if (v.tag) v.tag.visible = false;
         if (v.btag) v.btag.visible = false;
         return;
       }
+      deadT.current.delete(r.slot); // back among the living — reset their fall clock
       if (d2 > CULL_SQ) {
         body.visible = false;
         return;

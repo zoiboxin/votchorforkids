@@ -1241,6 +1241,14 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
   const wheelOpen = useGame((s) => s.wheelOpen);
   const licenseOpen = useGame((s) => s.licenseOpen);
   const setLicenseOpen = useGame((s) => s.setLicenseOpen);
+  // ⚔️ kill finisher — every zombie / hound / beast YOU cut down bursts a banner
+  const kills = useGame((s) => s.hud.kills);
+  const [finishFlash, setFinishFlash] = useState(0);
+  const prevKills = useRef(0);
+  useEffect(() => {
+    if (kills > prevKills.current) setFinishFlash((f) => f + 1); // a fresh skull for the pile
+    prevKills.current = kills; // a reset (new run) just rewinds silently
+  }, [kills]);
   // the 🎯 wheel publishes its confirm/cancel so the global keydown can G-confirm / Esc-cancel
   const wheelApi = useRef<WheelApi | null>(null);
   // after the cursor gets hard-bound, remind the player how to free it (4 s)
@@ -1348,6 +1356,13 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         return;
       }
       if (e.code === "KeyM") { e.preventDefault(); setBigMap(true); return; }
+      // 🩸 dead: Esc / P jumps straight back to the death recap — watch the town
+      // ride, replay the week, or quit to the menu. Pausing a ghost is pointless.
+      if (engine.lost && (e.code === "Escape" || e.code === "KeyP")) {
+        e.preventDefault();
+        useGame.getState().setVictoryOpen(true);
+        return;
+      }
       if (e.code === "KeyI") { e.preventDefault(); toggleHelp(); } // ⓘ goal card: show → auto-hide / toggle off
       if (e.code === "KeyP" || e.code === "Escape") { e.preventDefault(); togglePause(); }
       // top-row Digit keys AND keypad Numpad keys both eat pocketed food
@@ -1406,6 +1421,28 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
             className="absolute inset-0"
             style={{ boxShadow: "inset 0 0 150px 46px rgba(220,38,38,0.55)" }}
           />
+        )}
+      </AnimatePresence>
+
+      {/* ⚔️ KILL FINISHER — bursts over the crosshair zone each time you cut a
+          beast of the night down; each kill re-keys the animation */}
+      <AnimatePresence>
+        {finishFlash > 0 && (
+          <motion.div
+            key={`fin-${finishFlash}`}
+            aria-hidden
+            initial={{ opacity: 0, scale: 0.55, rotate: -10 }}
+            animate={{ opacity: [0, 1, 1, 0], scale: [0.55, 1.22, 1, 1.08], rotate: [-10, 3, 0, 0] }}
+            transition={{ duration: 1.25, times: [0, 0.16, 0.6, 1], ease: "easeOut" }}
+            className="pointer-events-none absolute left-1/2 top-[24%] z-10 -translate-x-1/2"
+          >
+            <div className="rounded-2xl border border-amber-300/60 bg-gradient-to-r from-rose-600/30 via-amber-400/30 to-rose-600/30 px-7 py-1.5 text-3xl font-black tracking-[0.2em] text-amber-200 drop-shadow-[0_2px_14px_rgba(0,0,0,0.85)] backdrop-blur-sm">
+              ⚔️ FINISHER
+            </div>
+            <div className="mt-1 text-center text-xs font-bold tracking-widest text-emerald-200/90 drop-shadow-[0_1px_6px_rgba(0,0,0,0.9)]">
+              +{hud.kills} 🧟 SLAIN
+            </div>
+          </motion.div>
         )}
       </AnimatePresence>
 

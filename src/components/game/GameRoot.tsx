@@ -173,6 +173,9 @@ export function GameRoot() {
       // report reveals the death itself) and while the 👀 free cam is riding around town
       if (useGame.getState().paused || useGame.getState().pauseReport || eng.spectating) return;
       if ((eng.won || eng.lost) && !useGame.getState().victoryOpen) {
+        // 🎬 let the death fall play out first — the body folds, rests, and the
+        // dark takes it; only THEN does the recap menu cover the screen
+        if (eng.lost && eng.deathT < 2.1) return;
         useGame.getState().setVictoryOpen(true);
         const h = useGame.getState().hud;
         useGame.getState().recordRun(h.points, h.money, h.rescues, eng.caughtCount, eng.won, Math.round(h.elapsed * 1000));
