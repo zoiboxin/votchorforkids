@@ -147,6 +147,15 @@ export const sfx = {
   wolfHowl: () => { tone(294, 0.5, "sine", 0.15, 523); tone(523, 1.1, "sine", 0.15, 349, 0.5); tone(349, 0.5, "sine", 0.08, 294, 1.5); noise(1.6, 0.02, 600, 0.3); },
   // spectral chime — the ghost stag fades from sight
   chime: () => { [1244, 1568, 1976].forEach((f, i) => tone(f, 0.8, "sine", 0.07, f * 0.985, i * 0.09, true)); noise(0.6, 0.015, 3000, 0.1); },
+  /* ------- 🐄 the farm & jungle voices ------- */
+  // cow moo — two low drawn-out notes
+  moo: () => { tone(146, 0.5, "sawtooth", 0.14, 98); tone(98, 0.65, "sine", 0.12, 82, 0.14); },
+  // chicken cluck — quick double peck
+  cluck: () => { tone(880, 0.05, "square", 0.09, 660); tone(760, 0.06, "square", 0.08, 560, 0.08); },
+  // monkey screech — two sharp rising rasps
+  screech: () => { tone(1250, 0.16, "sawtooth", 0.09, 950); tone(1500, 0.11, "sawtooth", 0.07, 1150, 0.14); },
+  // deer bleat — a wobbly mid tone
+  bleat: () => { tone(520, 0.28, "sawtooth", 0.08, 470); tone(500, 0.22, "sawtooth", 0.06, 460, 0.2); },
   // angry crowd drags the accused away
   mob: () => { tone(200, 0.3, "sawtooth", 0.2, 260); noise(0.35, 0.16, 400, 0.05); tone(180, 0.3, "square", 0.14, 240, 0.18); },
 };

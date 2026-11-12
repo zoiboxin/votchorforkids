@@ -13,6 +13,7 @@ import {
 import { nameTag } from "@/lib/game/character";
 import { mulberry32, range } from "@/lib/game/rng";
 import { nightFactor } from "@/lib/game/sim";
+import { isKitType, kitWheelR, makeKitCar } from "@/lib/game/cars/kit";
 import type { GameEngine } from "@/lib/game/engine";
 
 export const WORLD: World = generateWorld();
@@ -656,6 +657,13 @@ const CAR_TYPES: CarType[] = [
   { L: 5.3, W: 2.05, bodyH: 0.98, cabL: 1.75, cabOff: 1.32, cabH: 0.78, wheelR: 0.54, axF: 1.78, wsTilt: 0.34, rgTilt: 0.3, kind: 2 },             // pickup truck
   { L: 7.0, W: 2.35, bodyH: 1.55, cabL: 5.5, cabOff: 0, cabH: 0.68, wheelR: 0.5, axF: 2.45, wsTilt: 0.12, rgTilt: 0.1, kind: 3, dualAxle: true },  // city bus
   { L: 3.7, W: 2.0, bodyH: 0.88, cabL: 1.3, cabOff: 0.62, cabH: 0.5, wheelR: 0.52, axF: 1.16, wsTilt: 0.5, rgTilt: 0.4, kind: 4 },                 // jeep
+  // 🏁 retro-kit specials — these four SKIP the instanced part set entirely and
+  // render from the polyfork car modules (see KitCars); only their wheelR feeds
+  // the rolling-spin math, but the rest of the row documents the body for the minimap.
+  { L: 4.74, W: 2.01, bodyH: 0.9, cabL: 1.6, cabOff: -0.1, cabH: 0.58, wheelR: 0.3315, axF: 1.45, wsTilt: 0.5, rgTilt: 0.42, kind: 0 },   // 🏁 muscle car
+  { L: 5.3, W: 2.18, bodyH: 0.82, cabL: 1.5, cabOff: 0.1, cabH: 0.5, wheelR: 0.34, axF: 1.35, wsTilt: 0.52, rgTilt: 0.44, kind: 0 },      // 🚙 convertible
+  { L: 5.08, W: 2.01, bodyH: 0.95, cabL: 2.6, cabOff: -0.5, cabH: 0.66, wheelR: 0.3315, axF: 1.42, wsTilt: 0.38, rgTilt: 0.2, kind: 0 },  // 🚗 station wagon
+  { L: 4.47, W: 1.98, bodyH: 0.82, cabL: 1.5, cabOff: -0.1, cabH: 0.52, wheelR: 0.3315, axF: 1.28, wsTilt: 0.6, rgTilt: 0.5, kind: 0 },   // 🏎️ sports coupe
 ];
 
 /**
@@ -805,6 +813,27 @@ function placeCar(P: CarParts, i: number, x: number, y: number, z: number, rot: 
       m.setMatrixAt(i * 6 + k, tmp.matrix);
     }
   }
+}
+
+/** Zero-scale EVERY instanced slot of vehicle #i — the 🏁 retro-kit cars skip the
+ *  boxy part set entirely (their low-poly bodies render from the polyfork modules
+ *  in KitCars); hiding keeps all the per-index slot math untouched. */
+function hideCar(P: CarParts, i: number) {
+  const hide = (m: THREE.InstancedMesh, idx: number) => {
+    tmp.rotation.set(0, 0, 0);
+    tmp.position.set(0, -500, 0);
+    tmp.scale.setScalar(0);
+    tmp.updateMatrix();
+    m.setMatrixAt(idx, tmp.matrix);
+  };
+  hide(P.skirt, i); hide(P.body, i); hide(P.cab, i); hide(P.roof, i);
+  hide(P.wind, i); hide(P.rglass, i); hide(P.grille, i);
+  hide(P.mirL, i); hide(P.mirR, i); hide(P.exh, i);
+  hide(P.bumpF, i); hide(P.bumpR, i);
+  hide(P.sign, i); hide(P.spare, i);
+  for (let k = 0; k < 2; k++) { hide(P.lights, i * 2 + k); hide(P.tails, i * 2 + k); hide(P.beam, i * 2 + k); }
+  for (let k = 0; k < 3; k++) { hide(P.bed, i * 3 + k); hide(P.bar, i * 3 + k); }
+  for (let k = 0; k < 6; k++) { hide(P.wheels, i * 6 + k); hide(P.hubs, i * 6 + k); }
 }
 
 /* ---- shared vehicle part set ----
@@ -995,7 +1024,11 @@ function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutabl
     // parked fleet: engine OFF — beams folded, lamps at day glass (per-instance, so
     // the ONE car being driven can blaze without lighting the whole street).
     // y follows the ground so a car left parked on the ⛰️ band sits ON the hill.
-    WORLD.cars.forEach((c, i) => placeCar(P, i, c.x, terrainHeight(c.x, c.z), c.z, c.rot, c.c, c.t, false));
+    // 🏁 kit-modelled types skip the part set — their slots stay zero-scaled.
+    WORLD.cars.forEach((c, i) => {
+      if (isKitType(c.t)) hideCar(P, i);
+      else placeCar(P, i, c.x, terrainHeight(c.x, c.z), c.z, c.rot, c.c, c.t, false);
+    });
     for (let i = 0; i < WORLD.cars.length; i++) setLampGlow(P, i, 0);
     stampDone(P);
   }, []);
@@ -1017,7 +1050,8 @@ function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutabl
       for (const ci of engine.botDriven) {
         const c = WORLD.cars[ci];
         if (!c) continue;
-        placeCar(P, ci, c.x, terrainHeight(c.x, c.z), c.z, c.rot, c.c, c.t, false);
+        if (isKitType(c.t)) hideCar(P, ci); // 🏁 the kit renderer in KitCars drives this one
+        else placeCar(P, ci, c.x, terrainHeight(c.x, c.z), c.z, c.rot, c.c, c.t, false);
       }
       dirty = true;
     }
@@ -1028,14 +1062,16 @@ function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutabl
       // tracked tighter (14/s, was 9): a lazy ease lagged below fast climbs over
       // the rolling valley bumps and the car visibly sank into the mud/rock
       drvY.current += (gy - drvY.current) * Math.min(1, dt * 14); // eased — bumpy ground never jitters the body
-      placeCar(P, d.ci, d.vx, drvY.current, d.vz, d.vrot, c.c, c.t, true, d.spin, d.steerVis);
+      if (isKitType(c.t)) hideCar(P, d.ci); // 🏁 kit body renders in KitCars from the same smoothed pose
+      else placeCar(P, d.ci, d.vx, drvY.current, d.vz, d.vrot, c.c, c.t, true, d.spin, d.steerVis);
       setLampGlow(P, d.ci, nightFactor(clockRef.current));
       dirty = true;
     }
     if ((d ? d.ci : -1) !== lit.current) {
       if (lit.current >= 0) { // the previous ride is parked again — engine off
         const c = WORLD.cars[lit.current];
-        placeCar(P, lit.current, c.x, terrainHeight(c.x, c.z), c.z, c.rot, c.c, c.t, false);
+        if (isKitType(c.t)) hideCar(P, lit.current);
+        else placeCar(P, lit.current, c.x, terrainHeight(c.x, c.z), c.z, c.rot, c.c, c.t, false);
         setLampGlow(P, lit.current, 0);
       }
       lit.current = d ? d.ci : -1;
@@ -1058,13 +1094,113 @@ function RingTraffic({ engine, clockRef }: { engine: GameEngine; clockRef: React
     engine.traffic.forEach((t, i) => {
       const T = CAR_TYPES[t.t % CAR_TYPES.length];
       spins.current[i] -= (t.sp * t.r * dt) / T.wheelR; // angular speed × ring radius = u/s
-      placeCar(P, i, t.x, 0.07, t.z, t.rot, t.c, t.t, true, spins.current[i]);
+      if (isKitType(t.t)) hideCar(P, i); // 🏁 kit bodies cruise in KitCars
+      else placeCar(P, i, t.x, 0.07, t.z, t.rot, t.c, t.t, true, spins.current[i]);
     });
     stampDone(P);
     nightLights(R, clockRef.current);
   });
   const N = Math.max(1, engine.traffic.length);
   return <VehicleParts R={R} N={N} />;
+}
+
+/* ---------------- 🏁 polyfork Retro Cars Kit — the retro fleet ----------------
+ * Sedans, hatchbacks, vans, pickups + the four NEW specials (muscle car,
+ * convertible, station wagon, sports coupe) render from the parametric kit
+ * modules — real-world scale, +Z nose, named wheel/steer parts we spin every
+ * frame. Parked cars sit static; bot-driven & traffic cars roll their wheels
+ * by the distance covered; whatever the PLAYER drives also lights its beams
+ * after dark (a shared additive material keeps the glow dirt-cheap). */
+const kitBeamMat = new THREE.MeshBasicMaterial({
+  color: "#ffedb0", transparent: true, opacity: 0, blending: THREE.AdditiveBlending,
+  depthWrite: false, side: THREE.DoubleSide,
+});
+const KIT_BEAM_LEN = 5.6; // matches the procedural fleet's beam reach
+
+interface KitRig {
+  src: "park" | "traffic";
+  i: number;
+  t: number;
+  obj: THREE.Group;
+  wheels: THREE.Object3D[];
+  steer: THREE.Object3D[];
+  beams: THREE.Mesh[];
+  spin: number;
+  lastX: number;
+  lastZ: number;
+}
+
+function KitCars({ engine, clockRef }: { engine: GameEngine; clockRef: React.MutableRefObject<number> }) {
+  const rigs = useMemo<KitRig[]>(() => {
+    const out: KitRig[] = [];
+    const build = (src: "park" | "traffic", i: number, t: number, c: number, x: number, z: number) => {
+      const r = makeKitCar(t, c);
+      if (!r) return;
+      // 🔆 two headlight cones poking from the nose — apex back at the lens,
+      // opening forward; parked cars keep them folded (engine off)
+      const box = new THREE.Box3().setFromObject(r.obj);
+      const nose = box.max.z;
+      const beams: THREE.Mesh[] = [];
+      const geo = new THREE.ConeGeometry(0.95, KIT_BEAM_LEN, 10, 1, true);
+      for (const s of [-1, 1]) {
+        const cone = new THREE.Mesh(geo, kitBeamMat);
+        cone.rotation.x = -Math.PI / 2; // apex (+Y) → -Z, opening forward
+        cone.position.set(s * box.max.x * 0.6, 0.72, nose + KIT_BEAM_LEN / 2 - 0.05);
+        cone.visible = false;
+        r.obj.add(cone);
+        beams.push(cone);
+      }
+      out.push({ src, i, t, obj: r.obj, wheels: r.wheels, steer: r.steer, beams, spin: 0, lastX: x, lastZ: z });
+    };
+    WORLD.cars.forEach((c, i) => { if (isKitType(c.t)) build("park", i, c.t, c.c, c.x, c.z); });
+    engine.traffic.forEach((t, i) => { if (isKitType(t.t)) build("traffic", i, t.t, t.c, t.x, t.z); });
+    return out;
+  }, [engine]);
+
+  useFrame((_, dtRaw) => {
+    const dt = Math.min(0.05, Math.max(0.001, dtRaw));
+    const d = engine.drive;
+    const nf = nightFactor(clockRef.current);
+    kitBeamMat.opacity = Math.max(0, nf - 0.14) * 0.42; // same fade curve as beamFade
+    for (const k of rigs) {
+      let x: number, z: number, rot: number, steerA = 0, lit = false;
+      if (k.src === "park") {
+        const c = WORLD.cars[k.i];
+        if (!c) continue;
+        const mine = d && d.ci === k.i;
+        if (mine && d) {
+          x = d.vx; z = d.vz; rot = d.vrot; steerA = d.steerVis;
+          k.spin = -d.spin; // engine accumulates forward-negative; kit wheels roll +x forward
+          lit = nf > 0.14;
+        } else if (engine.botDriven.has(k.i)) {
+          x = c.x; z = c.z; rot = c.rot;
+          // roll by the distance actually covered — no skating
+          k.spin += Math.hypot(c.x - k.lastX, c.z - k.lastZ) / kitWheelR(k.t);
+          lit = nf > 0.14;
+        } else {
+          x = c.x; z = c.z; rot = c.rot;
+        }
+      } else {
+        const t = engine.traffic[k.i];
+        if (!t) continue;
+        x = t.x; z = t.z; rot = t.rot;
+        k.spin += (t.sp * t.r * dt) / kitWheelR(k.t); // tangential speed → wheel angle
+        lit = nf > 0.14;
+      }
+      k.lastX = x; k.lastZ = z;
+      k.obj.position.set(x, terrainHeight(x, z), z);
+      k.obj.rotation.y = rot;
+      for (const w of k.wheels) w.rotation.x = k.spin;
+      for (const s of k.steer) s.rotation.y = steerA;
+      if (k.beams[0].visible !== lit) for (const b of k.beams) b.visible = lit;
+    }
+  });
+
+  return (
+    <group>
+      {rigs.map((k, i) => <primitive object={k.obj} key={i} />)}
+    </group>
+  );
 }
 
 /** A warm pool of light in front of whatever the player is driving — the headlights
@@ -2951,6 +3087,7 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
       <PoliceStations />
       <Windows clockRef={clockRef} />
       <Cars engine={engine} clockRef={clockRef} />
+      <KitCars engine={engine} clockRef={clockRef} />
       <RingTraffic engine={engine} clockRef={clockRef} />
       <DriveLight engine={engine} clockRef={clockRef} />
       <PoliceVans engine={engine} />

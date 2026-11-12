@@ -552,9 +552,10 @@ export function Animals({ engine }: { engine: GameEngine }) {
     if (a.kind === "dog") {
       // 🐕 strays carry BOTH bodies — the friendly stray by day, the rotting
       // red-eyed hound at night; useFrame swaps visibility + lights the halo
+      const coat = a.variant ?? a.id % 5;
       const wrap = new THREE.Group();
-      const norm = buildAnimal("dog", a.id % 5);
-      const zom = buildZombieDog(a.id % 5);
+      const norm = buildAnimal("dog", coat);
+      const zom = buildZombieDog(coat);
       zom.visible = false;
       wrap.add(norm, zom);
       wrap.userData.dogParts = { norm, zom };
@@ -574,10 +575,17 @@ export function Animals({ engine }: { engine: GameEngine }) {
         rig.halo = halo;
         spawned.root.add(halo);
       }
+      if (a.kind === "wolf") {
+        // 🐺 night eyes — a faint gold glow so the pack watches you from the dark
+        const halo = makeGlowSprite("rgba(255,216,96,0.6)", 0.8);
+        halo.position.y = 0.78;
+        rig.halo = halo;
+        spawned.root.add(halo);
+      }
       rigs.current.set(a.id, rig);
     } else {
       const vi = engine.animals.filter((o) => o.kind === a.kind).findIndex((o) => o.id === a.id);
-      rigs.current.set(a.id, { obj: buildAnimal(a.kind as "cow", Math.max(0, vi)), kind: a.kind });
+      rigs.current.set(a.id, { obj: buildAnimal(a.kind as "cow", a.variant ?? Math.max(0, vi)), kind: a.kind });
     }
   }
 
@@ -597,17 +605,22 @@ export function Animals({ engine }: { engine: GameEngine }) {
       const stagVis = a.kind !== "stag" || nf > 0.35;
       m.visible = inCull && stagVis;
       if (rig.halo) {
-        rig.halo.visible = m.visible && (a.kind === "stag" ? true : !!a.zombie);
+        rig.halo.visible = m.visible && (a.kind === "stag" ? true : a.kind === "wolf" ? nf > 0.5 : !!a.zombie);
         if (rig.halo.visible) {
           const mat = rig.halo.material as THREE.SpriteMaterial;
           const pulse = a.kind === "stag"
             ? 0.35 + 0.2 * Math.sin(t * 1.7 + a.phase)
             : 0.5 + 0.22 * Math.sin(t * 6.2 + a.phase);
-          mat.opacity = (a.kind === "stag" ? Math.min(0.9, Math.max(0, (nf - 0.3) * 2.4)) * pulse : pulse * 0.85);
+          mat.opacity = (a.kind === "stag"
+            ? Math.min(0.9, Math.max(0, (nf - 0.3) * 2.4)) * pulse
+            : a.kind === "wolf" ? pulse * 0.95 * nf : pulse * 0.85);
         }
       }
       if (!m.visible) continue;
       m.position.set(a.x, 0, a.z);
+      // 🍼 babies are little — one scale bump, every frame is idempotent
+      const bs = a.baby ? 0.55 : 1;
+      if (m.scale.x !== bs) m.scale.setScalar(bs);
       let dd = a.face - m.rotation.y;
       dd = Math.atan2(Math.sin(dd), Math.cos(dd));
       m.rotation.y += dd * 0.12;

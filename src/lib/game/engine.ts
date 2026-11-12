@@ -247,6 +247,8 @@ export interface Build {
 export interface Animal { id: number; kind: AnimalKind; x: number; z: number; vx: number; vz: number; face: number; tx: number; tz: number; timer: number; phase: number; resting: boolean;
   /* 🐕 dogs: night turns every stray into a rotting hound */
   zombie?: boolean; hp?: number; barkT?: number; touchCd?: number; dead?: boolean;
+  /* 🎨 coat variant index + 🍼 baby flag — every creature is an individual */
+  variant?: number; baby?: boolean;
   /* 🎯 hound prey latch — same diverse-pick brain as the shamblers (crew id /
    * townsfolk id they're chasing, plus the attention-recheck cadence) */
   preyCrew?: number; preyCiv?: number; pickT?: number; }
@@ -932,7 +934,13 @@ export class GameEngine {
         const p = set.zone === "city"
           ? freeSpot(r, this.world, 14, CITY_RADIUS - 14)
           : freeSpot(r, this.world, set.zone === "farm" ? CITY_RADIUS + 10 : FARM_RADIUS + 10, set.zone === "farm" ? FARM_RADIUS - 8 : JUNGLE_RADIUS - 30);
-        this.animals.push({ id: this.nid(), kind: set.kind, x: p.x, z: p.z, vx: 0, vz: 0, face: 0, tx: p.x, tz: p.z, timer: range(r, 0, 5), phase: Math.random() * 6, resting: false });
+        this.animals.push({
+          id: this.nid(), kind: set.kind, x: p.x, z: p.z, vx: 0, vz: 0, face: 0, tx: p.x, tz: p.z,
+          timer: range(r, 0, 5), phase: Math.random() * 6, resting: false,
+          variant: Math.floor(r() * 4), // 🎨 each creature picks its own coat
+          // 🍼 some of the herd are babies — smaller, slower, twice as cute
+          baby: set.kind !== "wolf" && set.kind !== "bear" && set.kind !== "stag" && set.kind !== "owl" && set.kind !== "crow" && r() < 0.24,
+        });
         ai++;
       }
     // items
@@ -2726,15 +2734,26 @@ export class GameEngine {
     // 🐕 sunrise breaks the hounds' curse — strays shake off the rot; any you
     // slew is replaced by a fresh stray wandering in from the edge of town
     for (const an of this.animals) {
-      if (an.kind !== "dog") continue;
-      an.zombie = false;
-      an.hp = undefined;
-      an.resting = false;
-      if (an.dead) {
-        const t = freeSpot(this.rnd, this.world, 14, CITY_RADIUS - 14);
-        an.x = t.x; an.z = t.z; an.tx = t.x; an.tz = t.z;
-        an.vx = 0; an.vz = 0; an.dead = false;
+      if (an.kind === "dog") {
+        an.zombie = false;
+        an.hp = undefined;
+        an.resting = false;
+        if (an.dead) {
+          const t = freeSpot(this.rnd, this.world, 14, CITY_RADIUS - 14);
+          an.x = t.x; an.z = t.z; an.tx = t.x; an.tz = t.z;
+          an.vx = 0; an.vz = 0; an.dead = false;
+        }
+        continue;
       }
+      // 🌿 the wild refills too — anything the food chain took overnight is
+      // replaced by a fresh wanderer in its home band
+      if (!an.dead) continue;
+      const farm = an.kind === "cow" || an.kind === "chicken";
+      const t = freeSpot(this.rnd, this.world,
+        farm ? CITY_RADIUS + 8 : FARM_RADIUS + 10,
+        farm ? FARM_RADIUS - 10 : JUNGLE_RADIUS - 24);
+      an.x = t.x; an.z = t.z; an.tx = t.x; an.tz = t.z;
+      an.vx = 0; an.vz = 0; an.dead = false; an.resting = false; an.hp = undefined;
     }
     if (!early) this.points += POINTS_NIGHT;
     if (crumbled > 0) this.toast(`💀 ${crumbled} zombie${crumbled > 1 ? "s" : ""} crumbled at sunrise — the hunger won.`, "info");
@@ -5426,6 +5445,8 @@ export class GameEngine {
       const wild = WILDLIFE[an.kind];
       const fleeR = wild ? wild.spookR : 6;
       const arrived = dist2(an.x, an.z, an.tx, an.tz) < 2;
+      const bs = an.baby ? 0.72 : 1;          // 🍼 babies waddle — everything at 72%
+      an.barkT = Math.max(0, (an.barkT ?? 0) - dt); // one shared voice-cooldown
       // 👻 THE SPECTRAL STAG — the deep jungle's night spirit. It sleeps inside
       // the mist by day (the renderer fades it out); after dark it glides
       // between the trees, and if you press too close it VANISHES with a chime.
@@ -5456,18 +5477,66 @@ export class GameEngine {
         if (!an.resting) stepNpc(an, an.tx, an.tz, WILDLIFE.stag.walk, dt, this.world);
         continue;
       }
-      if (!isDog && this.morphKind == null && d2p < fleeR * fleeR) {
-        an.resting = false; // panic overrides grazing
-        const dx = an.x - p.x, dz = an.z - p.z, d = Math.hypot(dx, dz) || 1;
-        const fs = wild ? wild.flee : 5;
-        stepNpc(an, an.x + (dx / d) * 8, an.z + (dz / d) * 8, fs, dt, this.world);
-        continue;
+      // 🐺🦊 THE FOOD CHAIN — wolves stalk rabbits & deer, foxes ghost after
+      // rabbits. Chases run just under the prey's top speed, so every hunt is
+      // a close thing decided by corners, luck and the juke. A catch is a puff
+      // of fur (no gore) + a fed predator dozing it off; dawn repopulates.
+      if ((an.kind === "wolf" && nightFactor(this.clock) <= 0.55) || an.kind === "fox") {
+        if (!an.resting) {
+          const wolf = an.kind === "wolf";
+          let prey: Animal | null = null, pd = (wolf ? 20 : 15) * (wolf ? 20 : 15);
+          for (const o of this.animals) {
+            if (o === an || o.dead) continue;
+            if (wolf ? o.kind !== "rabbit" && o.kind !== "deer" : o.kind !== "rabbit") continue;
+            const d2o = dist2(an.x, an.z, o.x, o.z);
+            if (d2o < pd) { pd = d2o; prey = o; }
+          }
+          if (prey) {
+            if (dist2(an.x, an.z, prey.x, prey.z) < 1.3 * 1.3) {
+              // 🫧 the catch — a puff of fur, then the hunter naps it off
+              prey.dead = true;
+              this.fxQueue.push({ type: "confetti", x: prey.x, y: 0.7, z: prey.z, hue: 0.12 });
+              sfx.snap();
+              an.resting = true; an.timer = range(this.rnd, 14, 26);
+              an.tx = an.x; an.tz = an.z;
+              continue;
+            }
+            stepNpc(an, prey.x, prey.z, (wild?.flee ?? 6) * 0.97 * bs, dt, this.world);
+            continue;
+          }
+        }
+      }
+      if (!isDog && this.morphKind == null) {
+        // 🐺 prey fears the CLOSER of (you, a hunting wolf/fox) — rabbits bolt
+        // from the fox ghosting them through the ferns, not just from you
+        let feared = d2p < fleeR * fleeR, fearX = p.x, fearZ = p.z, fearD2 = d2p;
+        if (an.kind === "rabbit" || an.kind === "deer" || an.kind === "chicken") {
+          for (const o of this.animals) {
+            if (o === an || o.dead || (o.kind !== "wolf" && o.kind !== "fox")) continue;
+            if (o.kind === "fox" && an.kind !== "rabbit") continue;
+            const d2o = dist2(an.x, an.z, o.x, o.z);
+            const R = fleeR * 1.4;
+            if (d2o < R * R && (!feared || d2o < fearD2)) { feared = true; fearD2 = d2o; fearX = o.x; fearZ = o.z; }
+          }
+        }
+        if (feared) {
+          an.resting = false; // panic overrides grazing
+          const dx = an.x - fearX, dz = an.z - fearZ, d = Math.hypot(dx, dz) || 1;
+          const fs = (wild ? wild.flee : 5) * (an.baby ? 0.82 : 1);
+          // 🐇 small prey JUKES — a sideways weave makes every chase a story
+          let tx = an.x + (dx / d) * 8, tz = an.z + (dz / d) * 8;
+          if (an.kind === "rabbit" || an.kind === "chicken" || an.kind === "deer") {
+            const sway = Math.sin(this.clock * 5.5 + an.phase * 7) * 2.4;
+            tx += (-dz / d) * sway; tz += (dx / d) * sway;
+          }
+          stepNpc(an, tx, tz, fs, dt, this.world);
+          continue;
+        }
       }
       // 🐺 wolves — harmless grazers by day, but after dark they remember they
       // are predators: a wolf within earshot stalks you through the trees,
       // circling just outside arm's reach and howling to call the pack.
       if (an.kind === "wolf" && nightFactor(this.clock) > 0.55 && !this.drive && this.detainedT <= 0) {
-        an.barkT = Math.max(0, (an.barkT ?? 0) - dt);
         const hunt = d2p < 30 * 30;
         if (hunt && d2p > 7.5 * 7.5) {
           // stalk — close the gap to the circle distance
@@ -5489,12 +5558,42 @@ export class GameEngine {
         if (hunt && an.barkT <= 0 && d2p < 22 * 22) { an.barkT = range(this.rnd, 6, 13); sfx.wolfHowl(); }
         continue;
       }
+      // 🐦‍⬛ crows do the night's grim accounting — they gather where bodies fell
+      // and mutter among the feathers. Carrion duty keeps the jungle honest.
+      if (an.kind === "crow") {
+        let cx = 0, cz = 0, cd = 48 * 48, found = false;
+        for (const c of this.crew) {
+          if (c.alive) continue;
+          const d2c = dist2(an.x, an.z, c.deathX, c.deathZ);
+          if (d2c < cd) { cd = d2c; cx = c.deathX; cz = c.deathZ; found = true; }
+        }
+        for (const c of this.civs) {
+          if (!c.dead) continue;
+          const d2c = dist2(an.x, an.z, c.x, c.z);
+          if (d2c < cd) { cd = d2c; cx = c.x; cz = c.z; found = true; }
+        }
+        if (found) {
+          an.resting = false;
+          stepNpc(an, cx, cz, (WILDLIFE.crow?.walk ?? 1.3) * 1.6, dt, this.world);
+          if (an.barkT <= 0 && cd < 12 * 12) { an.barkT = range(this.rnd, 5, 11); sfx.caw(); }
+          continue;
+        }
+      }
+      // 🐻 bears bed down after dark — sneak past quietly… or wake the growl
+      if (an.kind === "bear" && nightFactor(this.clock) > 0.6) {
+        an.resting = true; an.vx = 0; an.vz = 0;
+        if (d2p < 6.5 * 6.5 && an.barkT <= 0) {
+          an.barkT = range(this.rnd, 9, 18);
+          sfx.growl();
+          this.addShake(0.14);
+        }
+        continue;
+      }
       if (isDog) {
         /* 🐕 friendly strays — dogs DON'T fear you: they amble up to say hello,
          * bark a wagging welcome, then wander off to sniff the next corner */
-        an.barkT = Math.max(0, (an.barkT ?? 0) - dt);
         if (this.detainedT <= 0 && !this.drive && d2p < 13 * 13 && d2p > 2.6 * 2.6) {
-          stepNpc(an, p.x, p.z, DOG_SPEED, dt, this.world);
+          stepNpc(an, p.x, p.z, DOG_SPEED * bs, dt, this.world);
           if (an.barkT <= 0 && d2p < 9 * 9) { an.barkT = range(this.rnd, 3.5, 8); sfx.bark(); }
         } else {
           if (an.timer <= 0 || (arrived && !an.resting)) {
@@ -5512,12 +5611,23 @@ export class GameEngine {
             }
           }
           if (!an.resting) {
-            stepNpc(an, an.tx, an.tz, DOG_SPEED * 0.62, dt, this.world);
+            stepNpc(an, an.tx, an.tz, DOG_SPEED * 0.62 * bs, dt, this.world);
           }
         }
         continue;
       }
-      // the farm & jungle wildlife — graze/rest cycle as always
+      // the farm & jungle wildlife — graze/rest cycle, with voices
+      // 🐄 the world talks when you walk past — every species greets in its own tongue
+      if (!isDog && an.barkT <= 0 && d2p < 11 * 11 && !this.drive && this.detainedT <= 0) {
+        an.barkT = range(this.rnd, 8, 18);
+        if (an.kind === "cow") sfx.moo();
+        else if (an.kind === "chicken") sfx.cluck();
+        else if (an.kind === "monkey") sfx.screech();
+        else if (an.kind === "deer") sfx.bleat();
+        else if (an.kind === "owl" && nightFactor(this.clock) > 0.45) sfx.owl();
+        else if (an.kind === "crow") sfx.caw();
+        else an.barkT = range(this.rnd, 4, 9); // non-voiced kinds retry sooner
+      }
       if (an.timer <= 0 || (arrived && !an.resting)) {
         if (!an.resting) {
           // reached the spot (or ran out of time en route) → stop and graze a while
@@ -5528,13 +5638,31 @@ export class GameEngine {
           // rest over → amble to a nearby patch of grass
           an.resting = false;
           const farm = an.kind === "cow" || an.kind === "chicken";
-          const spot = this.grazeSpot(an, farm);
+          let spot: { x: number; z: number } | null = null;
+          // 🐄 herd cohesion — company is comfy: half the time an animal grazes
+          // NEAR a same-kind herd-mate instead of a random patch, so flocks,
+          // troops & harems form and drift around the map together
+          if (this.rnd() < 0.5) {
+            let mate: Animal | null = null, md = 40 * 40;
+            for (const o of this.animals) {
+              if (o === an || o.dead || o.kind !== an.kind) continue;
+              const d2o = dist2(an.x, an.z, o.x, o.z);
+              if (d2o < md) { md = d2o; mate = o; }
+            }
+            if (mate && md > 3 * 3) {
+              const ha = this.rnd() * Math.PI * 2, hd = 2.5 + this.rnd() * 3;
+              const chk = { x: mate.x + Math.cos(ha) * hd, z: mate.z + Math.sin(ha) * hd };
+              resolve(chk, 0.6, this.world);
+              spot = chk;
+            }
+          }
+          if (!spot) spot = this.grazeSpot(an, farm);
           if (spot) { an.tx = spot.x; an.tz = spot.z; }
           an.timer = range(this.rnd, 5, 12);
         }
       }
       if (!an.resting) {
-        stepNpc(an, an.tx, an.tz, wild ? wild.walk : 1.8, dt, this.world);
+        stepNpc(an, an.tx, an.tz, (wild ? wild.walk : 1.8) * bs, dt, this.world);
       }
     }
 

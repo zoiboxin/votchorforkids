@@ -107,8 +107,13 @@ export function spawnModel(kind: string): { root: THREE.Group; mixer: THREE.Anim
   return { root, mixer, clips: rig.clips };
 }
 
-/** Fire the callback when every model is in (or immediately if already true). */
-export function onModelsReady(cb: () => void): void {
-  if (readyCount >= total) cb();
-  else readyCbs.push(cb);
+/** Fire the callback when every model is in (or immediately if already true).
+ *  Returns an unsubscribe fn — the caller's cleanup must always be callable. */
+export function onModelsReady(cb: () => void): () => void {
+  if (readyCount >= total) { cb(); return () => {}; }
+  readyCbs.push(cb);
+  return () => {
+    const i = readyCbs.indexOf(cb);
+    if (i >= 0) readyCbs.splice(i, 1);
+  };
 }

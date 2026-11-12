@@ -494,22 +494,29 @@ export const CAR_ACCEL = 14;           // u/s² on W
 export const CAR_BRAKE = 30;           // u/s² on S while rolling forward
 export const CAR_COAST = 9;            // u/s² natural drag when no pedal
 export const CAR_STEER = 1.75;         // rad/s at full lock
-/* ---------- Vehicle fleet — 6 body styles shared by parked cars & ring traffic ----------
- * 0 sedan · 1 hatchback · 2 van · 3 pickup truck · 4 city bus · 5 jeep */
-export const VEHICLE_LABELS = ["🚗 Car", "🚗 Hatchback", "🚐 Van", "🛻 Pickup truck", "🚌 City bus", "🚙 Jeep"];
-/** Weighted body-style pool — sedans/hatches/vans fill the streets, buses stay rare. */
-export const VEHICLE_POOL: readonly number[] = [0, 0, 1, 1, 2, 2, 2, 3, 3, 4, 5];
+/* ---------- Vehicle fleet — 10 body styles shared by parked cars & ring traffic ----------
+ * 0 sedan · 1 hatchback · 2 van · 3 pickup truck · 4 city bus · 5 jeep
+ * 6 muscle car · 7 convertible · 8 station wagon · 9 sports coupe  ← polyfork Retro Cars Kit
+ * (types 4 & 5 keep the classic procedural bodies — the kit ships no bus/jeep) */
+export const VEHICLE_LABELS = [
+  "🚗 Car", "🚗 Hatchback", "🚐 Van", "🛻 Pickup truck", "🚌 City bus", "🚙 Jeep",
+  "🏁 Muscle car", "🚙 Convertible", "🚗 Station wagon", "🏎️ Sports coupe",
+];
+/** Weighted body-style pool — sedans/hatches/vans fill the streets, buses stay rare,
+ *  and the four retro-kit specials cruise in as mid-rarity finds. */
+export const VEHICLE_POOL: readonly number[] = [0, 0, 1, 1, 2, 2, 2, 3, 3, 4, 5, 6, 6, 7, 7, 8, 8, 9, 9, 0, 1];
 export const pickVehicle = (r: () => number): number => VEHICLE_POOL[Math.floor(r() * VEHICLE_POOL.length)];
 /** Per body-style collision dims: the driven body collides as its two axle discs —
  *  the SAME offset/radius pair the parked cars use as colliders, so a moving vehicle
  *  can never overlap a building deeper than a parked one. Longer bodies (bus, pickup)
  *  spread their axles further apart so the nose & tail stay protected. */
-export const VEHICLE_AXLE: readonly number[] = [1.25, 1.02, 1.5, 1.78, 2.35, 1.12];
-export const VEHICLE_AXLE_R: readonly number[] = [1.16, 1.12, 1.26, 1.3, 1.42, 1.2];
+export const VEHICLE_AXLE: readonly number[] = [1.25, 1.02, 1.5, 1.78, 2.35, 1.12, 1.45, 1.35, 1.42, 1.28];
+export const VEHICLE_AXLE_R: readonly number[] = [1.16, 1.12, 1.26, 1.3, 1.42, 1.2, 1.18, 1.12, 1.18, 1.08];
 /** Per body-style driving feel: top speed (u/s) and steering grip multiplier —
- *  a loaded bus shouldn't corner like a go-kart. */
-export const VEHICLE_TOP: readonly number[] = [26, 24, 24, 23, 19, 25];
-export const VEHICLE_STEER: readonly number[] = [1, 1, 0.92, 0.85, 0.7, 1];
+ *  a loaded bus shouldn't corner like a go-kart. The muscle car & coupe are the
+ *  fastest rides in town; the convertible & wagon cruise like the sedans. */
+export const VEHICLE_TOP: readonly number[] = [26, 24, 24, 23, 19, 25, 28, 24, 24, 29];
+export const VEHICLE_STEER: readonly number[] = [1, 1, 0.92, 0.85, 0.7, 1, 0.94, 1, 0.95, 1.04];
 
 /* ---------- Scoring ---------- */
 export const POINTS_DELIVER = 120;
