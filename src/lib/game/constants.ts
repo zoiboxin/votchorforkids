@@ -370,11 +370,22 @@ export type AnimalKind = "cow" | "chicken" | "deer" | "monkey" | "dog"
   /* 🌲 polyfork GLB wildlife — the jungle is ALIVE now (see public/models/CREDITS.md) */
   | "wolf" | "bear" | "fox" | "owl" | "crow" | "rabbit"
   /* 👻 night-only spirit of the deep jungle */
-  | "stag";
-export const ANIMAL_SET: { kind: AnimalKind; count: number; zone: "farm" | "jungle" | "city" }[] = [
+  | "stag"
+  /* 🏔️ alpine & snow kit — the mountain band past the deep jungle gains its own wildlife */
+  | "ibex" | "hare"
+  /* 🚜 cozy farm kit — the barnyard menagerie grows */
+  | "pig" | "sheep" | "goat" | "duck"
+  /* 🎃 halloween night kit — a black cat prowls the town, a giant spider haunts the graveyard */
+  | "cat" | "spider";
+export const ANIMAL_SET: { kind: AnimalKind; count: number; zone: "farm" | "jungle" | "city" | "mountain" | "grave" }[] = [
   { kind: "dog", count: 9, zone: "city" },
   { kind: "cow", count: 5, zone: "farm" },
   { kind: "chicken", count: 7, zone: "farm" },
+  // 🚜 cozy farm kit additions — pigs rootle by the barn, sheep & goats graze the field, ducks paddle the trough
+  { kind: "pig", count: 4, zone: "farm" },
+  { kind: "sheep", count: 5, zone: "farm" },
+  { kind: "goat", count: 3, zone: "farm" },
+  { kind: "duck", count: 4, zone: "farm" },
   { kind: "deer", count: 4, zone: "jungle" },
   { kind: "monkey", count: 4, zone: "jungle" },
   // 🌲 the new wildlife — polyfork low-poly models, loaded from /public/models
@@ -385,6 +396,12 @@ export const ANIMAL_SET: { kind: AnimalKind; count: number; zone: "farm" | "jung
   { kind: "crow", count: 4, zone: "jungle" },
   { kind: "rabbit", count: 5, zone: "jungle" },
   { kind: "stag", count: 1, zone: "jungle" },   // 👻 the spectral stag — night only
+  // 🏔️ alpine & snow kit — ibex herds the scree beyond the deep jungle, hares bound through the snow patches
+  { kind: "ibex", count: 5, zone: "mountain" },
+  { kind: "hare", count: 5, zone: "mountain" },
+  // 🎃 halloween night kit — the town's black cat slinks between houses, the giant yard spider lurks in the graveyard
+  { kind: "cat", count: 2, zone: "city" },
+  { kind: "spider", count: 3, zone: "grave" },
 ];
 
 /** Per-kind wildlife motion table (u/s). Flee = panic dash away from you,
@@ -401,6 +418,17 @@ export const WILDLIFE: Record<string, { flee: number; walk: number; spookR: numb
   crow: { flee: 7.0, walk: 1.3, spookR: 7 },    // pecks around, bursts away
   rabbit: { flee: 7.4, walk: 1.4, spookR: 8.5 },// tiny + twitchy — gone before you see it
   stag: { flee: 5.6, walk: 1.1, spookR: 6.5 },  // 👻 glides — vanishes if pressed
+  // 🏔️ alpine: sure-footed herds watch you from the ridges, hares vanish in a bound
+  ibex: { flee: 6.4, walk: 1.5, spookR: 7.5 },
+  hare: { flee: 7.6, walk: 1.4, spookR: 9 },
+  // 🚜 farmyard: pigs trot over for a sniff, sheep flock, goats are bold, ducks waddle
+  pig: { flee: 3.4, walk: 1.3, spookR: 4.5 },
+  sheep: { flee: 3.0, walk: 1.1, spookR: 5 },
+  goat: { flee: 4.2, walk: 1.4, spookR: 4 },
+  duck: { flee: 4.4, walk: 1.2, spookR: 6 },
+  // 🎃 halloween: the cat is aloof — watching, never caught; the spider skitters
+  cat: { flee: 7.2, walk: 1.3, spookR: 7 },
+  spider: { flee: 5.5, walk: 1.0, spookR: 7 },
 };
 
 /* ---------- 🐕 street dogs & 🧟 zombie hounds ----------

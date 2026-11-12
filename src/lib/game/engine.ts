@@ -954,16 +954,33 @@ export class GameEngine {
     let ai = 0;
     for (const set of ANIMAL_SET)
       for (let i = 0; i < set.count; i++) {
-        // 🐕 strays sleep & roam RANDOM city spots — streets, parks, alley mouths
-        const p = set.zone === "city"
-          ? freeSpot(r, this.world, 14, CITY_RADIUS - 14)
-          : freeSpot(r, this.world, set.zone === "farm" ? CITY_RADIUS + 10 : FARM_RADIUS + 10, set.zone === "farm" ? FARM_RADIUS - 8 : JUNGLE_RADIUS - 30);
+        // 🏔️ alpine wildlife spawns on WALKABLE mountain slopes only — retry a
+        // few times if the pick lands on a cliff face, then settle for anything
+        let p: { x: number; z: number };
+        if (set.zone === "mountain") {
+          p = freeSpot(r, this.world, MOUNTAIN_INNER + 4, MOUNTAIN_OUTER - 8);
+          for (let tries = 0; tries < 6 && terrainHeight(p.x, p.z) > 11; tries++) {
+            const q = freeSpot(r, this.world, MOUNTAIN_INNER + 4, MOUNTAIN_OUTER - 8);
+            p.x = q.x; p.z = q.z;
+          }
+        } else if (set.zone === "grave") {
+          // 🕷️ the giant yard spider is born inside the cemetery fence
+          const a = range(r, 0, Math.PI * 2), d = range(r, 6, GRAVEYARD.r - 6);
+          p = { x: GRAVEYARD.x + Math.cos(a) * d, z: GRAVEYARD.z + Math.sin(a) * d };
+          resolve(p, 0.6, this.world);
+        } else if (set.zone === "city") {
+          // 🐕🐕‍⬛ strays & the black cat sleep & roam RANDOM city spots — streets, parks, alley mouths
+          p = freeSpot(r, this.world, 14, CITY_RADIUS - 14);
+        } else {
+          p = freeSpot(r, this.world, set.zone === "farm" ? CITY_RADIUS + 10 : FARM_RADIUS + 10, set.zone === "farm" ? FARM_RADIUS - 8 : JUNGLE_RADIUS - 30);
+        }
         this.animals.push({
           id: this.nid(), kind: set.kind, x: p.x, z: p.z, vx: 0, vz: 0, face: 0, tx: p.x, tz: p.z,
           timer: range(r, 0, 5), phase: Math.random() * 6, resting: false,
           variant: Math.floor(r() * 4), // 🎨 each creature picks its own coat
           // 🍼 some of the herd are babies — smaller, slower, twice as cute
-          baby: set.kind !== "wolf" && set.kind !== "bear" && set.kind !== "stag" && set.kind !== "owl" && set.kind !== "crow" && r() < 0.24,
+          baby: set.kind !== "wolf" && set.kind !== "bear" && set.kind !== "stag" && set.kind !== "owl" && set.kind !== "crow"
+            && set.kind !== "cat" && set.kind !== "spider" && r() < 0.24,
         });
         ai++;
       }
@@ -2514,14 +2531,20 @@ export class GameEngine {
   }
 
   private grazeSpot(an: Animal, farm: boolean): { x: number; z: number } | null {
-    const city = an.kind === "dog";                              // 🐕 dogs wander the STREETS
-    const minR = city ? 10 : farm ? CITY_RADIUS + 6 : FARM_RADIUS + 6;
-    const maxR = city ? CITY_RADIUS - 16 : farm ? FARM_RADIUS - 10 : JUNGLE_RADIUS - 30;
+    const city = an.kind === "dog" || an.kind === "cat";         // 🐕🐕‍⬛ dogs & the black cat wander the STREETS
+    const grave = an.kind === "spider";                         // 🕷️ the giant yard spider lurks in the graveyard
+    const mountain = an.kind === "ibex" || an.kind === "hare";  // 🏔️ alpine wildlife keeps to the mountain band
+    const minR = city ? 10 : grave ? GRAVEYARD.r + 2 : mountain ? MOUNTAIN_INNER + 4
+      : farm ? CITY_RADIUS + 6 : FARM_RADIUS + 6;
+    const maxR = city ? CITY_RADIUS - 16 : grave ? GRAVEYARD.r - 3 : mountain ? MOUNTAIN_OUTER - 8
+      : farm ? FARM_RADIUS - 10 : JUNGLE_RADIUS - 30;
     for (let i = 0; i < 12; i++) {
-      const a = this.rnd() * Math.PI * 2, d = city ? 6 + this.rnd() * 14 : 7 + this.rnd() * 16;
+      const a = this.rnd() * Math.PI * 2, d = mountain ? 4 + this.rnd() * 8 : city ? 6 + this.rnd() * 14 : 7 + this.rnd() * 16;
       const x = an.x + Math.cos(a) * d, z = an.z + Math.sin(a) * d;
       const rr = Math.hypot(x, z);
-      if (rr < minR || rr > maxR) continue;
+      if (grave) { // the spider's yard is a small disc around the cemetery, not a ring
+        if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) > GRAVEYARD.r - 3) continue;
+      } else if (rr < minR || rr > maxR) continue;
       const chk = { x, z };
       resolve(chk, 0.6, this.world);
       if (Math.abs(chk.x - x) > 0.05 || Math.abs(chk.z - z) > 0.05) continue;
@@ -2589,11 +2612,14 @@ export class GameEngine {
     this.toast(`🧱 THE WALL CLOSED IN — safe ground is now ${R}u wide. Outside it, your life DRAINS away!`, "bad");
   }
 
-  /** 🧱 per-frame wall tick for the PLAYER: outside = health drains to death. */
+  /** 🧱 per-frame wall tick for the PLAYER: outside = health drains to death.
+   *  🏆 FIXED: an early SOLE-SURVIVOR win no longer drops the wall — the safe
+   *  circle keeps shrinking every dawn through night 7, and it still bites
+   *  while you roam (it just can't kill you twice). Only the dead drift free. */
   private stepZone(dt: number) {
     this.zoneGraceT = Math.max(0, this.zoneGraceT - dt);
     this.zoneToastCd = Math.max(0, this.zoneToastCd - dt);
-    if (this.won || this.lost) { this.outsideWall = false; return; }
+    if (this.lost) { this.outsideWall = false; return; }
     const R = this.zoneRadius();
     const d = Math.hypot(this.player.x, this.player.z);
     this.outsideWall = d > R;
@@ -2601,6 +2627,7 @@ export class GameEngine {
       const drain = this.zoneDrain();
       if (drain > 0) {
         this.hp -= drain * dt;
+        if (this.won && this.hp <= 0) this.hp = 1; // 🏆 already won — the wall stings but can't kill you twice
         this.hurtT = Math.max(this.hurtT, 0.3);
         this.addShake(0.12); // 💥 small constant dread while standing in the burn
         if (this.zoneToastCd <= 0) {
@@ -2774,10 +2801,28 @@ export class GameEngine {
       // 🌿 the wild refills too — anything the food chain took overnight is
       // replaced by a fresh wanderer in its home band
       if (!an.dead) continue;
-      const farm = an.kind === "cow" || an.kind === "chicken";
-      const t = freeSpot(this.rnd, this.world,
-        farm ? CITY_RADIUS + 8 : FARM_RADIUS + 10,
-        farm ? FARM_RADIUS - 10 : JUNGLE_RADIUS - 24);
+      const farm = an.kind === "cow" || an.kind === "chicken" || an.kind === "pig" || an.kind === "sheep" || an.kind === "goat" || an.kind === "duck";
+      const mountain = an.kind === "ibex" || an.kind === "hare";
+      const grave = an.kind === "spider";
+      const cat = an.kind === "cat";
+      let t: { x: number; z: number };
+      if (grave) {
+        const a = range(this.rnd, 0, Math.PI * 2), d = range(this.rnd, 6, GRAVEYARD.r - 6);
+        t = { x: GRAVEYARD.x + Math.cos(a) * d, z: GRAVEYARD.z + Math.sin(a) * d };
+        resolve(t, 0.6, this.world);
+      } else if (mountain) {
+        t = freeSpot(this.rnd, this.world, MOUNTAIN_INNER + 4, MOUNTAIN_OUTER - 8);
+        for (let tries = 0; tries < 6 && terrainHeight(t.x, t.z) > 11; tries++) {
+          const q = freeSpot(this.rnd, this.world, MOUNTAIN_INNER + 4, MOUNTAIN_OUTER - 8);
+          t.x = q.x; t.z = q.z;
+        }
+      } else if (cat) {
+        t = freeSpot(this.rnd, this.world, 14, CITY_RADIUS - 14);
+      } else {
+        t = freeSpot(this.rnd, this.world,
+          farm ? CITY_RADIUS + 8 : FARM_RADIUS + 10,
+          farm ? FARM_RADIUS - 10 : JUNGLE_RADIUS - 24);
+      }
       an.x = t.x; an.z = t.z; an.tx = t.x; an.tz = t.z;
       an.vx = 0; an.vz = 0; an.dead = false; an.resting = false; an.hp = undefined;
     }
@@ -5553,6 +5598,29 @@ export class GameEngine {
           }
         }
       }
+      // 🕷️ the giant yard spider — a shy web-dweller by day, but after dark it
+      // stops fearing you and CREEPS: eight legs ghost it across the graveyard,
+      // closing to a hair-raising 3.5u and just… watching. It never bites —
+      // the dread is the point. (Daylight falls through to the shy graze cycle.)
+      if (an.kind === "spider" && nightFactor(this.clock) > 0.5 && !this.drive && this.detainedT <= 0) {
+        const hunt = d2p < 16 * 16;
+        if (hunt && d2p > 3.5 * 3.5) {
+          // skitter in — slow, deliberate, legs ticking
+          stepNpc(an, p.x, p.z, 1.9, dt, this.world);
+        } else if (hunt) {
+          // close enough — freeze and stare (the whole graveyard holds its breath)
+          an.vx = 0; an.vz = 0; an.resting = true;
+        } else {
+          // nobody to haunt — prowl its cemetery yard
+          if (an.timer <= 0 || (arrived && !an.resting)) {
+            an.resting = !an.resting;
+            if (!an.resting) { const spot = this.grazeSpot(an, false); if (spot) { an.tx = spot.x; an.tz = spot.z; } an.timer = range(this.rnd, 4, 9); }
+            else { an.tx = an.x; an.tz = an.z; an.timer = range(this.rnd, 2.5, 6); }
+          }
+          if (!an.resting) stepNpc(an, an.tx, an.tz, (WILDLIFE.spider?.walk ?? 1.0) * bs, dt, this.world);
+        }
+        continue;
+      }
       if (!isDog && this.morphKind == null) {
         // 🐺 prey fears the CLOSER of (you, a hunting wolf/fox) — rabbits bolt
         // from the fox ghosting them through the ferns, not just from you
@@ -5684,7 +5752,7 @@ export class GameEngine {
         } else {
           // rest over → amble to a nearby patch of grass
           an.resting = false;
-          const farm = an.kind === "cow" || an.kind === "chicken";
+          const farm = an.kind === "cow" || an.kind === "chicken" || an.kind === "pig" || an.kind === "sheep" || an.kind === "goat" || an.kind === "duck";
           let spot: { x: number; z: number } | null = null;
           // 🐄 herd cohesion — company is comfy: half the time an animal grazes
           // NEAR a same-kind herd-mate instead of a random patch, so flocks,

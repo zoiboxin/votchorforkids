@@ -540,7 +540,12 @@ export function Zombies({ engine }: { engine: GameEngine }) {
  *    public/models/CREDITS.md) are skinned meshes with baked clips:
  *    a real AnimationMixer cross-fades Idle → Walk → Run, and the
  *    birds take wing (Fly) when they bolt.                          */
-const GLB_KINDS = new Set(["wolf", "bear", "fox", "owl", "crow", "rabbit", "stag"]);
+const GLB_KINDS = new Set(["wolf", "bear", "fox", "owl", "crow", "rabbit", "stag",
+  // 🏔️ alpine & snow · 🚜 cozy farm · 🎃 halloween night — polyfork GLB species
+  "ibex", "hare", "pig", "sheep", "goat", "duck", "cat", "spider"]);
+
+/** 🏔️ kinds that live on the raised mountain band — their feet ride the terrain mesh */
+const MOUNTAIN_KINDS = new Set(["ibex", "hare"]);
 
 /** soft radial glow sprite — the hound's hell-light, the stag's spirit-mist */
 function makeGlowSprite(color: string, scale: number): THREE.Sprite {
@@ -627,6 +632,20 @@ export function Animals({ engine }: { engine: GameEngine }) {
         rig.halo = halo;
         spawned.root.add(halo);
       }
+      if (a.kind === "cat") {
+        // 🐈‍⬛ the black cat's eyes catch the dark — twin green coals in the night
+        const halo = makeGlowSprite("rgba(110,255,150,0.55)", 0.62);
+        halo.position.y = 0.44;
+        rig.halo = halo;
+        spawned.root.add(halo);
+      }
+      if (a.kind === "spider") {
+        // 🕷️ the giant yard spider wears an eerie violet aura after dark
+        const halo = makeGlowSprite("rgba(190,120,255,0.5)", 1.7);
+        halo.position.y = 0.5;
+        rig.halo = halo;
+        spawned.root.add(halo);
+      }
       rigs.current.set(a.id, rig);
     } else {
       const vi = engine.animals.filter((o) => o.kind === a.kind).findIndex((o) => o.id === a.id);
@@ -655,7 +674,7 @@ export function Animals({ engine }: { engine: GameEngine }) {
         const fall = Math.min(1, dT / 0.45);
         const ez = fall * fall * (3 - 2 * fall);
         const sinkD = Math.max(0, dT - 1.3) / CORPSE_SINK_S;
-        m.position.set(a.x, -1.1 * sinkD, a.z);
+        m.position.set(a.x, terrainHeight(a.x, a.z) - 1.1 * sinkD, a.z);
         m.rotation.z = ez * Math.PI / 2.15; // tip over sideways
         continue;
       }
@@ -663,7 +682,7 @@ export function Animals({ engine }: { engine: GameEngine }) {
       const stagVis = a.kind !== "stag" || nf > 0.35;
       m.visible = inCull && stagVis;
       if (rig.halo) {
-        rig.halo.visible = m.visible && (a.kind === "stag" ? true : a.kind === "wolf" ? nf > 0.5 : !!a.zombie);
+        rig.halo.visible = m.visible && (a.kind === "stag" ? true : a.kind === "wolf" ? nf > 0.5 : a.kind === "cat" || a.kind === "spider" ? nf > 0.4 : !!a.zombie);
         if (rig.halo.visible) {
           const mat = rig.halo.material as THREE.SpriteMaterial;
           const pulse = a.kind === "stag"
@@ -675,7 +694,8 @@ export function Animals({ engine }: { engine: GameEngine }) {
         }
       }
       if (!m.visible) continue;
-      m.position.set(a.x, 0, a.z);
+      // 🏔️ alpine wildlife walks the raised terrain band — everyone else stays on the flats
+      m.position.set(a.x, MOUNTAIN_KINDS.has(a.kind) ? terrainHeight(a.x, a.z) : 0, a.z);
       m.rotation.z = 0; // back on all fours
       // 🍼 babies are little — one scale bump, every frame is idempotent
       const bs = a.baby ? 0.55 : 1;
@@ -697,7 +717,7 @@ export function Animals({ engine }: { engine: GameEngine }) {
         const speed = Math.hypot(a.vx, a.vz);
         const walk = WILDLIFE[a.kind]?.walk ?? 1.8;
         const want = speed < 0.25 || a.resting ? "idle"
-          : speed > walk + 1.5 ? (a.kind === "owl" || a.kind === "crow" ? "fly" : "run")
+          : speed > walk + 1.5 ? (a.kind === "owl" || a.kind === "crow" || a.kind === "duck" ? "fly" : "run")
           : "walk";
         const next = rig.clips[want];
         if (next && rig.current?.getClip() !== next) {
@@ -929,6 +949,9 @@ const camV1 = new THREE.Vector3(); // scratch for the driving chase-cam glide
 const ANIMAL_SCALES: Record<string, number> = {
   cow: 1.7, chicken: 0.95, deer: 1.45, monkey: 1.1, dog: 1.05,
   wolf: 1.3, bear: 1.65, fox: 1.0, owl: 0.75, crow: 0.6, rabbit: 0.55, stag: 1.9,
+  // 🏔️ alpine · 🚜 farmyard · 🎃 halloween newcomers
+  ibex: 1.25, hare: 0.5, pig: 1.05, sheep: 1.05, goat: 1.0, duck: 0.7,
+  cat: 0.6, spider: 1.5,
 };
 
 export function Pickups({ engine }: { engine: GameEngine }) {
@@ -1691,7 +1714,9 @@ export function ZoneWall({ engine }: { engine: GameEngine }) {
   useFrame((s) => {
     const g = group.current;
     if (!g) return;
-    const on = engine.zoneLevel > 0 && !engine.won;
+    // 🧱 the wall STAYS after an early solo win — the safe circle must keep
+    // shrinking every dawn through night 7 (fixes "circle disappears at day 4-5")
+    const on = engine.zoneLevel > 0;
     g.visible = on;
     if (!on) return;
     const R = engine.zoneRadius();

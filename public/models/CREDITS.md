@@ -13,6 +13,14 @@ Licensed **CC BY 4.0**.
 | `crow-base.glb` | Crow | 2,996 |
 | `forest-rabbit-ea2da0.glb` | Forest Rabbit | 2,074 |
 | `spectral-stag-d19dc1.glb` | Crystal-Antlered Spectral Stag | 2,726 |
+| `alpine-ibex-2a288a.glb` | Alpine Ibex (Alpine & Snow kit) | — |
+| `mountain-hare-d9c64c.glb` | Mountain Hare (Alpine & Snow kit) | — |
+| `pig-868bda.glb` | Pig (Cozy Farm kit) | — |
+| `sheep-7b0187.glb` | Sheep (Cozy Farm kit) | — |
+| `goat-1dedee.glb` | Goat (Cozy Farm kit) | — |
+| `duck-357dc6.glb` | Duck (Cozy Farm kit) | — |
+| `arched-black-cat-407cf6.glb` | Arched Black Cat (Halloween Night kit) | — |
+| `giant-yard-spider-70ddce.glb` | Giant Yard Spider (Halloween Night kit) | — |
 
 Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
 (https://creativecommons.org/licenses/by/4.0/)

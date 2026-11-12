@@ -248,6 +248,150 @@ export function inAirportPlot(x: number, z: number): boolean {
   return x > AIRPORT.rx0 - 46 && x < AIRPORT.rx1 + 26 && z > AIRPORT.rz - 34 && z < AIRPORT.terminal.z + AIRPORT.terminal.d + 12;
 }
 
+/* ---------------- 🚂 countryside railway — the loop line through the farm band ----------------
+ * A single-track branch line arcs through the farmland (kept WELL clear of the
+ * ⚠️ airport sector, the graveyard and the city), with a country station, a
+ * level crossing where the farm lane leaves the main road, telegraph poles and
+ * a steam train parked at the platform. Track bed is visual-only; the solid
+ * furniture (house, tower, box, poles, stock, buffers) gets colliders. */
+export interface RailwayCfg {
+  R: number;                       // arc radius about the town centre
+  a0: number; a1: number;          // arc start/end angles (radians)
+  station: { a: number };          // platform centre angle
+  crossing: { a: number };         // level crossing angle (farm lane x=0)
+  poles: { x: number; z: number; rot: number }[];
+  stock: { x: number; z: number; rot: number; kind: 0 | 1 | 2 }[]; // 0 loco · 1 carriage · 2 brake van
+  ends: { x: number; z: number; rot: number }[];                   // buffer stops at both arc ends
+}
+const RAIL_R = 437, RAIL_A0 = 1.15, RAIL_A1 = 5.4;
+export const RAILWAY: RailwayCfg = (() => {
+  // telegraph poles march along the OUTside of the embankment
+  const poles: RailwayCfg["poles"] = [];
+  for (let a = RAIL_A0 + 0.14; a < RAIL_A1 - 0.1; a += 0.24) {
+    poles.push({
+      x: Math.cos(a) * (RAIL_R + 6.5), z: Math.sin(a) * (RAIL_R + 6.5),
+      rot: -(a + Math.PI / 2),
+    });
+  }
+  // the 15:07 to somewhere — locomotive + two carriages + brake van at the platform
+  const stock: RailwayCfg["stock"] = [];
+  const kinds: (0 | 1 | 2)[] = [0, 1, 1, 2];
+  for (let i = 0; i < 4; i++) {
+    const a = 1.945 + i * 0.0208;
+    stock.push({ x: Math.cos(a) * RAIL_R, z: Math.sin(a) * RAIL_R, rot: -(a + Math.PI / 2), kind: kinds[i] });
+  }
+  const ends = [RAIL_A0, RAIL_A1].map((a) => ({
+    x: Math.cos(a) * RAIL_R, z: Math.sin(a) * RAIL_R, rot: -(a + Math.PI / 2),
+  }));
+  return { R: RAIL_R, a0: RAIL_A0, a1: RAIL_A1, station: { a: 2.05 }, crossing: { a: Math.PI / 2 }, poles, stock, ends };
+})();
+
+/** 🚂 helper — world position + facing of a point at angle `a` offset `off` from the rail centre */
+export function railPoint(a: number, off = 0): { x: number; z: number; rot: number } {
+  const r = RAILWAY.R + off;
+  return { x: Math.cos(a) * r, z: Math.sin(a) * r, rot: -(a + Math.PI / 2) };
+}
+/** the country station house sits just inside the platform, and the crossing
+ *  keeper's cottage guards the farm lane at the level crossing */
+export const RAILWAY_stationHouse = railPoint(RAILWAY.station.a, -14.5);
+export const RAILWAY_crossCottage = { x: 9.5, z: RAILWAY.R - 9 };
+export const RAILWAY_waterTower = railPoint(RAILWAY.station.a + 0.055, -20);
+export const RAILWAY_signalBox = railPoint(RAILWAY.station.a - 0.055, -20);
+
+/* ---------------- 🚜 cozy farm kit — the farmsteads grow real furniture ----------------
+ * Everything is derived from the barn positions + crop fields so worldgen
+ * colliders and the WorldView render stay in lock-step. Deterministic. */
+export const FIELDS_BASE: { x: number; z: number; rot: number; crop: number }[] = [
+  { x: 410, z: -85, rot: 0.3, crop: 0 }, { x: 434, z: -159, rot: -0.2, crop: 1 },
+  { x: 366, z: 222, rot: 0.5, crop: 0 }, { x: 407, z: 198, rot: -0.4, crop: 2 },
+  { x: -403, z: 137, rot: 0.2, crop: 1 }, { x: -368, z: -210, rot: -0.3, crop: 2 },
+  // 🚜 three fresh paddocks — more to harvest, more to guard at night
+  { x: 430, z: -60, rot: 0.15, crop: 1 }, { x: -430, z: 40, rot: -0.35, crop: 0 }, { x: -360, z: 262, rot: 0.25, crop: 1 },
+];
+export const BARN_BASE: [number, number][] = [[425, -122], [374, 271], [-418, 93]];
+
+export const FARMKIT = (() => {
+  const farmhouses = BARN_BASE.map(([x, z]) => ({ x: x - 17, z: z + 10, rot: Math.atan2(-z, -x) }));
+  const greenhouse = { x: BARN_BASE[0][0] + 20, z: BARN_BASE[0][1] + 13 };
+  const coops = [
+    { x: BARN_BASE[1][0] - 14, z: BARN_BASE[1][1] + 9 },
+    { x: BARN_BASE[2][0] + 13, z: BARN_BASE[2][1] + 10 },
+  ];
+  // hay bales sleep in rings around every barn
+  const bales: { x: number; z: number; rot: number }[] = [];
+  BARN_BASE.forEach(([bx, bz], bi) => {
+    const cnt = 4 + (bi % 2);
+    for (let i = 0; i < cnt; i++) {
+      const a = (i / cnt) * Math.PI * 2 + bi * 0.7;
+      bales.push({ x: bx + Math.cos(a) * (12 + (i % 2) * 4), z: bz + Math.sin(a) * (12 + (i % 2) * 4) + 3, rot: a });
+    }
+  });
+  // a scarecrow guards every field's heart — the crows know which ones blink
+  const scarecrows = FIELDS_BASE.map((f) => {
+    const c = Math.cos(f.rot), s = Math.sin(f.rot);
+    const lx = 8, lz = 5; // local offset inside the field
+    return { x: f.x + lx * c + lz * s, z: f.z - lx * s + lz * c, rot: f.rot + 0.4 };
+  });
+  const well = { x: farmhouses[0].x + 7, z: farmhouses[0].z + 6 };
+  const tractor = { x: BARN_BASE[0][0] - 11, z: BARN_BASE[0][1] - 11, rot: 0.5 };
+  // fence runs trace every field's edge (visual-only — bots slip through gates)
+  const fences: { x: number; z: number; rot: number; len: number }[] = [];
+  for (const f of FIELDS_BASE) {
+    const c = Math.cos(f.rot), s = Math.sin(f.rot);
+    const W = 12, D = 8; // matches generateWorld's w/d half-extents
+    const edge = (lx: number, lz: number, along: "x" | "z") => {
+      const px = f.x + lx * c + lz * s, pz = f.z - lx * s + lz * c;
+      fences.push({ x: px, z: pz, rot: along === "x" ? f.rot : f.rot + Math.PI / 2, len: (along === "x" ? W * 2 : D * 2) + 2 });
+    };
+    edge(0, -D, "x"); edge(0, D, "x"); edge(-W, 0, "z"); edge(W, 0, "z");
+  }
+  return { farmhouses, greenhouse, coops, bales, scarecrows, well, tractor, fences };
+})();
+
+/* ---------------- 🎃 halloween night kit — the graveyard gets HAUNTED ----------------
+ * A rotten Victorian house looms over the cemetery, an arched gate guards the
+ * city-side entrance, wrought-iron posts ring the grounds, a mausoleum and a
+ * vintage hearse complete the estate. Jack-o-lanterns burn here all night. */
+export const GRAVEKIT = (() => {
+  const { x: gx, z: gz } = GRAVEYARD;
+  // direction from the graveyard toward the city centre (the public entrance)
+  const gl = Math.hypot(gx, gz) || 1;
+  const dx = -gx / gl, dz = -gz / gl;
+  const house = { x: gx, z: gz - 24, rot: Math.PI };            // looming over the north edge
+  const mausoleum = { x: gx + 24, z: gz + 18, rot: -0.5 };
+  const gate = { x: gx + dx * 42, z: gz + dz * 42, rot: Math.atan2(dz, dx) };
+  // gate pillars flank the entrance path (perpendicular to the city direction)
+  const px0 = -dz, pz0 = dx;
+  const gatePillars = [
+    { x: gate.x + px0 * 3.6, z: gate.z + pz0 * 3.6 },
+    { x: gate.x - px0 * 3.6, z: gate.z - pz0 * 3.6 },
+  ];
+  const hearse = { x: gx + dx * 32 - dz * 6, z: gz + dz * 32 + dx * 6, rot: gate.rot + Math.PI / 2 };
+  const lanterns = [0.7, 2.3, 3.9, 5.4].map((a) => ({ x: gx + Math.cos(a) * 30, z: gz + Math.sin(a) * 30 }));
+  const oaks = [1.5, 3.2, 5.0].map((a) => ({ x: gx + Math.cos(a) * 36, z: gz + Math.sin(a) * 36, s: 1 + (a % 1) * 0.4 }));
+  // wrought-iron fence posts ring the grounds (gate sector left open)
+  const fencePosts: { x: number; z: number }[] = [];
+  for (let i = 0; i < 36; i++) {
+    const a = (i / 36) * Math.PI * 2;
+    const px = gx + Math.cos(a) * 42, pz = gz + Math.sin(a) * 42;
+    const ga = Math.atan2(pz - gz, px - gx);             // angle of this post
+    const dg = Math.atan2(dz, dx);                        // gate angle
+    let d = Math.abs(ga - dg); d = Math.min(d, Math.PI * 2 - d);
+    if (d < 0.16) continue;                               // the gateway
+    fencePosts.push({ x: px, z: pz });
+  }
+  // 🎃 jack-o-lanterns line the entrance path — lit every night, no exceptions
+  const pumpkins = [0.35, 0.55, 0.75].flatMap((t) => {
+    const px = gx + dx * (14 + t * 22), pz = gz + dz * (14 + t * 22);
+    const perp = { x: -dz, z: dx };
+    return [
+      { x: px + perp.x * 2.6, z: pz + perp.z * 2.6, s: 1 },
+      { x: px - perp.x * 2.6, z: pz - perp.z * 2.6, s: 0.85 },
+    ];
+  });
+  return { house, mausoleum, gate, gatePillars, hearse, lanterns, oaks, fencePosts, pumpkins };
+})();
+
 const TOWER_COLS = [0x9fc4d8, 0xb8d0da, 0xc9d2cf, 0xa8b8c4, 0xd8cfc0, 0x8fb0a8, 0xc4b8d0, 0xb0c4b8];
 const TOWER_ROOF = 0x3d434c;
 const OFFICE_COLS = [0xe0c9a0, 0xc9b8a0, 0xd8d2c4, 0xbfae94, 0xc4cec4, 0xd0c0b0];
@@ -590,15 +734,17 @@ export function generateWorld(seed = WORLD_SEED): World {
 
   /* ---- farm: barns, silos, crop fields, windmills (moved out to the wider farm ring) ----
    * The whole farm band slid outward when the city grew to r=405 — every farm prop
-   * scaled by ~1.22 so fields sit between the city edge and the jungle again. */
-  const barns = [[425, -122], [374, 271], [-418, 93]] as const;
+   * scaled by ~1.22 so fields sit between the city edge and the jungle again.
+   * 🚜 cozy farm kit: each barn gained a farmhouse, the fields grew (9 paddocks),
+   * and a glass greenhouse joins the first steading. */
+  const barns = BARN_BASE;
   for (const [x, z] of barns) push(x, z, 8, 5.5, 7, 6, 0xc0442e, 0x7a3322);
   const silos: Silo[] = barns.map(([x, z]) => ({ x: x + 11.5, z: z + 2 }));
-  const fields: Field[] = [
-    { x: 410, z: -85, rot: 0.3, crop: 0 }, { x: 434, z: -159, rot: -0.2, crop: 1 },
-    { x: 366, z: 222, rot: 0.5, crop: 0 }, { x: 407, z: 198, rot: -0.4, crop: 2 },
-    { x: -403, z: 137, rot: 0.2, crop: 1 }, { x: -368, z: -210, rot: -0.3, crop: 2 },
-  ].map((f) => ({ ...f, w: 12, d: 8 }) as Field);
+  for (const fh of FARMKIT.farmhouses) push(fh.x, fh.z, 6, 4.5, 5.2, 2, 0xd8c8a8, 0x8a5a3a); // farmhouse with a pyramid roof
+  push(FARMKIT.greenhouse.x, FARMKIT.greenhouse.z, 4.2, 2.8, 3.4, 0, 0x9fc4d8, 0x5a6472);     // glasshouse shell (glazing drawn in <Farm>)
+  push(RAILWAY_crossCottage.x, RAILWAY_crossCottage.z, 5.5, 4.5, 5, 2, 0xc8b08a, 0x7a4a34);   // crossing keeper's cottage
+  push(RAILWAY_stationHouse.x, RAILWAY_stationHouse.z, 7, 5, 5.5, 1, 0x8a5a3a, 0x4a3a2e, 1);  // country station house + canopy awning
+  const fields: Field[] = FIELDS_BASE.map((f) => ({ ...f, w: 12, d: 8 }) as Field);
   const windmills = [
     { x: 425, z: -68, rot: 0 }, { x: 403, z: 195, rot: 1.2 }, { x: -412, z: 193, rot: 2.1 },
   ];
@@ -699,17 +845,30 @@ export function generateWorld(seed = WORLD_SEED): World {
     n++;
   }
 
-  /* ---- sparse farmland trees (avoid fields, buildings & the airport plot) ---- */
+  /* ---- sparse farmland trees (avoid fields, buildings, the railway & the airport plot) ---- */
   n = 0;
   while (n < 80) {
     const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 412, 458);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
     if (inAirportPlot(x, z)) continue;
+    if (Math.abs(Math.hypot(x, z) - RAILWAY.R) < 5.5) continue; // 🚂 the branch line stays clear
     if (fields.some((f) => Math.abs(x - f.x) < f.w + 3 && Math.abs(z - f.z) < f.d + 3)) continue;
     if (buildings.some((b) => Math.abs(x - b.x) < b.w + 3 && Math.abs(z - b.z) < b.d + 3)) continue;
     addTree(x, z, range(rnd, 0.8, 1.3), rnd() < 0.5 ? 0 : 1);
     n++;
+  }
+
+  /* ---- 🍎 farmstead orchards — apple & plum trees shade every farmhouse yard ---- */
+  for (const fh of FARMKIT.farmhouses) {
+    for (let i = 0; i < 3; i++) {
+      const oa = (i / 3) * Math.PI * 2 + fh.x * 0.13;
+      const x = fh.x + Math.cos(oa) * 9.5, z = fh.z + Math.sin(oa) * 9.5;
+      if (fields.some((f) => Math.abs(x - f.x) < f.w + 2.5 && Math.abs(z - f.z) < f.d + 2.5)) continue;
+      if (buildings.some((b) => Math.abs(x - b.x) < b.w + 2.5 && Math.abs(z - b.z) < b.d + 2.5)) continue;
+      if (Math.hypot(x, z) > FARM_RADIUS - 6) continue;
+      addTree(x, z, range(rnd, 0.85, 1.2), 1); // round crown = orchard look
+    }
   }
 
   /* ---- 🪨 boulders (7Nights): smashable rock nodes near the town & farm ----
@@ -721,6 +880,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
     if (inAirportPlot(x, z)) continue;
+    if (Math.abs(Math.hypot(x, z) - RAILWAY.R) < 6) continue; // 🚂 no boulders blocking the branch line
     // keep the ring road, main road, avenues and the street grid drivable
     if (Math.abs(rr - RING_R) < RING_W / 2 + 4) continue;
     if (Math.abs(x) < ROAD_W / 2 + 4 && z > MAIN_ROAD.z0 - 4 && z < MAIN_ROAD.z1 + 4) continue;
@@ -728,6 +888,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     if (buildings.some((b) => Math.abs(x - b.x) < b.w + 4 && Math.abs(z - b.z) < b.d + 4)) continue;
     if (trees.some((t) => Math.hypot(x - t.x, z - t.z) < 2.6)) continue;
     if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 7)) continue; // not inside a camp glade
+    if (FARMKIT.bales.some((hb) => Math.hypot(hb.x - x, hb.z - z) < 3.4)) continue; // 🚜 not rolled onto the hay
     rocks.push({ x, z, s: range(rnd, 0.85, 1.7) });
     n++;
   }
@@ -813,6 +974,30 @@ export function generateWorld(seed = WORLD_SEED): World {
   // 🧱 builder pool — dormant circles parked under the museum podium (r≈0 never
   // collides). moveCircle() teleports one onto a build spot; reset() brings it back.
   for (let i = 0; i < BUILD_POOL; i++) circles.push({ x: MUSEUM.x, z: MUSEUM.z, r: 0.001, build: i });
+  /* ---- 🚂 countryside railway — solid furniture (the track bed itself stays walkable) ---- */
+  boxes.push({ x: RAILWAY_waterTower.x, z: RAILWAY_waterTower.z, w: 2.4, d: 2.4, h: 12 }); // water tower legs
+  boxes.push({ x: RAILWAY_signalBox.x, z: RAILWAY_signalBox.z, w: 2.2, d: 1.8, h: 5.5 }); // signal box
+  for (const pl of RAILWAY.poles) circles.push({ x: pl.x, z: pl.z, r: 0.35 });            // telegraph poles
+  for (const st of RAILWAY.stock) circles.push({ x: st.x, z: st.z, r: 1.8 });             // parked rolling stock
+  for (const en of RAILWAY.ends) circles.push({ x: en.x, z: en.z, r: 0.9 });              // buffer stops
+  // level-crossing posts — four corners of the farm-lane × track intersection
+  const RAIL_CROSS = railPoint(RAILWAY.crossing.a);
+  for (const [gx0, gz0] of [[-6.5, -5.5], [6.5, -5.5], [-6.5, 5.5], [6.5, 5.5]] as const)
+    circles.push({ x: RAIL_CROSS.x + gx0, z: RAIL_CROSS.z + gz0, r: 0.42 });
+  /* ---- 🚜 cozy farm kit — the barnyard is solid ---- */
+  for (const hb of FARMKIT.bales) circles.push({ x: hb.x, z: hb.z, r: 1.05 });            // hay bales
+  for (const sc of FARMKIT.scarecrows) circles.push({ x: sc.x, z: sc.z, r: 0.4 });        // scarecrow posts
+  for (const cp of FARMKIT.coops) circles.push({ x: cp.x, z: cp.z, r: 1.6 });             // chicken coops
+  circles.push({ x: FARMKIT.tractor.x, z: FARMKIT.tractor.z, r: 1.5 });                   // parked tractor
+  circles.push({ x: FARMKIT.well.x, z: FARMKIT.well.z, r: 1.2 });                         // stone well
+  /* ---- 🎃 graveyard estate — the haunted grounds are fenced ---- */
+  boxes.push({ x: GRAVEKIT.house.x, z: GRAVEKIT.house.z, w: 6.5, d: 5, h: 11 });          // haunted Victorian house
+  boxes.push({ x: GRAVEKIT.mausoleum.x, z: GRAVEKIT.mausoleum.z, w: 2.8, d: 2.4, h: 6 }); // family mausoleum
+  circles.push({ x: GRAVEKIT.hearse.x, z: GRAVEKIT.hearse.z, r: 1.6 });                   // vintage hearse
+  for (const ln of GRAVEKIT.lanterns) circles.push({ x: ln.x, z: ln.z, r: 0.3 });         // lantern posts
+  for (const ok of GRAVEKIT.oaks) circles.push({ x: ok.x, z: ok.z, r: 0.5 });             // twisted dead oaks
+  for (const fp of GRAVEKIT.fencePosts) circles.push({ x: fp.x, z: fp.z, r: 0.28 });      // wrought-iron fence posts
+  for (const gp of GRAVEKIT.gatePillars) circles.push({ x: gp.x, z: gp.z, r: 0.45 });     // gate pillars
   // every circle remembers its array slot — the driven car refreshes its grid cells via this
   for (let i = 0; i < circles.length; i++) circles[i].idx = i;
 

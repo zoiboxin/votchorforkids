@@ -22,6 +22,17 @@ const FILES = {
   crow: "/models/crow-base.glb",
   rabbit: "/models/forest-rabbit-ea2da0.glb",
   stag: "/models/spectral-stag-d19dc1.glb",
+  // 🏔️ alpine & snow kit — the mountain band gains its own wildlife
+  ibex: "/models/alpine-ibex-2a288a.glb",
+  hare: "/models/mountain-hare-d9c64c.glb",
+  // 🚜 cozy farm kit — the barnyard menagerie grows
+  pig: "/models/pig-868bda.glb",
+  sheep: "/models/sheep-7b0187.glb",
+  goat: "/models/goat-1dedee.glb",
+  duck: "/models/duck-357dc6.glb",
+  // 🎃 halloween night kit — a black cat prowls the town, a giant spider haunts the graveyard
+  cat: "/models/arched-black-cat-407cf6.glb",
+  spider: "/models/giant-yard-spider-70ddce.glb",
 } as const;
 
 export type ModelKind = keyof typeof FILES;
@@ -29,6 +40,8 @@ export type ModelKind = keyof typeof FILES;
 /** Height-normalize then per-kind artistic scale (world units). */
 const TARGET_H: Record<ModelKind, number> = {
   wolf: 1.0, bear: 1.5, fox: 0.72, owl: 0.55, crow: 0.5, rabbit: 0.5, stag: 2.1,
+  ibex: 1.15, hare: 0.45, pig: 0.75, sheep: 0.8, goat: 0.85, duck: 0.45,
+  cat: 0.5, spider: 1.25,
 };
 
 /** Clip name fallbacks — every model has Idle+Walk+Run, birds add Fly. */
