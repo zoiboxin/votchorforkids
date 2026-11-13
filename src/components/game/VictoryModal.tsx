@@ -42,6 +42,13 @@ export function VictoryModal({ engine, onReplay, onMenu }: { engine: GameEngine;
       .catch(() => {});
   }, [open, hud.points, hud.elapsed, engine, won]);
 
+  // 🔁 re-arm the leaderboard POST whenever the recap closes — deaths no longer
+  // auto-open it (the auto free cam takes over), so the same modal instance must
+  // post again when the player calls it back up with Esc, or on the next run
+  useEffect(() => {
+    if (!open) posted.current = false;
+  }, [open]);
+
   const secs = Math.round(hud.elapsed);
   const mm = Math.floor(secs / 60), ss = String(secs % 60).padStart(2, "0");
 
@@ -86,14 +93,15 @@ export function VictoryModal({ engine, onReplay, onMenu }: { engine: GameEngine;
           <Stat icon={<RotateCcw size={14} />} label="Run" value={saved ? "saved ✓" : "saving…"} />
         </div>
         <Leaderboard compact />
-        {/* 👀 the contest doesn't end with you — ride the free cam behind the living */}
+        {/* 👀 the contest doesn't end with you — the camera already rides behind
+            the living (auto free cam); this returns you to it from the recap */}
         {!won && (
           <Button
             onClick={() => { setOpen(false); engine.startSpectate(); }}
             variant="outline"
             className="w-full rounded-xl border-emerald-300/40 bg-emerald-500/15 font-black text-emerald-200 hover:bg-emerald-500/30"
           >
-            <Eye size={16} className="mr-1" /> Free cam — watch the town finish
+            <Eye size={16} className="mr-1" /> Back to the free cam — watch the town
           </Button>
         )}
         <div className="flex gap-2">

@@ -612,6 +612,9 @@ export class GameEngine {
   finisherT = 0;
   /** 🩸 seconds since the player died — the death fall plays before the recap opens */
   deathT = 0;
+  /** 👀 fires once: the free cam starts BY ITSELF right after the death cinematic —
+   *  the camera auto-switches to following another living soul with no click */
+  autoSpecDone = false;
   /** 👀 the name of the soul the free cam is currently riding behind */
   specName = "";
   private specKey = "";
@@ -1329,14 +1332,17 @@ export class GameEngine {
     return out;
   }
 
-  /** Enter free cam — the camera detaches from your corpse and follows the living. */
-  startSpectate() {
+  /** Enter free cam — the camera detaches from your corpse and follows the living.
+   *  auto=true when the engine starts it on its own right after the death cinematic. */
+  startSpectate(auto = false) {
     if (!this.lost) return; // only taken souls may wander the town unseen
     this.spectating = true;
     this.specKey = "";
     this.specSwapT = SPEC_SWAP_S;
     this.nextSpec();
-    this.toast("👀 Free cam — you watch the town now. Click or N: next soul · Esc: death menu.", "info");
+    this.toast(auto
+      ? "👀 You watch the town now — Click / N: next soul · Esc: death recap."
+      : "👀 Free cam — you watch the town now. Click or N: next soul · Esc: death menu.", "info");
   }
 
   /** Leave free cam (back to the death recap menu). */
@@ -1374,7 +1380,7 @@ export class GameEngine {
     this.traceBuf = []; this.traceT = 0; this.nightDeaths = []; // fresh forensics per run
     this.hp = 100; this.stamina = 100; this.stars = 0; this.starTimer = 0; this.chased = false;
     this.crimeReport = null; this.botLootCd = 0;
-    this.setPersonalPause(false); this.pauseLog = []; this.spectating = false; this.specName = ""; this.specKey = "";
+    this.setPersonalPause(false); this.pauseLog = []; this.spectating = false; this.specName = ""; this.specKey = ""; this.autoSpecDone = false;
     this.inv = []; this.hurtT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0; this.powerFullT = 0;
     this.invOnceT = 0; this.toolOnceT = 0; this.botDriven.clear();
     this.flipT = 0; this.squashT = 0; this.faintT = 0; this.carHitCd = 0;
@@ -2871,7 +2877,7 @@ export class GameEngine {
     stopDrone(); stopInsects(); // 🦗 the chorus falls silent with the light
     sfx.lose();
     const place = this.crew.filter((c) => c.alive).length + this.remotes.filter((r) => r.alive).length + 1;
-    this.toast(`🩸 The darkness took you on night ${this.nightNo}… PLACED #${place} OF ${PLAYERS_TOTAL}.`, "bad");
+    this.toast(`🩸 The darkness took you on night ${this.nightNo}… PLACED #${place} OF ${PLAYERS_TOTAL}. The camera will ride with the living — Esc: recap.`, "bad");
   }
 
   /* ---------------- crew AI: wander by day, hide by night, hunt when possessed ---------------- */
@@ -4501,7 +4507,17 @@ export class GameEngine {
     this.attackCd = Math.max(0, this.attackCd - dt);
     this.accuseCd = Math.max(0, this.accuseCd - dt);
     this.finisherT = Math.max(0, this.finisherT - dt); // ⚔️ the finisher spin winds down
-    if (this.lost) this.deathT += dt; // 🩸 the death fall plays while the town moves on
+    if (this.lost) {
+      this.deathT += dt; // 🩸 the death fall plays while the town moves on
+      // 👀 once the corpse cinematic settles, the camera AUTOMATICALLY detaches
+      // and starts following another living soul — no manual "free cam" click
+      // needed anymore (the death recap still waits behind Esc). Stays armed
+      // while nobody else is alive yet, so a late-joining remote still gets followed.
+      if (!this.spectating && !this.won && this.deathT >= 2.1 && !this.autoSpecDone && this.specTargets().length > 0) {
+        this.autoSpecDone = true;
+        this.startSpectate(true);
+      }
+    }
     if (this.detainedT > 0) {
       // the clock only runs once the player is locked up at the station (or dizzy-stunned) —
       // while the van is being called or riding, time itself is frozen

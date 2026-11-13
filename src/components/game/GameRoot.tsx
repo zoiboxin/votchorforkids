@@ -40,6 +40,8 @@ export function GameRoot() {
   const [runId, setRunId] = useState(0);
   /** true while this run is a networked co-op session */
   const mpRef = useRef(false);
+  /** 💾 the end-of-run record saves exactly once per run (death no longer pops a modal) */
+  const endSavedRef = useRef(false);
 
   const startGame = useCallback(() => {
     useGame.getState().setScreen("connecting");
@@ -48,6 +50,7 @@ export function GameRoot() {
     useGame.getState().setVictoryOpen(false);
     useGame.getState().setShowHelp(true); // goal card re-shows every round, auto-hides after 12 s
     useGame.getState().setWheelOpen(false); // never carry a stale 🎒 tool wheel into a fresh run
+    endSavedRef.current = false; // 💾 fresh run → its end gets saved again
     sfx.click();
     startMusic();
     setTimeout(() => {
@@ -86,6 +89,7 @@ export function GameRoot() {
           onReset: () => {
             // the host restarted the week — everyone rewinds together
             useGame.getState().pushToast("👑 The host restarted the 7 nights — back to DAY 1!", "info");
+            endSavedRef.current = false; // 💾 the fresh week saves its own end
             if (engineRef.current) {
               engineRef.current.reset(useGame.getState().look);
               useGame.getState().setVictoryOpen(false);
@@ -161,7 +165,8 @@ export function GameRoot() {
 
   useGameInput(engine);
 
-  // watch for the win OR the death → open the end screen once + save the record
+  // watch for the win OR the death → save the record once; wins still pop the
+  // recap — deaths hand the camera to the living (the engine auto-spectates)
   useEffect(() => {
     const eng = engineRef.current;
     if (!eng) return;
@@ -170,16 +175,22 @@ export function GameRoot() {
       // has won/lost=true for the 650 ms connecting window — never re-open in that gap
       if (useGame.getState().screen !== "play") return;
       // ⏸ the end screen waits while the player is personally paused (the welcome-back
-      // report reveals the death itself) and while the 👀 free cam is riding around town
-      if (useGame.getState().paused || useGame.getState().pauseReport || eng.spectating) return;
-      if ((eng.won || eng.lost) && !useGame.getState().victoryOpen) {
-        // 🎬 let the death fall play out first — the body folds, rests, and the
-        // dark takes it; only THEN does the recap menu cover the screen
-        if (eng.lost && eng.deathT < 2.1) return;
-        useGame.getState().setVictoryOpen(true);
+      // report reveals the death itself)
+      if (useGame.getState().paused || useGame.getState().pauseReport) return;
+      if (!(eng.won || eng.lost)) return;
+      // 🎬 let the death fall play out first — the body folds, rests, and the dark
+      // takes it; only THEN does the end-game flow begin
+      if (eng.lost && eng.deathT < 2.1) return;
+      // 💾 save the run record exactly once, whether or not any menu ever opens —
+      // deaths no longer force-pop the recap, the auto free cam takes over instead
+      if (!endSavedRef.current) {
+        endSavedRef.current = true;
         const h = useGame.getState().hud;
         useGame.getState().recordRun(h.points, h.money, h.rescues, eng.caughtCount, eng.won, Math.round(h.elapsed * 1000));
       }
+      // 🏆 wins still open the recap automatically; deaths keep the world on screen
+      // (the recap is one Esc away — the spectate banner and the death toast say so)
+      if (eng.won && !useGame.getState().victoryOpen) useGame.getState().setVictoryOpen(true);
     }, 400);
     return () => clearInterval(id);
   }, [engine, runId]);
