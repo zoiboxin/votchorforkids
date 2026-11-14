@@ -640,6 +640,10 @@ export const TOOL_PICKUP_R = 2.1;
  *  dawn or crumble — so the lobby bleeds down night by night to one winner. */
 export const PLAYERS_TOTAL = 100;
 export const CREW_COUNT = PLAYERS_TOTAL - 1; // 99 AI contestants (you are #100)
+/** 🚓 police seats among the 100 — every 5th contestant is an officer on the
+ *  roster (patrol look, "Officer" name tag). They gather & build like everyone,
+ *  and at dusk they turn like everyone: the badge is no cure for the hunger. */
+export const POLICE_CREW = Math.floor(CREW_COUNT / 5); // 20 officers in the lobby
 const CREW_FIRSTS = ["Mia", "Ryan", "Zoe", "Kofi", "Anya", "Marco", "Luna", "Sasha", "Theo", "Ines", "Rafa", "Nova", "Elsa", "Dmitri"];
 const CREW_SURNAMES = ["Stone", "Rivera", "Novak", "Hayes", "Okafor", "Lind", "Moreau"];
 /** 99 unique contestant names — the originals first, then first+surname combos. */

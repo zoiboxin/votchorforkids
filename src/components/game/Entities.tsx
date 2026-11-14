@@ -1176,7 +1176,9 @@ const CREW_ZOMBIE_LOOK: Appearance = {
 export function CrewRig({ engine }: { engine: GameEngine }) {
   const views = useMemo(() => {
     return engine.crew.map((c) => {
-      const mesh = buildCharacter(c.look);
+      // 🚓 police seats render in full uniform (cap, badge, squad colors) —
+      // the identity shirt stays, so the color-clue mystery still works
+      const mesh = buildCharacter(c.look, { police: c.look.fac === "police" });
       const tag = nameTag(c.name, hexToTagBg(c.color));
       tag.position.y = 2.95;
       mesh.add(tag);

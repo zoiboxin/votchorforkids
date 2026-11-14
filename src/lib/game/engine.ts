@@ -18,7 +18,8 @@ import {
   POINTS_WRONG_ACCUSE, ROCK_HITS, ROCK_PER_BOULDER, TOOL_PICKUP_R, TOOL_SPAWN, TOOLS,
   TREE_HITS, WOOD_PER_TREE, WIN_BONUS, PLAYERS_TOTAL, ZOMBIE_CREW_DMG, ZOMBIE_HP,
   ZONE_DRAIN_BASE, ZONE_DRAIN_STEP, ZONE_GRACE_S, ZONE_RADII,
-  MONEY_PER_PILE, CASH_RESPAWN_S, CREW_PURSE, CIV_PURSE, ZOMBIE_PURSE, POINTS_LOOT,
+  MONEY_PER_PILE, CASH_RESPAWN_S, CREW_PURSE, CIV_PURSE, ZOMBIE_PURSE, POINTS_LOOT, POLICE_CREW,
+  POLICE_OUTFITS,
   CIV_PANIC_R, CREW_PANIC_R, ZOMBIE_HUNT_R, ZOMBIE_SNIFF, ZOMBIE_SWARM_CAP,
   TREE_FALL_S, TREE_WOBBLE_S, ROCK_BREAK_S,
   CREW_SEEK_R, CREW_EAT_R, CREW_BOOST_S, CREW_BOOST_MULT,
@@ -33,6 +34,12 @@ import { preloadModels } from "./models";
 import type { MpEvent } from "@/lib/game/net/client";
 
 const TAU = Math.PI * 2; // full circle — used to keep the camera yaw wrapped
+
+/** 📉 alive-count milestones the feed ALWAYS announces — the required story
+ *  beats survive any toast throttling while ambient deaths stay quiet. */
+const ALIVE_MILESTONES = [50, 25, 10, 5, 3, 2];
+/** 🚓 outfit rotation for the police seats — every squad walks the contest. */
+const POLICE_SEAT_OUTFITS = POLICE_OUTFITS.map((o) => o.id);
 
 export type CopMode = "patrol" | "chase" | "return" | "celebrate";
 export type CivilMode = "wander" | "flee" | "detained" | "rescued";
@@ -185,6 +192,9 @@ export interface Crew extends SteerMemory {
   seekBlock?: { kind: "food" | "loot" | "power"; id: number; t: number } | null;
   avoidId?: number; avoidT?: number;
   /* --- 👥 7-Nights contest roster bookkeeping --- */
+  /** 🚓 this seat belongs to a police officer — one of the 20 uniformed
+   *  contestants among the 100. They turn at dusk like everybody else. */
+  cop?: boolean;
   /** true dusk→dawn while this contestant is one of the TURNED (a contest zombie) */
   zombieTonight?: boolean;
   /** contestants this contestant's zombie devoured tonight — 0 by dawn = crumble */
@@ -634,6 +644,14 @@ export class GameEngine {
   private zLootCd = 0;
   /** throttle for "a bot scooped up …" toasts so 99 foragers don't spam */
   private botLootCd = 0;
+  /** throttle for ambient bot DEATH toasts so a hungry night doesn't flood the feed —
+   *  the story beats (dusk/dawn/wall/milestones) always get through instead */
+  private botDeathCd = 0;
+  /** 📉 last alive-count milestone announced (announce when alive drops TO it) */
+  private msAnnounced = PLAYERS_TOTAL;
+  /** exact-duplicate toast guard — the same message twice within 3.5s is noise */
+  private lastToastMsg = "";
+  private lastToastT = 0;
   /** 👮 a reported crime still hot — cops in range walk to the scene to investigate */
   crimeReport: { x: number; z: number; t: number } | null = null;
 
@@ -1304,7 +1322,7 @@ export class GameEngine {
 
   start() {
     this.running = true;
-    this.toast(`🌙 Welcome, ${this.playerName}. ${PLAYERS_TOTAL} souls enter the 7 nights — each dusk, HALF turn. One walks out.`, "info");
+    this.toast(`🌙 Welcome, ${this.playerName}. ${PLAYERS_TOTAL} souls enter the 7 nights — police squad among them — each dusk, HALF turn. One walks out.`, "info");
     this.toast("🧱 THE WALL: after every night a shimmering barrier slams down TIGHTER. Beyond it, life drains fast — always stay inside the circle!", "info");
     this.toast("💰 Cash piles lie around town — scoop them up! The fallen drop their purses… first one there is richer.", "info");
     this.toast("☀️ DAY: chop trees (🪓 + F), smash rocks (🔨 + F), build defenses (🔧 + B). Find arms around town — press G to open your pack!", "info");
@@ -1313,8 +1331,14 @@ export class GameEngine {
   setToast(fn: ToastFn) { this.rawToast = fn; }
 
   /** Every event funnels through here — while the player is personally paused
-   *  the feed is ALSO journaled so the welcome-back report can replay it. */
+   *  the feed is ALSO journaled so the welcome-back report can replay it.
+   *  📣 ONLY REQUIRED NOTIFICATIONS: an identical message inside 3.5s is a
+   *  duplicate — dropped (the wall-drain reminder re-fires every 4.5s, the
+   *  already-own-a-tool reminder every 5s; both stay clear of the window). */
   toast(msg: string, kind: "info" | "good" | "bad" = "info") {
+    const now = performance.now() / 1000;
+    if (msg === this.lastToastMsg && now - this.lastToastT < 3.5) return;
+    this.lastToastMsg = msg; this.lastToastT = now;
     if (this.personalPause && this.pauseLog.length < 60) this.pauseLog.push({ msg, kind });
     this.rawToast(msg, kind);
   }
@@ -1384,7 +1408,8 @@ export class GameEngine {
     this.player = newBody(this.playerSpawn.x, this.playerSpawn.z);
     this.traceBuf = []; this.traceT = 0; this.nightDeaths = []; // fresh forensics per run
     this.hp = 100; this.stamina = 100; this.stars = 0; this.starTimer = 0; this.chased = false;
-    this.crimeReport = null; this.botLootCd = 0;
+    this.crimeReport = null; this.botLootCd = 0; this.botDeathCd = 0; this.msAnnounced = PLAYERS_TOTAL;
+    this.lastToastMsg = ""; this.lastToastT = 0; // 📣 the duplicate guard rewinds too
     this.setPersonalPause(false); this.pauseLog = []; this.spectating = false; this.specName = ""; this.specKey = ""; this.autoSpecDone = false;
     this.inv = []; this.hurtT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0; this.powerFullT = 0;
     this.invOnceT = 0; this.toolOnceT = 0; this.botDriven.clear();
@@ -2599,8 +2624,24 @@ export class GameEngine {
       const spot = spots[i];
       const look = randomAppearance(this.rnd);
       look.shirt = CREW_COLORS[i % CREW_COLORS.length]; // the color IS the identity — clues depend on it
+      // 🚓 every 5th seat is a police officer — POLICE_CREW uniformed souls among
+      // the 100. Identity shirt stays (clues depend on it); the squad look adds
+      // cap, badge, uniform pants. At dusk the badge is no cure for the hunger:
+      // officers turn like everybody else and must FEED or crumble at sunrise.
+      const cop = i % 5 === 0;
+      if (cop) {
+        const o = policeOutfitOf(POLICE_SEAT_OUTFITS[Math.floor(i / 5) % POLICE_SEAT_OUTFITS.length]);
+        look.fac = "police";
+        look.outfit = o.id;
+        look.pants = o.look.pants ?? look.pants;
+        look.shoe = o.look.shoe ?? look.shoe;
+        look.cap = o.look.cap ?? true;
+        look.capColor = o.look.capColor ?? look.capColor;
+        look.glasses = o.look.glasses ?? false;
+        if (o.look.hairStyle) look.hairStyle = o.look.hairStyle;
+      }
       this.crew.push({
-        id: this.nid(), name: CREW_NAMES[i], color: CREW_COLORS[i % CREW_COLORS.length], colorName: CREW_COLOR_NAMES[i % CREW_COLOR_NAMES.length], look,
+        id: this.nid(), name: cop ? `Officer ${CREW_NAMES[i]}` : CREW_NAMES[i], color: CREW_COLORS[i % CREW_COLORS.length], colorName: CREW_COLOR_NAMES[i % CREW_COLOR_NAMES.length], look, cop,
         x: spot.x, z: spot.z, vx: 0, vz: 0, face: this.rnd() * Math.PI * 2,
         alive: true, mode: "wander", tx: spot.x, tz: spot.z,
         timer: range(this.rnd, 2, 6), phase: Math.random() * 6,
@@ -3189,6 +3230,11 @@ export class GameEngine {
         if (zb.dead) continue;
         const d = dist2(c.x, c.z, zb.x, zb.z);
         if (d < bd2) { bd2 = d; bx = zb.x; bz = zb.z; }
+      }
+      for (const an of this.animals) { // 🐺 the night pack hunts the town — flee the wolves too
+        if (an.kind !== "wolf" || an.dead) continue;
+        const d = dist2(c.x, c.z, an.x, an.z);
+        if (d < bd2) { bd2 = d; bx = an.x; bz = an.z; }
       }
       if (this.phase === "night" && bd2 < 12 * 12) {
         const dx = c.x - bx, dz = c.z - bz, dl = Math.hypot(dx, dz) || 1;
@@ -3781,6 +3827,18 @@ export class GameEngine {
     }
   }
 
+  /** 📉 announce an alive-count milestone ONCE per threshold, descending —
+   *  the required contest beats that survive every toast throttle. */
+  private maybeMilestone(alive: number) {
+    for (const m of ALIVE_MILESTONES) {
+      if (alive <= m && this.msAnnounced > m) {
+        this.msAnnounced = m;
+        this.toast(`📉 ${alive} of ${PLAYERS_TOTAL} souls remain${alive === 2 ? " — the FINAL DUEL is here" : "… the nights are thinning the herd"}.`, "bad");
+        return;
+      }
+    }
+  }
+
   /** A crew member dies — corpse stays, a clue appears, the town shrinks.
    *  `killerIdx` = which beast of the pack did it (−1 = unknown/you).
    *  `quiet` skips the scream (mass dawn crumbles play ONE sound instead).
@@ -3836,6 +3894,8 @@ export class GameEngine {
       });
     }
     const alive = this.crew.filter((x) => x.alive).length;
+    // 📉 required story beat FIRST — the herd count always gets through
+    this.maybeMilestone(alive);
     if (wall) {
       this.toast(`☠️ ${c.name} withered beyond the WALL — the safe circle is death ground now! (${alive} left)`, "bad");
     } else if (byYou) {
@@ -3843,8 +3903,15 @@ export class GameEngine {
     } else if (slain) {
       const left = this.possessed.filter((i) => this.crew[i].alive).length;
       this.toast(left > 0 ? `🗡️ A beast is DOWN — that was ${c.name}! ${left} still prowl…` : `🗡️ The last beast is DOWN! That was ${c.name}…`, "good");
+    } else {
+      // 💀 ambient death — only required when it happens NEAR you (a far-away
+      // kill is noise; the milestones above carry the contest count instead)
+      const d2p = dist2(this.player.x, this.player.z, c.x, c.z);
+      if (!quiet && d2p < 30 * 30 && this.botDeathCd <= 0) {
+        this.botDeathCd = 6;
+        this.toast(`💀 ${c.name} was slain by the beast! (${alive} strangers left)`, "bad");
+      }
     }
-    else this.toast(`💀 ${c.name} was slain by the beast! (${alive} strangers left)`, "bad");
     // 🌐 real souls still breathing? Then nobody is the last survivor yet
     if (alive === 0 && !this.mpOthersAlive()) {
       if (this.youPossessed && this.phase === "night") this.winGame("beast");
@@ -3894,7 +3961,7 @@ export class GameEngine {
         c.hp -= CLAW_DMG;
         sfx.stab();
         this.fxQueue.push({ type: "confetti", x: c.x, y: 1.2, z: c.z, hue: 0.98 });
-        if (c.hp <= 0) this.killCrew(bi, false);
+        if (c.hp <= 0) this.killCrew(bi, false, -1, false, true); // 🩸 YOU are the beast — your kills announce themselves
       } else {
         sfx.swing();
       }
@@ -5226,6 +5293,7 @@ export class GameEngine {
     // 🩸 the fallen get their corpse clock ticked here (dead ones skip all logic)
     this.zLootCd = Math.max(0, this.zLootCd - dt);
     this.botLootCd = Math.max(0, this.botLootCd - dt);
+    this.botDeathCd = Math.max(0, this.botDeathCd - dt);
     this.invOnceT = Math.max(0, this.invOnceT - dt);
     this.toolOnceT = Math.max(0, this.toolOnceT - dt);
     // 🎯 swarm census — one pass so diverse prey picks can discount victims that
@@ -5358,7 +5426,7 @@ export class GameEngine {
               victim.hp -= ZOMBIE_CREW_DMG;
               sfx.zombie();
               if (victim.hp <= 0) {
-                this.killCrew(victimCrew, false);
+                this.killCrew(victimCrew, false, -1, true); // quiet — the horde toast below is the required one
                 const owner = this.crew.find((cc) => cc.id === zb.owner);
                 if (owner) owner.fed = (owner.fed ?? 0) + 1; // fed — survives the sunrise
                 if (d2p < 30 * 30) this.toast(`🧟 ${victim.name} fell to the horde… their 💰 dropped!`, "bad");
@@ -5552,7 +5620,7 @@ export class GameEngine {
                 victim.hp -= ZOMDOG_DMG;
                 sfx.zdog();
                 if (victim.hp <= 0) {
-                  this.killCrew(victimCrew, false);
+                  this.killCrew(victimCrew, false, -1, true); // quiet — the hound toast below is the required one
                   if (d2p < 30 * 30) this.toast(`🐕‍🦺 A zombie hound brought down ${victim.name}… their 💰 dropped!`, "bad");
                 }
               } else if (victimCiv) {
@@ -5704,8 +5772,11 @@ export class GameEngine {
         }
       }
       // 🐺 wolves — harmless grazers by day, but after dark they remember they
-      // are predators: a wolf within earshot stalks you through the trees,
-      // circling just outside arm's reach and howling to call the pack.
+      // are predators: a wolf within earshot stalks YOU through the trees,
+      // circling just outside arm's reach and howling to call the pack. And
+      // when nobody's near, the pack CULLS the living town — contestants and
+      // townsfolk alike get run down in the dark. (Walk close to a hunted soul
+      // and the wolf keeps its distance from you — you are the shield.)
       if (an.kind === "wolf" && nightFactor(this.clock) > 0.55 && !this.drive && this.detainedT <= 0) {
         const hunt = d2p < 30 * 30;
         if (hunt && d2p > 7.5 * 7.5) {
@@ -5716,13 +5787,49 @@ export class GameEngine {
           const dx = an.x - p.x, dz = an.z - p.z, d = Math.hypot(dx, dz) || 1;
           stepNpc(an, an.x + (dx / d) * 6, an.z + (dz / d) * 6, 2.2, dt, this.world);
         } else {
-          // out of earshot — regular graze cycle
-          if (an.timer <= 0 || (arrived && !an.resting)) {
-            an.resting = !an.resting;
-            if (!an.resting) { const spot = this.grazeSpot(an, false); if (spot) { an.tx = spot.x; an.tz = spot.z; } an.timer = range(this.rnd, 5, 11); }
-            else { an.tx = an.x; an.tz = an.z; an.timer = range(this.rnd, 2.5, 6); }
+          // 🌙 you're out of earshot — the pack hunts the town instead
+          let mx = 0, mz = 0, md2 = 26 * 26, mCrew = -1, mCiv: Npc | null = null;
+          for (let ci = 0; ci < this.crew.length; ci++) {
+            const cc = this.crew[ci];
+            if (!cc.alive) continue;
+            const d = dist2(an.x, an.z, cc.x, cc.z);
+            if (d < md2) { md2 = d; mx = cc.x; mz = cc.z; mCrew = ci; mCiv = null; }
           }
-          if (!an.resting) stepNpc(an, an.tx, an.tz, WILDLIFE.wolf.walk, dt, this.world);
+          for (const cv of this.civs) {
+            if (cv.dead) continue;
+            const d = dist2(an.x, an.z, cv.x, cv.z);
+            if (d < md2) { md2 = d; mx = cv.x; mz = cv.z; mCrew = -1; mCiv = cv; }
+          }
+          if (mCrew >= 0 || mCiv) {
+            if (md2 > 1.5 * 1.5) {
+              // run the prey down — tonight the pack is faster than anything on
+              // two legs (just over the crew's 1.7× panic sprint, so hunts land)
+              stepNpc(an, mx, mz, CREW_SPEED * 1.78, dt, this.world);
+            } else {
+              // the catch — the body falls where it stood, the hunter feeds
+              if (mCrew >= 0) {
+                const cc = this.crew[mCrew];
+                this.killCrew(mCrew, false, -1, true); // quiet — the wolf toast below is the required one
+                const d2p2 = dist2(this.player.x, this.player.z, cc.x, cc.z);
+                if (d2p2 < 30 * 30 && this.botDeathCd <= 0) {
+                  this.botDeathCd = 6;
+                  this.toast(`🐺 The night pack dragged down ${cc.name}… their 💰 dropped!`, "bad");
+                }
+              } else if (mCiv) {
+                this.killCiv(mCiv, "beast");
+              }
+              an.resting = true; an.timer = range(this.rnd, 12, 22);
+              an.tx = an.x; an.tz = an.z;
+            }
+          } else {
+            // nobody to hunt — regular graze cycle
+            if (an.timer <= 0 || (arrived && !an.resting)) {
+              an.resting = !an.resting;
+              if (!an.resting) { const spot = this.grazeSpot(an, false); if (spot) { an.tx = spot.x; an.tz = spot.z; } an.timer = range(this.rnd, 5, 11); }
+              else { an.tx = an.x; an.tz = an.z; an.timer = range(this.rnd, 2.5, 6); }
+            }
+            if (!an.resting) stepNpc(an, an.tx, an.tz, WILDLIFE.wolf.walk, dt, this.world);
+          }
         }
         // the call — one long howl when it has your scent, quieter pacing otherwise
         if (hunt && an.barkT <= 0 && d2p < 22 * 22) { an.barkT = range(this.rnd, 6, 13); sfx.wolfHowl(); }
@@ -6018,8 +6125,16 @@ export class GameEngine {
     this.fxQueue.push({ type: "confetti", x: c.x, y: 1.2, z: c.z, hue: 0.98 });
     sfx.scream();
     const left = this.possessed.filter((i) => this.crew[i].alive).length;
+    const aliveN = this.crew.filter((x) => x.alive).length;
+    this.maybeMilestone(aliveN); // 📉 the herd count always gets through
     if (slain) this.toast(left > 0 ? `🗡️ A beast is DOWN — that was ${c.name}! (${left} still prowl…)` : `🗡️ The last beast is DOWN! That was ${c.name}…`, "good");
-    else this.toast(`💀 ${c.name} was slain by the beast!`, "bad");
+    else {
+      const d2p = dist2(this.player.x, this.player.z, c.x, c.z);
+      if (d2p < 30 * 30 && this.botDeathCd <= 0) {
+        this.botDeathCd = 6;
+        this.toast(`💀 ${c.name} was slain by the beast! (${aliveN} strangers left)`, "bad");
+      }
+    }
     if (this.crew.every((x) => !x.alive) && !this.mpOthersAlive()) {
       if (this.youPossessed && this.phase === "night") this.winGame("beast");
       else if (!this.youPossessed) this.winGame("solo");
