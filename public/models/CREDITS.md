@@ -23,5 +23,17 @@ Licensed **CC BY 4.0**.
 | `arched-black-cat-407cf6.glb` | Arched Black Cat (Halloween Night kit) | — |
 | `giant-yard-spider-70ddce.glb` | Giant Yard Spider (Halloween Night kit) | — |
 
+## Airport kit (`models/airport/` — 7Nights International Airport)
+
+From the [polyfork Airport kit](https://polyfork.dev/kit/airport-43b137) —
+helicopter, business jet, cargo freighter, narrow-body & widebody airliners,
+regional turboprop, single-engine & twin-piston light aircraft, control tower,
+fuel-farm tank, ground power unit, container dolly, spare engine stand,
+wheeled fire extinguisher, self check-in kiosk, x-ray baggage conveyor,
+passport control booth, walk-through security arch, queue stanchion run,
+taxi-rank sign, lifting barrier arm, windsock, VOR & rotating beacons,
+runway distance board, guard lights, PAPI unit, approach lighting bar,
+apron/taxiway tiles and the flight attendant.
+
 Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
 (https://creativecommons.org/licenses/by/4.0/)

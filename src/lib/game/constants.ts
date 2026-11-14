@@ -37,12 +37,16 @@ export const AIRPORT = {
   helipad: { x: 188, z: 278, r: 6 },
   /** VOR navigation beacon on its grass pad NE of the runway */
   vor: { x: 400, z: 283 },
-  vorCol: { x: 400, z: 283, r: 2 },
+  vorCol: { x: 400, z: 283, r: 2.4 },
   fuelTanks: [{ x: 368, z: 340 }, { x: 378, z: 340 }, { x: 388, z: 340 }],
   pumpHouse: { x: 399, z: 341 },
-  /** concrete freight apron slab behind the hangar (visual; w/d are half-extents) */
-  freightSlab: { x: 338, z: 317.5, w: 28, d: 8.5 },
-  cargo: { x: 338, z: 316, rot: 0 },
+  /** concrete freight apron slab behind the hangar, widened for the kit fleet (visual; w/d are half-extents) */
+  freightSlab: { x: 357, z: 318, w: 51, d: 10 },
+  cargo: { x: 330, z: 318, rot: 0 },
+  /** kit narrow-body airliner parked east of the freighter (nose west) */
+  airliner: { x: 362, z: 318, rot: Math.PI },
+  /** kit regional turboprop at the east end of the freight row (nose west) */
+  turboprop: { x: 390, z: 318, rot: Math.PI },
   /** barrier gate house west of the apron (lifting arm pivots 5m east of it) */
   gate: { x: 206, z: 320.5 },
   /** runway distance-remaining boards (north shoulder, counting down to the east end) */
@@ -51,7 +55,10 @@ export const AIRPORT = {
   /* ---- kit: parked light aircraft ---- */
   jet: { x: 298, z: 324, rot: Math.PI },
   piston: { x: 201, z: 287.5, rot: 0.9 },
-  pistonCol: { x: 201, z: 287.5, r: 1.35 },
+  pistonCols: [{ x: 199.5, z: 285, r: 1.3 }, { x: 203, z: 290, r: 1.3 }],
+  /** kit single-engine light aircraft on the west grass pad */
+  singleprop: { x: 196, z: 302, rot: 0.9 },
+  singlepropCol: { x: 196, z: 302, r: 1.3 },
   /** helicopter parked on the pad (faces ~34° east of north) */
   heli: { x: 188, z: 278, rot: 0.6 },
 
@@ -67,13 +74,15 @@ export const AIRPORT = {
 
   /* ---- kit: apron service ---- */
   dollies: [{ x: 312, z: 321.5 }, { x: 315.5, z: 321.5 }, { x: 313.8, z: 318 }],
-  spareEngine: { x: 320, z: 325.5 },
-  extinguisher: { x: 352, z: 325.5 },
+  spareEngine: { x: 316.5, z: 324.5 },
+  extinguisher: { x: 222, z: 331 },
 
   /* fuselage colliders for the parked aircraft & helicopter (worldgen circles) */
-  jetCols: [{ x: 295.5, z: 324, r: 1.3 }, { x: 300.5, z: 324, r: 1.25 }],
-  cargoCols: [{ x: 332.5, z: 316, r: 1.6 }, { x: 338, z: 316, r: 1.7 }, { x: 343.5, z: 316, r: 1.6 }],
-  heliCols: [{ x: 188, z: 278, r: 1.5 }],
+  jetCols: [{ x: 292, z: 324, r: 1.5 }, { x: 298, z: 324, r: 1.5 }, { x: 304, z: 324, r: 1.5 }],
+  cargoCols: [{ x: 322, z: 318, r: 1.8 }, { x: 329, z: 318, r: 1.8 }, { x: 336, z: 318, r: 1.8 }],
+  airlinerCols: [{ x: 356, z: 318, r: 1.7 }, { x: 368, z: 318, r: 1.7 }],
+  turbopropCols: [{ x: 384, z: 318, r: 1.6 }, { x: 396, z: 318, r: 1.6 }],
+  heliCols: [{ x: 186.5, z: 276.5, r: 1.5 }, { x: 189.5, z: 279.5, r: 1.5 }],
 } as const;
 export const PLANE_COUNT = 3;
 export const DAY_SECONDS = 360;
