@@ -201,16 +201,17 @@ export function KitFuelTanks() {
 /* ---------------- runway furniture ---------------- */
 
 /** approach lighting bar — kit light frames ladder the extended centreline
- *  before the west threshold, with a 3-unit crossbar at the 300m mark */
+ *  before the west threshold, with a 3-unit crossbar at the 300m mark.
+ *  Kept clear of the ring highway's airport bypass (which passes ~10m west). */
 export function KitApproachLights() {
-  const xs = [218, 212, 206, 194];
+  const xs = [218, 212];
   return (
     <group>
       {xs.map((x) => (
         <KitProp key={x} kind="approachBar" x={x} z={AIRPORT.rz} rot={Math.PI / 2} scale={1.3} />
       ))}
       {[295.6, 300, 304.4].map((z) => (
-        <KitProp key={z} kind="approachBar" x={200} z={z} rot={Math.PI / 2} scale={1.3} />
+        <KitProp key={z} kind="approachBar" x={206} z={z} rot={Math.PI / 2} scale={1.3} />
       ))}
     </group>
   );
@@ -281,8 +282,8 @@ export function KitBeacon() {
   );
 }
 
-/** windsock by the west threshold — kit mast + sock, the sock sways with the
- *  breeze via its swivel node */
+/** windsock on the south lawn beside the helipad — kit mast + sock, the sock
+ *  sways with the breeze via its swivel node */
 export function KitWindsock() {
   const spawn = useKitModel("windsock");
   const sway = useRef<THREE.Object3D | null>(null);
@@ -294,7 +295,7 @@ export function KitWindsock() {
     if (sway.current) sway.current.rotation.y = Math.sin(s.clock.elapsedTime * 0.8) * 0.5;
   });
   if (!spawn) return null;
-  return <primitive object={spawn.root} position={[AIRPORT.rx0 - 14, 0, AIRPORT.rz - 12]} />;
+  return <primitive object={spawn.root} position={[AIRPORT.windsock.x, 0, AIRPORT.windsock.z]} />;
 }
 
 /** VOR navigation beacon on its grass pad NE of the runway (pad stays

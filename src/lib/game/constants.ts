@@ -16,15 +16,17 @@ export const GRAVEYARD = { x: -255, z: 215, r: 45 } as const;
 export const SPAWN = { x: 0, z: 6 } as const;
 
 /* ---------- 7Nights International Airport (south-east, outside the ring highway) ----------
-   A working airport: the runway is flat & walkable, the terminal / tower / hangar are solid.
-   Bot planes taxi out, take off, circle the city and land back — all on their own.
-   Built out with the airport city-kit: marked & lighted runway (edge/threshold lights,
-   approach bar, PAPI, distance boards, guard lights), VOR pad, rotating tower beacon,
-   fuel farm, freight apron with parked aircraft, helipad, an open-air departures strip
-   (check-in kiosks, queue stanchions, x-ray conveyor, security arch, passport booth,
-   taxi rank sign) and service props (ground power units, container dollies, spare
-   engine, barrier gate, fire extinguisher). Every solid piece is pushed into the world
-   by worldgen; visuals render in <Airport> (single source of truth).                 */
+   A working airport: the runway is flat & walkable, the terminal / tower are solid and
+   the hangar has an OPEN shutter — walk in, the business jet stands inside. The ring
+   highway no longer cuts the west lawn: it breaks for the plot and swings around the
+   north-west corner on a straight connector (see ringTrafficPoint in worldgen).
+   Layout reads like a real airfield: taxi lane + stand lead-ins + hold-short bars along
+   the apron, the fleet parked where fleets park — airliners nose-in on the freight
+   apron, the bizjet inside the hangar, the twin-prop beside its west wall, light
+   aircraft & the widebody stored on the back lawn, and the helicopter on a dedicated
+   pad on the south lawn (well clear of every road). Bot planes taxi out, take off,
+   circle the city and land back — all on their own. Every solid piece is pushed into
+   the world by worldgen; visuals render in <Airport> (single source of truth).   */
 export const AIRPORT = {
   /** runway along +x at z = rz, thresholds at rx0/rx1 (take-off & landing heading east→west) */
   rx0: 225, rx1: 385, rz: 300, rw: 16,
@@ -34,7 +36,8 @@ export const AIRPORT = {
   hangar: { x: 336, z: 342, w: 24, d: 14, h: 13 },
 
   /* ---- kit: airside ---- */
-  helipad: { x: 188, z: 278, r: 6 },
+  /** helipad on the south lawn, behind the tower — dedicated, far from every road */
+  helipad: { x: 300, z: 357, r: 6 },
   /** VOR navigation beacon on its grass pad NE of the runway */
   vor: { x: 400, z: 283 },
   vorCol: { x: 400, z: 283, r: 2.4 },
@@ -46,21 +49,28 @@ export const AIRPORT = {
   /** kit narrow-body airliner parked east of the freighter (nose west) */
   airliner: { x: 362, z: 318, rot: Math.PI },
   /** kit regional turboprop at the east end of the freight row (nose west) */
-  turboprop: { x: 390, z: 318, rot: Math.PI },
+  turboprop: { x: 386, z: 318, rot: Math.PI },
   /** barrier gate house west of the apron (lifting arm pivots 5m east of it) */
   gate: { x: 206, z: 320.5 },
   /** runway distance-remaining boards (north shoulder, counting down to the east end) */
   boards: [{ x: 350, n: "1" }, { x: 320, n: "2" }, { x: 290, n: "3" }],
 
-  /* ---- kit: parked light aircraft ---- */
-  jet: { x: 298, z: 324, rot: Math.PI },
-  piston: { x: 201, z: 287.5, rot: 0.9 },
-  pistonCols: [{ x: 199.5, z: 285, r: 1.3 }, { x: 203, z: 290, r: 1.3 }],
-  /** kit single-engine light aircraft on the west grass pad */
-  singleprop: { x: 196, z: 302, rot: 0.9 },
-  singlepropCol: { x: 196, z: 302, r: 1.3 },
+  /* ---- kit: parked light aircraft ----
+   * Fleet storage reads like a real airfield: the bizjet stands INSIDE the hangar
+   * (nose to the open shutter), the twin-prop beside its west wall, the widebody
+   * & single-prop stored on the back lawn — nothing parked between roads.       */
+  /** business jet inside the hangar, facing the open shutter (nose north) */
+  jet: { x: 336, z: 341, rot: Math.PI / 2 },
+  /** twin-engine piston parked in the service yard west of the hangar */
+  piston: { x: 303, z: 342, rot: Math.PI / 2 },
+  pistonCols: [{ x: 303, z: 339.5, r: 1.3 }, { x: 303, z: 344.5, r: 1.3 }],
+  /** kit single-engine light aircraft stored on the back lawn (west end) */
+  singleprop: { x: 232, z: 359, rot: -0.75 },
+  singlepropCol: { x: 232, z: 359, r: 1.3 },
   /** helicopter parked on the pad (faces ~34° east of north) */
-  heli: { x: 188, z: 278, rot: 0.6 },
+  heli: { x: 300, z: 357, rot: 0.6 },
+  /** kit windsock on the lawn beside the helipad */
+  windsock: { x: 287, z: 358 },
 
   /* ---- kit: open-air terminal strip along the glass front ---- */
   kiosks: [{ x: 236, z: 331.2 }, { x: 241, z: 331.2 }, { x: 246, z: 331.2 }],
@@ -78,11 +88,11 @@ export const AIRPORT = {
   extinguisher: { x: 222, z: 331 },
 
   /* fuselage colliders for the parked aircraft & helicopter (worldgen circles) */
-  jetCols: [{ x: 292, z: 324, r: 1.5 }, { x: 298, z: 324, r: 1.5 }, { x: 304, z: 324, r: 1.5 }],
+  jetCols: [{ x: 336, z: 337.5, r: 1.5 }, { x: 336, z: 341, r: 1.5 }, { x: 336, z: 344.5, r: 1.5 }],
   cargoCols: [{ x: 322, z: 318, r: 1.8 }, { x: 329, z: 318, r: 1.8 }, { x: 336, z: 318, r: 1.8 }],
   airlinerCols: [{ x: 356, z: 318, r: 1.7 }, { x: 368, z: 318, r: 1.7 }],
-  turbopropCols: [{ x: 384, z: 318, r: 1.6 }, { x: 396, z: 318, r: 1.6 }],
-  heliCols: [{ x: 186.5, z: 276.5, r: 1.5 }, { x: 189.5, z: 279.5, r: 1.5 }],
+  turbopropCols: [{ x: 381, z: 318, r: 1.6 }, { x: 391, z: 318, r: 1.6 }],
+  heliCols: [{ x: 298.5, z: 355.5, r: 1.5 }, { x: 301.5, z: 358.5, r: 1.5 }],
 } as const;
 export const PLANE_COUNT = 3;
 export const DAY_SECONDS = 360;

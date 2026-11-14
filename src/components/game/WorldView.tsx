@@ -8,7 +8,7 @@ import {
   AIRPORT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, TREE_FALL_S, TREE_WOBBLE_S, WALL_RADIUS, stationCage, stationGate,
 } from "@/lib/game/constants";
 import {
-  AVENUE, BARN_BASE, FARMKIT, FIELDS_BASE, GATE, generateWorld, GRAVEKIT, HOSPITAL, inAirportPlot, MALL, MAIN_ROAD, NYC, PARK, RAILWAY, RAILWAY_crossCottage, RAILWAY_signalBox, RAILWAY_stationHouse, RAILWAY_waterTower, railPoint, ROAD_W, ROADS, RING_R, RING_W, SCHOOL, TOWN_SQUARE, terrainHeight,
+  AVENUE, BARN_BASE, FARMKIT, FIELDS_BASE, GATE, generateWorld, GRAVEKIT, HOSPITAL, inAirportPlot, MALL, MAIN_ROAD, NYC, PARK, RAILWAY, RAILWAY_crossCottage, RAILWAY_signalBox, RAILWAY_stationHouse, RAILWAY_waterTower, railPoint, RING_GAP, RING_R, RING_W, ROAD_W, ROADS, SCHOOL, TOWN_SQUARE, terrainHeight,
   type World,
 } from "@/lib/game/worldgen";
 import { nameTag } from "@/lib/game/character";
@@ -55,9 +55,15 @@ function Ring({ a, b, color, y }: { a: number; b: number; color: string; y: numb
   );
 }
 
-/* ------------------------- roads: grid + main road + ring highway + vista ------------------------- */
+/* ------------------------- roads: grid + main road + ring highway + vista -------------------------
+ * ✈️ The ring highway breaks for the airport and swings around its north-west
+ * corner on a straight connector chord (RING_GAP + matching ringTrafficPoint
+ * in the engine) — no more road over the runway's approach. The z=270 street
+ * now runs east to meet the ring at that junction. */
 function Roads() {
   const SPAN = 320;
+  /** east end of the z=270 street — reaches the ring junction by the airport */
+  const STREET_END = 248;
   const dashes = useMemo(() => {
     const out: { x: number; z: number; rot: number }[] = [];
     for (const k of ROADS)
@@ -67,16 +73,28 @@ function Roads() {
         // x=202.5 / x=270 lanes and the z=270 lane used to paint stripes right
         // across the runway markings
         if (k !== 0 && !inAirportPlot(k, d)) out.push({ x: k, z: d, rot: 0 }); // x=0 vertical is the wide MAIN ROAD now
-        if (!inAirportPlot(d, k)) out.push({ x: d, z: k, rot: Math.PI / 2 });
+        // ✈️ the z=270 street extension runs east across the plot's north-west
+        // corner grass to meet the ring junction (x ≤ STREET_END)
+        if (!inAirportPlot(d, k) || (k === 270 && d > AIRPORT.rx0 - 46 && d < STREET_END)) out.push({ x: d, z: k, rot: Math.PI / 2 });
       }
     for (let d = MAIN_ROAD.z0 + 9; d <= MAIN_ROAD.z1; d += 9) {
       if (ROADS.some((o) => Math.abs(d - o) < 11)) continue;
       out.push({ x: MAIN_ROAD.x, z: d, rot: 0 });
     }
     for (let d = AVENUE.z0 + 6; d >= AVENUE.z1 + 5; d -= 8) out.push({ x: AVENUE.x, z: d, rot: 0 });
+    // ✈️ centre dashes along the ring's airport bypass chord
+    const gx = RING_R * Math.cos(RING_GAP.a0), gz = RING_R * Math.sin(RING_GAP.a0);
+    const hx = RING_R * Math.cos(RING_GAP.a1), hz = RING_R * Math.sin(RING_GAP.a1);
+    const crot = Math.atan2(-(hx - gx), -(hz - gz));
+    for (const s of [0.12, 0.26, 0.4, 0.54, 0.68, 0.82])
+      out.push({ x: gx + (hx - gx) * s, z: gz + (hz - gz) * s, rot: crot });
     return out;
   }, []);
-  const ringDashes = useMemo(() => Array.from({ length: 56 }, (_, i) => (i / 56) * Math.PI * 2), []);
+  const ringDashes = useMemo(
+    () => Array.from({ length: 56 }, (_, i) => (i / 56) * Math.PI * 2)
+      .filter((a) => a < RING_GAP.a0 || a > RING_GAP.a1), // ✈️ skip the airport bypass gap
+    [],
+  );
 
   const ref = useRef<THREE.InstancedMesh>(null!);
   const ringRef = useRef<THREE.InstancedMesh>(null!);
@@ -115,10 +133,10 @@ function Roads() {
         lane.current.setMatrixAt(i++, tmp.matrix);
       }
       tmp.rotation.set(-Math.PI / 2, 0, 0);
-      // ✈️ the eastbound z=270 lane stops at the plot's west edge too
+      // ✈️ the eastbound z=270 lane now runs through to the ring junction —
+      // the airport bypass connector carries ring traffic around the corner
       if (k > AIRPORT.rz - 34 && k < AIRPORT.terminal.z + AIRPORT.terminal.d + 12) {
-        const xEnd = AIRPORT.rx0 - 46;
-        tmp.position.set((-SPAN + xEnd) / 2, 0.07, k); tmp.scale.set(xEnd + SPAN, ROAD_W, 1); tmp.updateMatrix();
+        tmp.position.set((-SPAN + STREET_END) / 2, 0.07, k); tmp.scale.set(STREET_END + SPAN, ROAD_W, 1); tmp.updateMatrix();
       } else {
         tmp.position.set(0, 0.07, k); tmp.scale.set(SPAN * 2, ROAD_W, 1); tmp.updateMatrix();
       }
@@ -132,17 +150,30 @@ function Roads() {
     tmp.position.set(AVENUE.x, 0.07, (AVENUE.z0 + AVENUE.z1) / 2);
     tmp.scale.set(AVENUE.w, AVENUE.z0 - AVENUE.z1, 1); tmp.updateMatrix();
     lane.current.setMatrixAt(i++, tmp.matrix);
+    // ✈️ the airport bypass connector — a straight chord joining the two ring
+    // ends across the plot's empty north-west corner (drawn 2mm lower so it
+    // merges under the z=270 street at the junction — no z-fighting)
+    const gx = RING_R * Math.cos(RING_GAP.a0), gz = RING_R * Math.sin(RING_GAP.a0);
+    const hx = RING_R * Math.cos(RING_GAP.a1), hz = RING_R * Math.sin(RING_GAP.a1);
+    const dl = Math.hypot(hx - gx, hz - gz);
+    tmp.rotation.set(-Math.PI / 2, 0, -Math.atan2(hz - gz, hx - gx));
+    tmp.position.set((gx + hx) / 2, 0.068, (gz + hz) / 2);
+    tmp.scale.set(dl + 14, RING_W, 1); tmp.updateMatrix();
+    lane.current.setMatrixAt(i++, tmp.matrix);
     tmp.rotation.set(0, 0, 0); tmp.scale.setScalar(1);
     lane.current.instanceMatrix.needsUpdate = true;
   }, [dashes, ringDashes]);
   return (
     <>
-      <instancedMesh ref={lane} args={[undefined, undefined, 2 * ROADS.length + 2]}>
+      <instancedMesh ref={lane} args={[undefined, undefined, 2 * ROADS.length + 3]}>
         <planeGeometry />
         <meshLambertMaterial color="#4a4a52" />
       </instancedMesh>
+      {/* ✈️ ring highway — one arc sweep with the airport bypass gap left open.
+       *  rotation-x=-π/2 MIRRORS ring geometry angles (θ → world −θ), so the
+       *  gap at world [a0, a1] starts at geometry −a0 and sweeps 2π − (a1−a0). */}
       <mesh rotation-x={-Math.PI / 2} position-y={0.08}>
-        <ringGeometry args={[RING_R - RING_W / 2, RING_R + RING_W / 2, 96]} />
+        <ringGeometry args={[RING_R - RING_W / 2, RING_R + RING_W / 2, 96, 1, -RING_GAP.a0, Math.PI * 2 - (RING_GAP.a1 - RING_GAP.a0)]} />
         <meshLambertMaterial color="#45454d" />
       </mesh>
       <instancedMesh ref={ringRef} args={[undefined, undefined, ringDashes.length]}>
@@ -3301,24 +3332,63 @@ function RunwayLights() {
   );
 }
 
-/** yellow taxi guide: dashed centreline on the connector + lead-in to the stands */
+/* ✈️ proper taxi signals: taxilane along the apron's north edge, stand lead-ins
+ * to the three airliner slots, the north connector to the runway threshold with
+ * hold-short double bars at the pavement edge — the full painted route the bot
+ * airliners actually fly (staging at rx0, rz+10 → line-up on the runway). */
 function TaxiLines() {
-  const dashes = useMemo(() => {
-    const out: number[] = [];
-    for (let x = 207; x <= 223; x += 3.4) out.push(x);
+  const stands = [AIRPORT.terminal.x - 26, AIRPORT.terminal.x - 4, AIRPORT.terminal.x + 18];
+  const connX = AIRPORT.rx0 + 0.5;               // connector centreline (staging point x)
+  const laneZ = AIRPORT.apronZ - 7;              // taxilane along the apron's north edge
+  return (
+    <group>
+      {/* taxilane — bots taxi west along here from the stands */}
+      <mesh rotation-x={-Math.PI / 2} position={[254, 0.055, laneZ]}>
+        <planeGeometry args={[56, 0.42]} />
+        <meshBasicMaterial color="#e8b83a" />
+      </mesh>
+      {/* stand lead-ins into the three airliner slots */}
+      {stands.map((x) => (
+        <mesh key={x} rotation-x={-Math.PI / 2} position={[x, 0.055, AIRPORT.apronZ - 1]}>
+          <planeGeometry args={[0.42, 7]} />
+          <meshBasicMaterial color="#e8b83a" />
+        </mesh>
+      ))}
+      {/* north connector from the lane to the runway edge */}
+      <mesh rotation-x={-Math.PI / 2} position={[connX, 0.055, 313.75]}>
+        <planeGeometry args={[0.42, 6.5]} />
+        <meshBasicMaterial color="#e8b83a" />
+      </mesh>
+      {/* hold-short double bar across the connector at the runway pavement edge */}
+      {[308.8, 310].map((z) => (
+        <mesh key={z} rotation-x={-Math.PI / 2} position={[connX, 0.057, z]}>
+          <planeGeometry args={[8, 0.5]} />
+          <meshBasicMaterial color="#e8b83a" />
+        </mesh>
+      ))}
+    </group>
+  );
+}
+
+/** ✈️ blue taxiway edge lights flanking the connector and the taxilane —
+ *  the classic airport blue that guides ground traffic after dark */
+function TaxiLights() {
+  const pts = useMemo(() => {
+    const connX = AIRPORT.rx0 + 0.5;
+    const laneZ = AIRPORT.apronZ - 7;
+    const out: [number, number][] = [];
+    for (const z of [312, 315, 318]) out.push([connX - 3.6, z], [connX + 3.6, z]);
+    for (const x of [232, 244, 256, 268, 280]) out.push([x, laneZ - 3.6], [x, laneZ + 3.6]);
     return out;
   }, []);
   return (
     <group>
-      {dashes.map((x) => (
-        <mesh key={x} rotation-x={-Math.PI / 2} position={[x, 0.055, AIRPORT.rz + 8]}>
-          <planeGeometry args={[1.9, 0.35]} />
-          <meshBasicMaterial color="#e8b83a" />
+      {pts.map(([x, z], i) => (
+        <mesh key={i} position={[x, 0.22, z]}>
+          <sphereGeometry args={[0.16, 6, 5]} />
+          <meshBasicMaterial color="#4aa3e8" />
         </mesh>
       ))}
-      <group position={[227.25, 0, 317]} rotation-y={-1.287}>
-        <mesh rotation-x={-Math.PI / 2}><planeGeometry args={[12.5, 0.35]} /><meshBasicMaterial color="#e8b83a" /></mesh>
-      </group>
     </group>
   );
 }
@@ -3442,6 +3512,7 @@ function Airport() {
       <KitGuardLights />
       <KitDistanceBoards />
       <TaxiLines />
+      <TaxiLights />
       {/* apron + taxiway */}
       <mesh rotation-x={-Math.PI / 2} position={[AIRPORT.terminal.x + 2, 0.04, (AIRPORT.rz + AIRPORT.terminal.z) / 2 + 1]} receiveShadow>
         <planeGeometry args={[92, AIRPORT.terminal.z - AIRPORT.rz - 8]} />
@@ -3487,11 +3558,33 @@ function Airport() {
       </mesh>
       {/* kit rotating airport beacon above the radar */}
       <KitBeacon />
-      {/* hangar door */}
-      <mesh position={[AIRPORT.hangar.x, 4.6, AIRPORT.hangar.z - AIRPORT.hangar.d - 0.08]}>
-        <boxGeometry args={[AIRPORT.hangar.w * 2 - 4, 9.2, 0.3]} />
+      {/* ✈️ hangar — the shutter stands OPEN: header beam over the 46-wide opening,
+       *  rolled shutter drum, roof slab and a lit concrete floor. The three walls
+       *  are worldgen buildings (walk-through) — kids can walk in and see the
+       *  bizjet parked nose-out inside. */}
+      <mesh position={[AIRPORT.hangar.x, 11.1, AIRPORT.hangar.z - AIRPORT.hangar.d]}>
+        <boxGeometry args={[AIRPORT.hangar.w * 2 - 2, 3.8, 0.7]} />
+        <meshLambertMaterial color="#b8bec8" />
+      </mesh>
+      <mesh rotation-z={Math.PI / 2} position={[AIRPORT.hangar.x, 8.9, AIRPORT.hangar.z - AIRPORT.hangar.d + 0.15]}>
+        <cylinderGeometry args={[0.55, 0.55, AIRPORT.hangar.w * 2 - 3, 10]} />
+        <meshLambertMaterial color="#5a6472" />
+      </mesh>
+      <mesh position={[AIRPORT.hangar.x, 13.45, AIRPORT.hangar.z]}>
+        <boxGeometry args={[AIRPORT.hangar.w * 2 + 1.6, 1.3, AIRPORT.hangar.d * 2 + 1.6]} />
         <meshLambertMaterial color="#7a828e" />
       </mesh>
+      <mesh rotation-x={-Math.PI / 2} position={[AIRPORT.hangar.x, 0.048, AIRPORT.hangar.z + 0.5]} receiveShadow>
+        <planeGeometry args={[AIRPORT.hangar.w * 2 - 2, AIRPORT.hangar.d * 2 - 1]} />
+        <meshLambertMaterial color="#8d8d94" />
+      </mesh>
+      {/* yellow taxi-in guide from the freight apron into the hangar */}
+      {[326, 329, 332, 335].map((z) => (
+        <mesh key={z} rotation-x={-Math.PI / 2} position={[AIRPORT.hangar.x, 0.05, z]}>
+          <planeGeometry args={[0.4, 1.9]} />
+          <meshBasicMaterial color="#e8b83a" />
+        </mesh>
+      ))}
       {/* kit fleet: freight row (cargo freighter, airliner, turboprop) + light aircraft */}
       <KitFreightFleet />
       <KitLightAircraft />
@@ -3501,7 +3594,7 @@ function Airport() {
       <KitBarrier />
       <FuelFarm />
       <KitFuelTanks />
-      {/* helipad on the west grass, VOR pad north-east of the runway */}
+      {/* helipad on the south lawn (behind the tower), VOR pad north-east of the runway */}
       <KitHelipad />
       <mesh rotation-x={-Math.PI / 2} position={[AIRPORT.vor.x, 0.046, AIRPORT.vor.z]}><circleGeometry args={[3.4, 24]} /><meshLambertMaterial color="#8d8d94" /></mesh>
       <KitVor />

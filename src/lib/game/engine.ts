@@ -27,7 +27,7 @@ import {
   type AnimalKind, type Appearance, type Phase, type PolicePerk, type PowerKind, type Side, type ToolKind, type Zone, zoneOf, ZONE_TOAST,
 } from "./constants";
 import { clamp, mulberry32, range } from "./rng";
-import { addDynamicCircle, freeSpot, lineClear, refreshCarCircle, resolve, RING_R, ROADS, scatterSpots, spotNear, terrainHeight, TOWN_SQUARE, type CircleCollider, type World } from "./worldgen";
+import { addDynamicCircle, freeSpot, lineClear, refreshCarCircle, resolve, ringTrafficPoint, RING_R, ROADS, scatterSpots, spotNear, terrainHeight, TOWN_SQUARE, type CircleCollider, type World } from "./worldgen";
 import { nightFactor, newBody, stepBody, stepNpc, type Body, type SteerMemory } from "./sim";
 import { sfx, startDrone, stopDrone, setInsects, stopInsects } from "./audio";
 import { preloadModels } from "./models";
@@ -1087,8 +1087,8 @@ export class GameEngine {
         x: 0, z: 0, rot: 0,
       });
       const t = this.traffic[this.traffic.length - 1];
-      t.x = Math.cos(t.a) * t.r; t.z = Math.sin(t.a) * t.r;
-      t.rot = t.dir > 0 ? -t.a : Math.PI - t.a; // clockwise lane: heading = velocity (was π+a — cars drove sideways!)
+      const pt = ringTrafficPoint(t.a, t.r, t.dir);
+      t.x = pt.x; t.z = pt.z; t.rot = pt.rot;
     }
     // police side: a slice of the civilians become vote-runners (the player hunts THEM)
     this.assignRunners();
@@ -4932,12 +4932,13 @@ export class GameEngine {
     // 🧱 THE WALL — outside the safe circle your life drains away (PUBG blue-zone)
     this.stepZone(dt);
 
-    /* --- ring-road traffic: solid cars that bonk careless runners --- */
+    /* --- ring-road traffic: solid cars that bonk careless runners ---
+     * ✈️ ringTrafficPoint swings cars around the airport's NW corner on the
+     * bypass chord — the highway never crosses the airport plot. */
     for (const t of this.traffic) {
       t.a += t.sp * t.dir * dt;
-      t.x = Math.cos(t.a) * t.r;
-      t.z = Math.sin(t.a) * t.r;
-      t.rot = t.dir > 0 ? -t.a : Math.PI - t.a; // clockwise lane: heading = velocity (was π+a — cars drove sideways!)
+      const pt = ringTrafficPoint(t.a, t.r, t.dir);
+      t.x = pt.x; t.z = pt.z; t.rot = pt.rot;
       if (this.detainedT > 0 || this.drive) continue; // sitting out detention / safe inside a vehicle — traffic can't touch you
       const fx = Math.sin(t.rot), fz = Math.cos(t.rot);
       const tax = VEHICLE_AXLE[t.t % VEHICLE_AXLE.length];

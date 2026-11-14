@@ -299,6 +299,36 @@ export const ROAD_W = 14;                          // full width
 export const MAIN_ROAD = { x: 0, z0: -135, z1: 368, w: 24 };
 export const RING_R = 355;                         // ring highway centre radius
 export const RING_W = 12;
+
+/* ---------- ring-highway airport bypass ----------
+ * The SE arc of the ring used to drive straight across the airport's west lawn —
+ * over the runway threshold's approach lights, the windsock and two parked light
+ * aircraft. The ring now BREAKS for a 13.5° gap and a straight connector chord
+ * swings it around the airport's north-west corner (through empty grass, well
+ * clear of the runway slab, the taxi connector and the approach bars). Traffic
+ * rides the chord with speed continuity: chord length ≈ arc length.           */
+const DEG = Math.PI / 180;
+export const RING_GAP = { a0: 47.5 * DEG, a1: 61 * DEG } as const;
+const GAP_A = { x: RING_R * Math.cos(RING_GAP.a0), z: RING_R * Math.sin(RING_GAP.a0) };
+const GAP_B = { x: RING_R * Math.cos(RING_GAP.a1), z: RING_R * Math.sin(RING_GAP.a1) };
+const GAP_DX = GAP_B.x - GAP_A.x, GAP_DZ = GAP_B.z - GAP_A.z;
+const GAP_LEN = Math.hypot(GAP_DX, GAP_DZ);
+/** Position + heading of a ring vehicle at angle `a` on lane radius `r`.
+ *  Inside the airport gap the car rides the straight connector chord (offset
+ *  sideways by its lane offset), keeping the highway off the airport plot.
+ *  Heading convention: forward = (sin rot, cos rot), matching parked cars. */
+export function ringTrafficPoint(a: number, r: number, dir: 1 | -1): { x: number; z: number; rot: number } {
+  const na = ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+  if (na >= RING_GAP.a0 && na <= RING_GAP.a1) {
+    const s = (na - RING_GAP.a0) / (RING_GAP.a1 - RING_GAP.a0);
+    // outward lane offset — the chord's outward side matches the arc's
+    const off = r - RING_R;
+    const x = GAP_A.x + GAP_DX * s + (GAP_DZ / GAP_LEN) * off;
+    const z = GAP_A.z + GAP_DZ * s + (-GAP_DX / GAP_LEN) * off;
+    return { x, z, rot: Math.atan2(dir * GAP_DX, dir * GAP_DZ) };
+  }
+  return { x: Math.cos(a) * r, z: Math.sin(a) * r, rot: dir > 0 ? -a : Math.PI - a };
+}
 export const AVENUE = { x: 0, z0: -135, z1: -188, w: 24 }; // central vista up to the museum
 export const PARK = { x: -33.75, z: -33.75, r: 27 };
 export const MALL = { x: 33.75, z: 47 };
@@ -886,6 +916,8 @@ export function generateWorld(seed = WORLD_SEED): World {
   }
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2;
+    // ✈️ skip the lamp inside the ring's airport bypass gap (the road swings inside there)
+    if (a > RING_GAP.a0 - 0.06 && a < RING_GAP.a1 + 0.06) continue;
     pushLamp(Math.cos(a) * (RING_R + RING_W / 2 + 2), Math.sin(a) * (RING_R + RING_W / 2 + 2));
   }
   pushLamp(15, -150); pushLamp(-15, -164); pushLamp(15, -178);
@@ -1456,18 +1488,27 @@ export function generateWorld(seed = WORLD_SEED): World {
   }
 
   /* ---- 7Nights International Airport (south-east, outside the ring highway) ----
-   * Terminal + control tower + hangar are solid boxes; the runway & apron stay
-   * flat and walkable so kids can race the planes. Planes live in the engine. */
+   * Terminal + control tower are solid boxes; the hangar is three walk-through
+   * walls with an OPEN front shutter — kids can walk in and admire the bizjet
+   * parked inside. The runway & apron stay flat and walkable so kids can race
+   * the planes. Planes live in the engine. */
   const AP_WALL = 0xe8e6e0;      // terminal shell
   const AP_GLASS = 0x9fc4d8;     // glass band colour (visuals drawn in WorldView)
   const AP_ROOF = 0x5a6472;
   push(AIRPORT.terminal.x, AIRPORT.terminal.z, AIRPORT.terminal.w, AIRPORT.terminal.d, AIRPORT.terminal.h, 0, AP_WALL, AP_ROOF);
   // tower shaft (the glazed cab + rotating radar are drawn by <Airport> in WorldView)
   push(AIRPORT.tower.x, AIRPORT.tower.z, AIRPORT.tower.r, AIRPORT.tower.r, AIRPORT.tower.h, 0, 0xd8d5cc, AP_ROOF);
-  // hangar
-  push(AIRPORT.hangar.x, AIRPORT.hangar.z, AIRPORT.hangar.w, AIRPORT.hangar.d, AIRPORT.hangar.h, 0, 0xb8bec8, 0x7a828e);
+  // hangar — three solid walls; the front (runway side) stays open under the
+  // rolled-up shutter (header + drum + roof drawn by <Airport> in WorldView)
+  const HW = AIRPORT.hangar.w, HD = AIRPORT.hangar.d, HH = AIRPORT.hangar.h;
+  push(AIRPORT.hangar.x, AIRPORT.hangar.z + HD - 0.5, HW, 0.5, HH, 3, 0xb8bec8, 0x7a828e);          // back wall
+  push(AIRPORT.hangar.x - HW + 0.5, AIRPORT.hangar.z, 0.5, HD, HH, 3, 0xb8bec8, 0x7a828e);          // west wall
+  push(AIRPORT.hangar.x + HW - 0.5, AIRPORT.hangar.z, 0.5, HD, HH, 3, 0xb8bec8, 0x7a828e);          // east wall
   // apron floodlights + a few staff cars by the terminal
-  pushLamp(AIRPORT.terminal.x - 18, AIRPORT.terminal.z - 14); pushLamp(AIRPORT.terminal.x + 18, AIRPORT.terminal.z - 14); pushLamp(AIRPORT.hangar.x + 16, AIRPORT.hangar.z - 12);
+  pushLamp(AIRPORT.terminal.x - 18, AIRPORT.terminal.z - 14); pushLamp(AIRPORT.terminal.x + 18, AIRPORT.terminal.z - 14);
+  pushLamp(AIRPORT.hangar.x + HW + 4, AIRPORT.hangar.z - 10);          // east yard (moved out of the now-walkable hangar)
+  pushLamp(AIRPORT.hangar.x - HW - 6, AIRPORT.hangar.z + 6);           // west service yard (twin-prop parking)
+  pushLamp(AIRPORT.windsock.x + 1, AIRPORT.helipad.z - 5);             // south lawn — the new helipad works after dark too
   // freight-ramp & fuel-farm floodlights (the east end of the airport works after dark too)
   pushLamp(AIRPORT.cargo.x - 8, AIRPORT.cargo.z + 6); pushLamp(AIRPORT.fuelTanks[1].x - 4, AIRPORT.fuelTanks[1].z - 8);
   for (let i = 0; i < 3; i++) cars.push({ x: AIRPORT.terminal.x - 10 + i * 9, z: AIRPORT.terminal.z + 8, rot: 0, c: (i + 5) % CAR_COLS.length, t: VEHICLE_POOL[(i * 3 + 2) % VEHICLE_POOL.length] });
@@ -1554,14 +1595,14 @@ export function generateWorld(seed = WORLD_SEED): World {
   for (const c of AIRPORT.airlinerCols) circles.push(c);     // parked narrow-body airliner fuselage
   for (const c of AIRPORT.turbopropCols) circles.push(c);    // parked regional turboprop fuselage
   for (const c of AIRPORT.heliCols) circles.push(c);         // helicopter on the pad
-  for (const c of AIRPORT.pistonCols) circles.push(c);       // parked twin-piston light aircraft
-  circles.push(AIRPORT.singlepropCol);                       // parked single-engine light aircraft
+  for (const c of AIRPORT.pistonCols) circles.push(c);       // twin-piston light aircraft (service yard, hangar side)
+  circles.push(AIRPORT.singlepropCol);                       // single-prop light aircraft (back lawn storage)
   for (const k of AIRPORT.kiosks) circles.push({ x: k.x, z: k.z, r: 0.5 });                // check-in kiosks
   boxes.push({ x: AIRPORT.xray.x, z: AIRPORT.xray.z, w: 3.75, d: 0.7, h: 1.5 });           // x-ray conveyor
   circles.push({ x: AIRPORT.passport.x, z: AIRPORT.passport.z, r: 1.25 });                 // passport booth
   circles.push({ x: AIRPORT.arch.x - 0.8, z: AIRPORT.arch.z, r: 0.28 });                   // security arch legs
   circles.push({ x: AIRPORT.arch.x + 0.8, z: AIRPORT.arch.z, r: 0.28 });
-  circles.push({ x: AIRPORT.rx0 - 14, z: AIRPORT.rz - 12, r: 0.35 });                      // windsock mast
+  circles.push({ x: AIRPORT.windsock.x, z: AIRPORT.windsock.z, r: 0.35 });                 // windsock mast (south lawn, by the helipad)
   /* ---- 🌲 nature & forest kit — the wild band's solid furniture ---- */
   for (const c2 of cabins) boxes.push({ x: c2.x, z: c2.z, w: 2.9, d: 2.9, h: 4.2 });       // log cabins
   if (rangerPos) boxes.push({ x: rangerPos.x, z: rangerPos.z, w: 3.4, d: 2.9, h: 4.6 });   // ranger station
