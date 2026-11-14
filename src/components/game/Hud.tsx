@@ -8,7 +8,7 @@ import {
   ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon, Mouse, Eye, ScrollText,
 } from "lucide-react";
 import type { GameEngine } from "@/lib/game/engine";
-import { DETAIN_SECONDS, ITEMS, INV_SLOTS, NIGHTS_TOTAL, POLICE_STATIONS, POWERS, TOOLS } from "@/lib/game/constants";
+import { DETAIN_SECONDS, GRAVEYARD, ITEMS, INV_SLOTS, NIGHTS_TOTAL, POLICE_STATIONS, POWERS, TOOLS } from "@/lib/game/constants";
 import { useGame } from "./store";
 import { requestGameLock } from "./Scene";
 import { setMuted as setAudioMuted, sfx, stopMusic, startMusic } from "@/lib/game/audio";
@@ -38,7 +38,7 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
   dot(0, 0, 545 * K, "#2d5a2e");
   dot(0, 0, 465 * K, "#7a8f3f");
   dot(0, 0, 405 * K, "#8d8a80");
-  dot(-255, 215, 45 * K, "#3a3a46");
+  dot(GRAVEYARD.x, GRAVEYARD.z, GRAVEYARD.r * K, "#3a3a46");
   // 7Nights International — runway strip + apron block (south-east)
   c.fillStyle = "#54565e";
   c.fillRect(S / 2 + 215 * K, S / 2 + (300 - 8) * K, 170 * K, 16 * K);
@@ -52,7 +52,7 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     c.setLineDash([3, 3]);
     c.beginPath(); c.arc(S / 2, S / 2, 700 * K, 0, 6.3); c.stroke();
     c.setLineDash([]);
-    c.beginPath(); c.arc(S / 2 - 255 * K, S / 2 + 215 * K, 45 * K, 0, 6.3); c.stroke();
+    c.beginPath(); c.arc(S / 2 + GRAVEYARD.x * K, S / 2 + GRAVEYARD.z * K, GRAVEYARD.r * K, 0, 6.3); c.stroke();
     c.fillStyle = "rgba(255,255,255,0.55)";
     c.font = `700 ${Math.round(7 * U)}px ui-sans-serif, system-ui, sans-serif`;
     c.textAlign = "center";
@@ -61,7 +61,7 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     c.fillText("JUNGLE", S / 2 - 370 * K, S / 2 - 350 * K);
     c.fillText("DEEP JUNGLE", S / 2 + 390 * K, S / 2 - 390 * K);
     c.fillText("⛰ MOUNTAINS", S / 2 + 480 * K, S / 2 + 480 * K);
-    c.fillText("GRAVEYARD", S / 2 - 255 * K, S / 2 + 265 * K);
+    c.fillText("GRAVEYARD", S / 2 + GRAVEYARD.x * K, S / 2 + (GRAVEYARD.z + 52) * K);
     c.fillText("✈ AIRPORT", S / 2 + 295 * K, S / 2 + 345 * K);
   }
   // 🧱 THE WALL — the shrinking safe zone. Every map (mini & big) shows it:

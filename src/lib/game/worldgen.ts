@@ -574,49 +574,129 @@ export const NYC = (() => {
   return { bx, boxBuildings, decTower, chrTower, billboard, brownstones, stoops, fireEscapes, scaffolding, wallAd, subway, newsstand, hotdog, mailboxes, hydrants, trafficLights, globeLamps, bikeRack, busShelter, diningShed, trash, bollards, manholes, cellarHatch, cabs, streetTrees, bladeSigns, garage, theatre, steam, waterTowers, acUnits, construction, solidBoxes, solidCircles };
 })();
 
-/* ---------------- 🎃 halloween night kit — the graveyard gets HAUNTED ----------------
- * A rotten Victorian house looms over the cemetery, an arched gate guards the
- * city-side entrance, wrought-iron posts ring the grounds, a mausoleum and a
- * vintage hearse complete the estate. Jack-o-lanterns burn here all night. */
+/* ---------------- 🎃 halloween night kit — the OUT-OF-TOWN cemetery estate ----------------
+ * The graveyard moved deep into the south-west jungle (GRAVEYARD const): no
+ * city road crosses the grounds any more. Access is a dedicated dirt lane from
+ * the x=-270 street's south end to the arched cemetery gate — the gate, fence
+ * runs, haunted Victorian house, family mausoleum, vintage hearse, lantern
+ * posts, dead oaks and jack-o-lanterns are the REAL polyfork Halloween-kit
+ * GLB models (see graveyardModels.ts / <GraveyardEstate>), and every position
+ * here is derived from GRAVEYARD so colliders + rendering stay in lock-step. */
 export const GRAVEKIT = (() => {
   const { x: gx, z: gz } = GRAVEYARD;
-  // direction from the graveyard toward the city centre (the public entrance)
-  const gl = Math.hypot(gx, gz) || 1;
-  const dx = -gx / gl, dz = -gz / gl;
-  const house = { x: gx, z: gz - 24, rot: Math.PI };            // looming over the north edge
-  const mausoleum = { x: gx + 24, z: gz + 18, rot: -0.5 };
-  const gate = { x: gx + dx * 42, z: gz + dz * 42, rot: Math.atan2(dz, dx) };
-  // gate pillars flank the entrance path (perpendicular to the city direction)
-  const px0 = -dz, pz0 = dx;
-  const gatePillars = [
-    { x: gate.x + px0 * 3.6, z: gate.z + pz0 * 3.6 },
-    { x: gate.x - px0 * 3.6, z: gate.z - pz0 * 3.6 },
+  /* the lane starts at the south end of the x=-270 street (roads span ±320) —
+   * that road end is the cemetery's "bus stop", so the gate faces it exactly */
+  const ax = -270, az = -318;
+  const al = Math.hypot(ax - gx, az - gz);
+  const u = { x: (ax - gx) / al, z: (az - gz) / al };      // gate faces the road end
+  const v = { x: -u.z, z: u.x };                           // lane perpendicular
+  // placement rots follow the kit convention: rot = atan2(dx, dz) turns the
+  // model's authored +z front toward the direction (dx, dz)
+  const gate = { x: gx + u.x * 42, z: gz + u.z * 42, rot: Math.atan2(u.x, u.z) };
+  // the dirt cemetery lane: a strip from the road end to the gate
+  const laneLen = al - 42;
+  const lane = {
+    x: (ax + gate.x) / 2, z: (az + gate.z) / 2,
+    len: laneLen, w: 7.2, rot: -Math.atan2(u.z, u.x),
+  };
+  // a narrower dirt path carries visitors from the gate to the heart of the grounds
+  const pathLen = 36;
+  const path = { x: gx + u.x * 23, z: gz + u.z * 23, len: pathLen, w: 2.6, rot: -Math.atan2(u.z, u.x) };
+  // the haunted Victorian house looms on the far side, facing the entrance
+  const house = { x: gx - u.x * 24, z: gz - u.z * 24, rot: Math.atan2(u.x, u.z) };
+  // the family mausoleum stands on the lane's far flank, door turned to the path
+  const mausoleum = { x: gx + v.x * 24 - u.x * 4, z: gz + v.z * 24 - u.z * 4, rot: Math.atan2(-v.x, -v.z) };
+  // mossy steps climb to the house porch; the coffin waits inside the mausoleum
+  const steps = { x: house.x + u.x * 7.4, z: house.z + u.z * 7.4, rot: house.rot };
+  const coffin = { x: mausoleum.x, z: mausoleum.z, rot: mausoleum.rot };
+  // the vintage hearse parked beside the lane just inside the gate
+  const hearse = { x: gate.x - u.x * 9 + v.x * 6.4, z: gate.z - u.z * 9 + v.z * 6.4, rot: gate.rot + Math.PI / 2 };
+  // weeping stone angels flank the entrance path, each facing across it
+  const angels = [
+    { x: gx + u.x * 12 + v.x * 4.6, z: gz + u.z * 12 + v.z * 4.6, rot: Math.atan2(-v.x, -v.z) },
+    { x: gx + u.x * 19 - v.x * 5.4, z: gz + u.z * 19 - v.z * 5.4, rot: Math.atan2(v.x, v.z) },
   ];
-  const hearse = { x: gx + dx * 32 - dz * 6, z: gz + dz * 32 + dx * 6, rot: gate.rot + Math.PI / 2 };
-  const lanterns = [0.7, 2.3, 3.9, 5.4].map((a) => ({ x: gx + Math.cos(a) * 30, z: gz + Math.sin(a) * 30 }));
+  // skeletons clawing out of the lawn, away from the path
+  const skeletons = [
+    { x: gx + v.x * 13 + u.x * 3, z: gz + v.z * 13 + u.z * 3, rot: range(seededDerive(1), 0, 6.28) },
+    { x: gx - v.x * 10 - u.x * 11, z: gz - v.z * 10 - u.z * 11, rot: range(seededDerive(2), 0, 6.28) },
+  ];
+  // lantern posts light the grounds (clear of the path sector)
+  const lanterns = [1.6, 2.7, 3.8, 5.2].map((a) => ({ x: gx + Math.cos(a) * 30, z: gz + Math.sin(a) * 30 }));
+  // twisted dead oaks around the lawn; cheesecloth ghosts hang in their branches
   const oaks = [1.5, 3.2, 5.0].map((a) => ({ x: gx + Math.cos(a) * 36, z: gz + Math.sin(a) * 36, s: 1 + (a % 1) * 0.4 }));
-  // wrought-iron fence posts ring the grounds (gate sector left open)
-  const fencePosts: { x: number; z: number }[] = [];
-  for (let i = 0; i < 36; i++) {
-    const a = (i / 36) * Math.PI * 2;
-    const px = gx + Math.cos(a) * 42, pz = gz + Math.sin(a) * 42;
-    const ga = Math.atan2(pz - gz, px - gx);             // angle of this post
-    const dg = Math.atan2(dz, dx);                        // gate angle
-    let d = Math.abs(ga - dg); d = Math.min(d, Math.PI * 2 - d);
-    if (d < 0.16) continue;                               // the gateway
-    fencePosts.push({ x: px, z: pz });
-  }
-  // 🎃 jack-o-lanterns line the entrance path — lit every night, no exceptions
-  const pumpkins = [0.35, 0.55, 0.75].flatMap((t) => {
-    const px = gx + dx * (14 + t * 22), pz = gz + dz * (14 + t * 22);
-    const perp = { x: -dz, z: dx };
+  const ghosts = oaks.map((ok) => ({ x: ok.x + 1.4, z: ok.z - 1.2, y: 3.4 }));
+  // bare thorn bushes hug the fence line, never the path sector
+  const bushes = [1.35, 2.25, 3.05, 3.95, 5.55].map((a) => ({ x: gx + Math.cos(a) * 37.5, z: gz + Math.sin(a) * 37.5 }));
+  // jack-o-lanterns line the cemetery lane — lit every night, no exceptions
+  const pumpkins = [0.3, 0.55, 0.8].flatMap((t) => {
+    const px = lane.x - u.x * (laneLen / 2 - laneLen * t), pz = lane.z - u.z * (laneLen / 2 - laneLen * t);
     return [
-      { x: px + perp.x * 2.6, z: pz + perp.z * 2.6, s: 1 },
-      { x: px - perp.x * 2.6, z: pz - perp.z * 2.6, s: 0.85 },
+      { x: px + v.x * 4.4, z: pz + v.z * 4.4, s: 1 },
+      { x: px - v.x * 4.4, z: pz - v.z * 4.4, s: 0.85 },
     ];
   });
-  return { house, mausoleum, gate, gatePillars, hearse, lanterns, oaks, fencePosts, pumpkins };
+  /* wrought-iron fence runs tile the ring (authored 4u long); the run strip is
+   * broken ONLY for the gate span — a solid fence with one real entrance     */
+  const FENCE_R = 42, FENCE_L = 4.05, ARC = Math.PI * 2 * FENCE_R;
+  const gateAng = Math.atan2(u.z, u.x);
+  const gateArc = ((gateAng % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2) * FENCE_R;
+  const fenceRuns: { x: number; z: number; rot: number }[] = [];
+  for (let s = 0; s < ARC; s += FENCE_L) {
+    // signed distance from the gate centre along the ring
+    let d = s + FENCE_L / 2 - gateArc;
+    d = ((d % ARC) + ARC * 1.5) % ARC - ARC / 2;
+    if (Math.abs(d) < FENCE_L / 2 + 2.4) continue;          // the gateway
+    const a = (s + FENCE_L / 2) / FENCE_R;
+    fenceRuns.push({ x: gx + Math.cos(a) * FENCE_R, z: gz + Math.sin(a) * FENCE_R, rot: Math.atan2(-Math.cos(a), -Math.sin(a)) });
+  }
+  // crows perch on a few fence runs (indices into fenceRuns) + one on the mausoleum
+  const crows = [3, 17, 31, 45].filter((i) => i < fenceRuns.length).map((i) => ({
+    x: fenceRuns[i].x, z: fenceRuns[i].z, y: 1.62, rot: fenceRuns[i].rot + Math.PI / 2,
+  }));
+  crows.push({ x: mausoleum.x + v.x * 0.9, z: mausoleum.z + v.z * 0.9, y: 4.62, rot: mausoleum.rot });
+  // solid fence collision ring — dense 2u spacing so nothing slips through the
+  // iron rails (the gateway span stays open: enter like a person, not a ghost)
+  const fenceCols: { x: number; z: number }[] = [];
+  for (let s = 0; s < ARC; s += 2) {
+    let d = s - gateArc;
+    d = ((d % ARC) + ARC * 1.5) % ARC - ARC / 2;
+    if (Math.abs(d) < 2.3) continue;
+    const a = s / FENCE_R;
+    fenceCols.push({ x: gx + Math.cos(a) * FENCE_R, z: gz + Math.sin(a) * FENCE_R });
+  }
+  return { ax, az, u, v, gate, lane, path, house, mausoleum, steps, coffin, hearse, angels, skeletons, lanterns, oaks, ghosts, bushes, pumpkins, fenceRuns, crows, fenceCols, FENCE_R };
 })();
+
+/** deterministic rand for GRAVEKIT prop derivation (keeps worldgen seed-free) */
+function seededDerive(n: number): () => number {
+  let a = (0x9e3779b9 ^ (n * 0x85ebca6b)) >>> 0;
+  return () => {
+    a |= 0; a = (a + 0x6d2b79f5) | 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** 🪦 distance from (x,z) to the cemetery access corridor — the dirt lane
+ *  (road end → arched gate) plus the visitor path (gate → grounds centre).
+ *  Every wild scatter (trees, boulders, rocks, ferns, camps, ponds, trails…)
+ *  keeps OFF this strip so the drive out to the graveyard stays open.       */
+export function graveyardLaneDist(x: number, z: number): number {
+  const { ax, az, gate } = GRAVEKIT;
+  let best = Infinity;
+  const segs: [number, number, number, number][] = [
+    [ax, az, gate.x, gate.z],
+    [gate.x, gate.z, GRAVEYARD.x, GRAVEYARD.z],
+  ];
+  for (const [x0, z0, x1, z1] of segs) {
+    const vx = x1 - x0, vz = z1 - z0;
+    const t = Math.max(0, Math.min(1, ((x - x0) * vx + (z - z0) * vz) / (vx * vx + vz * vz)));
+    best = Math.min(best, Math.hypot(x - (x0 + vx * t), z - (z0 + vz * t)));
+  }
+  return best;
+}
 
 const TOWER_COLS = [0x9fc4d8, 0xb8d0da, 0xc9d2cf, 0xa8b8c4, 0xd8cfc0, 0x8fb0a8, 0xc4b8d0, 0xb0c4b8];
 const TOWER_ROOF = 0x3d434c;
@@ -993,7 +1073,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   while (camps.length < 6 && campTries++ < 500) {
     const a = range(rnd, 0, Math.PI * 2), cr = range(rnd, 486, 576);
     const x = Math.cos(a) * cr, z = Math.sin(a) * cr;
-    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 42) continue;
+    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 42 || graveyardLaneDist(x, z) < 40) continue;
     if (inAirportPlot(x, z)) continue;
     if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 95)) continue;
     const baseRot = range(rnd, 0, Math.PI * 2);
@@ -1062,7 +1142,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   while (pn < 2 && pn < 40) {
     const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 486, 556);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 30) continue;
+    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 30 || graveyardLaneDist(x, z) < 30) continue;
     if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 46)) continue;    // not in a camp glade
     if (ponds.some((p) => Math.hypot(p.x - x, p.z - z) < 130)) continue;      // spread apart
     ponds.push({ x, z, r: range(rnd, 6.5, 8.5) });
@@ -1081,7 +1161,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   while (n < 560) {
     const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 472, DEEP_JUNGLE_RADIUS);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
+    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8 || graveyardLaneDist(x, z) < 9) continue;
     if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 10.5)) continue; // keep camp glades clear
     if (ponds.some((p) => Math.hypot(p.x - x, p.z - z) < p.r + 3.4)) continue; // 🌲 pond banks stay open
     addTree(x, z, range(rnd, 0.85, 1.55), treeKindRoll(rnd, OUTER_TREE_MIX));
@@ -1091,7 +1171,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   while (n < 520) {
     const a = range(rnd, 0, Math.PI * 2), r = range(rnd, DEEP_JUNGLE_RADIUS + 2, JUNGLE_RADIUS - 2);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
+    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8 || graveyardLaneDist(x, z) < 9) continue;
     if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 10.5)) continue; // keep camp glades clear
     addTree(x, z, range(rnd, 1.1, 1.95), treeKindRoll(rnd, DEEP_TREE_MIX)); // dark round canopies still dominate
     n++;
@@ -1113,7 +1193,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   while (n < 40) {
     const a = range(rnd, 0, Math.PI * 2), r = range(rnd, DEEP_JUNGLE_RADIUS + 3, JUNGLE_RADIUS - 6);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 6) continue;
+    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 6 || graveyardLaneDist(x, z) < 7) continue;
     if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 7)) continue; // not inside a camp glade
     if (trees.some((t) => Math.hypot(t.x - x, t.z - z) < 2.6)) continue;
     rocks.push({ x, z, s: range(rnd, 0.9, 1.8) });
@@ -1125,7 +1205,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   while (n < 80) {
     const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 412, 458);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
+    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8 || graveyardLaneDist(x, z) < 9) continue;
     if (inAirportPlot(x, z)) continue;
     if (Math.abs(Math.hypot(x, z) - RAILWAY.R) < 5.5) continue; // 🚂 the branch line stays clear
     if (fields.some((f) => Math.abs(x - f.x) < f.w + 3 && Math.abs(z - f.z) < f.d + 3)) continue;
@@ -1195,7 +1275,7 @@ export function generateWorld(seed = WORLD_SEED): World {
       const a = a0 + Math.sin(t * 5.0 + a0 * 3.1) * wob + t * drift;
       const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
       if (inAirportPlot(x, z)) { ok = false; break; }
-      if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 12) { ok = false; break; }
+      if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 12 || graveyardLaneDist(x, z) < 12) { ok = false; break; }
       if (fields.some((f) => Math.abs(x - f.x) < f.w + 4 && Math.abs(z - f.z) < f.d + 4)) { ok = false; break; }
       if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 7.5)) { ok = false; break; }
       if (ponds.some((p) => Math.hypot(p.x - x, p.z - z) < p.r + 6)) { ok = false; break; }
@@ -1229,6 +1309,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   /** every scatter prop must clear the landmarks, water, paths & tree trunks */
   const clearOf = (x: number, z: number, pad: number) => {
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + pad) return false;
+    if (graveyardLaneDist(x, z) < pad) return false;
     if (inAirportPlot(x, z)) return false;
     if (buildings.some((b) => Math.abs(x - b.x) < b.w + pad && Math.abs(z - b.z) < b.d + pad)) return false;
     if (fields.some((f) => Math.abs(x - f.x) < f.w + pad && Math.abs(z - f.z) < f.d + pad)) return false;
@@ -1450,7 +1531,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   while (n < ROCK_COUNT) {
     const a = range(rnd, 0, Math.PI * 2), rr = range(rnd, 70, 532);
     const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
-    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8) continue;
+    if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8 || graveyardLaneDist(x, z) < 8) continue;
     if (inAirportPlot(x, z)) continue;
     if (Math.abs(Math.hypot(x, z) - RAILWAY.R) < 6) continue; // 🚂 no boulders blocking the branch line
     // keep the ring road, main road, avenues and the street grid drivable
@@ -1572,14 +1653,22 @@ export function generateWorld(seed = WORLD_SEED): World {
   for (const cp of FARMKIT.coops) circles.push({ x: cp.x, z: cp.z, r: 1.6 });             // chicken coops
   circles.push({ x: FARMKIT.tractor.x, z: FARMKIT.tractor.z, r: 1.5 });                   // parked tractor
   circles.push({ x: FARMKIT.well.x, z: FARMKIT.well.z, r: 1.2 });                         // stone well
-  /* ---- 🎃 graveyard estate — the haunted grounds are fenced ---- */
-  boxes.push({ x: GRAVEKIT.house.x, z: GRAVEKIT.house.z, w: 6.5, d: 5, h: 11 });          // haunted Victorian house
-  boxes.push({ x: GRAVEKIT.mausoleum.x, z: GRAVEKIT.mausoleum.z, w: 2.8, d: 2.4, h: 6 }); // family mausoleum
-  circles.push({ x: GRAVEKIT.hearse.x, z: GRAVEKIT.hearse.z, r: 1.6 });                   // vintage hearse
+  /* ---- 🎃 graveyard estate — fenced all around, one real gate ---- */
+  boxes.push({ x: GRAVEKIT.house.x, z: GRAVEKIT.house.z, w: 10, d: 10, h: 13 });          // haunted Victorian house (kit, 12u footprint)
+  boxes.push({ x: GRAVEKIT.mausoleum.x, z: GRAVEKIT.mausoleum.z, w: 3.4, d: 3.4, h: 5 }); // family mausoleum (kit)
+  // vintage hearse — two axle circles, like every other vehicle
+  {
+    const fx = Math.sin(GRAVEKIT.hearse.rot), fz2 = Math.cos(GRAVEKIT.hearse.rot);
+    circles.push({ x: GRAVEKIT.hearse.x - fx * 1.5, z: GRAVEKIT.hearse.z - fz2 * 1.5, r: 1.35 });
+    circles.push({ x: GRAVEKIT.hearse.x + fx * 1.5, z: GRAVEKIT.hearse.z + fz2 * 1.5, r: 1.35 });
+  }
   for (const ln of GRAVEKIT.lanterns) circles.push({ x: ln.x, z: ln.z, r: 0.3 });         // lantern posts
-  for (const ok of GRAVEKIT.oaks) circles.push({ x: ok.x, z: ok.z, r: 0.5 });             // twisted dead oaks
-  for (const fp of GRAVEKIT.fencePosts) circles.push({ x: fp.x, z: fp.z, r: 0.28 });      // wrought-iron fence posts
-  for (const gp of GRAVEKIT.gatePillars) circles.push({ x: gp.x, z: gp.z, r: 0.45 });     // gate pillars
+  for (const ok of GRAVEKIT.oaks) circles.push({ x: ok.x, z: ok.z, r: 0.55 });            // twisted dead oaks (kit, 8u crown)
+  for (const fc of GRAVEKIT.fenceCols) circles.push({ x: fc.x, z: fc.z, r: 0.4 });        // iron fence ring (solid, gate span open)
+  circles.push({ x: GRAVEKIT.gate.x + GRAVEKIT.v.x * 1.9, z: GRAVEKIT.gate.z + GRAVEKIT.v.z * 1.9, r: 0.35 }); // gate arch posts
+  circles.push({ x: GRAVEKIT.gate.x - GRAVEKIT.v.x * 1.9, z: GRAVEKIT.gate.z - GRAVEKIT.v.z * 1.9, r: 0.35 });
+  for (const bu of GRAVEKIT.bushes) circles.push({ x: bu.x, z: bu.z, r: 0.5 });           // bare thorn bushes
+  for (const an of GRAVEKIT.angels) circles.push({ x: an.x, z: an.z, r: 0.5 });           // weeping stone angels
   /* ---- 🗽 NYC district — solid street furniture (subway rails, kiosks, cabs…) ---- */
   for (const sb of NYC.solidBoxes) boxes.push(sb);
   for (const sc of NYC.solidCircles) circles.push(sc);

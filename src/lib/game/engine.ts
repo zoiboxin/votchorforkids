@@ -32,6 +32,7 @@ import { nightFactor, newBody, stepBody, stepNpc, type Body, type SteerMemory } 
 import { sfx, startDrone, stopDrone, setInsects, stopInsects } from "./audio";
 import { preloadModels } from "./models";
 import { preloadAirportModels } from "./airportModels";
+import { preloadGraveyardModels } from "./graveyardModels";
 import type { MpEvent } from "@/lib/game/net/client";
 
 const TAU = Math.PI * 2; // full circle — used to keep the camera yaw wrapped
@@ -781,6 +782,8 @@ export class GameEngine {
     preloadModels();
     // ✈️ and the airport kit GLBs — the planes & props stream in while you walk
     preloadAirportModels();
+    // 🪦 and the cemetery kit GLBs — tombstones & the estate stream in alongside
+    preloadGraveyardModels();
     this.policePerk = policeOutfitOf(look.fac === "police" ? look.outfit : "").stats;
     // snapshot every static collider radius so reset() can un-fell trees & un-smash rocks
     this.circleR0 = world.circles.map((c) => c.r);

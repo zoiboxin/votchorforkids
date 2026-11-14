@@ -12,7 +12,11 @@ export const DEEP_JUNGLE_RADIUS = 545;
 /** Playable ⛰️ mountain band — rough, scary, and CLIMBABLE (see worldgen.terrainHeight). */
 export const MOUNTAIN_INNER = 610;
 export const MOUNTAIN_OUTER = 700;
-export const GRAVEYARD = { x: -255, z: 215, r: 45 } as const;
+/** 🪦 the cemetery moved OUT of town — deep in the south-west jungle beyond the
+ *  ring highway and the railway loop (r≈545). No city road crosses the grounds:
+ *  the x=-270 street ends 87u short of the gate and a dirt cemetery lane runs
+ *  from that road end to the arched gate. Zombies rise here at night.        */
+export const GRAVEYARD = { x: -370, z: -400, r: 45 } as const;
 export const SPAWN = { x: 0, z: 6 } as const;
 
 /* ---------- 7Nights International Airport (south-east, outside the ring highway) ----------

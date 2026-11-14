@@ -22,6 +22,7 @@ import {
   KitFuelTanks, KitGuardLights, KitHelipad, KitLightAircraft, KitPapi, KitService, KitTerminal,
   KitVor, KitWindsock,
 } from "@/components/game/AirportKit";
+import { GraveyardEstate } from "@/components/game/GraveyardKit";
 
 export const WORLD: World = generateWorld();
 const tmp = new THREE.Object3D();
@@ -1698,248 +1699,47 @@ function Landmarks() {
   );
 }
 
-/* ------------------------- graveyard & flowers ------------------------- */
+/* ------------------------- graveyard & flowers -------------------------
+ * 🪦 The cemetery moved OUT of town (GRAVEYARD const, south-west jungle): no
+ * road crosses the grounds any more — a dedicated dirt lane runs from the
+ * x=-270 street's end to the arched gate, and a narrow path carries on
+ * inside. Every tombstone, fence run, gate, building and lantern is the REAL
+ * polyfork Halloween-kit GLB model (<GraveyardEstate> in GraveyardKit.tsx);
+ * this component draws just the lane strips + mounts the kit estate.        */
 function Graves({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
-  const ref = useRef<THREE.InstancedMesh>(null!);
-  const crosses = useRef<THREE.InstancedMesh>(null!);
-  const mounds = useRef<THREE.InstancedMesh>(null!);
-  const posts = useRef<THREE.InstancedMesh>(null!);
-  const tips = useRef<THREE.InstancedMesh>(null!);
-  // 🎃 lantern + window glows wake with the dark
-  const lanternGlow = useRef<THREE.InstancedMesh>(null!);
-  const lanternGlowMat = useRef<THREE.MeshBasicMaterial>(null!);
-  const winGlow = useRef<THREE.MeshBasicMaterial>(null!);
-
-  useLayoutEffect(() => {
-    const r = mulberry32(99);
-    for (let i = 0; i < 70; i++) {
-      const a = range(r, 0, Math.PI * 2), d = range(r, 4, 38);
-      // keep the old tombstones out of the new estate buildings & the entrance path
-      const px = GRAVEYARD.x + Math.cos(a) * d, pz = GRAVEYARD.z + Math.sin(a) * d;
-      if (Math.hypot(px - GRAVEKIT.house.x, pz - GRAVEKIT.house.z) < 10) continue;
-      if (Math.hypot(px - GRAVEKIT.mausoleum.x, pz - GRAVEKIT.mausoleum.z) < 7) continue;
-      tmp.position.set(px, 0.7, pz);
-      tmp.rotation.set(0, range(r, -0.4, 0.4), range(r, -0.08, 0.08));
-      tmp.scale.setScalar(1);
-      tmp.updateMatrix();
-      ref.current.setMatrixAt(i, tmp.matrix);
-      tmp.position.y = 1.6;
-      tmp.rotation.set(0, tmp.rotation.y, 0);
-      tmp.updateMatrix();
-      crosses.current.setMatrixAt(i, tmp.matrix);
-    }
-    tmp.rotation.set(0, 0, 0);
-    ref.current.instanceMatrix.needsUpdate = true;
-    crosses.current.instanceMatrix.needsUpdate = true;
-    // 🪦 fresh grave mounds hump out of the lawn near the fence
-    const rm = mulberry32(77);
-    for (let i = 0; i < 14; i++) {
-      const a = range(rm, 0, Math.PI * 2), d = range(rm, 26, 38);
-      tmp.position.set(GRAVEYARD.x + Math.cos(a) * d, 0.12, GRAVEYARD.z + Math.sin(a) * d);
-      tmp.rotation.set(0, range(rm, 0, 3), 0);
-      tmp.scale.set(range(rm, 1.2, 2), 0.5, range(rm, 1, 1.6));
-      tmp.updateMatrix();
-      mounds.current.setMatrixAt(i, tmp.matrix);
-    }
-    tmp.scale.setScalar(1);
-    mounds.current.instanceMatrix.needsUpdate = true;
-    // ⛓️ wrought-iron fence posts ring the grounds
-    GRAVEKIT.fencePosts.forEach((fp, i) => {
-      tmp.position.set(fp.x, 1.2, fp.z);
-      tmp.rotation.set(0, 0, 0);
-      tmp.scale.setScalar(1);
-      tmp.updateMatrix();
-      posts.current.setMatrixAt(i, tmp.matrix);
-      tmp.position.y = 2.62;
-      tmp.updateMatrix();
-      tips.current.setMatrixAt(i, tmp.matrix);
-    });
-    posts.current.instanceMatrix.needsUpdate = true;
-    tips.current.instanceMatrix.needsUpdate = true;
-    // lantern glows hover where the lantern posts stand
-    GRAVEKIT.lanterns.forEach((ln, i) => {
-      tmp.position.set(ln.x, 2.6, ln.z);
-      tmp.rotation.set(0, 0, 0);
-      tmp.scale.setScalar(1);
-      tmp.updateMatrix();
-      lanternGlow.current.setMatrixAt(i, tmp.matrix);
-    });
-    lanternGlow.current.instanceMatrix.needsUpdate = true;
-  }, []);
-
-  useFrame((s) => {
-    const nf = nightFactor(clockRef.current);
-    const flick = 0.85 + Math.sin(s.clock.elapsedTime * 5.3) * 0.07 + Math.sin(s.clock.elapsedTime * 13.1) * 0.05;
-    if (lanternGlowMat.current) {
-      lanternGlowMat.current.opacity = Math.max(0, nf - 0.25) * 0.85 * flick;
-      lanternGlow.current.visible = lanternGlowMat.current.opacity > 0.02;
-    }
-    if (winGlow.current) winGlow.current.opacity = 0.12 + Math.max(0, nf - 0.3) * 0.55 * flick;
-  });
-
+  const lane = GRAVEKIT.lane, path = GRAVEKIT.path;
   return (
     <>
-      {/* the classic slabs + crosses */}
-      <instancedMesh ref={ref} args={[undefined, undefined, 70]}>
-        <boxGeometry args={[0.9, 1.4, 0.3]} />
-        <meshLambertMaterial color="#6a6a78" />
-      </instancedMesh>
-      <instancedMesh ref={crosses} args={[undefined, undefined, 70]}>
-        <boxGeometry args={[0.12, 0.7, 0.12]} />
-        <meshLambertMaterial color="#8a8a98" />
-      </instancedMesh>
-      {/* fresh mounds */}
-      <instancedMesh ref={mounds} args={[undefined, undefined, 14]}>
-        <sphereGeometry args={[1, 8, 5]} />
-        <meshLambertMaterial color="#45404c" />
-      </instancedMesh>
-      {/* ⛓️ wrought-iron fence: posts + spear tips + two rail rings split around the gate */}
-      <instancedMesh ref={posts} args={[undefined, undefined, Math.max(1, GRAVEKIT.fencePosts.length)]}>
-        <cylinderGeometry args={[0.05, 0.07, 2.4, 5]} />
-        <meshLambertMaterial color="#1c1e24" />
-      </instancedMesh>
-      <instancedMesh ref={tips} args={[undefined, undefined, Math.max(1, GRAVEKIT.fencePosts.length)]}>
-        <coneGeometry args={[0.09, 0.42, 5]} />
-        <meshLambertMaterial color="#2c2f38" />
-      </instancedMesh>
-      <IronRails y={0.95} />
-      <IronRails y={1.85} />
-      {/* 🏚️ the HAUNTED VICTORIAN HOUSE — dark windows stare back after dark */}
-      <group position={[GRAVEKIT.house.x, 0, GRAVEKIT.house.z]} rotation-y={GRAVEKIT.house.rot}>
-        {/* ground floor */}
-        <mesh position-y={2.6}><boxGeometry args={[13, 5.2, 9.6]} /><meshLambertMaterial color="#2a2320" /></mesh>
-        {/* upper floor, set back */}
-        <mesh position-y={6.1}><boxGeometry args={[10.4, 3.8, 7.6]} /><meshLambertMaterial color="#322a26" /></mesh>
-        {/* mansard roof */}
-        <mesh position-y={9.2} rotation-y={Math.PI / 4}><boxGeometry args={[7.6, 3.2, 5.6]} /><meshLambertMaterial color="#191418" /></mesh>
-        <mesh position-y={11.3}><coneGeometry args={[4.6, 1.6, 4]} /><meshLambertMaterial color="#191418" /></mesh>
-        {/* corner tower + spike */}
-        <mesh position={[5.4, 6.4, -3.6]}><cylinderGeometry args={[1.7, 1.9, 10.6, 8]} /><meshLambertMaterial color="#241d1a" /></mesh>
-        <mesh position={[5.4, 12.4, -3.6]}><coneGeometry args={[2.1, 2.6, 8]} /><meshLambertMaterial color="#120e12" /></mesh>
-        {/* porch */}
-        <mesh position={[0, 1.05, 5.4]}><boxGeometry args={[7, 0.25, 2.8]} /><meshLambertMaterial color="#1d1815" /></mesh>
-        <mesh position={[0, 2.9, 5.6]}><boxGeometry args={[7.4, 0.18, 3.2]} /><meshLambertMaterial color="#161210" /></mesh>
-        {[-3.2, 3.2].map((x) => (
-          <mesh key={x} position={[x, 1.9, 5.9]}><cylinderGeometry args={[0.14, 0.14, 1.9, 6]} /><meshLambertMaterial color="#3a2f28" /></mesh>
-        ))}
-        {/* the door — ajar, never quite shut */}
-        <mesh position={[0.9, 1.4, 4.82]} rotation-y={0.5}><boxGeometry args={[1.5, 2.8, 0.16]} /><meshLambertMaterial color="#0c0a0c" /></mesh>
-        {/* windows — pale by day, candle-orange by night */}
-        {[[-3.6, 3.4, 4.85], [2.6, 3.4, 4.85], [-3.2, 7.2, 3.85], [2.4, 7.2, 3.85], [-4.4, 7.2, -3.85], [3.6, 3.4, -4.85]].map(([x, y, z], i) => (
-          <mesh key={i} position={[x, y, z]}>
-            <planeGeometry args={[1.1, 1.7]} />
-            <meshBasicMaterial ref={i === 0 ? winGlow : undefined} color="#ff9a3c" transparent opacity={0.28} side={THREE.DoubleSide} depthWrite={false} />
-          </mesh>
-        ))}
-        {/* one window upstairs is WRONG — a pale silhouette occasionally stands there */}
-        <mesh position={[-3.2, 7.2, 3.87]}>
-          <planeGeometry args={[0.5, 1.3]} />
-          <meshBasicMaterial color="#d8d4e8" transparent opacity={0.18} depthWrite={false} />
-        </mesh>
-      </group>
-      {/* ⚰️ the family mausoleum — columns, stone lid, black doorway */}
-      <group position={[GRAVEKIT.mausoleum.x, 0, GRAVEKIT.mausoleum.z]} rotation-y={GRAVEKIT.mausoleum.rot}>
-        <mesh position-y={1.6}><boxGeometry args={[5.4, 3.2, 4.4]} /><meshLambertMaterial color="#7d7d8a" /></mesh>
-        <mesh position-y={3.7} rotation-y={Math.PI / 4}><boxGeometry args={[3.6, 1.4, 3]} /><meshLambertMaterial color="#6a6a78" /></mesh>
-        {[-1.9, 1.9].map((x) => (
-          <mesh key={x} position={[x, 1.4, 2.5]}><cylinderGeometry args={[0.32, 0.36, 2.8, 7]} /><meshLambertMaterial color="#8d8d9a" /></mesh>
-        ))}
-        <mesh position={[0, 1.25, 2.25]}><boxGeometry args={[1.3, 2.5, 0.3]} /><meshLambertMaterial color="#0a0a0e" /></mesh>
-      </group>
-      {/* 🚪 arched cemetery gate facing the city path */}
-      <group position={[GRAVEKIT.gate.x, 0, GRAVEKIT.gate.z]} rotation-y={GRAVEKIT.gate.rot}>
-        {[-3.6, 3.6].map((x) => (
-          <mesh key={x} position={[x, 2.5, 0]}>
-            <boxGeometry args={[1.5, 5, 1.5]} />
-            <meshLambertMaterial color="#565660" />
-          </mesh>
-        ))}
-        <mesh position={[0, 5.6, 0]} rotation={[0, 0, Math.PI / 2]}>
-          <torusGeometry args={[3.6, 0.34, 8, 18, Math.PI]} />
-          <meshLambertMaterial color="#5e5e68" />
-        </mesh>
-        {/* the iron gate itself — half open, as if something just passed */}
-        <mesh position={[-1.5, 1.5, 0.1]} rotation-y={0.6}><boxGeometry args={[2.9, 3, 0.12]} /><meshLambertMaterial color="#1c1e24" /></mesh>
-        <mesh position={[2.3, 1.5, 0.1]} rotation-y={-0.35}><boxGeometry args={[2.2, 3, 0.12]} /><meshLambertMaterial color="#1c1e24" /></mesh>
-      </group>
-      {/* ⚰️ the vintage hearse — parked where the last client left it */}
-      <group position={[GRAVEKIT.hearse.x, 0, GRAVEKIT.hearse.z]} rotation-y={GRAVEKIT.hearse.rot}>
-        <mesh position-y={1.15}><boxGeometry args={[4.6, 1.5, 2]} /><meshLambertMaterial color="#101014" /></mesh>
-        <mesh position={[1.5, 1.1, 0]}><boxGeometry args={[1.4, 1.3, 1.86]} /><meshLambertMaterial color="#181820" /></mesh>
-        <mesh position={[-0.4, 2.0, 0]}><boxGeometry args={[2.6, 1.1, 1.9]} /><meshLambertMaterial color="#0c0c10" /></mesh>
-        {[[1.55, 0.85], [1.55, -0.85], [-1.55, 0.85], [-1.55, -0.85]].map(([x, z], i) => (
-          <mesh key={i} position={[x, 0.42, z]} rotation-x={Math.PI / 2}>
-            <cylinderGeometry args={[0.42, 0.42, 0.24, 10]} />
-            <meshLambertMaterial color="#2c2c34" />
-          </mesh>
-        ))}
-      </group>
-      {/* 🌰 twisted dead oaks */}
-      {GRAVEKIT.oaks.map((ok, i) => (
-        <group key={i} position={[ok.x, 0, ok.z]}>
-          <mesh position-y={2.2 * ok.s} rotation-z={0.08}><cylinderGeometry args={[0.34 * ok.s, 0.52 * ok.s, 4.4 * ok.s, 6]} /><meshLambertMaterial color="#2c2420" /></mesh>
-          {[0.9, 2.1, 3.3].map((h, k) => (
-            <mesh key={k} position={[Math.cos(k * 2.1) * 0.9, h * ok.s + 1.4, Math.sin(k * 2.1) * 0.9]} rotation-z={Math.cos(k * 2.1) * 0.9} rotation-x={Math.sin(k * 1.7) * 0.9}>
-              <cylinderGeometry args={[0.05 * ok.s, 0.14 * ok.s, 2.4 * ok.s, 5]} />
-              <meshLambertMaterial color="#241d1a" />
-            </mesh>
-          ))}
-        </group>
-      ))}
-      {/* 🏮 cemetery lanterns + their warm night glow */}
-      {GRAVEKIT.lanterns.map((ln, i) => (
-        <group key={i} position={[ln.x, 0, ln.z]}>
-          <mesh position-y={1.2}><cylinderGeometry args={[0.08, 0.12, 2.4, 6]} /><meshLambertMaterial color="#23262e" /></mesh>
-          <mesh position-y={2.55}><boxGeometry args={[0.44, 0.55, 0.44]} /><meshLambertMaterial color="#2c2f38" /></mesh>
-          <mesh position-y={2.9}><coneGeometry args={[0.4, 0.34, 4]} /><meshLambertMaterial color="#181b22" /></mesh>
-        </group>
-      ))}
-      <instancedMesh ref={lanternGlow} args={[undefined, undefined, Math.max(1, GRAVEKIT.lanterns.length)]} frustumCulled={false} visible={false}>
-        <sphereGeometry args={[0.85, 8, 6]} />
-        <meshBasicMaterial ref={lanternGlowMat} color="#ffb14a" transparent opacity={0} depthWrite={false} />
-      </instancedMesh>
-      {/* 🎃 jack-o-lanterns grinning along the entrance path */}
-      {GRAVEKIT.pumpkins.map((pk, i) => (
-        <group key={i} position={[pk.x, 0, pk.z]}>
-          <mesh position-y={0.34 * pk.s} scale={[1, 0.82, 1]}>
-            <sphereGeometry args={[0.42 * pk.s, 9, 7]} />
-            <meshLambertMaterial color="#e8862a" />
-          </mesh>
-          <mesh position-y={0.72 * pk.s}><cylinderGeometry args={[0.06, 0.09, 0.22, 5]} /><meshLambertMaterial color="#3d6b2f" /></mesh>
-          {/* the carved face — three dark triangles that glow orange from within at night */}
-          <mesh position={[0, 0.38 * pk.s, 0.36 * pk.s]}><boxGeometry args={[0.08, 0.14, 0.05]} /><meshBasicMaterial color="#12100c" /></mesh>
-          <mesh position={[-0.14, 0.34 * pk.s, 0.36 * pk.s]}><boxGeometry args={[0.09, 0.11, 0.05]} /><meshBasicMaterial color="#12100c" /></mesh>
-          <mesh position={[0.14, 0.34 * pk.s, 0.36 * pk.s]}><boxGeometry args={[0.09, 0.11, 0.05]} /><meshBasicMaterial color="#12100c" /></mesh>
-        </group>
-      ))}
-      {/* a couple of town-square jack-o-lanterns too — halloween found the whole map */}
-      <group position={[TOWN_SQUARE.x + 6.5, 0, TOWN_SQUARE.z - 3]}>
-        <mesh position-y={0.36} scale={[1, 0.82, 1]}><sphereGeometry args={[0.5, 9, 7]} /><meshLambertMaterial color="#e8862a" /></mesh>
-        <mesh position-y={0.78}><cylinderGeometry args={[0.07, 0.1, 0.24, 5]} /><meshLambertMaterial color="#3d6b2f" /></mesh>
-      </group>
+      {/* 🪦 the dirt cemetery lane — the ONLY road connection, from the
+       * x=-270 street's south end to the arched gate (no city road crosses
+       * the grounds) — plus the narrower visitor path inside the fence */}
+      <mesh rotation={[-Math.PI / 2, 0, lane.rot]} position={[lane.x, 0.062, lane.z]}>
+        {/* args [len, w]: with rot = -atan2(uz,ux) the plane's local x runs ALONG the lane */}
+        <planeGeometry args={[lane.len, lane.w]} />
+        <meshLambertMaterial color="#6e5d47" />
+      </mesh>
+      <mesh rotation={[-Math.PI / 2, 0, path.rot]} position={[path.x, 0.063, path.z]}>
+        <planeGeometry args={[path.len, path.w]} />
+        <meshLambertMaterial color="#7a6952" />
+      </mesh>
+      <LaneEndWidening />
+      {/* 🎃 the kit estate: fence, gate, headstones, house, mausoleum, hearse… */}
+      <GraveyardEstate clockRef={clockRef} />
     </>
   );
+}
 
-  /* inner helper — one thin iron rail ring split around the gateway.
-   * MUST sit on the graveyard plot (GRAVEYARD.x/z) — with no offset these rings
-   * used to draw around the WORLD ORIGIN, i.e. two ghost half-circle "rail
-   * tracks" floating right through the city centre. And because rotation-x=-π/2
-   * mirrors ring angle θ to world angle −θ, the start angles are negated so the
-   * gateway gap lands exactly on the entrance-path side (world `gateAng`). */
-  function IronRails({ y }: { y: number }) {
-    const gateAng = Math.atan2(GRAVEKIT.gate.z - GRAVEYARD.z, GRAVEKIT.gate.x - GRAVEYARD.x);
-    const gap = 0.17;
-    return (
-      <>
-        {[-gateAng + gap, -gateAng + Math.PI + gap].map((start, i) => (
-          <mesh key={i} rotation-x={-Math.PI / 2} position={[GRAVEYARD.x, y, GRAVEYARD.z]}>
-            <ringGeometry args={[41.85, 42.15, 64, 1, start, Math.PI - gap * 2]} />
-            <meshLambertMaterial color="#1c1e24" side={THREE.DoubleSide} />
-          </mesh>
-        ))}
-      </>
-    );
-  }
+/** the lane meets the road with a small apron so the turn-in reads clearly */
+function LaneEndWidening() {
+  const lane = GRAVEKIT.lane, u = GRAVEKIT.u;
+  const ax = GRAVEKIT.ax, az = GRAVEKIT.az;
+  return (
+    <mesh rotation={[-Math.PI / 2, 0, lane.rot]} position={[ax + u.x * 4.4, 0.061, az + u.z * 4.4]}>
+      {/* turn-in pad — road-width (14) across the lane, 12 deep along it */}
+      <planeGeometry args={[12, 14]} />
+      <meshLambertMaterial color="#6e5d47" />
+    </mesh>
+  );
 }
 
 function Flowers() {

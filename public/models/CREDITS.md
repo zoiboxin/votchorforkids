@@ -37,3 +37,15 @@ apron/taxiway tiles and the flight attendant.
 
 Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
 (https://creativecommons.org/licenses/by/4.0/)
+
+## Halloween Night kit (`models/graveyard/` — the out-of-town cemetery estate)
+
+From the [polyfork Halloween Night kit](https://polyfork.dev/kit/halloween-night-46ade4) —
+carved headstones, foam yard gravestones, grave mounds, wrought-iron cemetery
+fence runs, arched cemetery gate, haunted Victorian house, family mausoleum,
+vintage hearse, twisted dead oak, cemetery lantern post, jack-o-lantern,
+weeping stone angel, crawling skeleton, crow, bare thorn bush, coffin prop,
+hanging cheesecloth ghosts and mossy stone steps.
+
+Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
+(https://creativecommons.org/licenses/by/4.0/)
