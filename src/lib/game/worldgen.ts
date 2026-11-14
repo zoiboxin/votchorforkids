@@ -1468,6 +1468,8 @@ export function generateWorld(seed = WORLD_SEED): World {
   push(AIRPORT.hangar.x, AIRPORT.hangar.z, AIRPORT.hangar.w, AIRPORT.hangar.d, AIRPORT.hangar.h, 0, 0xb8bec8, 0x7a828e);
   // apron floodlights + a few staff cars by the terminal
   pushLamp(AIRPORT.terminal.x - 18, AIRPORT.terminal.z - 14); pushLamp(AIRPORT.terminal.x + 18, AIRPORT.terminal.z - 14); pushLamp(AIRPORT.hangar.x + 16, AIRPORT.hangar.z - 12);
+  // freight-ramp & fuel-farm floodlights (the east end of the airport works after dark too)
+  pushLamp(AIRPORT.cargo.x - 8, AIRPORT.cargo.z + 6); pushLamp(AIRPORT.fuelTanks[1].x - 4, AIRPORT.fuelTanks[1].z - 8);
   for (let i = 0; i < 3; i++) cars.push({ x: AIRPORT.terminal.x - 10 + i * 9, z: AIRPORT.terminal.z + 8, rot: 0, c: (i + 5) % CAR_COLS.length, t: VEHICLE_POOL[(i * 3 + 2) % VEHICLE_POOL.length] });
   // windsock pole near the runway threshold (cloth drawn by <Airport>)
   push(AIRPORT.rx0 - 14, AIRPORT.rz - 12, 0.5, 0.5, 6.5, 0, 0xd8d5cc, AP_ROOF);
@@ -1541,6 +1543,22 @@ export function generateWorld(seed = WORLD_SEED): World {
   /* ---- 🗽 NYC district — solid street furniture (subway rails, kiosks, cabs…) ---- */
   for (const sb of NYC.solidBoxes) boxes.push(sb);
   for (const sc of NYC.solidCircles) circles.push(sc);
+  /* ---- ✈️ airport city-kit — fuel farm, parked aircraft & terminal furniture are solid ---- */
+  for (const ft of AIRPORT.fuelTanks)                        // one clean box per tank shell
+    boxes.push({ x: ft.x, z: ft.z, w: 4.5, d: 2.9, h: 4.6 });
+  boxes.push({ x: AIRPORT.pumpHouse.x, z: AIRPORT.pumpHouse.z, w: 1.1, d: 0.85, h: 3 });   // fuel pump house
+  boxes.push({ x: AIRPORT.gate.x, z: AIRPORT.gate.z, w: 0.85, d: 0.85, h: 3.2 });          // barrier gate house
+  circles.push({ x: AIRPORT.gate.x + 5, z: AIRPORT.gate.z, r: 0.35 });                     // barrier pivot post
+  circles.push({ x: AIRPORT.vorCol.x, z: AIRPORT.vorCol.z, r: AIRPORT.vorCol.r });         // VOR antenna pad
+  for (const c of AIRPORT.jetCols) circles.push(c);          // parked business jet fuselage
+  for (const c of AIRPORT.cargoCols) circles.push(c);        // parked cargo freighter fuselage
+  for (const c of AIRPORT.heliCols) circles.push(c);         // helicopter on the pad
+  circles.push(AIRPORT.pistonCol);                           // parked twin-piston light aircraft
+  for (const k of AIRPORT.kiosks) circles.push({ x: k.x, z: k.z, r: 0.5 });                // check-in kiosks
+  circles.push({ x: AIRPORT.passport.x, z: AIRPORT.passport.z, r: 0.85 });                 // passport booth
+  circles.push({ x: AIRPORT.xray.x, z: AIRPORT.xray.z, r: 0.75 });                         // x-ray machine
+  circles.push({ x: AIRPORT.arch.x - 1.45, z: AIRPORT.arch.z, r: 0.28 });                  // security arch legs
+  circles.push({ x: AIRPORT.arch.x + 1.45, z: AIRPORT.arch.z, r: 0.28 });
   /* ---- 🌲 nature & forest kit — the wild band's solid furniture ---- */
   for (const c2 of cabins) boxes.push({ x: c2.x, z: c2.z, w: 2.9, d: 2.9, h: 4.2 });       // log cabins
   if (rangerPos) boxes.push({ x: rangerPos.x, z: rangerPos.z, w: 3.4, d: 2.9, h: 4.6 });   // ranger station

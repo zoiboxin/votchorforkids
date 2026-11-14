@@ -17,7 +17,14 @@ export const SPAWN = { x: 0, z: 6 } as const;
 
 /* ---------- 7Nights International Airport (south-east, outside the ring highway) ----------
    A working airport: the runway is flat & walkable, the terminal / tower / hangar are solid.
-   Bot planes taxi out, take off, circle the city and land back — all on their own.       */
+   Bot planes taxi out, take off, circle the city and land back — all on their own.
+   Built out with the airport city-kit: marked & lighted runway (edge/threshold lights,
+   approach bar, PAPI, distance boards, guard lights), VOR pad, rotating tower beacon,
+   fuel farm, freight apron with parked aircraft, helipad, an open-air departures strip
+   (check-in kiosks, queue stanchions, x-ray conveyor, security arch, passport booth,
+   taxi rank sign) and service props (ground power units, container dollies, spare
+   engine, barrier gate, fire extinguisher). Every solid piece is pushed into the world
+   by worldgen; visuals render in <Airport> (single source of truth).                 */
 export const AIRPORT = {
   /** runway along +x at z = rz, thresholds at rx0/rx1 (take-off & landing heading east→west) */
   rx0: 225, rx1: 385, rz: 300, rw: 16,
@@ -25,6 +32,48 @@ export const AIRPORT = {
   terminal: { x: 258, z: 342, w: 26, d: 10, h: 12 },
   tower: { x: 292, z: 344, r: 3.2, h: 30 },
   hangar: { x: 336, z: 342, w: 24, d: 14, h: 13 },
+
+  /* ---- kit: airside ---- */
+  helipad: { x: 188, z: 278, r: 6 },
+  /** VOR navigation beacon on its grass pad NE of the runway */
+  vor: { x: 400, z: 283 },
+  vorCol: { x: 400, z: 283, r: 2 },
+  fuelTanks: [{ x: 368, z: 340 }, { x: 378, z: 340 }, { x: 388, z: 340 }],
+  pumpHouse: { x: 399, z: 341 },
+  /** concrete freight apron slab behind the hangar (visual; w/d are half-extents) */
+  freightSlab: { x: 338, z: 317.5, w: 28, d: 8.5 },
+  cargo: { x: 338, z: 316, rot: 0 },
+  /** barrier gate house west of the apron (lifting arm pivots 5m east of it) */
+  gate: { x: 206, z: 320.5 },
+  /** runway distance-remaining boards (north shoulder, counting down to the east end) */
+  boards: [{ x: 350, n: "1" }, { x: 320, n: "2" }, { x: 290, n: "3" }],
+
+  /* ---- kit: parked light aircraft ---- */
+  jet: { x: 298, z: 324, rot: Math.PI },
+  piston: { x: 201, z: 287.5, rot: 0.9 },
+  pistonCol: { x: 201, z: 287.5, r: 1.35 },
+  /** helicopter parked on the pad (faces ~34° east of north) */
+  heli: { x: 188, z: 278, rot: 0.6 },
+
+  /* ---- kit: open-air terminal strip along the glass front ---- */
+  kiosks: [{ x: 236, z: 331.2 }, { x: 241, z: 331.2 }, { x: 246, z: 331.2 }],
+  stanchions: [{ x: 250.5, z: 327.8 }, { x: 250.5, z: 329.7 }, { x: 250.5, z: 331.6 }],
+  xray: { x: 258.5, z: 330.8 },
+  arch: { x: 265, z: 330.8 },
+  passport: { x: 271.5, z: 331.2 },
+  taxiSign: { x: 283, z: 331.2 },
+  /** ground power units behind each parked airliner slot (hoses render in <Airport>) */
+  gpus: [{ x: 230, z: 328.8 }, { x: 255, z: 329 }, { x: 279.5, z: 328.8 }],
+
+  /* ---- kit: apron service ---- */
+  dollies: [{ x: 312, z: 321.5 }, { x: 315.5, z: 321.5 }, { x: 313.8, z: 318 }],
+  spareEngine: { x: 320, z: 325.5 },
+  extinguisher: { x: 352, z: 325.5 },
+
+  /* fuselage colliders for the parked aircraft & helicopter (worldgen circles) */
+  jetCols: [{ x: 295.5, z: 324, r: 1.3 }, { x: 300.5, z: 324, r: 1.25 }],
+  cargoCols: [{ x: 332.5, z: 316, r: 1.6 }, { x: 338, z: 316, r: 1.7 }, { x: 343.5, z: 316, r: 1.6 }],
+  heliCols: [{ x: 188, z: 278, r: 1.5 }],
 } as const;
 export const PLANE_COUNT = 3;
 export const DAY_SECONDS = 360;

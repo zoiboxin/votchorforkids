@@ -8,7 +8,7 @@ import {
   AIRPORT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, TREE_FALL_S, TREE_WOBBLE_S, WALL_RADIUS, stationCage, stationGate,
 } from "@/lib/game/constants";
 import {
-  AVENUE, BARN_BASE, FARMKIT, FIELDS_BASE, GATE, generateWorld, GRAVEKIT, HOSPITAL, MALL, MAIN_ROAD, NYC, PARK, RAILWAY, RAILWAY_crossCottage, RAILWAY_signalBox, RAILWAY_stationHouse, RAILWAY_waterTower, railPoint, ROAD_W, ROADS, RING_R, RING_W, SCHOOL, TOWN_SQUARE, terrainHeight,
+  AVENUE, BARN_BASE, FARMKIT, FIELDS_BASE, GATE, generateWorld, GRAVEKIT, HOSPITAL, inAirportPlot, MALL, MAIN_ROAD, NYC, PARK, RAILWAY, RAILWAY_crossCottage, RAILWAY_signalBox, RAILWAY_stationHouse, RAILWAY_waterTower, railPoint, ROAD_W, ROADS, RING_R, RING_W, SCHOOL, TOWN_SQUARE, terrainHeight,
   type World,
 } from "@/lib/game/worldgen";
 import { nameTag } from "@/lib/game/character";
@@ -58,8 +58,11 @@ function Roads() {
     for (const k of ROADS)
       for (let d = -SPAN; d <= SPAN; d += 9) {
         if (ROADS.some((o) => Math.abs(d - o) < 11)) continue; // keep intersections clear
-        if (k !== 0) out.push({ x: k, z: d, rot: 0 }); // x=0 vertical is the wide MAIN ROAD now
-        out.push({ x: d, z: k, rot: Math.PI / 2 });
+        // ✈️ the airport plot (runway, apron, taxi paths) stays road-free — the
+        // x=202.5 / x=270 lanes and the z=270 lane used to paint stripes right
+        // across the runway markings
+        if (k !== 0 && !inAirportPlot(k, d)) out.push({ x: k, z: d, rot: 0 }); // x=0 vertical is the wide MAIN ROAD now
+        if (!inAirportPlot(d, k)) out.push({ x: d, z: k, rot: Math.PI / 2 });
       }
     for (let d = MAIN_ROAD.z0 + 9; d <= MAIN_ROAD.z1; d += 9) {
       if (ROADS.some((o) => Math.abs(d - o) < 11)) continue;
@@ -96,10 +99,24 @@ function Roads() {
     for (const k of ROADS) {
       if (k !== 0) { // x=0 vertical lane is replaced by the wide main road below
         tmp.rotation.set(-Math.PI / 2, 0, 0);
-        tmp.position.set(k, 0.07, 0); tmp.scale.set(ROAD_W, SPAN * 2, 1); tmp.updateMatrix();
+        // ✈️ roads that run into the airport plot stop at its fence instead of
+        // driving over the runway (the x=202.5 & x=270 lanes)
+        if (k > AIRPORT.rx0 - 46 && k < AIRPORT.rx1 + 26) {
+          const zEnd = AIRPORT.rz - 34;
+          tmp.position.set(k, 0.07, (-SPAN + zEnd) / 2); tmp.scale.set(ROAD_W, zEnd + SPAN, 1); tmp.updateMatrix();
+        } else {
+          tmp.position.set(k, 0.07, 0); tmp.scale.set(ROAD_W, SPAN * 2, 1); tmp.updateMatrix();
+        }
         lane.current.setMatrixAt(i++, tmp.matrix);
       }
-      tmp.position.set(0, 0.07, k); tmp.scale.set(SPAN * 2, ROAD_W, 1); tmp.updateMatrix();
+      tmp.rotation.set(-Math.PI / 2, 0, 0);
+      // ✈️ the eastbound z=270 lane stops at the plot's west edge too
+      if (k > AIRPORT.rz - 34 && k < AIRPORT.terminal.z + AIRPORT.terminal.d + 12) {
+        const xEnd = AIRPORT.rx0 - 46;
+        tmp.position.set((-SPAN + xEnd) / 2, 0.07, k); tmp.scale.set(xEnd + SPAN, ROAD_W, 1); tmp.updateMatrix();
+      } else {
+        tmp.position.set(0, 0.07, k); tmp.scale.set(SPAN * 2, ROAD_W, 1); tmp.updateMatrix();
+      }
       lane.current.setMatrixAt(i++, tmp.matrix);
     }
     // the MAIN ROAD (town march strip) + the central vista to the museum
@@ -3245,10 +3262,552 @@ function Env({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
   );
 }
 
-/* ---------------- 7Nights International Airport ----------------
- * Runway + taxiway + apron slabs with painted markings, a glass-fronted
- * terminal, a control tower with a spinning radar and a windsock. The solid
- * terminal/tower/hangar shells are worldgen buildings — this paints the rest. */
+/* ---------------- 7Nights International Airport — airport city-kit ----------------
+ * Runway + taxiway + apron slabs with painted markings and the full airside
+ * kit: edge/threshold lights, approach lighting bar, PAPI, distance-remaining
+ * boards, flashing runway guard lights, a VOR pad and the rotating tower
+ * beacon. The terminal gets an open-air departures strip (check-in kiosks,
+ * queue stanchions, x-ray conveyor, walk-through security arch, passport
+ * booth, taxi rank sign), the freight ramp a cargo freighter, business jet,
+ * light piston aircraft and a live helipad; plus fuel farm, ground power
+ * units, container dollies, spare engine, barrier gate and fire extinguisher.
+ * The solid terminal/tower/hangar shells are worldgen buildings — this paints
+ * the rest. All positions live in the AIRPORT const (single source of truth). */
+function RunwayLights() {
+  const edge = useMemo(() => {
+    const out: [number, number][] = [];
+    for (let x = AIRPORT.rx0 + 3; x <= AIRPORT.rx1 - 3; x += 10.5) {
+      out.push([x, AIRPORT.rz - 7.3], [x, AIRPORT.rz + 7.3]);
+    }
+    return out;
+  }, []);
+  const green = useMemo(() => [-5.4, -3.2, -1, 1, 3.2, 5.4].map((z) => [AIRPORT.rx0 - 1, AIRPORT.rz + z] as [number, number]), []);
+  const red = useMemo(() => [-5.4, -3.2, -1, 1, 3.2, 5.4].map((z) => [AIRPORT.rx1 + 1, AIRPORT.rz + z] as [number, number]), []);
+  return (
+    <group>
+      {edge.map(([x, z], i) => (
+        <mesh key={`e${i}`} position={[x, 0.2, z]}><sphereGeometry args={[0.13, 6, 5]} /><meshBasicMaterial color="#f8f4e0" /></mesh>
+      ))}
+      {green.map(([x, z], i) => (
+        <mesh key={`g${i}`} position={[x, 0.2, z]}><sphereGeometry args={[0.15, 6, 5]} /><meshBasicMaterial color="#3ae07a" /></mesh>
+      ))}
+      {red.map(([x, z], i) => (
+        <mesh key={`r${i}`} position={[x, 0.2, z]}><sphereGeometry args={[0.15, 6, 5]} /><meshBasicMaterial color="#e84040" /></mesh>
+      ))}
+    </group>
+  );
+}
+
+/** approach lighting bar — white bar lights on the extended centreline before
+ *  the west threshold, with a crossbar where the glide slope catches the eye */
+function ApproachBar() {
+  const xs = [218, 212, 206, 200, 194];
+  return (
+    <group>
+      {xs.map((x) => (
+        <group key={x} position={[x, 0, AIRPORT.rz]}>
+          <mesh position-y={0.85}><cylinderGeometry args={[0.07, 0.09, 1.7, 6]} /><meshLambertMaterial color="#8a8f96" /></mesh>
+          <mesh position-y={1.78}><sphereGeometry args={[0.17, 8, 6]} /><meshBasicMaterial color="#fdfdf5" /></mesh>
+        </group>
+      ))}
+      <group position={[200, 1.78, AIRPORT.rz]}>
+        <mesh><boxGeometry args={[0.12, 0.1, 12.4]} /><meshLambertMaterial color="#8a8f96" /></mesh>
+        {[-5, -2.5, 0, 2.5, 5].map((z) => (
+          <mesh key={z} position={[0, 0.14, z]}><sphereGeometry args={[0.16, 8, 6]} /><meshBasicMaterial color="#ffe9b0" /></mesh>
+        ))}
+      </group>
+    </group>
+  );
+}
+
+/** PAPI — four precision path indicator boxes on the touchdown-zone shoulder,
+ *  two white / two red when the glide slope is just right */
+function Papi() {
+  return (
+    <group>
+      {[0, 1, 2, 3].map((i) => (
+        <group key={i} position={[AIRPORT.rx0 + 9 + i * 3, 0.3, AIRPORT.rz + 11]}>
+          <mesh><boxGeometry args={[0.9, 0.55, 0.55]} /><meshLambertMaterial color="#3c4148" /></mesh>
+          <mesh position={[-0.47, 0, 0]} rotation-y={-Math.PI / 2}>
+            <circleGeometry args={[0.18, 12]} />
+            <meshBasicMaterial color={i < 2 ? "#fdfdf5" : "#e03c30"} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+/** runway guard lights — alternating flashing ambers flanking the taxiway
+ *  where it joins the runway ("hold your position!") */
+function GuardLights() {
+  const a = useRef<THREE.Group>(null!);
+  const b = useRef<THREE.Group>(null!);
+  useFrame((s) => {
+    const on = Math.sin(s.clock.elapsedTime * 7) > 0;
+    a.current.visible = on;
+    b.current.visible = !on;
+  });
+  return (
+    <group>
+      <group ref={a} position={[AIRPORT.rx0 - 20, 0.35, AIRPORT.rz + 9.6]}>
+        <mesh><boxGeometry args={[0.5, 0.5, 0.4]} /><meshLambertMaterial color="#2e3238" /></mesh>
+        {[-0.12, 0.12].map((dz) => (
+          <mesh key={dz} position={[0, 0.34, dz]}><sphereGeometry args={[0.11, 8, 6]} /><meshBasicMaterial color="#ffc832" /></mesh>
+        ))}
+      </group>
+      <group ref={b} position={[AIRPORT.rx0 - 1, 0.35, AIRPORT.rz + 9.6]}>
+        <mesh><boxGeometry args={[0.5, 0.5, 0.4]} /><meshLambertMaterial color="#2e3238" /></mesh>
+        {[-0.12, 0.12].map((dz) => (
+          <mesh key={dz} position={[0, 0.34, dz]}><sphereGeometry args={[0.11, 8, 6]} /><meshBasicMaterial color="#ffc832" /></mesh>
+        ))}
+      </group>
+    </group>
+  );
+}
+
+/** runway distance-remaining board — black number board on the shoulder */
+function DistanceBoard({ x, n }: { x: number; n: string }) {
+  const tex = useMemo(() => nycTex(128, 256, (g, W, H) => {
+    g.fillStyle = "#101314"; g.fillRect(0, 0, W, H);
+    g.strokeStyle = "#e8e8e0"; g.lineWidth = 8; g.strokeRect(6, 6, W - 12, H - 12);
+    g.fillStyle = "#f5f5f0"; g.textAlign = "center"; g.textBaseline = "middle";
+    g.font = "900 150px ui-sans-serif, system-ui, sans-serif";
+    g.fillText(n, W / 2, H / 2 - 20);
+    g.fillRect(26, H - 58, W - 52, 14);
+  }), [n]);
+  return (
+    <group position={[x, 0, AIRPORT.rz + 9.8]}>
+      <mesh position-y={1.05}><cylinderGeometry args={[0.07, 0.09, 2.1, 6]} /><meshLambertMaterial color="#5a5f66" /></mesh>
+      <mesh position={[0, 2.45, -0.03]} rotation-y={Math.PI}>
+        <planeGeometry args={[2.6, 1.3]} />
+        <meshBasicMaterial map={tex} toneMapped={false} />
+      </mesh>
+      <mesh position={[0, 2.45, 0.03]}><planeGeometry args={[2.6, 1.3]} /><meshLambertMaterial color="#101314" /></mesh>
+    </group>
+  );
+}
+
+/** yellow taxi guide: dashed centreline on the connector + lead-in to the stands */
+function TaxiLines() {
+  const dashes = useMemo(() => {
+    const out: number[] = [];
+    for (let x = 207; x <= 223; x += 3.4) out.push(x);
+    return out;
+  }, []);
+  return (
+    <group>
+      {dashes.map((x) => (
+        <mesh key={x} rotation-x={-Math.PI / 2} position={[x, 0.055, AIRPORT.rz + 8]}>
+          <planeGeometry args={[1.9, 0.35]} />
+          <meshBasicMaterial color="#e8b83a" />
+        </mesh>
+      ))}
+      <group position={[227.25, 0, 317]} rotation-y={-1.287}>
+        <mesh rotation-x={-Math.PI / 2}><planeGeometry args={[12.5, 0.35]} /><meshBasicMaterial color="#e8b83a" /></mesh>
+      </group>
+    </group>
+  );
+}
+
+/** VOR navigation beacon — white cabin, striped mast and a slowly sweeping
+ *  counterpoise array on its own concrete pad */
+function VorBeacon() {
+  const spin = useRef<THREE.Group>(null!);
+  useFrame((s, dt) => { if (spin.current) spin.current.rotation.y += dt * 0.8; });
+  return (
+    <group position={[AIRPORT.vor.x, 0, AIRPORT.vor.z]}>
+      <mesh rotation-x={-Math.PI / 2} position-y={0.046}><circleGeometry args={[3.4, 24]} /><meshLambertMaterial color="#8d8d94" /></mesh>
+      <mesh position-y={0.8}><boxGeometry args={[1.6, 1.6, 1.3]} /><meshLambertMaterial color="#c8c4b8" /></mesh>
+      <mesh position-y={2.6}><cylinderGeometry args={[0.09, 0.13, 2.4, 6]} /><meshLambertMaterial color="#b83030" /></mesh>
+      <mesh position-y={3.9}><cylinderGeometry args={[0.08, 0.08, 1.4, 6]} /><meshLambertMaterial color="#e8e6e0" /></mesh>
+      <group ref={spin} position-y={4.7}>
+        <mesh><cylinderGeometry args={[1.5, 1.5, 0.12, 10]} /><meshLambertMaterial color="#d8d5cc" /></mesh>
+        {[0, 1, 2, 3].map((k) => (
+          <mesh key={k} rotation-y={(k * Math.PI) / 2} position={[1.5, 0.3, 0]}><cylinderGeometry args={[0.05, 0.05, 0.9, 5]} /><meshLambertMaterial color="#b83030" /></mesh>
+        ))}
+      </group>
+    </group>
+  );
+}
+
+/** rotating airport beacon on the tower roof — two sweeping beams plus a
+ *  white/green flash bulb, the classic "there's an airfield here" signal */
+function AirportBeacon() {
+  const head = useRef<THREE.Group>(null!);
+  const white = useRef<THREE.Mesh>(null!);
+  const green = useRef<THREE.Mesh>(null!);
+  useFrame((s, dt) => {
+    if (head.current) head.current.rotation.y += dt * 2.6;
+    const ph = (s.clock.elapsedTime * 1.15) % 1;
+    white.current.visible = ph < 0.5;
+    green.current.visible = ph >= 0.5;
+  });
+  const y = AIRPORT.tower.h + 6.4;
+  return (
+    <group position={[AIRPORT.tower.x, 0, AIRPORT.tower.z]}>
+      <mesh position-y={y - 0.8}><cylinderGeometry args={[0.08, 0.1, 1.8, 6]} /><meshLambertMaterial color="#3c4148" /></mesh>
+      <group ref={head} position-y={y}>
+        <mesh rotation-z={-Math.PI / 2} position={[3.2, 0, 0]}>
+          <coneGeometry args={[0.7, 6, 10, 1, true]} />
+          <meshBasicMaterial color="#f8f4e0" transparent opacity={0.3} depthWrite={false} side={THREE.DoubleSide} />
+        </mesh>
+        <mesh rotation-z={Math.PI / 2} position={[-3.2, 0, 0]}>
+          <coneGeometry args={[0.7, 6, 10, 1, true]} />
+          <meshBasicMaterial color="#3ae07a" transparent opacity={0.3} depthWrite={false} side={THREE.DoubleSide} />
+        </mesh>
+        <mesh ref={white} position-y={0.25}><sphereGeometry args={[0.22, 8, 6]} /><meshBasicMaterial color="#ffffff" /></mesh>
+        <mesh ref={green} position-y={-0.25}><sphereGeometry args={[0.22, 8, 6]} /><meshBasicMaterial color="#3ae07a" /></mesh>
+      </group>
+    </group>
+  );
+}
+
+/** fuel farm — three cradled tanks with red bands, a supply line and the
+ *  pump house east of the hangar (solid: two discs per tank) */
+function FuelFarm() {
+  return (
+    <group>
+      {AIRPORT.fuelTanks.map((t, i) => (
+        <group key={i} position={[t.x, 0, t.z]}>
+          <mesh rotation-z={Math.PI / 2} position-y={2.1} castShadow>
+            <cylinderGeometry args={[2.5, 2.5, 8.6, 14]} />
+            <meshLambertMaterial color="#e4e2da" />
+          </mesh>
+          <mesh rotation-z={Math.PI / 2} position={[-3.4, 2.1, 0]}><cylinderGeometry args={[2.52, 2.52, 0.8, 14]} /><meshLambertMaterial color="#c23a2e" /></mesh>
+          <mesh rotation-z={Math.PI / 2} position={[4.35, 2.1, 0]}><cylinderGeometry args={[0.9, 0.9, 0.7, 10]} /><meshLambertMaterial color="#8a8f96" /></mesh>
+          {[-2.8, 2.8].map((dx) => (
+            <mesh key={dx} position={[dx, 0.6, 0]}><boxGeometry args={[1.1, 1.2, 5.4]} /><meshLambertMaterial color="#5a6472" /></mesh>
+          ))}
+          <mesh position={[2.6, 1.7, 2.45]}><boxGeometry args={[0.5, 3.4, 0.08]} /><meshLambertMaterial color="#3c4148" /></mesh>
+        </group>
+      ))}
+      {/* twin supply lines running west→east to the pump house */}
+      {[340.8, 341.4].map((z) => (
+        <mesh key={z} rotation-z={Math.PI / 2} position={[381, 0.35, z]}>
+          <cylinderGeometry args={[0.16, 0.16, 36, 8]} />
+          <meshLambertMaterial color="#565b62" />
+        </mesh>
+      ))}
+      <group position={[AIRPORT.pumpHouse.x, 0, AIRPORT.pumpHouse.z]}>
+        <mesh position-y={1.5}><boxGeometry args={[2.2, 3, 1.7]} /><meshLambertMaterial color="#b8bec8" /></mesh>
+        <mesh position-y={3.12}><boxGeometry args={[2.5, 0.24, 2]} /><meshLambertMaterial color="#5a6472" /></mesh>
+        <mesh position={[0, 1.2, -0.9]}><boxGeometry args={[0.7, 0.9, 0.1]} /><meshLambertMaterial color="#31445c" /></mesh>
+      </group>
+    </group>
+  );
+}
+
+/** helipad — marked slab with a parked helicopter, rotors idling round */
+function Helipad() {
+  const rotor = useRef<THREE.Group>(null!);
+  const tail = useRef<THREE.Group>(null!);
+  useFrame((s, dt) => {
+    if (rotor.current) rotor.current.rotation.y += dt * 12;
+    if (tail.current) tail.current.rotation.x += dt * 18;
+  });
+  const h = AIRPORT.helipad;
+  return (
+    <group position={[h.x, 0, h.z]}>
+      <mesh rotation-x={-Math.PI / 2} position-y={0.046}><circleGeometry args={[h.r, 28]} /><meshLambertMaterial color="#3f4046" /></mesh>
+      <mesh rotation-x={-Math.PI / 2} position-y={0.052}><ringGeometry args={[h.r - 0.8, h.r - 0.4, 28]} /><meshBasicMaterial color="#f2c020" /></mesh>
+      {[-1.1, 1.1].map((dx) => (
+        <mesh key={dx} rotation-x={-Math.PI / 2} position={[dx, 0.054, 0]}><planeGeometry args={[0.7, 3.2]} /><meshBasicMaterial color="#f5f5f0" /></mesh>
+      ))}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.054}><planeGeometry args={[1.7, 0.7]} /><meshBasicMaterial color="#f5f5f0" /></mesh>
+      <group rotation-y={AIRPORT.heli.rot}>
+        <mesh rotation-z={Math.PI / 2} position-y={1.5} castShadow>
+          <capsuleGeometry args={[0.85, 2.1, 4, 10]} />
+          <meshLambertMaterial color="#2a9d8f" />
+        </mesh>
+        <mesh position={[1.5, 1.62, 0]}><sphereGeometry args={[0.62, 10, 8]} /><meshLambertMaterial color="#9fc4d8" transparent opacity={0.85} /></mesh>
+        <mesh rotation-z={Math.PI / 2} position={[-2.6, 1.7, 0]}><cylinderGeometry args={[0.16, 0.24, 2.6, 8]} /><meshLambertMaterial color="#2a9d8f" /></mesh>
+        <mesh position={[-3.8, 1.9, 0]}><boxGeometry args={[0.16, 1.1, 0.1]} /><meshLambertMaterial color="#22615a" /></mesh>
+        <group ref={tail} position={[-3.85, 1.9, 0.14]}>
+          {[0, 1].map((k) => (
+            <mesh key={k} rotation-x={(k * Math.PI) / 2}><boxGeometry args={[0.08, 0.7, 0.16]} /><meshLambertMaterial color="#1c1c22" /></mesh>
+          ))}
+        </group>
+        <mesh position-y={2.55}><cylinderGeometry args={[0.12, 0.12, 0.5, 6]} /><meshLambertMaterial color="#3c4148" /></mesh>
+        <group ref={rotor} position-y={2.9}>
+          {[0, 1, 2, 3].map((k) => (
+            <mesh key={k} rotation-y={(k * Math.PI) / 4}><boxGeometry args={[5.4, 0.06, 0.34]} /><meshLambertMaterial color="#26262c" /></mesh>
+          ))}
+        </group>
+        {[-1, 1].map((sd) => (
+          <mesh key={sd} position={[0.1, 0.32, sd * 0.85]}><boxGeometry args={[3.4, 0.09, 0.09]} /><meshLambertMaterial color="#3a3f46" /></mesh>
+        ))}
+        {[-1.1, 1.3].map((dx) => (
+          <mesh key={dx} position={[dx, 0.16, 0]}><boxGeometry args={[0.08, 0.34, 1.7]} /><meshLambertMaterial color="#2e3238" /></mesh>
+        ))}
+      </group>
+    </group>
+  );
+}
+
+/** parked business jet — T-tail, rear-mounted engines, nose-in to the apron */
+function BusinessJet() {
+  const j = AIRPORT.jet;
+  return (
+    <group position={[j.x, 0, j.z]} rotation-y={j.rot}>
+      <mesh rotation-z={Math.PI / 2} position-y={1.35} castShadow>
+        <capsuleGeometry args={[0.78, 4.4, 4, 12]} />
+        <meshLambertMaterial color="#e9e5da" />
+      </mesh>
+      <mesh position={[3.05, 1.35, 0]} rotation-z={-Math.PI / 2}><coneGeometry args={[0.72, 1.5, 12]} /><meshLambertMaterial color="#e9e5da" /></mesh>
+      <mesh position={[2.15, 1.9, 0]} rotation-z={-0.5}><boxGeometry args={[1.15, 0.5, 1.3]} /><meshLambertMaterial color="#22303f" /></mesh>
+      {[-1, 1].map((s) => (
+        <mesh key={`w${s}`} position={[-0.6, 1.32, s * 0.72]}><boxGeometry args={[3.4, 0.26, 0.08]} /><meshLambertMaterial color="#9fb8c8" /></mesh>
+      ))}
+      {[-1, 1].map((s) => (
+        <mesh key={`e${s}`} rotation-z={Math.PI / 2} position={[-1.35, 1.75, s * 1.05]}>
+          <capsuleGeometry args={[0.32, 1.15, 4, 8]} />
+          <meshLambertMaterial color="#c9c4b6" />
+        </mesh>
+      ))}
+      {[-1, 1].map((s) => (
+        <mesh key={`wing${s}`} position={[-0.3, 0.85, s * 3.5]} rotation-x={s * 0.08} rotation-y={s * -0.28} castShadow>
+          <boxGeometry args={[2.3, 0.16, 5.6]} />
+          <meshLambertMaterial color="#e9e5da" />
+        </mesh>
+      ))}
+      <mesh position={[-2.9, 2.3, 0]} rotation-z={0.5} castShadow><boxGeometry args={[1.2, 2.2, 0.2]} /><meshLambertMaterial color="#c23a2e" /></mesh>
+      <mesh position={[-3.1, 3.3, 0]}><boxGeometry args={[1.15, 0.14, 3.4]} /><meshLambertMaterial color="#e9e5da" /></mesh>
+      {[2.3, -0.9].map((dx) => (
+        <mesh key={dx} position={[dx, 0.42, 0]} rotation-x={Math.PI / 2}><cylinderGeometry args={[0.26, 0.26, 0.2, 10]} /><meshLambertMaterial color="#26262c" /></mesh>
+      ))}
+      {[-1, 1].map((s) => (
+        <mesh key={`g${s}`} position={[-1.6, 0.4, s * 1.1]} rotation-x={Math.PI / 2}><cylinderGeometry args={[0.24, 0.24, 0.2, 10]} /><meshLambertMaterial color="#26262c" /></mesh>
+      ))}
+    </group>
+  );
+}
+
+/** parked cargo freighter — high-wing turbofan hauler with an open tail ramp */
+function CargoFreighter() {
+  const c = AIRPORT.cargo;
+  const body = "#cdd2d8", accent = "#e8862a";
+  return (
+    <group position={[c.x, 0, c.z]} rotation-y={c.rot}>
+      <mesh rotation-z={Math.PI / 2} position-y={2.3} castShadow>
+        <capsuleGeometry args={[1.5, 10.4, 4, 12]} />
+        <meshLambertMaterial color={body} />
+      </mesh>
+      <mesh position={[6.7, 2.05, 0]} rotation-z={-Math.PI / 2}><coneGeometry args={[1.42, 2.6, 12]} /><meshLambertMaterial color={body} /></mesh>
+      <mesh position={[5.9, 2.7, 0]} rotation-z={-0.42}><boxGeometry args={[1.5, 0.62, 1.7]} /><meshLambertMaterial color="#22303f" /></mesh>
+      {[-1, 1].map((s) => (
+        <mesh key={`w${s}`} position={[-0.6, 3.9, s * 3.9]} rotation-x={s * -0.05} castShadow>
+          <boxGeometry args={[3.4, 0.22, 7.4]} />
+          <meshLambertMaterial color={body} />
+        </mesh>
+      ))}
+      {[-1, 1].map((s) => (
+        <mesh key={`e${s}`} rotation-z={Math.PI / 2} position={[1.4, 2.1, s * 3.6]}>
+          <capsuleGeometry args={[0.62, 2.1, 4, 10]} />
+          <meshLambertMaterial color="#8a8f96" />
+        </mesh>
+      ))}
+      <mesh position={[-6.3, 4.1, 0]} rotation-z={0.34} castShadow><boxGeometry args={[1.9, 3.6, 0.26]} /><meshLambertMaterial color={accent} /></mesh>
+      {[-1, 1].map((s) => (
+        <mesh key={`s${s}`} position={[-6.2, 2.8, s * 1.9]} rotation-x={s * 0.14}><boxGeometry args={[1.5, 0.18, 3]} /><meshLambertMaterial color={body} /></mesh>
+      ))}
+      <mesh position={[-6.6, 1.6, 0]} rotation-z={-0.5}><boxGeometry args={[1.7, 0.2, 2.4]} /><meshLambertMaterial color="#8a8f96" /></mesh>
+      <mesh position={[4.4, 2.3, 1.51]}><boxGeometry args={[2.6, 1.7, 0.06]} /><meshLambertMaterial color="#5a6472" /></mesh>
+      <mesh position={[0.4, 1.05, 0]}><boxGeometry args={[12.5, 0.4, 2.6]} /><meshLambertMaterial color="#e9e5da" /></mesh>
+      {[-1, 1].map((s) => (
+        <mesh key={`g${s}`} position={[-1.4, 0.6, s * 1.7]} rotation-x={Math.PI / 2}><cylinderGeometry args={[0.52, 0.52, 0.36, 10]} /><meshLambertMaterial color="#26262c" /></mesh>
+      ))}
+      <mesh position={[4.6, 0.62, 0]} rotation-x={Math.PI / 2}><cylinderGeometry args={[0.44, 0.44, 0.3, 10]} /><meshLambertMaterial color="#26262c" /></mesh>
+    </group>
+  );
+}
+
+/** parked twin-engine piston light aircraft on the west grass pad */
+function PistonAircraft() {
+  const p = AIRPORT.piston;
+  return (
+    <group position={[p.x, 0, p.z]} rotation-y={p.rot}>
+      <mesh rotation-x={-Math.PI / 2} position-y={0.0465}><circleGeometry args={[5.2, 22]} /><meshLambertMaterial color="#7c7c84" /></mesh>
+      <mesh rotation-z={Math.PI / 2} position-y={1.25} castShadow>
+        <capsuleGeometry args={[0.55, 2.3, 4, 10]} />
+        <meshLambertMaterial color="#f0c040" />
+      </mesh>
+      <mesh position={[1.95, 1.25, 0]} rotation-z={-Math.PI / 2}><coneGeometry args={[0.5, 1.1, 10]} /><meshLambertMaterial color="#f0c040" /></mesh>
+      <mesh position={[2.75, 1.25, 0]} rotation-z={-Math.PI / 2}><coneGeometry args={[0.16, 0.4, 8]} /><meshLambertMaterial color="#c8c4b8" /></mesh>
+      <mesh position={[2.68, 1.25, 0]}><boxGeometry args={[0.08, 2.2, 0.16]} /><meshLambertMaterial color="#26262c" /></mesh>
+      <mesh position={[2.68, 1.25, 0]}><boxGeometry args={[0.08, 0.16, 2.2]} /><meshLambertMaterial color="#26262c" /></mesh>
+      <mesh position={[1.3, 1.7, 0]} rotation-z={-0.3}><boxGeometry args={[0.7, 0.5, 0.9]} /><meshLambertMaterial color="#22303f" /></mesh>
+      {[-1, 1].map((s) => (
+        <mesh key={`w${s}`} position={[0.3, 2.15, s * 2.3]} rotation-x={s * 0.06} castShadow>
+          <boxGeometry args={[2.4, 0.14, 4.4]} />
+          <meshLambertMaterial color="#f5f2e8" />
+        </mesh>
+      ))}
+      {[-1, 1].map((s) => (
+        <mesh key={`e${s}`} rotation-z={Math.PI / 2} position={[1.4, 1.9, s * 1.6]}>
+          <capsuleGeometry args={[0.3, 0.9, 4, 8]} />
+          <meshLambertMaterial color="#8a8f96" />
+        </mesh>
+      ))}
+      <mesh position={[-1.9, 1.8, 0]} rotation-z={0.4}><boxGeometry args={[0.9, 1.3, 0.14]} /><meshLambertMaterial color="#f0c040" /></mesh>
+      {[1.4, -0.8].map((dx) => (
+        <mesh key={dx} position={[dx, 0.34, 0]} rotation-x={Math.PI / 2}><cylinderGeometry args={[0.24, 0.24, 0.16, 8]} /><meshLambertMaterial color="#26262c" /></mesh>
+      ))}
+      <mesh position={[0.35, 0.62, 0]}><boxGeometry args={[0.1, 0.55, 0.1]} /><meshLambertMaterial color="#3a3f46" /></mesh>
+      <mesh position={[0.35, 0.3, 0]} rotation-x={Math.PI / 2}><cylinderGeometry args={[0.22, 0.22, 0.14, 8]} /><meshLambertMaterial color="#26262c" /></mesh>
+    </group>
+  );
+}
+
+/** open-air departures strip along the terminal glass: check-in kiosks, queue
+ *  stanchions with rope, x-ray conveyor, walk-through security arch, passport
+ *  booth and the taxi rank sign */
+function TerminalKit() {
+  const taxiTex = useMemo(() => nycTex(256, 80, (g, W, H) => {
+    g.fillStyle = "#f2c020"; g.fillRect(0, 0, W, H);
+    g.strokeStyle = "#141414"; g.lineWidth = 6; g.strokeRect(4, 4, W - 8, H - 8);
+    g.fillStyle = "#141414"; g.textAlign = "center"; g.textBaseline = "middle";
+    g.font = "900 52px ui-sans-serif, system-ui, sans-serif";
+    g.fillText("TAXI", W / 2, H / 2 + 2);
+  }), []);
+  return (
+    <group>
+      {AIRPORT.kiosks.map((k, i) => (
+        <group key={i} position={[k.x, 0, k.z]}>
+          <mesh position-y={0.55}><boxGeometry args={[0.6, 1.1, 0.5]} /><meshLambertMaterial color="#3c4148" /></mesh>
+          <mesh position-y={1.32} rotation-x={-0.28}><boxGeometry args={[0.7, 0.55, 0.16]} /><meshLambertMaterial color="#262a30" /></mesh>
+          <mesh position={[0, 1.34, 0.1]} rotation-x={-0.28}><planeGeometry args={[0.52, 0.4]} /><meshBasicMaterial color="#3ad0a8" /></mesh>
+          <mesh position-y={1.72}><boxGeometry args={[0.5, 0.14, 0.3]} /><meshLambertMaterial color="#e8862a" /></mesh>
+        </group>
+      ))}
+      {AIRPORT.stanchions.map((p, i) => (
+        <group key={i} position={[p.x, 0, p.z]}>
+          <mesh position-y={0.03}><cylinderGeometry args={[0.22, 0.26, 0.06, 10]} /><meshLambertMaterial color="#2e3238" /></mesh>
+          <mesh position-y={0.5}><cylinderGeometry args={[0.045, 0.05, 0.95, 8]} /><meshLambertMaterial color="#b8b0a0" /></mesh>
+          <mesh position-y={1.0}><sphereGeometry args={[0.07, 8, 6]} /><meshLambertMaterial color="#e8e6e0" /></mesh>
+        </group>
+      ))}
+      {[0, 1].map((i) => {
+        const a = AIRPORT.stanchions[i], b = AIRPORT.stanchions[i + 1];
+        return (
+          <mesh key={`r${i}`} position={[a.x, 0.82, (a.z + b.z) / 2]} rotation-x={Math.PI / 2}>
+            <cylinderGeometry args={[0.035, 0.035, b.z - a.z, 6]} />
+            <meshLambertMaterial color="#8a2a2a" />
+          </mesh>
+        );
+      })}
+      <group position={[AIRPORT.xray.x, 0, AIRPORT.xray.z]}>
+        <mesh position-y={0.62}><boxGeometry args={[2.3, 1.1, 0.85]} /><meshLambertMaterial color="#8a8f96" /></mesh>
+        <mesh position-y={0.95}><boxGeometry args={[1.0, 0.7, 0.9]} /><meshLambertMaterial color="#2e3238" /></mesh>
+        <mesh position={[-1.55, 0.78, 0]}><boxGeometry args={[0.8, 0.1, 0.7]} /><meshLambertMaterial color="#5a5f66" /></mesh>
+        <mesh position={[1.5, 0.83, 0.05]}><boxGeometry args={[0.75, 0.4, 0.5]} /><meshLambertMaterial color="#7a4a2e" /></mesh>
+      </group>
+      <group position={[AIRPORT.arch.x, 0, AIRPORT.arch.z]}>
+        {[-1.45, 1.45].map((dx) => (
+          <mesh key={dx} position={[dx, 1.1, 0]}><boxGeometry args={[0.32, 2.2, 0.55]} /><meshLambertMaterial color="#2e3238" /></mesh>
+        ))}
+        <mesh position-y={2.35}><boxGeometry args={[3.4, 0.3, 0.55]} /><meshLambertMaterial color="#3c4148" /></mesh>
+        <mesh position-y={2.55}><boxGeometry args={[3.0, 0.08, 0.4]} /><meshBasicMaterial color="#f8f4e0" /></mesh>
+      </group>
+      <group position={[AIRPORT.passport.x, 0, AIRPORT.passport.z]}>
+        <mesh position-y={1.15}><boxGeometry args={[1.15, 2.3, 0.95]} /><meshLambertMaterial color="#31445c" /></mesh>
+        <mesh position={[0, 1.55, -0.5]}><boxGeometry args={[0.8, 0.6, 0.06]} /><meshBasicMaterial color="#f2c020" /></mesh>
+        <mesh position-y={2.42}><boxGeometry args={[1.35, 0.16, 1.1]} /><meshLambertMaterial color="#5a6472" /></mesh>
+        <mesh position={[0, 0.78, -0.52]}><boxGeometry args={[0.9, 0.1, 0.3]} /><meshLambertMaterial color="#8a8f96" /></mesh>
+      </group>
+      <group position={[AIRPORT.taxiSign.x, 0, AIRPORT.taxiSign.z]}>
+        <mesh position-y={1.4}><cylinderGeometry args={[0.06, 0.08, 2.8, 6]} /><meshLambertMaterial color="#2e3238" /></mesh>
+        <mesh position={[0, 2.95, -0.015]} rotation-y={Math.PI}><planeGeometry args={[1.7, 0.53]} /><meshBasicMaterial map={taxiTex} toneMapped={false} /></mesh>
+        <mesh position={[0, 2.95, 0.015]}><planeGeometry args={[1.7, 0.53]} /><meshLambertMaterial color="#f2c020" /></mesh>
+      </group>
+    </group>
+  );
+}
+
+/** apron service kit: ground power units with hoses to each airliner, baggage
+ *  container dollies, a spare engine on its stand and the barrier gate */
+function ServiceKit() {
+  return (
+    <group>
+      {AIRPORT.gpus.map((g, i) => {
+        const px = AIRPORT.terminal.x - 26 + i * 22, pz = AIRPORT.apronZ;
+        const rot = Math.atan2(-(pz - g.z), px - g.x);
+        return (
+          <group key={i} position={[g.x, 0, g.z]}>
+            <mesh position-y={0.55}><boxGeometry args={[1.5, 0.85, 0.85]} /><meshLambertMaterial color="#e8b83a" /></mesh>
+            <mesh position-y={1.05}><boxGeometry args={[1.55, 0.12, 0.9]} /><meshLambertMaterial color="#2e3238" /></mesh>
+            <mesh position={[0.4, 1.0, 0.2]}><boxGeometry args={[0.4, 0.22, 0.3]} /><meshLambertMaterial color="#3c4148" /></mesh>
+            {[-0.5, 0.5].map((dx) => (
+              <mesh key={dx} position={[dx, 0.24, 0]} rotation-x={Math.PI / 2}><cylinderGeometry args={[0.2, 0.2, 0.14, 8]} /><meshLambertMaterial color="#1c1c22" /></mesh>
+            ))}
+            <mesh position={[2.3 * Math.cos(rot), 0.06, -2.3 * Math.sin(rot)]} rotation-y={rot}>
+              <boxGeometry args={[4.6, 0.05, 0.12]} />
+              <meshLambertMaterial color="#1c1c22" />
+            </mesh>
+          </group>
+        );
+      })}
+      {AIRPORT.dollies.map((d, i) => (
+        <group key={i} position={[d.x, 0, d.z]} rotation-y={i * 0.2}>
+          <mesh position-y={0.42}><boxGeometry args={[2.1, 0.14, 1.2]} /><meshLambertMaterial color="#5a6472" /></mesh>
+          {[-0.8, 0.8].map((dx) => (
+            <mesh key={dx} position={[dx, 0.2, 0]} rotation-x={Math.PI / 2}><cylinderGeometry args={[0.2, 0.2, 0.12, 8]} /><meshLambertMaterial color="#1c1c22" /></mesh>
+          ))}
+          <mesh position-y={0.72}><boxGeometry args={[1.7, 0.55, 1.1]} /><meshLambertMaterial color={["#c23a2e", "#e8b83a", "#2a9d8f"][i % 3]} /></mesh>
+          <mesh position-y={1.02}><boxGeometry args={[1.75, 0.06, 1.15]} /><meshLambertMaterial color="#e9e5da" /></mesh>
+        </group>
+      ))}
+      <group position={[AIRPORT.spareEngine.x, 0, AIRPORT.spareEngine.z]}>
+        {[[-0.5, -0.4], [0.5, -0.4], [-0.5, 0.4], [0.5, 0.4]].map(([dx, dz], k) => (
+          <mesh key={k} position={[dx, 0.45, dz]}><boxGeometry args={[0.12, 0.9, 0.12]} /><meshLambertMaterial color="#3c4148" /></mesh>
+        ))}
+        <mesh position-y={0.95}><boxGeometry args={[1.4, 0.1, 1.1]} /><meshLambertMaterial color="#5a6472" /></mesh>
+        <mesh rotation-z={Math.PI / 2} position-y={1.35}><cylinderGeometry args={[0.5, 0.5, 1.5, 12]} /><meshLambertMaterial color="#c9c4b6" /></mesh>
+        <mesh position={[1.0, 1.35, 0]}><boxGeometry args={[0.1, 1.5, 0.12]} /><meshLambertMaterial color="#26262c" /></mesh>
+        <mesh position={[1.0, 1.35, 0]}><boxGeometry args={[0.1, 0.12, 1.5]} /><meshLambertMaterial color="#26262c" /></mesh>
+      </group>
+      <group position={[AIRPORT.extinguisher.x, 0, AIRPORT.extinguisher.z]}>
+        <mesh position-y={0.08}><boxGeometry args={[0.55, 0.12, 0.35]} /><meshLambertMaterial color="#1c1c22" /></mesh>
+        <mesh position-y={0.55}><cylinderGeometry args={[0.19, 0.16, 0.8, 10]} /><meshLambertMaterial color="#c23a2e" /></mesh>
+        <mesh position-y={1.05}><boxGeometry args={[0.3, 0.1, 0.1]} /><meshLambertMaterial color="#2e3238" /></mesh>
+        <mesh position={[0, 0.98, 0.18]} rotation-x={0.5}><cylinderGeometry args={[0.035, 0.035, 0.4, 6]} /><meshLambertMaterial color="#1c1c22" /></mesh>
+      </group>
+    </group>
+  );
+}
+
+/** lifting barrier at the apron gate — red/white arm that raises and lowers
+ *  on a loop so kids can time their run past it */
+function BarrierGate() {
+  const arm = useRef<THREE.Group>(null!);
+  useFrame((s) => {
+    if (!arm.current) return;
+    const c = s.clock.elapsedTime % 8;
+    const target = c < 3.4 ? 1.25 : c < 4.2 ? 1.25 - ((c - 3.4) / 0.8) * 1.25 : 0;
+    arm.current.rotation.z = target;
+  });
+  return (
+    <group>
+      <group position={[AIRPORT.gate.x, 0, AIRPORT.gate.z]}>
+        <mesh position-y={1.6}><boxGeometry args={[1.7, 3.2, 1.7]} /><meshLambertMaterial color="#e8e6e0" /></mesh>
+        <mesh position-y={3.3}><boxGeometry args={[1.9, 0.2, 1.9]} /><meshLambertMaterial color="#5a6472" /></mesh>
+        <mesh position={[0, 2.2, -0.88]}><boxGeometry args={[0.9, 0.8, 0.08]} /><meshLambertMaterial color="#9fc4d8" /></mesh>
+        <mesh position={[0, 0.9, -0.88]}><boxGeometry args={[0.7, 1.6, 0.06]} /><meshLambertMaterial color="#31445c" /></mesh>
+      </group>
+      <group position={[AIRPORT.gate.x + 5, 0, AIRPORT.gate.z]}>
+        <mesh position-y={0.6}><cylinderGeometry args={[0.22, 0.28, 1.2, 8]} /><meshLambertMaterial color="#e8b83a" /></mesh>
+        <group ref={arm} position-y={1.15}>
+          <mesh position={[3.1, 0, 0]}><boxGeometry args={[6.2, 0.18, 0.14]} /><meshLambertMaterial color="#e8e6e0" /></mesh>
+          {[0.5, 1.7, 2.9, 4.1, 5.3].map((dx) => (
+            <mesh key={dx} position={[dx, 0.02, 0]}><boxGeometry args={[0.7, 0.2, 0.16]} /><meshLambertMaterial color="#c23a2e" /></mesh>
+          ))}
+          <mesh position={[-0.45, 0, 0]}><boxGeometry args={[0.5, 0.5, 0.2]} /><meshLambertMaterial color="#3c4148" /></mesh>
+        </group>
+      </group>
+    </group>
+  );
+}
+
 function Airport() {
   const radar = useRef<THREE.Mesh>(null!);
   const sock = useRef<THREE.Group>(null!);
@@ -3277,6 +3836,21 @@ function Airport() {
           <meshBasicMaterial color="#f5f5f0" />
         </mesh>
       ))}
+      {/* aiming point bars + touchdown zone pairs */}
+      {[-4.6, 4.6].map((z) => (
+        <mesh key={`ap${z}`} rotation-x={-Math.PI / 2} position={[AIRPORT.rx0 + 22, 0.05, AIRPORT.rz + z]}>
+          <planeGeometry args={[9, 1.5]} />
+          <meshBasicMaterial color="#f5f5f0" />
+        </mesh>
+      ))}
+      {[AIRPORT.rx0 + 35, AIRPORT.rx0 + 45].flatMap((x) =>
+        [-6, -3.2, 3.2, 6].map((z) => (
+          <mesh key={`td${x}-${z}`} rotation-x={-Math.PI / 2} position={[x, 0.05, AIRPORT.rz + z]}>
+            <planeGeometry args={[4.5, 0.85]} />
+            <meshBasicMaterial color="#f5f5f0" />
+          </mesh>
+        )),
+      )}
       {/* threshold stripes both ends */}
       {[-1, 1].map((e) =>
         [-5.4, -3.24, -1.08, 1.08, 3.24, 5.4].map((z) => (
@@ -3293,6 +3867,13 @@ function Airport() {
           <meshBasicMaterial color="#e8e8e0" />
         </mesh>
       ))}
+      {/* runway furniture: edge/threshold lights, approach bar, PAPI, boards, guard lights */}
+      <RunwayLights />
+      <ApproachBar />
+      <Papi />
+      <GuardLights />
+      {AIRPORT.boards.map((b) => <DistanceBoard key={b.x} x={b.x} n={b.n} />)}
+      <TaxiLines />
       {/* apron + taxiway */}
       <mesh rotation-x={-Math.PI / 2} position={[AIRPORT.terminal.x + 2, 0.04, (AIRPORT.rz + AIRPORT.terminal.z) / 2 + 1]} receiveShadow>
         <planeGeometry args={[92, AIRPORT.terminal.z - AIRPORT.rz - 8]} />
@@ -3300,6 +3881,11 @@ function Airport() {
       </mesh>
       <mesh rotation-x={-Math.PI / 2} position={[AIRPORT.rx0 - 10, 0.042, AIRPORT.rz + 8]}>
         <planeGeometry args={[22, 8]} />
+        <meshLambertMaterial color="#7c7c84" />
+      </mesh>
+      {/* freight apron slab (behind the hangar) */}
+      <mesh rotation-x={-Math.PI / 2} position={[AIRPORT.freightSlab.x, 0.044, AIRPORT.freightSlab.z]} receiveShadow>
+        <planeGeometry args={[AIRPORT.freightSlab.w * 2, AIRPORT.freightSlab.d * 2]} />
         <meshLambertMaterial color="#7c7c84" />
       </mesh>
       {/* terminal glass front + doors + sign */}
@@ -3316,6 +3902,8 @@ function Airport() {
         <planeGeometry args={[16, 2.4]} />
         <meshBasicMaterial map={sign} toneMapped={false} />
       </mesh>
+      {/* open-air departures strip along the glass front */}
+      <TerminalKit />
       {/* control tower cab + spinning radar (shaft is a worldgen building) */}
       <mesh position={[AIRPORT.tower.x, AIRPORT.tower.h + 1.6, AIRPORT.tower.z]}>
         <boxGeometry args={[7.4, 3.4, 7.4]} />
@@ -3329,11 +3917,24 @@ function Airport() {
         <boxGeometry args={[7.4, 0.24, 0.6]} />
         <meshLambertMaterial color="#f2f4f0" />
       </mesh>
+      {/* rotating airport beacon above the radar */}
+      <AirportBeacon />
       {/* hangar door */}
       <mesh position={[AIRPORT.hangar.x, 4.6, AIRPORT.hangar.z - AIRPORT.hangar.d - 0.08]}>
         <boxGeometry args={[AIRPORT.hangar.w * 2 - 4, 9.2, 0.3]} />
         <meshLambertMaterial color="#7a828e" />
       </mesh>
+      {/* freight ramp kit: parked freighter, business jet, light piston aircraft */}
+      <CargoFreighter />
+      <BusinessJet />
+      <PistonAircraft />
+      {/* apron service kit */}
+      <ServiceKit />
+      <BarrierGate />
+      <FuelFarm />
+      {/* helipad on the west grass, VOR pad north-east of the runway */}
+      <Helipad />
+      <VorBeacon />
       {/* windsock: orange cone that sways with the breeze */}
       <group ref={sock} position={[AIRPORT.rx0 - 14, 6.4, AIRPORT.rz - 12]}>
         <mesh rotation-z={Math.PI / 2} position={[1.6, 0, 0]}>
