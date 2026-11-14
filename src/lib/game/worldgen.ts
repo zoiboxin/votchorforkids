@@ -413,6 +413,137 @@ export const FARMKIT = (() => {
   return { farmhouses, greenhouse, coops, bales, scarecrows, well, tractor, fences };
 })();
 
+/* ---------------- 🗽 NYC city-kit district — a slice of Manhattan in the east midtown belt ----------------
+ * Inspired by the Polyfork "New York City Kit" (82 low-poly parts): art-deco
+ * setback towers with rooftop water tanks, a brownstone row with stoops &
+ * fire escapes, tenements, a parking garage, a movie theatre, and the full
+ * street-level furniture set — subway entrance, newsstand, hot-dog cart,
+ * yellow cabs, globe lamps, traffic lights, hydrants, mailboxes, steam.
+ * Occupies the FREE column of city blocks at x=168.75 (roads x=135 / x=202.5),
+ * z −135…135 — everything here is deterministic; generateWorld() pushes the
+ * boxBuildings (auto colliders) + solidBoxes/solidCircles into the world. */
+export interface NycBoxBuilding { x: number; z: number; w: number; d: number; h: number; kind: 0 | 1; color: number; roof: number; awn: number; fz: 1 | -1 }
+export const NYC = (() => {
+  const bx = 168.75; // district column centre (between roads x=135 and x=202.5)
+  const BROWNSTONE_COLS = [0x8a5a3c, 0x9e6a48, 0xa4714e, 0x7c4a34, 0x96613e, 0x8f5a42];
+  const BROWNSTONE_ROOFS = [0x5c4436, 0x6a4e3e, 0x5f4a3a, 0x54382c, 0x68503c, 0x614a38];
+  const SHOP_NYC = [0xf4a261, 0xe76f51, 0x2a9d8f, 0xf7b2bd, 0xe9c46a];
+  const AWN_NYC = [0xd62828, 0x2a6f4f, 0xe07b39, 0x7a3b8f, 0x1d7a8f];
+
+  /* box buildings — pushed via generateWorld's push() (instanced walls + auto colliders) */
+  const boxBuildings: NycBoxBuilding[] = [
+    // Block A (z −135…−67.5) — art-deco skyline: base tiers only, upper tiers render in <NycDistrict>
+    { x: 164, z: -102, w: 8, d: 8, h: 30, kind: 0, color: 0xd8cfc0, roof: 0x8a8178, awn: 0, fz: 1 },  // "The Dorsett" limestone base
+    { x: 180, z: -94, w: 6.5, d: 6.5, h: 24, kind: 0, color: 0xc9b8a0, roof: 0x8a8178, awn: 0, fz: 1 }, // Chrysler-ish tower base
+    { x: 176, z: -116, w: 6.5, d: 5, h: 13, kind: 0, color: 0xb0a090, roof: 0x6c645c, awn: 0, fz: 1 },  // low office (billboard roof)
+    // Block B (z −67.5…0) — brownstone row + tenement + walk-up + cast-iron loft
+    ...BROWNSTONE_COLS.map((color, i) => ({ x: 152, z: -60 + i * 8.5, w: 4, d: 3.5, h: 11, kind: 0 as const, color, roof: BROWNSTONE_ROOFS[i], awn: 0, fz: 1 as const })),
+    { x: 170, z: -20, w: 5, d: 4.5, h: 16, kind: 0, color: 0x9e4a3a, roof: 0x4a3028, awn: 0, fz: 1 },   // brick tenement (wall ad + water tank)
+    { x: 182, z: -30, w: 2.8, d: 4, h: 13, kind: 0, color: 0xb0a894, roof: 0x5c544a, awn: 0, fz: 1 },   // narrow walk-up
+    { x: 170, z: -52, w: 6, d: 4.5, h: 13, kind: 0, color: 0xa8b0a0, roof: 0x6c746c, awn: 0, fz: 1 },   // cast-iron loft
+    // Block C (z 0…67.5) — one-storey shop row facing road z=0 (fz −1 → awnings/doors toward the street)
+    ...SHOP_NYC.map((color, i) => ({ x: 154 + i * 8.5, z: 11.5, w: 4, d: 3.5, h: 6.2, kind: 1 as const, color, roof: 0x5c544a, awn: AWN_NYC[i], fz: -1 as const })),
+    // Block D (z 67.5…135) — parking garage, tenement, movie theatre
+    { x: 172, z: 92, w: 7, d: 6, h: 9, kind: 0, color: 0xb8b8b0, roof: 0x8a8a82, awn: 0, fz: 1 },      // parking garage
+    { x: 160, z: 114, w: 5, d: 4.5, h: 15, kind: 0, color: 0x8e4436, roof: 0x4a3028, awn: 0, fz: 1 },  // tenement (fire escape + water tank)
+    { x: 182, z: 114, w: 6, d: 5, h: 10, kind: 0, color: 0xd8cbb0, roof: 0x8a5a44, awn: 0, fz: 1 },    // movie theatre (marquee + blade sign)
+  ];
+
+  /* 🏙️ setback towers — tier stacks render in <NycDistrict> above the pushed bases */
+  const decTower = { x: 164, z: -102, base: 30, tiers: [{ s: 5.75, h: 13, y: 30 }, { s: 3.6, h: 8, y: 43 }], color: 0xd8cfc0, dark: 0x8a8178, spire: 9 };
+  const chrTower = { x: 180, z: -94, base: 24, tiers: [{ s: 4.4, h: 10, y: 24 }], color: 0xc9b8a0, dark: 0x7e7264, crown: 5, spire: 6 };
+  const billboard = { x: 176, z: -116, y: 13, w: 8, h: 4.5, rot: Math.PI / 2, face: 1 }; // rooftop billboard facing road x=202.5
+
+  /* 🧱 brownstone detail */
+  const brownstones = BROWNSTONE_COLS.map((color, i) => ({ x: 152, z: -60 + i * 8.5, color, roof: BROWNSTONE_ROOFS[i], stoop: true, escape: i % 2 === 1, scaffold: i === 2 }));
+  const stoops = brownstones.map((b) => ({ x: 147.4, z: b.z }));
+  const fireEscapes = [
+    ...brownstones.filter((b) => b.escape).map((b) => ({ x: 148.3, z: b.z, floors: 3, flip: false })),
+    { x: 164.7, z: -20, floors: 3, flip: false },  // tenement west face
+    { x: 154.7, z: 114, floors: 2, flip: false },  // tenement D west face (road x=135 side)
+  ];
+  const scaffolding = { x: 147.2, z: -43, len: 8 };
+  const wallAd = { x: 175.3, z: -20, y: 8, w: 8.6, h: 6.5, rot: Math.PI / 2 }; // painted ad on tenement east wall
+
+  /* 🚕 street level */
+  const subway = { x: 147, z: 28 };
+  const newsstand = { x: 151, z: 20 };
+  const hotdog = { x: 145, z: -9, rot: 0.4 };
+  const mailboxes = [{ x: 158, z: 6.8 }, { x: 194.8, z: 110 }];
+  const hydrants = [{ x: 144.5, z: 14 }, { x: 195.3, z: 96 }];
+  const trafficLights = [{ x: 141.5, z: -8.5, rot: Math.PI }, { x: 194.5, z: 61.5, rot: 0 }];
+  const globeLamps = [{ x: 144, z: 12 }, { x: 144, z: 52 }, { x: 193.5, z: 12 }, { x: 193.5, z: 52 }];
+  const bikeRack = { x: 163, z: 15, rot: 0 };
+  const busShelter = { x: 144, z: 46, rot: Math.PI / 2 };
+  const diningShed = { x: 161, z: 9.8 };
+  const trash = [{ x: 150, z: 5 }, { x: 188, z: 8 }];
+  const bollards = [{ x: 145.5, z: 25.5 }, { x: 148.5, z: 25.5 }, { x: 145.5, z: 30.5 }, { x: 148.5, z: 30.5 }];
+  const manholes = [{ x: 148, z: 38 }, { x: 156, z: 52 }, { x: 190, z: 30 }];
+  const cellarHatch = { x: 151, z: 44, rot: 0 };
+  const cabs = [{ x: 160, z: 34, rot: Math.PI / 2 }, { x: 166.5, z: 34, rot: Math.PI / 2 }];
+  const streetTrees = [{ x: 146, z: 4 }, { x: 146, z: 36 }, { x: 146, z: 60 }];
+  const bladeSigns = [{ x: 162.5, z: 7.6, y: 4.4, text: "DELI" }, { x: 179.5, z: 7.6, y: 4.4, text: "NEWS" }]; // projecting shop signs
+
+  /* 🅿️ garage + 🎬 theatre + 🚧 construction corner */
+  const garage = { x: 172, z: 92, w: 7, d: 6, h: 9 };
+  const theatre = { x: 182, z: 114, w: 6, d: 5, h: 10, blade: { x: 189.3, z: 117, y: 6.6, w: 1.9, h: 6.8 } };
+  const steam = [
+    { x: 168.6, z: -96.8, y: 30, s: 0.8 },   // "The Dorsett" setback ledge
+    { x: 146.5, z: -70.5, y: 0, s: 1 },      // sidewalk steam pipe
+    { x: 176.5, z: 88.5, y: 9, s: 0.7 },     // garage roof corner
+  ];
+  const waterTowers = [
+    { x: 168.3, z: -102, y: 30.45, s: 0.9 },  // Dorsett setback ledge
+    { x: 171.5, z: -22.5, y: 16.45, s: 1 },   // tenement roof
+    { x: 161.5, z: 116, y: 15.45, s: 0.95 },  // tenement D roof
+  ];
+  const acUnits = [
+    { x: 160.5, z: -105.5, y: 30.45, rot: 0 },
+    { x: 152, z: -58.5, y: 11.45, rot: 0 },
+    { x: 171.5, z: -50, y: 13.45, rot: 0.3 },
+    { x: 184, z: 112, y: 10.45, rot: 0 },
+  ];
+  const construction = {
+    x: 155, z: 78,
+    hoardings: [{ x: 155, z: 74.6, rot: 0, len: 7 }, { x: 151.3, z: 78, rot: Math.PI / 2, len: 6 }],
+    dumpster: { x: 156.5, z: 79.5, rot: 0.1 },
+    cones: [{ x: 153, z: 81 }, { x: 155.5, z: 82.5 }, { x: 153.5, z: 84 }],
+    dirt: { x: 155.5, z: 80 },
+  };
+
+  /* colliders for the solid street furniture (buildings collide automatically) */
+  const solidBoxes: { x: number; z: number; w: number; d: number; h: number }[] = [
+    { x: subway.x, z: subway.z, w: 2.2, d: 2.6, h: 1.4 },      // subway stair railings
+    { x: newsstand.x, z: newsstand.z, w: 1.6, d: 1.2, h: 2.4 }, // newsstand kiosk
+    { x: diningShed.x, z: diningShed.z, w: 1.8, d: 2.6, h: 2.6 }, // curbside dining shed
+    { x: busShelter.x, z: busShelter.z, w: 1.0, d: 1.9, h: 2.6 }, // bus shelter
+    ...construction.hoardings.map((h) => ({ x: h.x, z: h.z, w: h.rot === 0 ? h.len / 2 : 0.3, d: h.rot === 0 ? 0.3 : h.len / 2, h: 2.2 })),
+    { x: construction.dumpster.x, z: construction.dumpster.z, w: 1.6, d: 1.1, h: 1.5 },
+  ];
+  const solidCircles: { x: number; z: number; r: number }[] = [
+    { x: hotdog.x, z: hotdog.z, r: 1.1 },
+    ...mailboxes.map((m) => ({ x: m.x, z: m.z, r: 0.5 })),
+    ...hydrants.map((h) => ({ x: h.x, z: h.z, r: 0.35 })),
+    ...trafficLights.map((t) => ({ x: t.x, z: t.z, r: 0.3 })),
+    ...globeLamps.map((g) => ({ x: g.x, z: g.z, r: 0.3 })),
+    ...trash.map((t) => ({ x: t.x, z: t.z, r: 0.4 })),
+    ...bollards.map((b) => ({ x: b.x, z: b.z, r: 0.22 })),
+    ...streetTrees.map((t) => ({ x: t.x, z: t.z, r: 0.6 })),
+    { x: bikeRack.x, z: bikeRack.z, r: 0.7 },
+    ...construction.cones.map((c) => ({ x: c.x, z: c.z, r: 0.3 })),
+    // yellow cabs — two axle discs each, like every other vehicle
+    ...cabs.flatMap((c) => {
+      const fx = Math.sin(c.rot), fz2 = Math.cos(c.rot);
+      return [
+        { x: c.x - fx * 1.25, z: c.z - fz2 * 1.25, r: 1.3 },
+        { x: c.x + fx * 1.25, z: c.z + fz2 * 1.25, r: 1.3 },
+      ];
+    }),
+  ];
+
+  return { bx, boxBuildings, decTower, chrTower, billboard, brownstones, stoops, fireEscapes, scaffolding, wallAd, subway, newsstand, hotdog, mailboxes, hydrants, trafficLights, globeLamps, bikeRack, busShelter, diningShed, trash, bollards, manholes, cellarHatch, cabs, streetTrees, bladeSigns, garage, theatre, steam, waterTowers, acUnits, construction, solidBoxes, solidCircles };
+})();
+
 /* ---------------- 🎃 halloween night kit — the graveyard gets HAUNTED ----------------
  * A rotten Victorian house looms over the cemetery, an arched gate guards the
  * city-side entrance, wrought-iron posts ring the grounds, a mausoleum and a
@@ -643,6 +774,10 @@ export function generateWorld(seed = WORLD_SEED): World {
         HOME_ROOFS[buildings.length % HOME_ROOFS.length], 0, fz);
     }
   }
+
+  /* ---- 🗽 NYC city-kit district (east midtown column x=168.75) ----
+   * Pushed BEFORE the fringe-cottage loops so cottages keep off the plots. */
+  for (const n of NYC.boxBuildings) push(n.x, n.z, n.w, n.d, n.h, n.kind, n.color, n.roof, n.awn, n.fz);
 
   /* ---- police stations: one per quadrant, white kind-7 block with a van gate + jail cage ----
    * Pushed BEFORE fringe cottages so cottages never spawn on the station plots. */
@@ -1403,6 +1538,9 @@ export function generateWorld(seed = WORLD_SEED): World {
   for (const ok of GRAVEKIT.oaks) circles.push({ x: ok.x, z: ok.z, r: 0.5 });             // twisted dead oaks
   for (const fp of GRAVEKIT.fencePosts) circles.push({ x: fp.x, z: fp.z, r: 0.28 });      // wrought-iron fence posts
   for (const gp of GRAVEKIT.gatePillars) circles.push({ x: gp.x, z: gp.z, r: 0.45 });     // gate pillars
+  /* ---- 🗽 NYC district — solid street furniture (subway rails, kiosks, cabs…) ---- */
+  for (const sb of NYC.solidBoxes) boxes.push(sb);
+  for (const sc of NYC.solidCircles) circles.push(sc);
   /* ---- 🌲 nature & forest kit — the wild band's solid furniture ---- */
   for (const c2 of cabins) boxes.push({ x: c2.x, z: c2.z, w: 2.9, d: 2.9, h: 4.2 });       // log cabins
   if (rangerPos) boxes.push({ x: rangerPos.x, z: rangerPos.z, w: 3.4, d: 2.9, h: 4.6 });   // ranger station

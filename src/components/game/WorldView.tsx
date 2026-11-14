@@ -1,13 +1,14 @@
 "use client";
 
 import { useLayoutEffect, useMemo, useRef } from "react";
+import type { ReactNode } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
   AIRPORT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, TREE_FALL_S, TREE_WOBBLE_S, WALL_RADIUS, stationCage, stationGate,
 } from "@/lib/game/constants";
 import {
-  AVENUE, BARN_BASE, FARMKIT, FIELDS_BASE, GATE, generateWorld, GRAVEKIT, HOSPITAL, MALL, MAIN_ROAD, PARK, RAILWAY, RAILWAY_crossCottage, RAILWAY_signalBox, RAILWAY_stationHouse, RAILWAY_waterTower, railPoint, ROAD_W, ROADS, RING_R, RING_W, SCHOOL, TOWN_SQUARE, terrainHeight,
+  AVENUE, BARN_BASE, FARMKIT, FIELDS_BASE, GATE, generateWorld, GRAVEKIT, HOSPITAL, MALL, MAIN_ROAD, NYC, PARK, RAILWAY, RAILWAY_crossCottage, RAILWAY_signalBox, RAILWAY_stationHouse, RAILWAY_waterTower, railPoint, ROAD_W, ROADS, RING_R, RING_W, SCHOOL, TOWN_SQUARE, terrainHeight,
   type World,
 } from "@/lib/game/worldgen";
 import { nameTag } from "@/lib/game/character";
@@ -1854,14 +1855,19 @@ function Graves({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
     </>
   );
 
-  /* inner helper — one thin iron rail ring split around the gateway */
+  /* inner helper — one thin iron rail ring split around the gateway.
+   * MUST sit on the graveyard plot (GRAVEYARD.x/z) — with no offset these rings
+   * used to draw around the WORLD ORIGIN, i.e. two ghost half-circle "rail
+   * tracks" floating right through the city centre. And because rotation-x=-π/2
+   * mirrors ring angle θ to world angle −θ, the start angles are negated so the
+   * gateway gap lands exactly on the entrance-path side (world `gateAng`). */
   function IronRails({ y }: { y: number }) {
     const gateAng = Math.atan2(GRAVEKIT.gate.z - GRAVEYARD.z, GRAVEKIT.gate.x - GRAVEYARD.x);
     const gap = 0.17;
     return (
       <>
-        {[gateAng + gap, gateAng + Math.PI + gap].map((start, i) => (
-          <mesh key={i} rotation-x={-Math.PI / 2} position-y={y}>
+        {[-gateAng + gap, -gateAng + Math.PI + gap].map((start, i) => (
+          <mesh key={i} rotation-x={-Math.PI / 2} position={[GRAVEYARD.x, y, GRAVEYARD.z]}>
             <ringGeometry args={[41.85, 42.15, 64, 1, start, Math.PI - gap * 2]} />
             <meshLambertMaterial color="#1c1e24" side={THREE.DoubleSide} />
           </mesh>
@@ -3490,14 +3496,17 @@ function Railway() {
   const cross = railPoint(RAILWAY.crossing.a);
   return (
     <>
-      {/* ballast bed + twin rails — flat ribbons along the arc */}
+      {/* ballast bed + twin rails — flat ribbons along the arc.
+       * rotation-x=-π/2 MIRRORS ring angles (θ → world −θ), so the thetaStart
+       * is −a1 (not a0!) to land the ribbon ON the sleepers/station side —
+       * the old mirrored ribbon drew a ghost half-arc on the far side of town. */}
       <mesh rotation-x={-Math.PI / 2} position-y={0.045}>
-        <ringGeometry args={[RAILWAY.R - 2.3, RAILWAY.R + 2.3, 160, 1, RAILWAY.a0, RAILWAY.a1 - RAILWAY.a0]} />
+        <ringGeometry args={[RAILWAY.R - 2.3, RAILWAY.R + 2.3, 160, 1, -RAILWAY.a1, RAILWAY.a1 - RAILWAY.a0]} />
         <meshLambertMaterial color="#5a5248" side={THREE.DoubleSide} />
       </mesh>
       {[RAILWAY.R - 0.75, RAILWAY.R + 0.75].map((r, i) => (
         <mesh key={i} rotation-x={-Math.PI / 2} position-y={0.18}>
-          <ringGeometry args={[r - 0.07, r + 0.07, 200, 1, RAILWAY.a0, RAILWAY.a1 - RAILWAY.a0]} />
+          <ringGeometry args={[r - 0.07, r + 0.07, 200, 1, -RAILWAY.a1, RAILWAY.a1 - RAILWAY.a0]} />
           <meshLambertMaterial color="#4a4440" side={THREE.DoubleSide} />
         </mesh>
       ))}
@@ -3593,8 +3602,9 @@ function Railway() {
           <mesh position={[1.1, 1.8, 0]}><boxGeometry args={[0.9, 0.2, 2.4]} /><meshLambertMaterial color="#3a3430" /></mesh>
         </group>
       ))}
-      {/* ✖️ the level crossing where the farm lane meets the line */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.04}>
+      {/* ✖️ the farm lane meets the line — the long lane strip sits AT the crossing
+       * (it used to render at the world origin, a dirt stripe right through downtown!) */}
+      <mesh rotation-x={-Math.PI / 2} position={[cross.x, 0.04, cross.z]}>
         <planeGeometry args={[7, 108]} />
         <meshLambertMaterial color="#7a6a50" />
       </mesh>
@@ -3620,6 +3630,431 @@ function Railway() {
         <mesh position-y={3.9} rotation-z={0.6}><boxGeometry args={[1.9, 0.34, 0.1]} /><meshLambertMaterial color="#e8e4dc" /></mesh>
         <mesh position-y={3.9} rotation-z={-0.6}><boxGeometry args={[1.9, 0.34, 0.1]} /><meshLambertMaterial color="#e8e4dc" /></mesh>
       </group>
+    </>
+  );
+}
+
+/* ------------------------- 🗽 NYC city-kit district -------------------------
+ * A Manhattan slice in the east midtown column (x=168.75): art-deco setback
+ * towers, brownstone row, subway entrance, yellow cabs, water tanks, steam —
+ * all positions come from the NYC const in worldgen (single source of truth). */
+function nycTex(w: number, h: number, draw: (g: CanvasRenderingContext2D, W: number, H: number) => void): THREE.CanvasTexture {
+  const cv = document.createElement("canvas");
+  cv.width = w; cv.height = h;
+  draw(cv.getContext("2d")!, w, h);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.anisotropy = 4;
+  return tex;
+}
+
+function NycWaterTower({ x, z, y, s = 1 }: { x: number; z: number; y: number; s?: number }) {
+  return (
+    <group position={[x, y, z]} scale={[s, s, s]}>
+      {[[-0.9, -0.9], [0.9, -0.9], [-0.9, 0.9], [0.9, 0.9]].map(([dx, dz], i) => (
+        <mesh key={i} position={[dx, 1.3, dz]} rotation-z={dx * 0.12} rotation-x={-dz * 0.12}>
+          <cylinderGeometry args={[0.09, 0.12, 2.6, 5]} /><meshLambertMaterial color="#4a3c30" />
+        </mesh>
+      ))}
+      <mesh position-y={3.4}><cylinderGeometry args={[1.5, 1.7, 2.6, 10]} /><meshLambertMaterial color="#8a6a4a" /></mesh>
+      <mesh position-y={4.9}><coneGeometry args={[1.8, 1.1, 10]} /><meshLambertMaterial color="#3a3430" /></mesh>
+    </group>
+  );
+}
+
+/** iron zigzag pinned to a west-facing wall — landings + alternating stairs */
+function NycFireEscape({ x, z, floors }: { x: number; z: number; floors: number }) {
+  const iron = "#2c3a30";
+  const runs: ReactNode[] = [];
+  for (let f = 0; f <= floors; f++) {
+    const y = 2.6 + f * 3.4;
+    runs.push(
+      <mesh key={`l${f}`} position={[x, y, z]}><boxGeometry args={[1.1, 0.1, 3]} /><meshLambertMaterial color={iron} /></mesh>,
+      <mesh key={`r${f}`} position={[x + 0.52, y + 0.55, z]}><boxGeometry args={[0.06, 0.06, 3]} /><meshLambertMaterial color={iron} /></mesh>,
+    );
+    if (f < floors) {
+      const dir = f % 2 === 0 ? -1 : 1;
+      runs.push(
+        <mesh key={`s${f}`} position={[x, y + 1.55, z + dir * 1.25]} rotation-x={dir * 0.64}>
+          <boxGeometry args={[0.8, 0.08, 2.5]} /><meshLambertMaterial color={iron} />
+        </mesh>,
+        <mesh key={`sr${f}`} position={[x + 0.42, y + 2.0, z + dir * 1.25]} rotation-x={dir * 0.64}>
+          <boxGeometry args={[0.05, 0.05, 2.5]} /><meshLambertMaterial color={iron} />
+        </mesh>,
+      );
+    }
+  }
+  return <>{runs}</>;
+}
+
+function NycGlobeLamp({ x, z }: { x: number; z: number }) {
+  return (
+    <group position={[x, 0, z]}>
+      <mesh position-y={1.8}><cylinderGeometry args={[0.09, 0.14, 3.6, 6]} /><meshLambertMaterial color="#1d3a2a" /></mesh>
+      <mesh position={[0.5, 3.62, 0]}><boxGeometry args={[1.2, 0.08, 0.08]} /><meshLambertMaterial color="#1d3a2a" /></mesh>
+      <mesh position={[1.05, 3.35, 0]}><sphereGeometry args={[0.3, 10, 8]} /><meshBasicMaterial color="#f4f0dc" /></mesh>
+    </group>
+  );
+}
+
+function NycTrafficLight({ x, z, rot }: { x: number; z: number; rot: number }) {
+  return (
+    <group position={[x, 0, z]} rotation-y={rot}>
+      <mesh position-y={2.3}><cylinderGeometry args={[0.11, 0.15, 4.6, 6]} /><meshLambertMaterial color="#2c3038" /></mesh>
+      <mesh position={[0.7, 4.55, 0]}><boxGeometry args={[1.6, 0.09, 0.09]} /><meshLambertMaterial color="#2c3038" /></mesh>
+      <mesh position={[1.5, 4.3, 0]}><boxGeometry args={[0.34, 1.05, 0.28]} /><meshLambertMaterial color="#1c1f24" /></mesh>
+      <mesh position={[1.5, 4.62, 0]}><sphereGeometry args={[0.1, 8, 6]} /><meshBasicMaterial color="#5a1410" /></mesh>
+      <mesh position={[1.5, 4.3, 0]}><sphereGeometry args={[0.1, 8, 6]} /><meshBasicMaterial color="#5a3a10" /></mesh>
+      <mesh position={[1.5, 3.98, 0]}><sphereGeometry args={[0.1, 8, 6]} /><meshBasicMaterial color="#35e07a" /></mesh>
+    </group>
+  );
+}
+
+function NycCab({ x, z, rot }: { x: number; z: number; rot: number }) {
+  return (
+    <group position={[x, 0, z]} rotation-y={rot}>
+      <mesh position-y={0.78}><boxGeometry args={[4.2, 0.75, 1.9]} /><meshLambertMaterial color="#f7c948" /></mesh>
+      <mesh position={[-0.2, 1.5, 0]}><boxGeometry args={[2.1, 0.7, 1.72]} /><meshLambertMaterial color="#f7c948" /></mesh>
+      <mesh position={[-0.2, 1.6, 0]}><boxGeometry args={[2.14, 0.44, 1.76]} /><meshLambertMaterial color="#2a3540" /></mesh>
+      <mesh position={[-0.2, 1.98, 0]}><boxGeometry args={[0.66, 0.26, 0.3]} /><meshBasicMaterial color="#f4f0dc" /></mesh>
+      {[[-1.45, 0.95], [-1.45, -0.95], [1.45, 0.95], [1.45, -0.95]].map(([dx, dz], i) => (
+        <mesh key={i} position={[dx, 0.42, dz]} rotation-x={Math.PI / 2}>
+          <cylinderGeometry args={[0.42, 0.42, 0.24, 10]} /><meshLambertMaterial color="#1e2024" />
+        </mesh>
+      ))}
+      <mesh position={[2.12, 0.78, 0.55]}><sphereGeometry args={[0.14, 8, 6]} /><meshBasicMaterial color="#fff7d6" /></mesh>
+      <mesh position={[2.12, 0.78, -0.55]}><sphereGeometry args={[0.14, 8, 6]} /><meshBasicMaterial color="#fff7d6" /></mesh>
+    </group>
+  );
+}
+
+function NycSteam({ x, z, y, s = 1 }: { x: number; z: number; y: number; s?: number }) {
+  const base = y === 0 ? 0.9 : 2.6;
+  return (
+    <group position={[x, y, z]} scale={[s, s, s]}>
+      {y > 0 && <mesh position-y={1.1}><cylinderGeometry args={[0.3, 0.38, 2.2, 8]} /><meshLambertMaterial color="#4a4440" /></mesh>}
+      <mesh position={[0, base, 0]}><sphereGeometry args={[0.7, 8, 6]} /><meshBasicMaterial color="#e8e8e8" transparent opacity={0.34} depthWrite={false} /></mesh>
+      <mesh position={[0.15, base + 1.5, -0.1]}><sphereGeometry args={[1.05, 8, 6]} /><meshBasicMaterial color="#ececec" transparent opacity={0.24} depthWrite={false} /></mesh>
+      <mesh position={[-0.1, base + 3.0, 0.08]}><sphereGeometry args={[1.5, 8, 6]} /><meshBasicMaterial color="#f0f0f0" transparent opacity={0.15} depthWrite={false} /></mesh>
+    </group>
+  );
+}
+
+/** vertical stacked-letter blade sign texture (DELI / NEWS / RIVOLI) */
+function nycBladeTex(text: string, bg: string): THREE.CanvasTexture {
+  return nycTex(96, 288, (g, W, H) => {
+    g.fillStyle = bg; g.fillRect(0, 0, W, H);
+    g.strokeStyle = "#f4ecd8"; g.lineWidth = 6; g.strokeRect(6, 6, W - 12, H - 12);
+    g.fillStyle = "#f4ecd8"; g.textAlign = "center"; g.textBaseline = "middle";
+    g.font = "900 52px ui-sans-serif, system-ui, sans-serif";
+    const step = H / (text.length + 1);
+    [...text].forEach((ch, i) => g.fillText(ch, W / 2, step * (i + 1)));
+  });
+}
+
+function NycDistrict() {
+  const billboardTex = useMemo(() => nycTex(512, 288, (g, W, H) => {
+    g.fillStyle = "#b5432a"; g.fillRect(0, 0, W, H);
+    g.strokeStyle = "#f4ecd8"; g.lineWidth = 10; g.strokeRect(14, 14, W - 28, H - 28);
+    g.fillStyle = "#f4ecd8"; g.textAlign = "center"; g.textBaseline = "middle";
+    g.font = "900 108px ui-sans-serif, system-ui, sans-serif";
+    g.fillText("7 NIGHTS", W / 2, H / 2 - 42);
+    g.font = "800 52px ui-sans-serif, system-ui, sans-serif";
+    g.fillText("SURVIVE THE CITY", W / 2, H / 2 + 58);
+  }), []);
+  const wallAdTex = useMemo(() => nycTex(512, 384, (g, W, H) => {
+    g.fillStyle = "#e4d6b4"; g.fillRect(0, 0, W, H);
+    g.fillStyle = "rgba(120,90,60,0.25)"; for (let i = 0; i < 6; i++) g.fillRect(i * 90 + 10, 0, 26, H); // weathered boards
+    g.fillStyle = "#b5432a"; g.textAlign = "center"; g.textBaseline = "middle";
+    g.font = "900 96px ui-sans-serif, system-ui, sans-serif";
+    g.fillText("MOON SODA", W / 2, H / 2 - 58);
+    g.fillStyle = "#2c3947";
+    g.font = "800 56px ui-sans-serif, system-ui, sans-serif";
+    g.fillText("ICE COLD · 5¢", W / 2, H / 2 + 42);
+    g.font = "700 34px ui-sans-serif, system-ui, sans-serif";
+    g.fillText("DRINK IT UNDER THE STARS", W / 2, H / 2 + 118);
+  }), []);
+  const subwayTex = useMemo(() => nycTex(256, 96, (g, W, H) => {
+    g.fillStyle = "#0e3a24"; g.fillRect(0, 0, W, H);
+    g.strokeStyle = "#f4f0dc"; g.lineWidth = 6; g.strokeRect(6, 6, W - 12, H - 12);
+    g.fillStyle = "#f4f0dc"; g.textAlign = "center"; g.textBaseline = "middle";
+    g.font = "900 54px ui-sans-serif, system-ui, sans-serif";
+    g.fillText("SUBWAY", W / 2, H / 2 + 2);
+  }), []);
+  const rivoliTex = useMemo(() => nycBladeTex("RIVOLI", "#b5432a"), []);
+  const deliTex = useMemo(() => nycBladeTex("DELI", "#2a6f4f"), []);
+  const newsTex = useMemo(() => nycBladeTex("NEWS", "#1d3a5f"), []);
+  const pTex = useMemo(() => nycTex(128, 128, (g, W, H) => {
+    g.fillStyle = "#f2f4f0"; g.fillRect(0, 0, W, H);
+    g.fillStyle = "#1d5fbf"; g.textAlign = "center"; g.textBaseline = "middle";
+    g.font = "900 104px ui-sans-serif, system-ui, sans-serif";
+    g.fillText("P", W / 2, H / 2 + 6);
+  }), []);
+
+  return (
+    <>
+      {/* sidewalk plates — poured concrete bands along the district kerbs */}
+      {[-101.25, -33.75, 33.75, 101.25].map((cz, i) => (
+        <mesh key={`w${i}`} rotation-x={-Math.PI / 2} position={[145.5, 0.035, cz]}>
+          <planeGeometry args={[6.8, 65.5]} />
+          <meshLambertMaterial color="#7e7e76" />
+        </mesh>
+      ))}
+      {[33.75, 101.25].map((cz, i) => (
+        <mesh key={`e${i}`} rotation-x={-Math.PI / 2} position={[191.75, 0.035, cz]}>
+          <planeGeometry args={[7, 65.5]} />
+          <meshLambertMaterial color="#7e7e76" />
+        </mesh>
+      ))}
+      <mesh rotation-x={-Math.PI / 2} position={[171, 0.035, 10.4]}>
+        <planeGeometry args={[42, 6.8]} />
+        <meshLambertMaterial color="#7e7e76" />
+      </mesh>
+
+      {/* 🏙️ art-deco setback towers — the Empire-State silhouette */}
+      <group position={[NYC.decTower.x, 0, NYC.decTower.z]}>
+        {NYC.decTower.tiers.map((t, i) => (
+          <mesh key={i} position-y={t.y + t.h / 2}><boxGeometry args={[t.s * 2, t.h, t.s * 2]} /><meshLambertMaterial color={NYC.decTower.color} /></mesh>
+        ))}
+        <mesh position-y={NYC.decTower.base + NYC.decTower.tiers[0].h + NYC.decTower.tiers[1].h + NYC.decTower.spire / 2}>
+          <cylinderGeometry args={[0.5, 0.9, NYC.decTower.spire, 6]} /><meshLambertMaterial color="#8a8178" />
+        </mesh>
+        {/* west-face window columns (LOCAL coords — the group is offset to the tower plot) */}
+        {[-6.6, -3.4, -0.2, 3, 6.2].map((wz, i) => (
+          <mesh key={`ww${i}`} position={[-8.06, 15, wz]} rotation-y={-Math.PI / 2}><planeGeometry args={[1.4, 26]} /><meshLambertMaterial color="#3a3e46" /></mesh>
+        ))}
+        {[-4.2, -1.6, 1.6, 4.2].map((wz, i) => (
+          <mesh key={`tw${i}`} position={[wz, NYC.decTower.tiers[0].y + 6.5, -5.82]} rotation-y={Math.PI}><planeGeometry args={[1.2, 10]} /><meshLambertMaterial color="#3a3e46" /></mesh>
+        ))}
+      </group>
+      <group position={[NYC.chrTower.x, 0, NYC.chrTower.z]}>
+        {NYC.chrTower.tiers.map((t, i) => (
+          <mesh key={i} position-y={t.y + t.h / 2}><boxGeometry args={[t.s * 2, t.h, t.s * 2]} /><meshLambertMaterial color={NYC.chrTower.color} /></mesh>
+        ))}
+        {/* crown cones + needle spire */}
+        <mesh position-y={34.2}><coneGeometry args={[4.2, 3, 8]} /><meshLambertMaterial color={NYC.chrTower.dark} /></mesh>
+        <mesh position-y={36.8}><coneGeometry args={[2.4, 2.6, 8]} /><meshLambertMaterial color={NYC.chrTower.dark} /></mesh>
+        <mesh position-y={39.8}><cylinderGeometry args={[0.22, 0.4, NYC.chrTower.spire, 6]} /><meshLambertMaterial color="#8a8178" /></mesh>
+        {[-4.4, -1.6, 1.6, 4.4].map((wz, i) => (
+          <mesh key={`cw${i}`} position={[-6.56, 12, wz]} rotation-y={-Math.PI / 2}><planeGeometry args={[1.2, 20]} /><meshLambertMaterial color="#3a3e46" /></mesh>
+        ))}
+      </group>
+      {/* rooftop billboard on the low office — faces road x=202.5 */}
+      <group position={[NYC.billboard.x, 0, NYC.billboard.z]}>
+        {[[-2.6, -3.2], [2.6, -3.2], [-2.6, 3.2], [2.6, 3.2]].map(([dx, dz], i) => (
+          <mesh key={i} position={[dx, NYC.billboard.y + 1.3, dz]}><cylinderGeometry args={[0.14, 0.18, 2.8, 6]} /><meshLambertMaterial color="#3a3430" /></mesh>
+        ))}
+        <mesh position={[0, NYC.billboard.y + 3.4, 0]} rotation-y={NYC.billboard.rot}>
+          <planeGeometry args={[NYC.billboard.w, NYC.billboard.h]} />
+          <meshLambertMaterial map={billboardTex} side={THREE.DoubleSide} />
+        </mesh>
+      </group>
+
+      {/* 🧱 brownstone row — stoops, tall windows, iron zigzags, scaffolding */}
+      {NYC.brownstones.map((b, i) => (
+        <group key={i}>
+          {/* stoop: three treads + iron rails + door */}
+          {[0.5, 0.85, 1.2].map((sy, si) => (
+            <mesh key={si} position={[147.9 - si * 0.42, sy, b.z]}><boxGeometry args={[0.5, 0.35, 2.2]} /><meshLambertMaterial color="#9a9186" /></mesh>
+          ))}
+          {[1.15, -1.15].map((dz, ri) => (
+            <mesh key={ri} position={[147.6, 1.9, b.z + dz]} rotation-z={ri === 0 ? -0.3 : 0.3}>
+              <cylinderGeometry args={[0.045, 0.045, 2.4, 5]} /><meshLambertMaterial color="#1c1e24" />
+            </mesh>
+          ))}
+          <mesh position={[148.4, 1.75, b.z]} rotation-y={-Math.PI / 2}><planeGeometry args={[1.3, 2.5]} /><meshLambertMaterial color="#2e2016" /></mesh>
+          {/* two floors of tall windows on the street face */}
+          {[3.6, 7.8].map((wy, fi) => [-2, 2].map((wz, wi) => (
+            <mesh key={`w${fi}-${wi}`} position={[148.4, wy, b.z + wz]} rotation-y={-Math.PI / 2}>
+              <planeGeometry args={[1.15, 2.3]} /><meshLambertMaterial color="#3a3e46" />
+            </mesh>
+          )))}
+        </group>
+      ))}
+      {NYC.fireEscapes.map((fe, i) => <NycFireEscape key={i} x={fe.x} z={fe.z} floors={fe.floors} />)}
+      {/* scaffolding over brownstone #3's stoop */}
+      <group position={[NYC.scaffolding.x, 0, NYC.scaffolding.z]}>
+        {[[1.2, -3.7], [1.2, 3.7], [-0.7, -3.7], [-0.7, 3.7]].map(([dx, dz], i) => (
+          <mesh key={i} position={[dx, 5.4, dz]}><cylinderGeometry args={[0.09, 0.11, 10.8, 5]} /><meshLambertMaterial color="#8a6a4a" /></mesh>
+        ))}
+        <mesh position-y={5.75}><boxGeometry args={[0.24, 0.14, 8.4]} /><meshLambertMaterial color="#c9a45c" /></mesh>
+        <mesh position-y={10.7}><boxGeometry args={[0.24, 0.14, 8.4]} /><meshLambertMaterial color="#c9a45c" /></mesh>
+      </group>
+      {/* painted wall ad — tenement gable */}
+      <mesh position={[NYC.wallAd.x, NYC.wallAd.y, NYC.wallAd.z]} rotation-y={NYC.wallAd.rot}>
+        <planeGeometry args={[NYC.wallAd.w, NYC.wallAd.h]} />
+        <meshLambertMaterial map={wallAdTex} transparent opacity={0.92} />
+      </mesh>
+      {/* tenement bulkheads + roof AC units */}
+      <mesh position={[171.5, 17.2, -18]}><boxGeometry args={[2.2, 1.5, 1.8]} /><meshLambertMaterial color="#54443a" /></mesh>
+      {NYC.acUnits.map((ac, i) => (
+        <group key={i} position={[ac.x, ac.y, ac.z]} rotation-y={ac.rot}>
+          <mesh position-y={0.5}><boxGeometry args={[1.6, 1, 1.4]} /><meshLambertMaterial color="#8a8f98" /></mesh>
+          <mesh position={[0, 0.52, 0.72]} rotation-y={0}><planeGeometry args={[1.2, 0.6]} /><meshLambertMaterial color="#3a3e46" /></mesh>
+        </group>
+      ))}
+      {NYC.waterTowers.map((wt, i) => <NycWaterTower key={i} x={wt.x} z={wt.z} y={wt.y} s={wt.s} />)}
+
+      {/* 🚕 street level — cabs, subway, newsstand, hot dog, lamps, lights */}
+      {NYC.cabs.map((cb, i) => <NycCab key={i} x={cb.x} z={cb.z} rot={cb.rot} />)}
+      {NYC.globeLamps.map((gl, i) => <NycGlobeLamp key={i} x={gl.x} z={gl.z} />)}
+      {NYC.trafficLights.map((tl, i) => <NycTrafficLight key={i} x={tl.x} z={tl.z} rot={tl.rot} />)}
+      {NYC.steam.map((st, i) => <NycSteam key={i} x={st.x} z={st.z} y={st.y} s={st.s} />)}
+      {/* subway entrance — sunken stair, green railings, twin globes, sign */}
+      <group position={[NYC.subway.x, 0, NYC.subway.z]}>
+        <mesh rotation-x={-Math.PI / 2} position-y={0.05}><planeGeometry args={[4.2, 5]} /><meshLambertMaterial color="#15171c" /></mesh>
+        {[0.4, 1.1, 1.8].map((dy, i) => (
+          <mesh key={i} rotation-x={-Math.PI / 2} position={[0, 0.06, -1.2 + i * 1.1]}><planeGeometry args={[3.4, 0.9]} /><meshLambertMaterial color={i % 2 ? "#3a3e46" : "#2c3038"} /></mesh>
+        ))}
+        {[2.2, -2.2].map((dz, i) => (
+          <group key={i} position={[0, 0, dz]}>
+            <mesh position={[-1.8, 0.6, 0]}><cylinderGeometry args={[0.07, 0.07, 1.2, 6]} /><meshLambertMaterial color="#1f7a4a" /></mesh>
+            <mesh position={[1.8, 0.6, 0]}><cylinderGeometry args={[0.07, 0.07, 1.2, 6]} /><meshLambertMaterial color="#1f7a4a" /></mesh>
+            <mesh position={[0, 1.15, 0]} rotation-x={Math.PI / 2}><cylinderGeometry args={[0.07, 0.07, 4.2, 6]} /><meshLambertMaterial color="#1f7a4a" /></mesh>
+          </group>
+        ))}
+        {[-2.6, 2.6].map((dz, i) => (
+          <group key={`g${i}`} position={[0, 0, dz]}>
+            <mesh position-y={1.1}><cylinderGeometry args={[0.06, 0.08, 2.2, 5]} /><meshLambertMaterial color="#1d3a2a" /></mesh>
+            <mesh position-y={2.3}><sphereGeometry args={[0.24, 10, 8]} /><meshBasicMaterial color="#35d07a" /></mesh>
+          </group>
+        ))}
+        <mesh position={[0, 1.7, -2.35]}><planeGeometry args={[2.6, 1]} /><meshLambertMaterial map={subwayTex} side={THREE.DoubleSide} /></mesh>
+      </group>
+      {/* newsstand — kiosk, striped canopy, mag rack */}
+      <group position={[NYC.newsstand.x, 0, NYC.newsstand.z]}>
+        <mesh position-y={1.15}><boxGeometry args={[2.6, 2.3, 1.8]} /><meshLambertMaterial color="#8a5a3a" /></mesh>
+        <mesh position-y={2.5}><boxGeometry args={[3.2, 0.16, 2.3]} /><meshLambertMaterial color="#d8d2c4" /></mesh>
+        {[-1.1, -0.45, 0.2, 0.85].map((dx, i) => (
+          <mesh key={i} position={[dx, 2.59, 0]}><boxGeometry args={[0.34, 0.05, 2.32]} /><meshLambertMaterial color="#c0392b" /></mesh>
+        ))}
+        <mesh position={[-1.32, 1.1, 0]} rotation-y={-Math.PI / 2}><planeGeometry args={[1.5, 1.2]} /><meshLambertMaterial color="#e8e0cc" /></mesh>
+      </group>
+      {/* hot-dog cart — wheels, umbrella, steam */}
+      <group position={[NYC.hotdog.x, 0, NYC.hotdog.z]} rotation-y={NYC.hotdog.rot}>
+        <mesh position-y={0.95}><boxGeometry args={[2.1, 0.9, 1.2]} /><meshLambertMaterial color="#c0c8cc" /></mesh>
+        <mesh position-y={0.5}><boxGeometry args={[2.1, 0.24, 1.2]} /><meshLambertMaterial color="#c0392b" /></mesh>
+        {[[-0.8, 0.5], [-0.8, -0.5], [0.8, 0.5], [0.8, -0.5]].map(([dx, dz], i) => (
+          <mesh key={i} position={[dx, 0.26, dz]} rotation-x={Math.PI / 2}><cylinderGeometry args={[0.24, 0.24, 0.16, 8]} /><meshLambertMaterial color="#1e2024" /></mesh>
+        ))}
+        <mesh position={[0, 1.9, 0]}><cylinderGeometry args={[0.05, 0.05, 1.6, 5]} /><meshLambertMaterial color="#8a6a4a" /></mesh>
+        <mesh position={[0, 2.95, 0]}><coneGeometry args={[1.7, 0.75, 10]} /><meshLambertMaterial color="#e0483a" /></mesh>
+        <mesh position={[0, 2.75, 0]}><cylinderGeometry args={[1.55, 1.55, 0.12, 10]} /><meshLambertMaterial color="#e0483a" /></mesh>
+      </group>
+      {/* mailboxes, hydrants, trash, bollards, bike rack */}
+      {NYC.mailboxes.map((m, i) => (
+        <group key={i} position={[m.x, 0, m.z]}>
+          <mesh position-y={0.65}><boxGeometry args={[0.9, 1.3, 0.6]} /><meshLambertMaterial color="#2255aa" /></mesh>
+          <mesh position-y={1.37}><boxGeometry args={[0.94, 0.14, 0.64]} /><meshLambertMaterial color="#2255aa" /></mesh>
+        </group>
+      ))}
+      {NYC.hydrants.map((h, i) => (
+        <group key={i} position={[h.x, 0, h.z]}>
+          <mesh position-y={0.38}><cylinderGeometry args={[0.2, 0.24, 0.76, 8]} /><meshLambertMaterial color="#c0392b" /></mesh>
+          <mesh position-y={0.8}><sphereGeometry args={[0.16, 8, 6]} /><meshLambertMaterial color="#c0392b" /></mesh>
+          <mesh position={[0.2, 0.42, 0]} rotation-z={Math.PI / 2}><cylinderGeometry args={[0.09, 0.09, 0.14, 6]} /><meshLambertMaterial color="#a03028" /></mesh>
+          <mesh position={[-0.2, 0.42, 0]} rotation-z={Math.PI / 2}><cylinderGeometry args={[0.09, 0.09, 0.14, 6]} /><meshLambertMaterial color="#a03028" /></mesh>
+        </group>
+      ))}
+      {NYC.trash.map((t, i) => (
+        <group key={i} position={[t.x, 0, t.z]}>
+          <mesh position-y={0.45}><cylinderGeometry args={[0.32, 0.28, 0.9, 8]} /><meshLambertMaterial color="#2c4038" /></mesh>
+          <mesh position-y={0.94}><cylinderGeometry args={[0.36, 0.32, 0.12, 8]} /><meshLambertMaterial color="#3a4a42" /></mesh>
+        </group>
+      ))}
+      {NYC.bollards.map((b, i) => (
+        <mesh key={i} position={[b.x, 0.42, b.z]}><cylinderGeometry args={[0.13, 0.15, 0.84, 6]} /><meshLambertMaterial color="#3a3e46" /></mesh>
+      ))}
+      <group position={[NYC.bikeRack.x, 0, NYC.bikeRack.z]}>
+        {[-0.8, 0, 0.8].map((dx, i) => (
+          <mesh key={i} position={[dx, 0.5, 0]} rotation-y={Math.PI / 2}><torusGeometry args={[0.42, 0.06, 6, 12, Math.PI]} /><meshLambertMaterial color="#8a8f98" /></mesh>
+        ))}
+      </group>
+      {/* bus shelter — glass back, roof, bench */}
+      <group position={[NYC.busShelter.x, 0, NYC.busShelter.z]} rotation-y={NYC.busShelter.rot}>
+        <mesh position={[0, 1.35, -0.7]}><boxGeometry args={[4, 2.5, 0.1]} /><meshLambertMaterial color="#a8d4e8" transparent opacity={0.4} /></mesh>
+        <mesh position-y={2.72}><boxGeometry args={[4.4, 0.14, 1.7]} /><meshLambertMaterial color="#3a3f46" /></mesh>
+        <mesh position={[2.1, 1.35, 0]}><boxGeometry args={[0.12, 2.7, 1.7]} /><meshLambertMaterial color="#3a3f46" /></mesh>
+        <mesh position={[0, 0.65, 0]}><boxGeometry args={[3, 0.14, 0.5]} /><meshLambertMaterial color="#6e5a3a" /></mesh>
+      </group>
+      {/* curbside dining shed — posts, roof, translucent sides */}
+      <group position={[NYC.diningShed.x, 0, NYC.diningShed.z]}>
+        {[[-1.7, -2.4], [1.7, -2.4], [-1.7, 2.4], [1.7, 2.4]].map(([dx, dz], i) => (
+          <mesh key={i} position={[dx, 1.35, dz]}><cylinderGeometry args={[0.06, 0.08, 2.7, 5]} /><meshLambertMaterial color="#2c3038" /></mesh>
+        ))}
+        <mesh position-y={2.75}><boxGeometry args={[3.9, 0.12, 5.3]} /><meshLambertMaterial color="#e8e4dc" /></mesh>
+        <mesh position={[0, 1.3, -2.62]}><planeGeometry args={[3.7, 2.5]} /><meshLambertMaterial color="#a8d4e8" transparent opacity={0.3} side={THREE.DoubleSide} /></mesh>
+      </group>
+      {/* manhole discs + sidewalk cellar hatch */}
+      {NYC.manholes.map((m, i) => (
+        <mesh key={i} rotation-x={-Math.PI / 2} position={[m.x, 0.05, m.z]}><circleGeometry args={[0.8, 14]} /><meshLambertMaterial color="#3a3a3e" /></mesh>
+      ))}
+      <group position={[NYC.cellarHatch.x, 0, NYC.cellarHatch.z]} rotation-y={NYC.cellarHatch.rot}>
+        <mesh position-y={0.1}><boxGeometry args={[1.8, 0.2, 1.2]} /><meshLambertMaterial color="#6e6e68" /></mesh>
+        <mesh position={[0, 0.21, 0.3]}><boxGeometry args={[1.8, 0.02, 0.2]} /><meshLambertMaterial color="#e0a93a" /></mesh>
+        <mesh position={[0, 0.21, -0.3]}><boxGeometry args={[1.8, 0.02, 0.2]} /><meshLambertMaterial color="#e0a93a" /></mesh>
+      </group>
+      {/* street trees in tree pits */}
+      {NYC.streetTrees.map((t, i) => (
+        <group key={i} position={[t.x, 0, t.z]}>
+          <mesh rotation-x={-Math.PI / 2} position-y={0.05}><ringGeometry args={[0.75, 0.95, 12]} /><meshLambertMaterial color="#4a4440" /></mesh>
+          <mesh position-y={1.1}><cylinderGeometry args={[0.16, 0.22, 2.2, 6]} /><meshLambertMaterial color="#6e4a2e" /></mesh>
+          <mesh position-y={2.9}><sphereGeometry args={[1.35, 8, 6]} /><meshLambertMaterial color="#5e8c40" /></mesh>
+          <mesh position={[0.4, 3.7, 0.2]}><sphereGeometry args={[0.9, 8, 6]} /><meshLambertMaterial color="#6f9e4a" /></mesh>
+        </group>
+      ))}
+      {/* projecting blade signs on the shop row */}
+      {NYC.bladeSigns.map((bs, i) => (
+        <group key={i} position={[bs.x, bs.y, bs.z]}>
+          <mesh position={[0, 1.45, 0.3]}><boxGeometry args={[0.06, 0.06, 1.2]} /><meshLambertMaterial color="#2c3038" /></mesh>
+          <mesh position={[0.06, 0, 0]} rotation-y={Math.PI / 2}>
+            <planeGeometry args={[1.05, 2.9]} />
+            <meshLambertMaterial map={i === 0 ? deliTex : newsTex} side={THREE.DoubleSide} />
+          </mesh>
+        </group>
+      ))}
+
+      {/* 🅿️ parking garage — entry mouth, ramp, P sign */}
+      <group position={[NYC.garage.x, 0, NYC.garage.z]}>
+        <mesh position={[NYC.garage.w + 0.14, 2.1, 0]} rotation-y={Math.PI / 2}>
+          <planeGeometry args={[10.6, 4.2]} /><meshLambertMaterial color="#1c1f24" />
+        </mesh>
+        <mesh rotation-x={-Math.PI / 2} position={[NYC.garage.w + 3.6, 0.045, 0]}>
+          <planeGeometry args={[6.5, 7]} /><meshLambertMaterial color="#8a8a84" />
+        </mesh>
+        <mesh position={[NYC.garage.w + 0.16, 5.4, 0]} rotation-y={Math.PI / 2}>
+          <planeGeometry args={[1.5, 1.5]} /><meshLambertMaterial map={pTex} />
+        </mesh>
+      </group>
+      {/* 🎬 movie theatre — marquee with bulbs + RIVOLI blade */}
+      <group position={[NYC.theatre.x, 0, NYC.theatre.z]}>
+        <mesh position={[NYC.theatre.w + 0.55, 5.1, 0]}><boxGeometry args={[2.2, 0.6, 4.8]} /><meshLambertMaterial color="#b5432a" /></mesh>
+        <mesh position={[NYC.theatre.w + 0.55, 4.74, 0]}><boxGeometry args={[2.1, 0.08, 4.4]} /><meshBasicMaterial color="#fff3c8" /></mesh>
+        {[-1.8, -0.9, 0, 0.9, 1.8].map((dz, i) => (
+          <mesh key={i} position={[NYC.theatre.w + 1.68, 5.5, dz]}><sphereGeometry args={[0.11, 8, 6]} /><meshBasicMaterial color="#ffd166" /></mesh>
+        ))}
+        <mesh position={[NYC.theatre.blade.x - 0.4, NYC.theatre.blade.y, NYC.theatre.blade.z]} rotation-y={Math.PI / 2}>
+          <planeGeometry args={[NYC.theatre.blade.w, NYC.theatre.blade.h]} />
+          <meshLambertMaterial map={rivoliTex} side={THREE.DoubleSide} />
+        </mesh>
+      </group>
+      {/* 🚧 construction corner — hoardings, dumpster, cones, dirt pile */}
+      {NYC.construction.hoardings.map((h, i) => (
+        <group key={i} position={[h.x, 0, h.z]} rotation-y={h.rot}>
+          <mesh position-y={1.1}><boxGeometry args={[h.len, 2.2, 0.14]} /><meshLambertMaterial color="#3a6ea5" /></mesh>
+          <mesh position-y={1.1}><boxGeometry args={[h.len, 0.24, 0.16]} /><meshLambertMaterial color="#e8e4dc" /></mesh>
+        </group>
+      ))}
+      <group position={[NYC.construction.dumpster.x, 0, NYC.construction.dumpster.z]} rotation-y={NYC.construction.dumpster.rot}>
+        <mesh position-y={0.75}><boxGeometry args={[3.2, 1.3, 1.7]} /><meshLambertMaterial color="#8a4a2a" /></mesh>
+        <mesh position-y={1.44}><boxGeometry args={[3.24, 0.12, 1.74]} /><meshLambertMaterial color="#6a3a20" /></mesh>
+      </group>
+      {NYC.construction.cones.map((c, i) => (
+        <group key={i} position={[c.x, 0, c.z]}>
+          <mesh position-y={0.42}><coneGeometry args={[0.28, 0.84, 8]} /><meshLambertMaterial color="#ff7a30" /></mesh>
+          <mesh position-y={0.45}><cylinderGeometry args={[0.17, 0.17, 0.16, 8]} /><meshLambertMaterial color="#f4f0dc" /></mesh>
+        </group>
+      ))}
+      <mesh position={[NYC.construction.dirt.x, 0.4, NYC.construction.dirt.z]}><sphereGeometry args={[2.4, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2]} /><meshLambertMaterial color="#8a7455" /></mesh>
     </>
   );
 }
@@ -4447,6 +4882,7 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
       <Farm />
       <FarmKit />
       <Railway />
+      <NycDistrict />
       <Landmarks />
       <Forest engine={engine} />
       <Camps engine={engine} clockRef={clockRef} />
