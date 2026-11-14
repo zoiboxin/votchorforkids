@@ -575,7 +575,7 @@ export const NYC = (() => {
 })();
 
 /* ---------------- 🎃 halloween night kit — the OUT-OF-TOWN cemetery estate ----------------
- * The graveyard moved deep into the south-west jungle (GRAVEYARD const): no
+ * The graveyard moved deep into the north-west jungle (GRAVEYARD const): no
  * city road crosses the grounds any more. Access is a dedicated dirt lane from
  * the x=-270 street's south end to the arched cemetery gate — the gate, fence
  * runs, haunted Victorian house, family mausoleum, vintage hearse, lantern

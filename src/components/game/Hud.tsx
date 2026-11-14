@@ -58,7 +58,7 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     c.textAlign = "center";
     c.fillText("CITY", S / 2, S / 2 + 150 * K);
     c.fillText("FARMLAND", S / 2, S / 2 + 435 * K);
-    c.fillText("JUNGLE", S / 2 - 370 * K, S / 2 - 350 * K);
+    c.fillText("JUNGLE", S / 2 - 430 * K, S / 2 + 180 * K);
     c.fillText("DEEP JUNGLE", S / 2 + 390 * K, S / 2 - 390 * K);
     c.fillText("⛰ MOUNTAINS", S / 2 + 480 * K, S / 2 + 480 * K);
     c.fillText("GRAVEYARD", S / 2 + GRAVEYARD.x * K, S / 2 + (GRAVEYARD.z + 52) * K);

@@ -1700,7 +1700,7 @@ function Landmarks() {
 }
 
 /* ------------------------- graveyard & flowers -------------------------
- * 🪦 The cemetery moved OUT of town (GRAVEYARD const, south-west jungle): no
+ * 🪦 The cemetery moved OUT of town (GRAVEYARD const, north-west jungle): no
  * road crosses the grounds any more — a dedicated dirt lane runs from the
  * x=-270 street's end to the arched gate, and a narrow path carries on
  * inside. Every tombstone, fence run, gate, building and lantern is the REAL
