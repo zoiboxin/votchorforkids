@@ -1,5 +1,5 @@
 import {
-  AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, BUST_CARRY_BONUS, BUST_POINTS, BUST_TARGET, CARRY_RADIUS, CAR_ACCEL, CAR_BRAKE, CAR_COAST, CAR_ENTER_R, CAR_HIT_CD, CAR_HIT_DMG, CAR_REV_SPEED, CAR_STEER, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
+  AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, BUST_CARRY_BONUS, BUST_POINTS, BUST_TARGET, CARRY_RADIUS, CAR_ACCEL, CAR_BRAKE, CAR_COAST, CAR_COAST_FRICTION, CAR_ENTER_R, CAR_HIT_CD, CAR_HIT_DMG, CAR_HIT_MIN_CLOSING, CAR_HIT_TRANSFER, CAR_REV_SPEED, CAR_SLIDE_FRICTION, CAR_SPIN_FRICTION, CAR_STEER, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
   CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, CONFISCATE_FINE, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
   ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HAUL_CAMP_R, HURT_FLASH_S, ITEMS, INV_SLOTS, ITEM_COUNT,
@@ -314,6 +314,25 @@ export interface DriveState {
   lastDir: 1 | -1;
 }
 
+/** The pose subset the shared car-physics helpers (resolveCarBody / syncCarColliders)
+ *  actually touch — a full DriveState or a light coasting-car stub both satisfy it,
+ *  so parked, driven & driverless cars all share ONE collision + collider code path. */
+export interface CarPose { ci: number; x: number; z: number; rot: number; t: number }
+
+/** 🚗 a driverless car still rolling on its own momentum — the driver hopped out at
+ *  speed (the car keeps rolling and eases to a stop a little further down the road,
+ *  it does NOT teleport-stop) or another car rammed it and handed it some momentum.
+ *  Velocity is world-space; stepCarPhysics decomposes it into tyre axes each frame:
+ *  forward rolling bleeds off slowly, sideways screech dies fast (tyres grip). */
+export interface CoastCar {
+  ci: number;               // index into world.cars
+  x: number; z: number;     // live body position
+  rot: number;              // heading (forward = sin/cos, matching DriveState)
+  t: number;                // body style (for axle sizes)
+  vx: number; vz: number;   // world-space velocity (u/s)
+  w: number;                // yaw rate from an off-centre hit (rad/s), decays fast
+}
+
 /** 🎇 world FX — confetti = physical chips (harvest/hits), soul = a rising wisp
  *  burst that plays when a beast of the night is CUT DOWN (the kill finisher) */
 export interface Fx { type: "confetti" | "soul"; x: number; y: number; z: number; hue: number }
@@ -543,6 +562,12 @@ export class GameEngine {
   private carHome: { x: number; z: number; rot: number }[] = [];            // parked spots — reset() restores them
   private carAxles = new Map<number, [CircleCollider, CircleCollider]>();  // car idx → its two live colliders
   private driveMsgT = 0;   // throttles "you need a license" / "park first" toasts
+  /** 🚗 driverless cars still rolling on momentum (driver bailed at speed, or the
+   *  car was just rammed by another one) — stepCarPhysics eases each to a stop.
+   *  The renderer re-stamps these fleet instances every frame. */
+  carCoast = new Map<number, CoastCar>();
+  /** 🚗💥 shared crunch-sound throttle — several cars can collide the same frame */
+  private carCrashCd = 0;
 
   /* --- 🤖 bots acting like real players ---
    * goodieClaims: per-frame map goodieKey → crewId; each loose snack/pile/gem
@@ -1421,6 +1446,7 @@ export class GameEngine {
     this.runnerDelivered = 0; this.lost = false; this.catchCd = 0;
     // driving: hop out, re-hide the licenses, bring every car back to its parking spot
     this.hasLicense = false; this.drive = null; this.exitCd = 0; this.driveMsgT = 0;
+    this.carCoast.clear(); // 🚗 every abandoned coasting drift rewinds too
     for (const lc of this.licenses) lc.active = true;
     this.world.cars.forEach((c, i) => {
       const h = this.carHome[i];
@@ -1601,6 +1627,13 @@ export class GameEngine {
     }
     const car = this.world.cars[ci];
     this.drive = { ci, x: car.x, z: car.z, rot: car.rot, v: 0, c: car.c, t: car.t, vx: car.x, vz: car.z, vrot: car.rot, spin: 0, hitT: 0, steerVis: 0, steer: 0, pedal: 0, lastDir: 1 };
+    // 🚗 hopping into a car that's still coasting — inherit its rolling speed
+    // (the coast entry hands control over; we keep the momentum it had)
+    const coast = this.carCoast.get(ci);
+    if (coast) {
+      this.drive.v = coast.vx * Math.sin(coast.rot) + coast.vz * Math.cos(coast.rot);
+      this.carCoast.delete(ci);
+    }
     const p = this.player;
     p.vx = p.vz = p.vy = 0;
     sfx.engine();
@@ -1608,10 +1641,15 @@ export class GameEngine {
     this.toast(`${VEHICLE_LABELS[car.t % VEHICLE_LABELS.length]} Vroom! W/S gas & brake · A/D steer · E hop out · H horn!`, "good");
   }
 
-  /** Hop out — the car stays parked where you left it (its colliders move along). */
+  /** Hop out — the car stays parked where you left it (its colliders move along).
+   *  🚗 bail out while ROLLING and the car keeps its momentum: it coasts a little
+   *  further down the road and eases to a smooth stop — no teleport-stop. */
   exitCar() {
     const d = this.drive;
     if (!d) return;
+    if (Math.abs(d.v) > 0.6) {
+      this.carCoast.set(d.ci, { ci: d.ci, x: d.x, z: d.z, rot: d.rot, t: d.t, vx: Math.sin(d.rot) * d.v, vz: Math.cos(d.rot) * d.v, w: 0 });
+    }
     this.drive = null;
     this.exitCd = 0.6;
     const p = this.player;
@@ -1724,7 +1762,7 @@ export class GameEngine {
    *  The axle spread follows the body style — a bus sits on discs further apart.
    *  The moving axle circles also hop cells in the collider spatial hash, so bots
    *  (and the player on foot) keep bumping into the car wherever it drives. */
-  private syncCarColliders(d: DriveState) {
+  private syncCarColliders(d: CarPose) {
     const car = this.world.cars[d.ci];
     car.x = d.x; car.z = d.z; car.rot = d.rot;
     const pair = this.carAxles.get(d.ci);
@@ -1746,7 +1784,7 @@ export class GameEngine {
    * into a natural slide along the wall. Returns how far the body was shoved (the
    * caller spends it as scrape speed loss).
    */
-  private resolveCarBody(d: DriveState): number {
+  private resolveCarBody(d: CarPose): number {
     const ax = VEHICLE_AXLE[d.t % VEHICLE_AXLE.length];
     const axR = VEHICLE_AXLE_R[d.t % VEHICLE_AXLE_R.length];
     let moved = 0;
@@ -1767,6 +1805,155 @@ export class GameEngine {
       if (push < 0.0005) break; // settled — no need for the second pass
     }
     return moved;
+  }
+
+  /** 🚗💥 car-meets-car physics — the OTHER car reacts like real metal: it is
+   *  shoved ALONG the contact normal (rear-end it → it lurches forward, head-on
+   *  → it's knocked backward, T-bone → it skids sideways) with a little twist
+   *  when the hit lands off-centre, and the closing speed decides how hard.
+   *  Struck parked cars gain a CoastCar entry (they roll away and ease to a
+   *  stop); already-coasting cars just gain momentum; cars with a LIVE driver
+   *  (you or a bot joyrider) eat the impulse into their own drive speed instead
+   *  — rear-ended → their car lurches forward, head-on → shoved backward. `a`
+   *  is the striker with world velocity (avx, avz). Returns the impulse handed
+   *  over + the contact normal, or null when nothing was actually rammed. */
+  private transferCarMomentum(a: CarPose, avx: number, avz: number): { j: number; nx: number; nz: number } | null {
+    const ax = VEHICLE_AXLE[a.t % VEHICLE_AXLE.length];
+    const axR = VEHICLE_AXLE_R[a.t % VEHICLE_AXLE_R.length];
+    const asn = Math.sin(a.rot), acs = Math.cos(a.rot);
+    const cars = this.world.cars;
+    for (let j = 0; j < cars.length; j++) {
+      if (j === a.ci) continue;
+      const o = cars[j];
+      const cdx = o.x - a.x, cdz = o.z - a.z;
+      if (cdx * cdx + cdz * cdz > 8.5 * 8.5) continue; // broad reject — cars can't touch beyond this
+      const ax2 = VEHICLE_AXLE[o.t % VEHICLE_AXLE.length];
+      const axR2 = VEHICLE_AXLE_R[o.t % VEHICLE_AXLE_R.length];
+      const osn = Math.sin(o.rot), ocs = Math.cos(o.rot);
+      // deepest overlapping axle-disc pair = where the bumpers actually met
+      let depth = 0, nx = 0, nz = 0, cx = 0, cz = 0;
+      for (const off of [ax, -ax]) {
+        const mx = a.x + asn * off, mz = a.z + acs * off;
+        for (const ooff of [ax2, -ax2]) {
+          const tx = o.x + osn * ooff, tz = o.z + ocs * ooff;
+          const dx = tx - mx, dz = tz - mz;
+          const rr = axR + axR2;
+          const d2 = dx * dx + dz * dz;
+          if (d2 >= rr * rr) continue;
+          const dep = rr - Math.sqrt(d2);
+          if (dep > depth) {
+            depth = dep;
+            const d = Math.sqrt(d2);
+            nx = d > 0.01 ? dx / d : 1; nz = d > 0.01 ? dz / d : 0; // their-centre direction
+            cx = tx; cz = tz;
+          }
+        }
+      }
+      if (depth <= 0) continue;
+      // their current velocity (coasting cars already carry one)
+      const oc = this.carCoast.get(j);
+      const ovx = oc ? oc.vx : 0, ovz = oc ? oc.vz : 0;
+      // approach speed along the contact normal — the real collision condition
+      const closing = (avx - ovx) * nx + (avz - ovz) * nz;
+      if (closing < CAR_HIT_MIN_CLOSING) continue; // parked nose-to-nose or separating — no impulse
+      const jImp = closing * CAR_HIT_TRANSFER;
+      // a proper crunch deserves a sound when it lands near the player
+      if (closing > 3 && this.carCrashCd <= 0 && dist2(a.x, a.z, this.player.x, this.player.z) < 42 * 42) {
+        this.carCrashCd = 0.35; sfx.bonk();
+      }
+      // 🧑‍✈️ the struck car has a LIVE driver (you or a bot joyrider) — hand the
+      // impulse to THEIR drive speed (projected on their heading: rear-ended →
+      // lurches forward, head-on → knocked backward) + a squash beat. Their own
+      // drive step keeps steering; the speed change IS the reaction.
+      if (this.drive?.ci === j) {
+        const dd = this.drive;
+        dd.v += jImp * (nx * Math.sin(dd.rot) + nz * Math.cos(dd.rot));
+        dd.hitT = 0.35;
+        if (closing > 3) this.addShake(Math.min(0.6, 0.15 + jImp * 0.04));
+        return { j: jImp, nx, nz };
+      }
+      const botDriver = this.botDriven.has(j) ? this.crew.find((c) => c.drive && c.drive.ci === j) : null;
+      if (botDriver?.drive) {
+        const bd = botDriver.drive;
+        bd.v += jImp * (nx * Math.sin(bd.rot) + nz * Math.cos(bd.rot));
+        bd.hitT = 0.35;
+        return { j: jImp, nx, nz };
+      }
+      // driverless metal — shoved ALONG the contact normal with a little twist
+      // from the off-centre hit: r × impulse (contact point vs their centre)
+      const rx = cx - o.x, rz = cz - o.z;
+      const twist = Math.max(-2, Math.min(2, (rx * nz - rz * nx) * closing * 0.55));
+      if (oc) { oc.vx += nx * jImp; oc.vz += nz * jImp; oc.w = Math.max(-2, Math.min(2, oc.w + twist)); }
+      else this.carCoast.set(j, { ci: j, x: o.x, z: o.z, rot: o.rot, t: o.t, vx: nx * jImp, vz: nz * jImp, w: twist });
+      return { j: jImp, nx, nz };
+    }
+    return null;
+  }
+
+  /** 🚗 step every driverless car that still has momentum. Real-ish handling:
+   *  forward rolling bleeds off slowly (CAR_COAST_FRICTION), sideways screech
+   *  dies fast (tyres grip — CAR_SLIDE_FRICTION), an off-centre hit's twist
+   *  unwinds, walls & parked cars still stop it — then it parks where it stands. */
+  private stepCarPhysics(dt: number) {
+    if (this.carCoast.size === 0) return;
+    for (const [ci, ph] of Array.from(this.carCoast)) { // snapshot — hits may add entries
+      // decompose velocity into the tyre axes: forward rolls, sideways skids
+      const sn = Math.sin(ph.rot), cs = Math.cos(ph.rot);
+      const fwd = (ph.vx * sn + ph.vz * cs) * Math.exp(-dt * CAR_COAST_FRICTION);
+      const lat = (ph.vx * cs - ph.vz * sn) * Math.exp(-dt * CAR_SLIDE_FRICTION);
+      ph.w *= Math.exp(-dt * CAR_SPIN_FRICTION);
+      ph.rot += ph.w * dt;
+      if (Math.abs(fwd) < 0.14 && Math.abs(lat) < 0.14 && Math.abs(ph.w) < 0.06) {
+        this.carCoast.delete(ci); // eased to a stop — it's a parked car again
+        continue;
+      }
+      ph.vx = sn * fwd + cs * lat;
+      ph.vz = cs * fwd - sn * lat;
+      // 🚗💥 ram parked cars FIRST, using the PRE-integration speed — the impulse
+      // must be computed from the speed the body actually carried into the contact,
+      // before body resolution & scrape damping eat the velocity for the frame
+      const preVx = ph.vx, preVz = ph.vz;
+      const carHit = this.transferCarMomentum(ph, preVx, preVz);
+      if (carHit) { ph.vx -= carHit.nx * carHit.j; ph.vz -= carHit.nz * carHit.j; }
+      // sliced integration — a fast coaster can never leap a thin wall in one frame
+      const speed = Math.hypot(ph.vx, ph.vz);
+      const slices = Math.max(1, Math.ceil((speed * dt) / 0.35));
+      const sdt = dt / slices;
+      let scrape = 0;
+      for (let s = 0; s < slices; s++) {
+        ph.x += ph.vx * sdt; ph.z += ph.vz * sdt;
+        scrape += this.resolveCarBody(ph); // buildings, trees & parked cars still stop it
+      }
+      // a clean car-to-car impulse IS the speed loss — skip the extra scrape damp
+      // when momentum was handed over, or the two double-punish the same crash
+      if (scrape > 0.004 && !carHit) { ph.vx *= Math.exp(-dt * 10); ph.vz *= Math.exp(-dt * 10); ph.w *= 0.7; }
+      const rr = Math.hypot(ph.x, ph.z);
+      if (rr > WALL_RADIUS) {
+        ph.x *= WALL_RADIUS / rr; ph.z *= WALL_RADIUS / rr;
+        ph.vx *= 0.4; ph.vz *= 0.4; ph.w *= 0.5;
+      }
+      // ring-road traffic & police vans are solid for coasters too — bonk off
+      // them (same push-out the driven car gets), never ghost through metal
+      const ti = ph.t % VEHICLE_AXLE_R.length;
+      for (const t of this.traffic) {
+        const tr = VEHICLE_AXLE_R[t.t % VEHICLE_AXLE_R.length] + VEHICLE_AXLE_R[ti] + 0.12;
+        const tdx = ph.x - t.x, tdz = ph.z - t.z, td2 = tdx * tdx + tdz * tdz;
+        if (td2 < tr * tr && td2 > 0.0001) {
+          const td = Math.sqrt(td2);
+          ph.x = t.x + (tdx / td) * tr; ph.z = t.z + (tdz / td) * tr;
+          ph.vx *= Math.exp(-dt * 17); ph.vz *= Math.exp(-dt * 17); ph.w *= 0.5;
+        }
+      }
+      for (const van of this.vans) {
+        const vdx = ph.x - van.x, vdz = ph.z - van.z, vd2 = vdx * vdx + vdz * vdz;
+        if (vd2 < 3.2 * 3.2 && vd2 > 0.0001) {
+          const vd = Math.sqrt(vd2);
+          ph.x = van.x + (vdx / vd) * 3.2; ph.z = van.z + (vdz / vd) * 3.2;
+          ph.vx *= Math.exp(-dt * 17); ph.vz *= Math.exp(-dt * 17); ph.w *= 0.5;
+        }
+      }
+      this.syncCarColliders(ph); // the parked fleet entry + axle colliders ride along
+    }
   }
 
   /** One arcade physics step of the player-driven vehicle — bouncy, fast, kid-friendly.
@@ -1809,6 +1996,10 @@ export class GameEngine {
     const sdt = dt / slices;
     // rolling-direction hysteresis — see DriveState.lastDir
     if (Math.abs(d.v) > 0.35) d.lastDir = d.v > 0 ? 1 : -1;
+    // 🚗💥 remember the PRE-collision speed — the impulse we hand a parked car
+    // must come from the speed the body carried INTO the contact, before body
+    // resolution & scrape damping eat the velocity for this frame
+    const preV = d.v;
     let scrape = 0;
     for (let s = 0; s < slices; s++) {
       d.rot -= d.steer * CAR_STEER * grip * sdt * d.lastDir;
@@ -1816,9 +2007,20 @@ export class GameEngine {
       d.z += Math.cos(d.rot) * d.v * sdt;
       scrape += this.resolveCarBody(d);
     }
+    // 🚗💥 ram a parked car — shove IT along the contact normal (rear-end lurches
+    // it forward, head-on knocks it back, T-bone skids it sideways) and WE lose
+    // the momentum we handed over — no more bouncing off statues
+    const carHit = this.transferCarMomentum(d, Math.sin(d.rot) * preV, Math.cos(d.rot) * preV);
+    if (carHit) {
+      d.v -= carHit.j;
+      if (d.hitT <= 0) this.addShake(Math.min(0.7, 0.18 + carHit.j * 0.045));
+      d.hitT = 0.35;
+    }
     // cartoon scrape — walls eat speed (exp form: identical feel at 30 or 144 fps,
-    // the old per-frame 0.82 multiplier braked ~4× harder on a 144 Hz screen)
-    if (scrape > 0.004) { d.v *= Math.exp(-dt * 12); if (d.hitT <= 0) this.addShake(0.16); d.hitT = 0.35; }
+    // the old per-frame 0.82 multiplier braked ~4× harder on a 144 Hz screen).
+    // A clean car-to-car impulse already took our momentum — don't double-punish
+    // the same crash, so the scrape damp skips on the frame of a hand-over.
+    if (scrape > 0.004 && !carHit) { d.v *= Math.exp(-dt * 12); if (d.hitT <= 0) this.addShake(0.16); d.hitT = 0.35; }
     const rr = Math.hypot(d.x, d.z);
     if (rr > WALL_RADIUS) {
       d.x *= WALL_RADIUS / rr; d.z *= WALL_RADIUS / rr;
@@ -1858,7 +2060,7 @@ export class GameEngine {
     let vdr = d.rot - d.vrot;
     vdr = Math.atan2(Math.sin(vdr), Math.cos(vdr));
     d.vrot += vdr * kr;
-    // wheels roll by the distance the VISUAL body actually covered (±reverse)
+    // wheels roll by the distance the VISUAL body actually covered (+-reverse)
     d.spin -= (Math.hypot(d.vx - pvx, d.vz - pvz) * Math.sign(d.v || 1)) / 0.46;
     // front wheels visibly turn into the EASED steer (they now match the real
     // turn rate — before they led it on keyboard, teleporting to full lock) and
@@ -3628,6 +3830,7 @@ export class GameEngine {
     const car = this.world.cars[ci];
     if (!car) return;
     c.job = null;
+    this.carCoast.delete(ci); // a bot taking the wheel ends any coasting drift
     c.drive = { ci, x: car.x, z: car.z, rot: car.rot, v: 0, c: car.c, t: car.t, vx: car.x, vz: car.z, vrot: car.rot, spin: 0, hitT: 0, steerVis: 0, steer: 0, pedal: 0, lastDir: 1 };
     this.botDriven.add(ci);
     // 🛣️ cruise waypoint — bots tour the streets like any joyrider
@@ -3670,6 +3873,8 @@ export class GameEngine {
     const slices = Math.max(1, Math.ceil((Math.abs(d.v) * dt) / 0.35));
     const sdt = dt / slices;
     if (Math.abs(d.v) > 0.35) d.lastDir = d.v > 0 ? 1 : -1;
+    // 🚗💥 remember the PRE-collision speed — same rule the player's car follows
+    const preV = d.v;
     let scrape = 0;
     for (let s = 0; s < slices; s++) {
       d.rot -= d.steer * CAR_STEER * grip * sdt * d.lastDir;
@@ -3677,7 +3882,10 @@ export class GameEngine {
       d.z += Math.cos(d.rot) * d.v * sdt;
       scrape += this.resolveCarBody(d);
     }
-    if (scrape > 0.004) { d.v *= Math.exp(-dt * 12); d.hitT = 0.35; }
+    // 🚗💥 bots ram parked cars too — same momentum hand-over the player gets
+    const botCarHit = this.transferCarMomentum(d, Math.sin(d.rot) * preV, Math.cos(d.rot) * preV);
+    if (botCarHit) { d.v -= botCarHit.j; d.hitT = 0.35; }
+    if (scrape > 0.004 && !botCarHit) { d.v *= Math.exp(-dt * 12); d.hitT = 0.35; }
     const rr = Math.hypot(d.x, d.z);
     if (rr > WALL_RADIUS) { d.x *= WALL_RADIUS / rr; d.z *= WALL_RADIUS / rr; }
     // 🧱 walled in while crawling? 3s of going-nowhere parks the joyride
@@ -3703,10 +3911,15 @@ export class GameEngine {
   }
 
   /** Park & hop out — the car stays where the bot left it, and any 🪪 card in
-   *  the driver's pocket is tossed back onto the street for the next racer. */
+   *  the driver's pocket is tossed back onto the street for the next racer.
+   *  🚗 a bot bailing out while still rolling hands the car to the coast system
+   *  so it eases to a stop just like a player's abandoned ride. */
   private endBotDrive(c: Crew) {
     const d = c.drive;
     if (!d) return;
+    if (Math.abs(d.v) > 0.6) {
+      this.carCoast.set(d.ci, { ci: d.ci, x: d.x, z: d.z, rot: d.rot, t: d.t, vx: Math.sin(d.rot) * d.v, vz: Math.cos(d.rot) * d.v, w: 0 });
+    }
     c.drive = null;
     c.driveT = undefined;
     c.driveStuck = undefined;
@@ -4706,6 +4919,9 @@ export class GameEngine {
       } else if (this.stamina > 25) this.exhaustedAnnounced = false;
     }
     this.hp = Math.min(100, this.hp + 1.2 * dt * AGE_STATS[this.look.age].regen);
+    // 🚗 driverless cars coast & decelerate; car-meets-car crunch cooldown ticks
+    this.stepCarPhysics(dt);
+    this.carCrashCd = Math.max(0, this.carCrashCd - dt);
     // 🧱 THE WALL — outside the safe circle your life drains away (PUBG blue-zone)
     this.stepZone(dt);
 

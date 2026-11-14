@@ -1144,6 +1144,18 @@ function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutabl
       }
       dirty = true;
     }
+    // 🚗 driverless cars still rolling on their momentum (driver bailed at speed,
+    // or another car rammed them) — re-stamp those instances every frame too,
+    // or the body would coast while its mesh stays parked
+    if (engine.carCoast.size > 0) {
+      for (const [ci] of engine.carCoast) {
+        const c = WORLD.cars[ci];
+        if (!c) continue;
+        if (isKitType(c.t)) hideCar(P, ci); // 🏁 the kit renderer follows world.cars itself
+        else placeCar(P, ci, c.x, terrainHeight(c.x, c.z), c.z, c.rot, c.c, c.t, false);
+      }
+      dirty = true;
+    }
     if (d) {
       const c = WORLD.cars[d.ci];
       if (d.ci !== drvCi.current) { drvCi.current = d.ci; drvY.current = terrainHeight(d.vx, d.vz); } // new ride — snap

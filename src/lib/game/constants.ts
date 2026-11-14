@@ -545,6 +545,17 @@ export const VEHICLE_AXLE_R: readonly number[] = [1.16, 1.12, 1.26, 1.3, 1.42, 1
  *  fastest rides in town; the convertible & wagon cruise like the sedans. */
 export const VEHICLE_TOP: readonly number[] = [26, 24, 24, 23, 19, 25, 28, 24, 24, 29];
 export const VEHICLE_STEER: readonly number[] = [1, 1, 0.92, 0.85, 0.7, 1, 0.94, 1, 0.95, 1.04];
+/* ---------- Car-meets-car physics — momentum transfer & driverless coasting ----------
+ * When a driven car rams another car, the struck car is shoved ALONG the contact
+ * normal (rear-end → lurches forward, head-on → knocked backward, T-bone → skids
+ * sideways) with a little off-centre twist, and the striker loses the momentum it
+ * handed over. A driverless car keeps whatever momentum it has (driver hopped out
+ * at speed, or it was just rammed) and eases to a stop like real rolling metal. */
+export const CAR_HIT_TRANSFER = 0.8;      // fraction of the closing speed handed to the struck car
+export const CAR_HIT_MIN_CLOSING = 0.6;   // u/s — below this cars are just parked nose-to-nose, no impulse
+export const CAR_COAST_FRICTION = 2.1;    // 1/s rolling drag — exp decay, a 20 u/s bail-out coasts ~9u
+export const CAR_SLIDE_FRICTION = 4.5;    // 1/s lateral tyre grip — side hits skid, then the tyres bite
+export const CAR_SPIN_FRICTION = 3.2;     // 1/s yaw decay on an off-centre hit twist
 
 /* ---------- Scoring ---------- */
 export const POINTS_DELIVER = 120;
