@@ -3829,6 +3829,10 @@ export class GameEngine {
   private startBotDrive(c: Crew, ci: number) {
     const car = this.world.cars[ci];
     if (!car) return;
+    // 🚗 never steal a car that already has a driver — the player's ride or a
+    // crew-mate's joyride. Two drive states on one car would fight over the
+    // body every frame and drag the player's car across the whole map.
+    if (this.drive?.ci === ci || this.crew.some((o) => o.drive && o.drive.ci === ci)) return;
     c.job = null;
     this.carCoast.delete(ci); // a bot taking the wheel ends any coasting drift
     c.drive = { ci, x: car.x, z: car.z, rot: car.rot, v: 0, c: car.c, t: car.t, vx: car.x, vz: car.z, vrot: car.rot, spin: 0, hitT: 0, steerVis: 0, steer: 0, pedal: 0, lastDir: 1 };
