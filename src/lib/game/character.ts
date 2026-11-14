@@ -837,9 +837,9 @@ export function buildAnimal(kind: AnimalKind3, variant = 0, zom = false): THREE.
     ? { c: coat!.fur, s: 1.06, headY: 0.72, headZ: 0.92 }
     : {
         cow: { c: coat!.c, s: 1.7, headY: 0.95, headZ: 0.85 },
-        chicken: { c: coat!.c, s: 0.95, headY: 0.5, headZ: 0.4 },
+        chicken: { c: coat!.c, s: 1.15, headY: 0.5, headZ: 0.4 }, // 📏 bumped — was ankle-height invisible next to survivors
         deer: { c: coat!.c, s: 1.45, headY: 1.0, headZ: 0.8 },
-        monkey: { c: coat!.c, s: 1.1, headY: 0.75, headZ: 0.55 },
+        monkey: { c: coat!.c, s: 1.2, headY: 0.75, headZ: 0.55 },
       }[kind];
   const dark = kind === "dog" ? coat!.muzzle : coat!.dark;
   const belly = kind === "dog" ? coat!.belly : coat!.belly;

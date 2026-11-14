@@ -39,12 +39,15 @@ const FILES = {
 
 export type ModelKind = keyof typeof FILES;
 
-/** Height-normalize then per-kind artistic scale (world units). */
+/** Height-normalize then per-kind artistic scale (world units).
+ *  📏 sized to READ next to ~1.9u human survivors — the tiny critters were
+ *  ankle-height specks players couldn't even spot, so every small species
+ *  got a visibility bump (game readability over strict realism). */
 const TARGET_H: Record<ModelKind, number> = {
-  wolf: 1.0, bear: 1.5, fox: 0.72, owl: 0.55, crow: 0.5, rabbit: 0.5, stag: 2.1,
+  wolf: 1.25, bear: 1.75, fox: 0.95, owl: 0.75, crow: 0.68, rabbit: 0.72, stag: 2.1,
   deer: 1.7,
-  ibex: 1.15, hare: 0.45, pig: 0.75, sheep: 0.8, goat: 0.85, duck: 0.45,
-  cat: 0.5, spider: 1.25,
+  ibex: 1.35, hare: 0.72, pig: 1.0, sheep: 1.05, goat: 1.1, duck: 0.68,
+  cat: 0.75, spider: 1.5,
 };
 
 /** Clip name fallbacks — every model has Idle+Walk+Run, birds add Fly. */

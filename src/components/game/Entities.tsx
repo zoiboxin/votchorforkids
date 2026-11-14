@@ -630,21 +630,21 @@ export function Animals({ engine }: { engine: GameEngine }) {
       if (a.kind === "wolf") {
         // 🐺 night eyes — a faint gold glow so the pack watches you from the dark
         const halo = makeGlowSprite("rgba(255,216,96,0.6)", 0.8);
-        halo.position.y = 0.78;
+        halo.position.y = 0.95;
         rig.halo = halo;
         spawned.root.add(halo);
       }
       if (a.kind === "cat") {
         // 🐈‍⬛ the black cat's eyes catch the dark — twin green coals in the night
         const halo = makeGlowSprite("rgba(110,255,150,0.55)", 0.62);
-        halo.position.y = 0.44;
+        halo.position.y = 0.55;
         rig.halo = halo;
         spawned.root.add(halo);
       }
       if (a.kind === "spider") {
         // 🕷️ the giant yard spider wears an eerie violet aura after dark
         const halo = makeGlowSprite("rgba(190,120,255,0.5)", 1.7);
-        halo.position.y = 0.5;
+        halo.position.y = 0.62;
         rig.halo = halo;
         spawned.root.add(halo);
       }

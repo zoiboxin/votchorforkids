@@ -167,6 +167,11 @@ export interface Crew extends SteerMemory {
   replaced?: boolean;
   /** 💰 the purse they carry — drops where they fall */
   purse: number;
+  /** 🎒 the gear this contestant gathered & carries — wood & stone from chop/mine
+   *  shifts, a pocketed snack, loose coins. The purse drops where they fall, but
+   *  all of THIS stays on the body until someone inspects it (E) — whoever
+   *  searches the corpse pockets the whole load (wood/stone feed the wall-stash). */
+  carry?: { wood: number; rock: number; snack: number | null; coins: number };
   /* --- 🤖 daylight foraging — bots race you for snacks, cash & gems --- */
   /** what this bot is walking to grab (null = just wandering) */
   seek?: { kind: "food" | "loot" | "power"; id: number; x: number; z: number } | null;
@@ -1467,7 +1472,8 @@ export class GameEngine {
     if (!this.running || this.personalPause || this.lost) return;
     // in a car? E hops out first — everything else waits
     if (this.drive) { this.exitCar(); return; }
-    // 🩸 7Nights: inspect a fallen survivor's body — learn the killer's clue
+    // 🩸 7Nights: inspect a fallen survivor's body — learn the killer's clue AND
+    // salvage everything they were carrying (🪵 wood & 🪨 stone feed the wall-stash)
     const dead = this.nearestDeadCrew(3.2);
     if (dead && !dead.inspected) {
       dead.inspected = true;
@@ -1475,6 +1481,27 @@ export class GameEngine {
       this.points += 10;
       sfx.click();
       this.toast(this.lastClue, "info");
+      // 🎒 search the pockets — wood & stone go straight to the top-left stash
+      // counters, a pocketed snack fills a free slot, loose coins fatten the wallet
+      const cr = dead.carry;
+      if (cr) {
+        const parts: string[] = [];
+        if (cr.wood > 0) { this.res.wood += cr.wood; parts.push(`🪵 +${cr.wood} wood`); }
+        if (cr.rock > 0) { this.res.rock += cr.rock; parts.push(`🪨 +${cr.rock} stone`); }
+        if (cr.snack !== null) {
+          const slot = this.inv.find((s) => s.def === cr.snack);
+          if (!slot && this.inv.length < INV_SLOTS) {
+            this.inv.push({ def: cr.snack, count: 1 });
+            parts.push(`${ITEMS[cr.snack].emoji} ${ITEMS[cr.snack].name}`);
+          }
+        }
+        if (cr.coins > 0) { this.money += cr.coins; parts.push(`💰 +$${cr.coins}`); }
+        dead.carry = { wood: 0, rock: 0, snack: null, coins: 0 }; // the body is picked clean
+        if (parts.length) {
+          sfx.pickup();
+          this.toast(`🎒 Salvaged from ${dead.name}'s body — ${parts.join(" · ")}`, "good");
+        }
+      }
       return;
     }
     // protester priority: rescue a detained civilian standing nearby
@@ -2579,6 +2606,8 @@ export class GameEngine {
         timer: range(this.rnd, 2, 6), phase: Math.random() * 6,
         hp: CREW_HP, touchCd: 0, attackAnimT: 0, deathX: 0, deathZ: 0, clue: "", inspected: false,
         purse: Math.round(range(this.rnd, CREW_PURSE[0], CREW_PURSE[1])),
+        // 🎒 every contestant starts with pocket change; wood/stone/snack fill up as they work & forage
+        carry: { wood: 0, rock: 0, snack: null, coins: Math.round(range(this.rnd, 3, 12)) },
       });
     }
     // 🔍 spawn-scatter forensics — the "everyone started in the same place" check
@@ -3231,7 +3260,13 @@ export class GameEngine {
       const it = this.items.find((i2) => i2.id === s.id && i2.active);
       if (!it) return;
       it.active = false; it.respawn = ITEM_RESPAWN_S;
-      c.hp = Math.min(CREW_HP, c.hp + ITEMS[it.def].hp); // snacks mend bots too
+      // 🎒 nearly-full bot pockets the snack for later — it rides on their body
+      // when they fall (inspect it to take it); hungry bots still eat on the spot
+      if (c.hp >= CREW_HP * 0.85 && !c.carry?.snack && c.carry) {
+        c.carry.snack = it.def;
+      } else {
+        c.hp = Math.min(CREW_HP, c.hp + ITEMS[it.def].hp); // snacks mend bots too
+      }
       if (this.mp) this.netEmit?.({ t: "pickup", kind: "item", id: it.id });
       this.fxQueue.push({ type: "confetti", x: it.x, y: 1.0, z: it.z, hue: 0.32 });
       if (near && this.botLootCd <= 0) {
@@ -3510,6 +3545,8 @@ export class GameEngine {
       this.world.circles[i].r = 0.24; // only the stump blocks now
       this.fellTimes.set(i, this.elapsed);
       this.fellDir.set(i, Math.atan2(dx / dl, dz / dl));
+      // 🎒 the bot pockets the same reward you'd get — it rides on their body now
+      if (by.carry) by.carry.wood += WOOD_PER_TREE;
       if (near) {
         this.addShake(0.35);
         this.toast(`🪓 ${by.name} felled a tree — the bots work the jungle too!`, "info");
@@ -3530,6 +3567,8 @@ export class GameEngine {
       this.fellVersion++;
       this.world.circles[this.world.rockCi[i]].r = 0.06; // rubble
       this.rockBreakAt.set(i, this.elapsed);
+      // 🎒 the bot pockets the same stone reward you'd get — it rides on their body now
+      if (by.carry) by.carry.rock += ROCK_PER_BOULDER;
       if (near) {
         this.addShake(0.3);
         this.toast(`🔨 ${by.name} cracked a boulder apart!`, "info");
@@ -3738,7 +3777,7 @@ export class GameEngine {
         by === "zombie" ? `🧟 The zombies got ${c.name}! Their 💰 purse dropped — grab it!`
         : by === "beast" ? `🩸 A beast tore ${c.name} apart! Their 💰 dropped — run for it!`
         : by === "wall" ? `☠️ ${c.name} withered beyond the WALL! Their 💰 purse dropped.`
-        : `🩸 You killed ${c.name}! Their 💰 purse dropped — and the law will hear of it!`, "bad");
+        : `🩸 You killed ${c.name}! Their 💰 purse dropped — inspect the body (E) to salvage their gear!`, "bad");
     }
   }
 
@@ -5838,7 +5877,7 @@ export class GameEngine {
       }
       if (!prompt) {
         const d = this.nearestDeadCrew(3.2);
-        if (d && !d.inspected) prompt = `Press E to inspect ${d.name}'s body…`;
+        if (d && !d.inspected) prompt = `Press E to inspect ${d.name}'s body & collect their loot…`;
       }
       if (!prompt && this.phase !== "night" && this.tools.some((s) => s.kind === "builder")) {
         prompt = this.res.wood >= BARRICADE_COST.wood
