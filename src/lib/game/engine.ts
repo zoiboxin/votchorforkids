@@ -4892,16 +4892,17 @@ export class GameEngine {
           if (te.respawn <= 0) te.active = true;
           continue;
         }
-        // 🎒 each TOOL can be collected exactly once — owning an axe blocks a second
-        if (this.tools.some((s) => s.kind === te.kind)) {
-          if (this.toolOnceT <= 0) {
-            this.toolOnceT = 5;
-            const td = TOOLS.find((t2) => t2.kind === te.kind)!;
-            this.toast(`${td.emoji} You already own a ${td.name} — each tool can be picked up only once!`, "info");
-          }
-          continue;
-        }
+        // 🎒 each TOOL can be collected exactly once — only speak up when the kid
+        // actually walks ONTO the duplicate tool (never from across the map!)
         if (dist2(p.x, p.z, te.x, te.z) < TOOL_PICKUP_R * TOOL_PICKUP_R) {
+          if (this.tools.some((s) => s.kind === te.kind)) {
+            if (this.toolOnceT <= 0) {
+              this.toolOnceT = 20; // rare nudge — walk-overs happen a lot, don't nag
+              const td = TOOLS.find((t2) => t2.kind === te.kind)!;
+              this.toast(`${td.emoji} You already own a ${td.name} — each tool can be picked up only once!`, "info");
+            }
+            continue;
+          }
           te.active = false;
           te.respawn = 45;
           if (this.mp) this.netEmit?.({ t: "pickup", kind: "tool", id: te.id });
