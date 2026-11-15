@@ -102,6 +102,17 @@ const shade = (hex: string, f: number) => `#${new THREE.Color(hex).multiplyScala
 const mix = (hex: string, to: string, t: number) => `#${new THREE.Color(hex).lerp(new THREE.Color(to), t).getHexString()}`;
 const LASH = "#241a12";
 
+/** 🌟 hair shine lift — lightening jet-black hair toward white the same amount
+ *  as blonde turns the highlight into a flat GREY patch that reads like a
+ *  bald-spot beret (seen from the front on every dark-haired survivor).
+ *  Scale the lift by hair luminance: dark hair gets a subtle warm gleam,
+ *  light hair keeps the full anime shine. */
+const hairShine = (hex: string) => {
+  const c = new THREE.Color(hex);
+  const lum = 0.2126 * c.r + 0.7152 * c.g + 0.0722 * c.b;
+  return mix(hex, "#fff2d6", lum < 0.22 ? 0.13 : lum < 0.45 ? 0.22 : 0.32);
+};
+
 /* ------------------------------------------------------------------ */
 /* Blob shadow (one shared radial texture)                             */
 /* ------------------------------------------------------------------ */
@@ -154,6 +165,14 @@ function addFace(
     unlit.add(sphere(0.031 * s, 6, 5), EYE_B, true, ex, 0.022 * s, 0.393 * s);
     unlit.add(sphere(0.018 * s, 6, 5), GLINT, true, ex + 0.022 * s, 0.062 * s, 0.402 * s);
     unlit.add(sphere(0.009 * s, 5, 4), GLINT, true, ex - 0.024 * s, -0.005 * s, 0.402 * s);
+
+    // 🌸 anime upper lash-line — a slim dark arc tracing the top rim of the eye
+    // (outer corner swept up a touch). Defines the gaze so the eyes read at ANY
+    // distance, and doubles as closed-eye lashes while the lid blinks over it.
+    if (!opts.droopy) {
+      const lashArc = torus(0.107 * s, 0.016 * s, Math.PI).clone();
+      unlit.add(lashArc, LASH, true, ex, 0.032 * s, 0.375 * s, 0, 0, side * 0.06);
+    }
 
     // 👁️ girls' lashes — three tiny lashes sweep down the outer corner
     if (opts.girl && !opts.droopy)
@@ -333,15 +352,16 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
       }
       headToon.add(sphere(0.2, 9, 7), hairCol, false, 0, 0.5, -0.06);
       // crown shine — the puff catches a soft light up top
-      headToon.add(sphere(0.26, 10, 6), mix(hairCol, "#ffffff", 0.32), false, 0, 0.52, -0.02, 0, 0, 0, 1.4, 0.5, 1.0);
+      headToon.add(sphere(0.26, 10, 6), hairShine(hairCol), false, 0, 0.52, -0.02, 0, 0, 0, 1.4, 0.5, 1.0);
     } else {
       const domeTheta = style === "bowl" ? Math.PI * 0.62 : Math.PI * 0.5;
-      headToon.add(sphere(0.425, 14, 10, 0, Math.PI * 2, 0, domeTheta), hairCol, false, 0, 0.015, style === "bowl" ? 0.03 : 0, 0, 0, 0, 1.04, style === "bowl" ? 1.02 : 1.08, 1.04);
+      headToon.add(sphere(0.425, 14, 10, 0, Math.PI * 2, 0, domeTheta), hairCol, false, 0, 0.045, style === "bowl" ? 0.03 : 0, 0, 0, 0, 1.04, style === "bowl" ? 1.02 : 1.06, 1.04);
       // nape skirt — hair wraps the BACK of the head down to the collar (the old
       // dome stopped at the equator, leaving every guy bald-backed from behind)
       headToon.add(sphere(0.43, 12, 8, Math.PI * 1.5 - 1.15, 2.3, Math.PI * 0.3, Math.PI * 0.42), hairCol, false, 0, 0.02, -0.01, 0, 0, 0, 1.02, 1.0, 1.02);
       // crown shine — a lighter patch catches the light, anime-style
-      headToon.add(sphere(0.24, 10, 6), mix(hairCol, "#ffffff", 0.3), false, 0, 0.36, 0.1, 0, 0, 0, 1.5, 0.5, 1.0);
+      // (lift scales with hair colour — see hairShine: no grey beret on black hair)
+      headToon.add(sphere(0.24, 10, 6), hairShine(hairCol), false, 0, 0.375, 0.06, 0, 0, 0, 1.34, 0.44, 1.0);
       if (style === "spiky") {
         for (let i = 0; i < 6; i++) {
           const ang = i * 1.35;
