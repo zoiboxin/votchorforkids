@@ -42,12 +42,19 @@ export type ModelKind = keyof typeof FILES;
 /** Height-normalize then per-kind artistic scale (world units).
  *  📏 sized to READ next to ~1.9u human survivors — the tiny critters were
  *  ankle-height specks players couldn't even spot, so every small species
- *  got a visibility bump (game readability over strict realism). */
+ *  got a visibility bump (game readability over strict realism).
+ *  ⚠️ normalization divides by the model's FULL bounding-box height, so for
+ *  horned/antlered species (goat · ibex · deer · stag) the horns inflate that
+ *  height and silently shrink the BODY — every GLB is authored at real-world
+ *  scale (see polyfork SPECS: goat 1.65 m, deer 2.12 m, ibex 1.45 m, stag
+ *  2.16 m tall incl. headgear), so their targets sit AT/ABOVE real height to
+ *  keep the body mass true (goat was rendering at 0.67×, its body half a
+ *  sheep's length; the deer's body came out shorter than the wolf's). */
 const TARGET_H: Record<ModelKind, number> = {
-  wolf: 1.25, bear: 1.75, fox: 0.95, owl: 0.75, crow: 0.68, rabbit: 0.72, stag: 2.1,
-  deer: 1.7,
-  ibex: 1.35, hare: 0.72, pig: 1.0, sheep: 1.05, goat: 1.1, duck: 0.68,
-  cat: 0.75, spider: 1.5,
+  wolf: 1.25, bear: 1.75, fox: 0.95, owl: 0.75, crow: 0.68, rabbit: 0.8, stag: 2.5,
+  deer: 2.35,
+  ibex: 1.6, hare: 0.8, pig: 1.15, sheep: 1.05, goat: 1.6, duck: 0.75,
+  cat: 0.8, spider: 1.5,
 };
 
 /** Clip name fallbacks — every model has Idle+Walk+Run, birds add Fly. */

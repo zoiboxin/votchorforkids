@@ -949,11 +949,11 @@ const camV1 = new THREE.Vector3(); // scratch for the driving chase-cam glide
 /** Shadow-blob radius multiplier per animal kind — procedural conf.s and the
  *  polyfork GLB wildlife heights (see public/models/CREDITS.md). */
 const ANIMAL_SCALES: Record<string, number> = {
-  cow: 1.7, chicken: 0.95, deer: 1.45, monkey: 1.1, dog: 1.05,
-  wolf: 1.3, bear: 1.65, fox: 1.0, owl: 0.75, crow: 0.6, rabbit: 0.55, stag: 1.9,
+  cow: 1.7, chicken: 0.95, deer: 1.65, monkey: 1.1, dog: 1.05,
+  wolf: 1.3, bear: 1.65, fox: 1.0, owl: 0.75, crow: 0.6, rabbit: 0.6, stag: 2.0,
   // 🏔️ alpine · 🚜 farmyard · 🎃 halloween newcomers
-  ibex: 1.25, hare: 0.5, pig: 1.05, sheep: 1.05, goat: 1.0, duck: 0.7,
-  cat: 0.6, spider: 1.5,
+  ibex: 1.4, hare: 0.55, pig: 1.1, sheep: 1.05, goat: 1.15, duck: 0.75,
+  cat: 0.65, spider: 1.5,
 };
 
 export function Pickups({ engine }: { engine: GameEngine }) {

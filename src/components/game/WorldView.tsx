@@ -401,8 +401,20 @@ function Forest({ engine }: { engine: GameEngine }) {
         : t.kind === 6 ? "#54443a"                             // dead snag's grey-bark
         : TRUNK_COLS[i % TRUNK_COLS.length];
       tmp.rotation.set(0, rot, 0);
-      tmp.scale.set(t.s, t.s, t.s);
-      tmp.position.set(t.x, 1.6 * t.s, t.z);
+      // per-species trunk fit — the old one-cylinder-fits-all made the base &
+      // top read as two different trees: saplings stood on full grown logs,
+      // birch crowns floated clear of the trunk tip, and dead-snag branches
+      // hung PAST the bare trunk's end. th lifts the shared 3.2u cylinder's
+      // tip to 3.2·th·s (base stays grounded at y=0) so every trunk reaches
+      // into its own canopy / branch set; tw slims or beefs the trunk.
+      let tw = 1, th = 1;
+      if (t.kind === 0) { tw = 1; th = 1.12 * hm; }         // pine — skirt bottom sits at 2.85·hm·s
+      else if (t.kind === 5) { tw = 0.55; th = 0.78 * hm; } // young pine — thin sapling stem
+      else if (t.kind === 2) { tw = 0.78; th = 1.18; }      // birch — slim trunk up into the airy crown
+      else if (t.kind === 3) { tw = 1.14; th = 1.02; }      // oak — massive trunk under the wide crown
+      else if (t.kind === 6) { tw = 0.92; th = 1.32 * hm; } // dead snag — bare tip meets the top branch
+      tmp.scale.set(t.s * tw, t.s * th, t.s * tw);
+      tmp.position.set(t.x, 1.6 * t.s * th, t.z);
       tmp.updateMatrix();
       trunks.current.setMatrixAt(i, tmp.matrix);
       trunks.current.setColorAt(i, col.set(barkCol).multiplyScalar(deep ? 0.85 : 1));
