@@ -117,8 +117,8 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     const heldKind = !beast && !morphing && !engine.drive && engine.held >= 0 && engine.tools[engine.held]
       ? engine.tools[engine.held].kind as HeldToolKind : null;
     if (heldRef.current !== heldKind) { setHeldTool(mesh, heldKind); heldRef.current = heldKind; }
-    mesh.visible = (!engine.lost || engine.deathT < 3.4) && !engine.playerInVan && !morphing && !engine.drive && !beast; // 🩸 the dark takes the body too — after one final fall
-    beastMesh.visible = beast && !engine.lost && !engine.playerInVan && !engine.drive;
+    mesh.visible = (!engine.lost || engine.deathT < 3.4) && !engine.playerInVan && !morphing && !engine.drive && !engine.ride && !beast; // 🩸 the dark takes the body too — after one final fall
+    beastMesh.visible = beast && !engine.lost && !engine.playerInVan && !engine.drive && !engine.ride;
     if (beastMesh.visible) {
       beastMesh.position.set(p.x, p.y, p.z);
       let bd = p.face - beastMesh.rotation.y;
@@ -1629,6 +1629,14 @@ export function RemotesView({ engine }: { engine: GameEngine }) {
         return;
       }
       deadT.current.delete(r.slot); // back among the living — reset their fall clock
+      // 🚗 they're inside a car (driving it or riding shotgun) — the body hides,
+      // exactly like the local driver's body does; the car mesh carries them
+      if ((r.drive || r.ride) && r.alive) {
+        if (body.visible) body.visible = false;
+        if (v.tag) v.tag.visible = false;
+        if (v.btag) v.btag.visible = false;
+        return;
+      }
       if (d2 > CULL_SQ) {
         body.visible = false;
         return;

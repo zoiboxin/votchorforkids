@@ -393,7 +393,10 @@ export function Multiplayer() {
           <h3 className="font-black text-slate-200">How co-op works</h3>
           <ul className="mt-2 grid gap-1.5 md:grid-cols-2">
             <li>🌙 The host owns the story clock &amp; the possession dice.</li>
+            <li>🎮 <b className="text-slate-200">Even SOLO nights are joinable</b> — press Play and anyone who Quick joins lands in <b className="text-slate-200">your</b> world; a bot frees their seat (100 souls, always).</li>
             <li>🐾 <b className="text-slate-200">Any soul can turn</b> — beasts hunt everyone, and a player-beast&apos;s claws reach across the wire.</li>
+            <li>🚗 <b className="text-slate-200">Ride shotgun</b> — walk up to a car someone is driving and press E: passengers ride along, license-free.</li>
+            <li>💡 Cars are mirrored live — their pose, <b className="text-slate-200">headlights</b> and wheels stream to every screen in real time.</li>
             <li>💰 Loot, builds &amp; clues sync instantly — hoard together, barricade together.</li>
             <li>🔮 Accusations (R) stay <b className="text-slate-200">yours alone</b> — read the clues, bet your points.</li>
             <li>⚡ Position streams use 9-byte binary packets @12 Hz — runs on school Wi-Fi.</li>

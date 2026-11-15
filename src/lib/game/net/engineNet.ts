@@ -10,7 +10,7 @@
  */
 import type { GameEngine } from "../engine";
 import type { Appearance } from "../constants";
-import { packState } from "./protocol";
+import { packState, packCar } from "./protocol";
 import { net, type LobbyPlayer, type MpEvent } from "./client";
 
 export interface AttachNetOpts {
@@ -31,6 +31,7 @@ export interface NetHandle {
 }
 
 const lastRaw = new Map<number, { x: number; z: number; t: number }>(); // slot → last raw sample (velocity estimate)
+const slotCars = new Map<number, { ci: number; at: number }>(); // slot → their last streamed car (staleness bookkeeping)
 
 export function attachNet(opts: AttachNetOpts): NetHandle {
   const { engine, code, isHost, name, look } = opts;
@@ -65,25 +66,38 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       x: engine.drive ? engine.drive.x : engine.player.x,
       z: engine.drive ? engine.drive.z : engine.player.z,
       y: engine.player.y,
-      yaw: engine.drive ? engine.drive.rot : engine.input.yaw,
+      yaw: engine.drive ? engine.drive.rot
+        : engine.ride ? engine.world.cars[engine.ride.ci]?.rot ?? engine.input.yaw
+        : engine.input.yaw,
       hp: engine.hp,
       sprint: engine.player.sprinting,
       air: engine.player.y > 0.12,
       beast: engine.youPossessed && engine.phase === "night",
       dead: engine.lost,
       drive: !!engine.drive,
+      ride: !!engine.ride, // 🚗 riding shotgun in someone else's car
       attack: engine.attackCd > 0.3, // just-swung window (ATTACK_CD = 0.45)
     }),
   );
 
+  /* ---------- 🚗 publish our driven car @15 Hz (pose + headlights) ----------
+   * The deterministic world makes the car INDEX mean the same vehicle on every
+   * client, so 8 bytes of pose are enough — every peer re-renders the exact
+   * body, colliders, wheels & blazing lamps in real time. On foot → no packet. */
+  net.startCarPublishing(() => {
+    const d = engine.drive;
+    if (!d) return null;
+    return packCar({ ci: d.ci, x: d.x, z: d.z, rot: d.rot, lights: true });
+  });
+
   /* ---------- remote streams → engine.remotes ---------- */
   const streamTimer = setInterval(() => {
     engine.mpPing = net.ping;
+    const now = performance.now();
     for (const r of engine.remotes) {
       const s = net.sampleRemote(r.slot);
       if (!s) continue;
-      r.lastSeen = performance.now();
-      const now = performance.now();
+      r.lastSeen = now;
       const prev = lastRaw.get(r.slot) ?? { x: s.x, z: s.z, t: now };
       const dtms = Math.max(16, now - prev.t);
       r.vx = ((s.x - prev.x) / dtms) * 1000;
@@ -94,9 +108,27 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       r.alive = !s.dead;
       r.beast = s.beast || (r.beast && engine.phase === "night");
       r.drive = s.drive;
+      r.ride = s.ride;
       r.sprint = s.sprint;
       r.air = s.air;
       if (s.attack) r.attackT = 0.35;
+      // 🚗 their car stream — mirror pose + headlights so the vehicle MOVES on
+      // our world (and its lamps BLAZE at night) exactly like it does on theirs.
+      // Only FRESH packets (≤1.2 s old) keep the mirror alive — a driver who
+      // parked lets the car settle here and its lamps fold off via the sweep.
+      const cs = net.sampleCar(r.slot);
+      if (cs && now - cs.t < 1200) {
+        slotCars.set(r.slot, { ci: cs.ci, at: now });
+        engine.netRemoteCar(cs.ci, cs.x, cs.z, cs.rot, cs.lights);
+      }
+    }
+    // a driver who parked (no more car packets) leaves their car parked here —
+    // lamps fold off; passengers it carried are set back on their feet
+    for (const [sl, e] of Array.from(slotCars)) {
+      if (now - e.at > 1500) {
+        engine.netRemoteCarStop(e.ci);
+        slotCars.delete(sl);
+      }
     }
   }, 80); // 12.5 Hz matches the stream rate
 
@@ -116,6 +148,14 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
     if (engine.phase !== ph) {
       engine.phase = ph;
       engine.phaseT = ev.phaseLeft;
+      // 🕐 a mid-night join must land on the host's SKY too — without the clock
+      // sync a guest dropping into night 4 stares at day-1 morning light while
+      // the roster hunts in the dark. Snap when the drift is big, ease when small.
+      if (ev.clock !== undefined) {
+        const dc = ev.clock - engine.clock;
+        if (Math.abs(dc) > 3) engine.clock = ev.clock;
+        else engine.clock += dc * 0.25;
+      }
       // a phase jump must land with its side effects (our local machine missed them)
       if (ph === "night") {
         for (const idx of engine.possessed) {
@@ -133,6 +173,11 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
     } else {
       if (Math.abs(engine.phaseT - ev.phaseLeft) > 1.5) engine.phaseT = ev.phaseLeft;
       if (engine.nightNo !== ev.nightNo) engine.nightNo = ev.nightNo;
+      // gentle clock drift-correction keeps every client's sky on the same beat
+      if (ev.clock !== undefined) {
+        const dc = ev.clock - engine.clock;
+        engine.clock += Math.abs(dc) > 3 ? dc : dc * 0.15;
+      }
     }
   });
 
@@ -195,13 +240,13 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
     acc = 0;
     net.send({ t: "score", points: engine.points, kills: engine.kills, money: engine.money });
     if (isHost) {
-      net.send({ t: "phase", phase: engine.phase, nightNo: engine.nightNo, phaseLeft: Math.max(0, Math.round(engine.phaseT)) });
+      net.send({ t: "phase", phase: engine.phase, nightNo: engine.nightNo, phaseLeft: Math.max(0, Math.round(engine.phaseT)), clock: Math.round(engine.clock * 100) / 100 });
     }
   }, 500);
   // host keeps a tight 2 Hz clock so guest transitions never drift far
   const phaseTimer = setInterval(() => {
     if (!isHost || !engine.running) return;
-    net.send({ t: "phase", phase: engine.phase, nightNo: engine.nightNo, phaseLeft: Math.max(0, Math.round(engine.phaseT)) });
+    net.send({ t: "phase", phase: engine.phase, nightNo: engine.nightNo, phaseLeft: Math.max(0, Math.round(engine.phaseT)), clock: Math.round(engine.clock * 100) / 100 });
   }, 500);
 
   /* ---------- our death → tell the room ---------- */
@@ -225,11 +270,14 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       clearInterval(phaseTimer);
       clearInterval(endWatcher);
       net.stopPublishing();
+      net.stopCarPublishing();
       engine.netEmit = null;
       engine.netTick = null;
       engine.mp = false;
       engine.remotes = [];
+      engine.remoteDriven.clear();
       lastRaw.clear();
+      slotCars.clear();
     },
   };
 }

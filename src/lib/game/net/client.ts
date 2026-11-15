@@ -13,7 +13,7 @@
  * the host additionally owns the story clock & possession roster.
  */
 import { io, type Socket } from "socket.io-client";
-import { Interp, packState, unpackState, type NetState } from "./protocol";
+import { Interp, packState, unpackState, unpackCar, type NetState, type CarState } from "./protocol";
 import type { Appearance } from "../constants";
 
 export interface LobbyPlayer {
@@ -34,7 +34,7 @@ export type ConnState = "idle" | "connecting" | "lobby" | "room" | "error" | "cl
 
 /** Every wire event the gameplay layer understands (relay stamps `s` = sender slot). */
 export type MpEvent =
-  | { t: "phase"; phase: string; nightNo: number; phaseLeft: number }
+  | { t: "phase"; phase: string; nightNo: number; phaseLeft: number; clock?: number }
   | { t: "roster"; possessed: number[]; beastSlots: number[]; nightNo: number }
   | { t: "crewDeath"; idx: number; clue: string; slain: boolean; loot?: { x: number; z: number; amt: number; label: string } }
   | { t: "dmg"; target: number; amount: number }
@@ -60,9 +60,13 @@ type PeerListener = (name: string) => void;
 export class NetClient {
   private sock: Socket | null = null;
   private interps = new Map<number, Interp>(); // slot → interpolation buffer
+  /** latest mirrored car pose per driving slot (8-byte `mp:car` packets) */
+  private carStates = new Map<number, CarState>();
   private evHandlers = new Map<EventKind, Set<(ev: MpEvent, fromSlot: number) => void>>();
   private publishTimer: ReturnType<typeof setInterval> | null = null;
   private publishFn: (() => ArrayBuffer) | null = null;
+  private carTimer: ReturnType<typeof setInterval> | null = null;
+  private carFn: (() => ArrayBuffer | null) | null = null;
 
   code = "";
   isHost = false;
@@ -159,6 +163,16 @@ export class NetClient {
         else ip.push(s);
       });
 
+      // 🚗 driver car stream — pose + headlights, mirrored into every peer's world
+      sock.on("mp:car", (buf: Buffer, slot: number) => {
+        const c = unpackCar(buf);
+        if (!c) return;
+        if (Number.isFinite(slot)) c.slot = slot;
+        if (c.slot === this.slot) return;
+        c.t = performance.now(); // arrival stamp — mirrors expire when packets stop
+        this.carStates.set(c.slot, c);
+      });
+
       sock.on("mp:event", (ev: MpEvent & { s?: number }) => {
         if (!ev || typeof ev !== "object" || !ev.t) return;
         markLive(ev);
@@ -211,12 +225,14 @@ export class NetClient {
 
   disconnect() {
     this.stopPublishing();
+    this.stopCarPublishing();
     if (this.pingTimer) clearInterval(this.pingTimer);
     this.pingTimer = null;
     if (this.code) this.sock?.emit("mp:leave");
     this.sock?.disconnect();
     this.sock = null;
     this.interps.clear();
+    this.carStates.clear();
     this.code = "";
     this.slot = -1;
     this.lobby = null;
@@ -311,6 +327,24 @@ export class NetClient {
     this.publishFn = null;
   }
 
+  /** 🚗 publish our driven-car snapshot every `hz` ticks (default 15 Hz) — the
+   *  pack fn returns null while we're on foot and nothing goes on the wire. */
+  startCarPublishing(pack: () => ArrayBuffer | null, hz = 15) {
+    this.stopCarPublishing();
+    this.carFn = pack;
+    this.carTimer = setInterval(() => {
+      if (!this.sock?.connected || !this.carFn) return;
+      const buf = this.carFn();
+      if (buf) this.sock.emit("mp:car", buf);
+    }, Math.max(20, Math.round(1000 / hz)));
+  }
+
+  stopCarPublishing() {
+    if (this.carTimer) clearInterval(this.carTimer);
+    this.carTimer = null;
+    this.carFn = null;
+  }
+
   /** Reliable gameplay event → every peer. */
   send(ev: MpEvent) {
     if (!this.sock?.connected) return;
@@ -328,6 +362,11 @@ export class NetClient {
   /** Latest interpolated pose for a remote slot (null = no data yet). */
   sampleRemote(slot: number): NetState | null {
     return this.interps.get(slot)?.sample() ?? null;
+  }
+
+  /** 🚗 latest mirrored car pose from a driving slot (null = no data yet). */
+  sampleCar(slot: number): CarState | null {
+    return this.carStates.get(slot) ?? null;
   }
 
   /** True once we've ever heard from this slot (drives ghost timeouts). */

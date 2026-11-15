@@ -1195,6 +1195,7 @@ function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutabl
   useFrame((_, dtRaw) => {
     const dt = Math.min(0.05, Math.max(0.001, dtRaw));
     beamFade(R, nightFactor(clockRef.current));
+    const nf = nightFactor(clockRef.current);
     const d = engine.drive;
     const P = partsOf(R);
     let dirty = false;
@@ -1207,6 +1208,20 @@ function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutabl
         if (!c) continue;
         if (isKitType(c.t)) hideCar(P, ci); // 🏁 the kit renderer in KitCars drives this one
         else placeCar(P, ci, c.x, terrainHeight(c.x, c.z), c.z, c.rot, c.c, c.t, false);
+      }
+      dirty = true;
+    }
+    // 🌐 REMOTE-driven cars — a real teammate's vehicle, mirrored live from
+    // their 8-byte car stream: re-stamp the body, blaze the lamps at night
+    // (the exact bug fix: the car used to sit parked with dead lights while
+    // its driver was already miles down the road on their own screen)
+    if (engine.remoteDriven.size > 0) {
+      for (const [ci, st] of engine.remoteDriven) {
+        const c = WORLD.cars[ci];
+        if (!c) continue;
+        if (isKitType(c.t)) hideCar(P, ci); // 🏁 the kit renderer drives this one
+        else placeCar(P, ci, c.x, terrainHeight(c.x, c.z), c.z, c.rot, c.c, c.t, true, st.spin, 0);
+        setLampGlow(P, ci, st.lights ? nf : 0);
       }
       dirty = true;
     }
@@ -1344,6 +1359,14 @@ function KitCars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mut
           // roll by the distance actually covered — no skating
           k.spin += Math.hypot(c.x - k.lastX, c.z - k.lastZ) / kitWheelR(k.t);
           lit = nf > 0.14;
+        } else if (engine.remoteDriven.has(k.i)) {
+          // 🌐 a real teammate is driving this kit car — follow the mirrored
+          // pose; lamps blaze only when THEIR lights flag is up (it always is
+          // while they drive, gated here by the night factor like everywhere)
+          const st = engine.remoteDriven.get(k.i)!;
+          x = c.x; z = c.z; rot = c.rot;
+          k.spin += Math.hypot(c.x - k.lastX, c.z - k.lastZ) / kitWheelR(k.t);
+          lit = st.lights && nf > 0.14;
         } else {
           x = c.x; z = c.z; rot = c.rot;
         }

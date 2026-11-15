@@ -43,6 +43,17 @@ export function GameRoot() {
   /** 💾 the end-of-run record saves exactly once per run (death no longer pops a modal) */
   const endSavedRef = useRef(false);
 
+  /** 👑 the host restarted the week — everyone rewinds to day 1 together
+   *  (shared by the multiplayer path AND the auto-hosted solo session) */
+  const makeOnReset = useCallback(() => () => {
+    useGame.getState().pushToast("👑 The host restarted the 7 nights — back to DAY 1!", "info");
+    endSavedRef.current = false; // 💾 the fresh week saves its own end
+    if (engineRef.current) {
+      engineRef.current.reset(useGame.getState().look);
+      useGame.getState().setVictoryOpen(false);
+    }
+  }, []);
+
   const startGame = useCallback(() => {
     useGame.getState().setScreen("connecting");
     useGame.getState().setPaused(false);
@@ -86,19 +97,46 @@ export function GameRoot() {
           isHost: net.isHost,
           name: useGame.getState().playerName || me?.name || "Survivor",
           look: freshLook as Appearance,
-          onReset: () => {
-            // the host restarted the week — everyone rewinds together
-            useGame.getState().pushToast("👑 The host restarted the 7 nights — back to DAY 1!", "info");
-            endSavedRef.current = false; // 💾 the fresh week saves its own end
-            if (engineRef.current) {
-              engineRef.current.reset(useGame.getState().look);
-              useGame.getState().setVictoryOpen(false);
-            }
-          },
+          onReset: makeOnReset(),
         });
       } else {
         netRef.current?.detach();
         netRef.current = null;
+        // 🌐 SOLO GAMES ARE JOINABLE — quietly claim a relay session in the
+        // background (relay down? nothing changes, pure solo keeps working).
+        //   • nobody else around → we HOST a fresh room and mark it LIVE: any
+        //     player who hits Quick join lands in THIS world, and a bot frees
+        //     their seat (100 souls, always).
+        //   • a live night already running → we JOIN it instead: two players
+        //     who both pressed Play end up in the SAME game, seeing each other.
+        //   • already in a session (replay after leaving a net run)? quick()
+        //     reclaims that seat instantly.
+        const myName = useGame.getState().playerName || "Survivor";
+        net.quick(myName, freshLook as Appearance)
+          .then((r) => {
+            if (engineRef.current !== eng || useGame.getState().screen !== "play") {
+              net.disconnect(); // run was replaced / quit before the seat landed
+              return;
+            }
+            mpRef.current = true;
+            netRef.current = attachNet({
+              engine: eng,
+              code: net.code,
+              slot: net.slot,
+              isHost: net.isHost,
+              name: myName,
+              look: freshLook as Appearance,
+              onReset: makeOnReset(),
+            });
+            if (net.isHost && !r.started) {
+              net.send({ t: "start" }); // the relay marks this room LIVE for quick-joiners
+              net.sessionStarted = true;
+              pushToast("🌐 Your night is LIVE — anyone who Quick joins lands in YOUR world!", "good");
+            } else if (r.started) {
+              pushToast("🌐 You joined the live night — the other survivors are in this world too!", "good");
+            }
+          })
+          .catch(() => { /* relay unreachable — the night goes on solo */ });
       }
 
       useGame.getState().setScreen("play");
@@ -108,7 +146,7 @@ export function GameRoot() {
       // free-look + hold Z / X to turn (HUD shows the hint)
       requestGameLock();
     }, 650);
-  }, [pushToast]);
+  }, [pushToast, makeOnReset]);
 
   /* ---------- 🌐 host presses START in the lobby → everyone boots a net run ---------- */
   useEffect(() => {

@@ -9,6 +9,19 @@
  *   └──────┴────────┴────────┴─────┴───────┴────┴───────┘
  *
  * flags bits: 0 sprint · 1 airborne · 2 beast · 3 dead · 4 driving · 5 attackAnim
+ *                        · 6 riding (passenger — inside a car someone else drives)
+ *
+ * A DRIVER additionally publishes a 8-byte car packet @15 Hz on `mp:car` so
+ * every peer sees the vehicle MOVE (and its lamps BLAZE) in real time:
+ *
+ *   ┌──────┬────────┬────────┬─────┬───────┐
+ *   │ ci   │ x      │ z      │ rot │ flags │
+ *   │ u16  │ i16×10 │ i16×10 │ u8  │ u8    │
+ *   └──────┴────────┴────────┴─────┴───────┘
+ *
+ * flags bits (car): 0 headlights on. `ci` indexes world.cars — the world is
+ * deterministic (seed 1337), so the same index means the same vehicle on
+ * every client. rot quantizes to 1.4° — plenty for a mirrored body pose.
  *
  * Quantization: the world is a 712 u-radius disc (walls at ±712, mountains at
  * 610) → i16 with 0.1 u steps covers ±3276 u at 10 cm resolution. (The old
@@ -29,6 +42,20 @@ export const FLAG_BEAST = 1 << 2;
 export const FLAG_DEAD = 1 << 3;
 export const FLAG_DRIVE = 1 << 4;
 export const FLAG_ATTACK = 1 << 5;
+export const FLAG_RIDE = 1 << 6;
+
+export const CAR_BYTES = 8;
+export const CARFLAG_LIGHTS = 1 << 0;
+
+/** One decoded snapshot of a remote-driven car. */
+export interface CarState {
+  slot: number;
+  ci: number;               // index into world.cars (deterministic across clients)
+  x: number; z: number; rot: number;
+  lights: boolean;
+  /** receive timestamp (ms, performance.now) — set by the transport, drives staleness */
+  t: number;
+}
 
 /** One decoded snapshot of a remote survivor. */
 export interface NetState {
@@ -37,6 +64,8 @@ export interface NetState {
   yaw: number;
   hp: number;
   sprint: boolean; air: boolean; beast: boolean; dead: boolean; drive: boolean; attack: boolean;
+  /** riding shotgun — inside a car someone else is driving */
+  ride: boolean;
   /** receive timestamp (ms, performance.now) — interpolation bookkeeping */
   t: number;
 }
@@ -46,7 +75,7 @@ const wrap = (yaw: number): number => ((yaw % (Math.PI * 2)) + Math.PI * 2) % (M
 /** Pack one survivor state into a fresh 9-byte ArrayBuffer. */
 export function packState(s: {
   slot: number; x: number; z: number; y: number; yaw: number; hp: number;
-  sprint?: boolean; air?: boolean; beast?: boolean; dead?: boolean; drive?: boolean; attack?: boolean;
+  sprint?: boolean; air?: boolean; beast?: boolean; dead?: boolean; drive?: boolean; attack?: boolean; ride?: boolean;
 }): ArrayBuffer {
   const buf = new ArrayBuffer(STATE_BYTES);
   const v = new DataView(buf);
@@ -63,8 +92,36 @@ export function packState(s: {
   if (s.dead) f |= FLAG_DEAD;
   if (s.drive) f |= FLAG_DRIVE;
   if (s.attack) f |= FLAG_ATTACK;
+  if (s.ride) f |= FLAG_RIDE;
   v.setUint8(8, f);
   return buf;
+}
+
+/** Pack one driven-car snapshot into a fresh 8-byte ArrayBuffer. */
+export function packCar(s: { slot?: number; ci: number; x: number; z: number; rot: number; lights?: boolean }): ArrayBuffer {
+  const buf = new ArrayBuffer(CAR_BYTES);
+  const v = new DataView(buf);
+  v.setUint16(0, Math.max(0, Math.min(0xffff, Math.round(s.ci))), true);
+  v.setInt16(2, Math.round(Math.max(-3276, Math.min(3276, s.x)) * 10), true);
+  v.setInt16(4, Math.round(Math.max(-3276, Math.min(3276, s.z)) * 10), true);
+  v.setUint8(6, Math.round((wrap(s.rot) / (Math.PI * 2)) * 255));
+  v.setUint8(7, s.lights ? CARFLAG_LIGHTS : 0);
+  return buf;
+}
+
+/** Unpack a received car packet. Returns null on malformed input. */
+export function unpackCar(data: BinSrc): CarState | null {
+  const v = toDataView(data);
+  if (!v || v.byteLength < CAR_BYTES) return null;
+  const f = v.getUint8(7);
+  return {
+    slot: -1, // the transport stamps the sender's real slot
+    ci: v.getUint16(0, true),
+    x: v.getInt16(2, true) / 10,
+    z: v.getInt16(4, true) / 10,
+    rot: (v.getUint8(6) / 255) * Math.PI * 2,
+    lights: !!(f & CARFLAG_LIGHTS),
+  };
 }
 
 /** Any binary flavor the transport may hand us (browser ArrayBuffer, typed views, Node Buffer). */
@@ -98,6 +155,7 @@ export function unpackState(data: BinSrc, t = 0): NetState | null {
     dead: !!(f & FLAG_DEAD),
     drive: !!(f & FLAG_DRIVE),
     attack: !!(f & FLAG_ATTACK),
+    ride: !!(f & FLAG_RIDE),
     t,
   };
 }

@@ -1779,6 +1779,15 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         </div>
       )}
 
+      {/* 🚗🧑‍🤝‍🧑 riding shotgun chip — the driver keeps their wheel, you enjoy the view */}
+      {hud.riding && (
+        <div role="status" className="absolute bottom-36 left-1/2 flex -translate-x-1/2 items-center gap-2.5 rounded-full bg-slate-900/85 px-4 py-2 text-white shadow-xl backdrop-blur-md sm:bottom-28">
+          <motion.span animate={{ y: [0, -2, 0] }} transition={{ repeat: Infinity, duration: 1.6 }} className="text-lg leading-none" aria-hidden>🚗</motion.span>
+          <span className="text-sm font-black text-cyan-300">RIDING SHOTGUN</span>
+          <span className="hidden whitespace-nowrap text-[10px] font-bold uppercase tracking-widest text-white/70 sm:inline">E hop out</span>
+        </div>
+      )}
+
       {/* toasts */}
       <div className="absolute bottom-24 left-1/2 z-10 flex w-[90%] max-w-md -translate-x-1/2 flex-col items-center gap-1.5 sm:bottom-24">
         <AnimatePresence>

@@ -254,6 +254,8 @@ export interface RemotePlayer {
   x: number; z: number; y: number; vx: number; vz: number; face: number;
   hp: number; alive: boolean;
   beast: boolean; drive: boolean; sprint: boolean; air: boolean; attackT: number;
+  /** 🚗 riding shotgun in someone else's car (their body hides inside it) */
+  ride?: boolean;
   /** points reported by their client (HUD scoreboard) */
   points: number; kills: number; money: number;
   lastSeen: number;
@@ -398,6 +400,8 @@ export interface HudData {
   hasLicense: boolean;
   /** true while the player is behind the wheel of a car (GTA style) */
   driving: boolean;
+  /** 🚗 true while riding shotgun in a car someone else is driving */
+  riding: boolean;
   /** current car speed in u/s while driving (0 on foot) — HUD speedometer */
   speed: number;
   /* --- 7 Nights --- */
@@ -447,7 +451,7 @@ export interface HudData {
   /** relay round-trip estimate (ms) */
   mpPing: number;
   /** the real souls in town — scoreboard & presence */
-  netPlayers: { slot: number; name: string; points: number; kills: number; money: number; hp: number; alive: boolean; beast: boolean; drive: boolean; self: boolean }[];
+  netPlayers: { slot: number; name: string; points: number; kills: number; money: number; hp: number; alive: boolean; beast: boolean; drive: boolean; ride: boolean; self: boolean }[];
 }
 
 export type ToastFn = (msg: string, kind?: "info" | "good" | "bad") => void;
@@ -570,6 +574,15 @@ export class GameEngine {
   carCoast = new Map<number, CoastCar>();
   /** 🚗💥 shared crunch-sound throttle — several cars can collide the same frame */
   private carCrashCd = 0;
+
+  /* --- 🌐 multiplayer cars ---
+   * remoteDriven: car idx → the latest streamed pose from its REAL driver
+   * (8-byte `mp:car` packets @15 Hz). stepRemoteCars eases the world entry
+   * toward it every frame — body, colliders and the renderer all follow the
+   * real driver's car, headlights included, in real time.
+   * ride: the car WE are riding shotgun in (someone else drives — E hops out). */
+  remoteDriven = new Map<number, { x: number; z: number; rot: number; lights: boolean; spin: number }>();
+  ride: { ci: number } | null = null;
 
   /* --- 🤖 bots acting like real players ---
    * goodieClaims: per-frame map goodieKey → crewId; each loose snack/pile/gem
@@ -1452,7 +1465,9 @@ export class GameEngine {
     this.runnerDelivered = 0; this.lost = false; this.catchCd = 0;
     // driving: hop out, re-hide the licenses, bring every car back to its parking spot
     this.hasLicense = false; this.drive = null; this.exitCd = 0; this.driveMsgT = 0;
+    this.ride = null; // 🚗 the passenger seat rewinds too
     this.carCoast.clear(); // 🚗 every abandoned coasting drift rewinds too
+    this.remoteDriven.clear(); // 🌐 mirrored remote cars re-fill from the live stream
     for (const lc of this.licenses) lc.active = true;
     this.world.cars.forEach((c, i) => {
       const h = this.carHome[i];
@@ -1529,6 +1544,8 @@ export class GameEngine {
     if (!this.running || this.personalPause || this.lost) return;
     // in a car? E hops out first — everything else waits
     if (this.drive) { this.exitCar(); return; }
+    // riding shotgun? E hops out too — the driver keeps their wheel
+    if (this.ride) { this.exitRide(); return; }
     // 🩸 7Nights: inspect a fallen survivor's body — learn the killer's clue AND
     // salvage everything they were carrying (🪵 wood & 🪨 stone feed the wall-stash)
     const dead = this.nearestDeadCrew(3.2);
@@ -1579,8 +1596,14 @@ export class GameEngine {
       }
     }
     // then: hop into the nearest parked car — GTA style, license required!
+    // 🌐 someone ALREADY behind the wheel (a real teammate over the wire or a
+    // bot joyrider)? You ride shotgun instead — it's a multiplayer game!
     const car = this.nearestCar(CAR_ENTER_R);
-    if (car >= 0) { this.enterCar(car); return; }
+    if (car >= 0) {
+      if (this.isCarDriven(car)) this.enterRide(car);
+      else this.enterCar(car);
+      return;
+    }
     // police don't rescue their own prisoners — a friendly reminder instead
     if (this.side === "police") {
       this.toast("👮 You're the police today, Officer — no freeing the suspects! Chase runners instead.", "info");
@@ -1673,6 +1696,55 @@ export class GameEngine {
 
   /** H key while driving — beep beep! */
   horn() { if (this.drive) sfx.horn(); }
+
+  /* ---------------- 🚗 riding shotgun (multiplayer passenger seat) ---------------- */
+
+  /** Is this car currently driven by someone else (a real remote player or a
+   *  bot joyrider)? Passengers can hop aboard a MOVING car — no license needed
+   *  (you're not driving!). */
+  isCarDriven(ci: number): boolean {
+    if (this.remoteDriven.has(ci) || this.botDriven.has(ci)) return true;
+    return this.crew.some((o) => o.drive && o.drive.ci === ci);
+  }
+
+  /** Hop into the passenger seat of a car someone else is driving. The body
+   *  glues to the car (hidden — you're inside), the camera rides along, and
+   *  our streamed pose carries the ride flag so everyone sees us aboard. */
+  private enterRide(ci: number) {
+    if (this.exitCd > 0) return; // just hopped out — don't tumble straight back in
+    if (this.detainedT > 0 || this.playerInVan) {
+      if (this.driveMsgT <= 0) {
+        this.driveMsgT = 3;
+        this.toast("🚔 You're under arrest — no car rides until the police let you go!", "bad");
+      }
+      return;
+    }
+    if (!this.isCarDriven(ci)) return; // only cars with a live driver take passengers
+    const car = this.world.cars[ci];
+    this.ride = { ci };
+    const p = this.player;
+    p.x = car.x; p.z = car.z; p.y = 0; p.vx = p.vz = p.vy = 0;
+    p.face = car.rot;
+    sfx.door();
+    this.toast("🚗 You hopped in as a PASSENGER — enjoy the ride! E to hop out.", "good");
+  }
+
+  /** Hop out of the passenger seat — door side, right where the car sits now. */
+  exitRide(silent = false) {
+    if (!this.ride) return;
+    const car = this.world.cars[this.ride.ci];
+    this.ride = null;
+    this.exitCd = 0.6;
+    const p = this.player;
+    p.x = car.x + Math.cos(car.rot) * 2.3;
+    p.z = car.z - Math.sin(car.rot) * 2.3;
+    p.y = terrainHeight(p.x, p.z); p.vx = p.vz = p.vy = 0;
+    p.face = car.rot;
+    resolve(p, 0.45, this.world);
+    const rr = Math.hypot(p.x, p.z);
+    if (rr > WALL_RADIUS) { p.x *= WALL_RADIUS / rr; p.z *= WALL_RADIUS / rr; }
+    if (!silent) sfx.door();
+  }
 
   /* ---------------- 🪪 driving license — show & share ---------------- */
 
@@ -1959,6 +2031,60 @@ export class GameEngine {
         }
       }
       this.syncCarColliders(ph); // the parked fleet entry + axle colliders ride along
+    }
+  }
+
+  /* ---------------- 🌐 remote-driven cars — real-time mirror ---------------- */
+
+  /** A remote driver's car stream packet arrived (8 bytes @15 Hz). Mirror the
+   *  pose so everyone sees the vehicle move & its lamps blaze in real time.
+   *  The deterministic world makes `ci` mean the SAME vehicle on every client. */
+  netRemoteCar(ci: number, x: number, z: number, rot: number, lights: boolean) {
+    if (ci < 0 || ci >= this.world.cars.length) return;
+    let st = this.remoteDriven.get(ci);
+    if (!st) {
+      st = { x, z, rot, lights, spin: 0 };
+      this.remoteDriven.set(ci, st);
+      const car = this.world.cars[ci];
+      car.x = x; car.z = z; car.rot = rot; // first packet snaps — never ease across the map
+      // a real driver owns this car now — any stale local wheel or drift ends
+      if (this.drive?.ci === ci) this.exitCar();
+      this.carCoast.delete(ci);
+    } else {
+      st.x = x; st.z = z; st.rot = rot; st.lights = lights;
+    }
+  }
+
+  /** The remote driver parked / bailed / left — the car stays where it stopped,
+   *  lamps fold off, and any passenger of ours is set back on their feet. */
+  netRemoteCarStop(ci: number) {
+    if (!this.remoteDriven.delete(ci)) return;
+    if (this.ride?.ci === ci) this.exitRide(true);
+  }
+
+  /** Ease every remote-driven car toward its streamed target pose. The body,
+   *  axle colliders and wheel spin all follow the real driver — passengers glue
+   *  to the same pose, so the ride (and the camera) is butter-smooth. */
+  private stepRemoteCars(dt: number) {
+    if (this.remoteDriven.size === 0) return;
+    const k = 1 - Math.exp(-dt * 10);
+    for (const [ci, st] of this.remoteDriven) {
+      const car = this.world.cars[ci];
+      if (!car) { this.remoteDriven.delete(ci); continue; }
+      const px = car.x, pz = car.z;
+      car.x += (st.x - car.x) * k;
+      car.z += (st.z - car.z) * k;
+      let dr = st.rot - car.rot;
+      dr = Math.atan2(Math.sin(dr), Math.cos(dr));
+      car.rot += dr * k;
+      st.spin -= Math.hypot(car.x - px, car.z - pz) / 0.46; // wheels roll by distance covered
+      this.syncCarColliders({ ci, x: car.x, z: car.z, rot: car.rot, t: car.t });
+      // 🚗 riding shotgun — glue the passenger to the car they ride in
+      if (this.ride?.ci === ci) {
+        const p = this.player;
+        p.x = car.x; p.z = car.z; p.y = 0; p.face = car.rot;
+        p.vx = 0; p.vz = 0;
+      }
     }
   }
 
@@ -3313,7 +3439,7 @@ export class GameEngine {
             const d = dist2(c.x, c.z, r.x, r.z);
             if (d < 95 * 95 && d <= bd * 2.8) { tx = r.x; tz = r.z; td = d; victim = -1; victimCiv = null; remoteVictim = r; latched = true; }
           }
-        } else if (c.preyKind === "you" && this.detainedT <= 0 && !this.drive) {
+        } else if (c.preyKind === "you" && this.detainedT <= 0 && !this.drive && !this.ride) {
           if (d2p < 95 * 95 && d2p <= bd * 2.8) { tx = p.x; tz = p.z; td = d2p; victim = -1; victimCiv = null; remoteVictim = null; latched = true; }
         }
         if (!latched && bd < Infinity) {
@@ -3322,7 +3448,7 @@ export class GameEngine {
           // spreads across the lobby exactly like the shambler horde does
           const pick = this.pickDiversePrey(c, {
             avoidId: c.avoidId, avoidT: c.avoidT, excludeCi: i,
-            includeYou: this.detainedT <= 0 && !this.drive,
+            includeYou: this.detainedT <= 0 && !this.drive && !this.ride,
             includeCivs: true, includeRemotes: true,
             sniff: 70, cap: ZOMBIE_SWARM_CAP, farHunt: false,
           });
@@ -3370,7 +3496,7 @@ export class GameEngine {
         }
         // caught someone?
         if (c.touchCd <= 0) {
-          if (victim < 0 && !victimCiv && td < 1.8 * 1.8 && this.detainedT <= 0 && !this.drive) {
+          if (victim < 0 && !victimCiv && td < 1.8 * 1.8 && this.detainedT <= 0 && !this.drive && !this.ride) {
             c.touchCd = HUNTER_TOUCH_CD;
             c.attackAnimT = 0.45; // claw swipe animation
             this.hp = Math.max(0, this.hp - HUNTER_DMG);
@@ -4939,6 +5065,11 @@ export class GameEngine {
       // 🚗 behind the wheel — car physics runs, the driver enjoys the ride
       this.invulnT = Math.max(0, this.invulnT - dt);
       this.stepDrive(dt);
+    } else if (this.ride) {
+      // 🚗 riding shotgun — legs off, the car carries us (stepRemoteCars glues
+      // the body to the car pose; the camera & streamed position follow along)
+      this.invulnT = Math.max(0, this.invulnT - dt);
+      p.vx = p.vz = 0;
     } else {
       this.invulnT = Math.max(0, this.invulnT - dt);
       const prevY = p.y;
@@ -4983,6 +5114,7 @@ export class GameEngine {
     this.hp = Math.min(100, this.hp + 1.2 * dt * AGE_STATS[this.look.age].regen);
     // 🚗 driverless cars coast & decelerate; car-meets-car crunch cooldown ticks
     this.stepCarPhysics(dt);
+    this.stepRemoteCars(dt); // 🌐 remote-driven cars mirror their real driver
     this.carCrashCd = Math.max(0, this.carCrashCd - dt);
     // 🧱 THE WALL — outside the safe circle your life drains away (PUBG blue-zone)
     this.stepZone(dt);
@@ -4994,7 +5126,7 @@ export class GameEngine {
       t.a += t.sp * t.dir * dt;
       const pt = ringTrafficPoint(t.a, t.r, t.dir);
       t.x = pt.x; t.z = pt.z; t.rot = pt.rot;
-      if (this.detainedT > 0 || this.drive) continue; // sitting out detention / safe inside a vehicle — traffic can't touch you
+      if (this.detainedT > 0 || this.drive || this.ride) continue; // sitting out detention / safe inside a vehicle — traffic can't touch you
       const fx = Math.sin(t.rot), fz = Math.cos(t.rot);
       const tax = VEHICLE_AXLE[t.t % VEHICLE_AXLE.length];
       const taxR = VEHICLE_AXLE_R[t.t % VEHICLE_AXLE_R.length];
@@ -5039,7 +5171,7 @@ export class GameEngine {
     this.updatePlanes(dt);
     // vans are solid — shove the player out of their footprint (no bonk, police don't ram kids)
     // (while driving, stepDrive already bounces the CAR off vans instead)
-    if (this.detainedT <= 0 && !this.drive) {
+    if (this.detainedT <= 0 && !this.drive && !this.ride) { // (stepDrive/stepRemoteCars bounce the CAR off vans instead)
       for (const van of this.vans) {
         const fx = Math.sin(van.rot), fz = Math.cos(van.rot);
         for (const off of [VAN_AXLE, -VAN_AXLE]) {
@@ -5369,7 +5501,7 @@ export class GameEngine {
           cop.alertT = d2p < detect * detect * 3 ? ESCAPE_LOST_S : cop.alertT - dt;
           // a speeding car can't be caught on foot — cops tumble after it instead
           // (and a turned beast mauls would-be arresters — they hesitate)
-          if (d2p < 1.9 * 1.9 && this.detainedT <= 0 && this.invulnT <= 0 && this.morphKind == null && !this.youPossessed && !this.drive) { this.catchPlayer(cop); }
+          if (d2p < 1.9 * 1.9 && this.detainedT <= 0 && this.invulnT <= 0 && this.morphKind == null && !this.youPossessed && !this.drive && !this.ride) { this.catchPlayer(cop); }
           else if (cop.alertT <= 0) { cop.mode = "return"; cop.timer = 0; }
           break;
         }
@@ -5630,13 +5762,13 @@ export class GameEngine {
               const d = dist2(zb.x, zb.z, o.x, o.z);
               if (d < 95 * 95) { tx = o.x; tz = o.z; td = d; victimCrew = vi; latched = true; }
             }
-          } else if (zb.preyKind === "you" && !beastYou && this.detainedT <= 0 && !this.drive) {
+          } else if (zb.preyKind === "you" && !beastYou && this.detainedT <= 0 && !this.drive && !this.ride) {
             if (d2p < 95 * 95) { tx = p.x; tz = p.z; td = d2p; victimCrew = -1; latched = true; }
           }
           // 👀 a much closer soul can steal a latched hunter's attention — but
           // only an under-swarmed one, and only every 0.6s (cheap, no thrash)
           zb.pickT = (zb.pickT ?? 0) - dt;
-          if (latched && td > 13 * 13 && (zb.pickT ?? 0) <= 0 && !beastYou && this.detainedT <= 0 && !this.drive) {
+          if (latched && td > 13 * 13 && (zb.pickT ?? 0) <= 0 && !beastYou && this.detainedT <= 0 && !this.drive && !this.ride) {
             zb.pickT = 0.6;
             const steal = this.pickDiversePrey(zb, {
               avoidId: zb.avoidV, avoidT: zb.avoidT,
@@ -5662,7 +5794,7 @@ export class GameEngine {
             // this beast goes FINDING that player across the night
             const pick = this.pickDiversePrey(zb, {
               avoidId: zb.avoidV, avoidT: zb.avoidT,
-              includeYou: !beastYou && this.detainedT <= 0 && !this.drive,
+              includeYou: !beastYou && this.detainedT <= 0 && !this.drive && !this.ride,
               includeCivs: false, includeRemotes: false,
               sniff: ZOMBIE_SNIFF, cap: ZOMBIE_SWARM_CAP, farHunt: true,
             });
@@ -5736,7 +5868,7 @@ export class GameEngine {
             }
           }
         }
-        if (d2p < 1.6 * 1.6 && zb.touchCd <= 0 && this.detainedT <= 0 && !this.drive && !beastYou) { // the car shell keeps zombies out
+        if (d2p < 1.6 * 1.6 && zb.touchCd <= 0 && this.detainedT <= 0 && !this.drive && !this.ride && !beastYou) { // the car shell keeps zombies out
           zb.touchCd = ZOMBIE_TOUCH_CD;
           this.hp = Math.max(0, this.hp - ZOMBIE_DMG);
           this.hurtT = HURT_FLASH_S;
@@ -5924,7 +6056,7 @@ export class GameEngine {
             stepNpc(an, an.tx, an.tz, ZOMDOG_SPEED * 0.45, dt, this.world);
           }
           // 🩸 the jaws find YOU too — the car shell keeps dogs out, the beast-night keeps them off
-          if (d2p < 1.5 * 1.5 && (an.touchCd ?? 0) <= 0 && this.detainedT <= 0 && !this.drive
+          if (d2p < 1.5 * 1.5 && (an.touchCd ?? 0) <= 0 && this.detainedT <= 0 && !this.drive && !this.ride
             && !(this.youPossessed && this.phase === "night")) {
             an.touchCd = ZOMDOG_TOUCH_CD;
             this.hp = Math.max(0, this.hp - ZOMDOG_DMG);
@@ -6005,7 +6137,7 @@ export class GameEngine {
       // stops fearing you and CREEPS: eight legs ghost it across the graveyard,
       // closing to a hair-raising 3.5u and just… watching. It never bites —
       // the dread is the point. (Daylight falls through to the shy graze cycle.)
-      if (an.kind === "spider" && nightFactor(this.clock) > 0.5 && !this.drive && this.detainedT <= 0) {
+      if (an.kind === "spider" && nightFactor(this.clock) > 0.5 && !this.drive && !this.ride && this.detainedT <= 0) {
         const hunt = d2p < 16 * 16;
         if (hunt && d2p > 3.5 * 3.5) {
           // skitter in — slow, deliberate, legs ticking
@@ -6057,7 +6189,7 @@ export class GameEngine {
       // when nobody's near, the pack CULLS the living town — contestants and
       // townsfolk alike get run down in the dark. (Walk close to a hunted soul
       // and the wolf keeps its distance from you — you are the shield.)
-      if (an.kind === "wolf" && nightFactor(this.clock) > 0.55 && !this.drive && this.detainedT <= 0) {
+      if (an.kind === "wolf" && nightFactor(this.clock) > 0.55 && !this.drive && !this.ride && this.detainedT <= 0) {
         const hunt = d2p < 30 * 30;
         if (hunt && d2p > 7.5 * 7.5) {
           // stalk — close the gap to the circle distance
@@ -6257,7 +6389,7 @@ export class GameEngine {
         if (c.mode === "detained" && dist2(p.x, p.z, c.x, c.z) < RESCUE_RADIUS * RESCUE_RADIUS) { prompt = `Press E to rescue ${c.name}!`; break; }
     }
     /* --- 7Nights story prompts --- */
-    if (!prompt && !this.drive) {
+    if (!prompt && !this.drive && !this.ride) {
       if (this.phase === "day" || this.phase === "dawn") {
         const c = this.nearestCrewAlive(ACCUSE_RADIUS);
         if (c) prompt = `Press R to ACCUSE ${c.name} — are they the possessed one?`;
@@ -6273,13 +6405,17 @@ export class GameEngine {
       }
     }
     // 🚗 car prompts — driving clears everything (the speedo chip shows controls);
-    // on foot, a parked car nearby hints how driving works (lowest priority)
-    if (this.drive) {
+    // on foot, a parked car nearby hints how driving works (lowest priority).
+    // 🌐 a car someone else is driving? The PASSENGER seat is open — no license
+    // needed to ride along, it's a multiplayer game!
+    if (this.drive || this.ride) {
       prompt = "";
     } else {
       const nc = this.nearestCar(CAR_ENTER_R);
       if (nc >= 0 && !prompt) {
-        prompt = this.hasLicense ? "Press E to hop in and drive!" : "Find a glowing 🪪 license card to unlock cars!";
+        prompt = this.isCarDriven(nc)
+          ? "Press E to ride shotgun — hop in with the driver!"
+          : this.hasLicense ? "Press E to hop in and drive!" : "Find a glowing 🪪 license card to unlock cars!";
       }
     }
     let policeNear = false;
@@ -6300,6 +6436,7 @@ export class GameEngine {
       side: this.side, busted: this.caughtCount, runnerDelivered: this.runnerDelivered, lost: this.lost,
       outfitLabel: this.side === "police" ? `${squad.emoji} ${squad.label}` : "",
       hasLicense: this.hasLicense, driving: !!this.drive, speed: this.drive ? Math.abs(this.drive.v) : 0,
+      riding: !!this.ride,
       inv: this.inv.map((s) => ({ def: s.def, count: s.count })),
       hurt: this.hurtT > 0, sprinting: p.sprinting, exhausted: this.stamina <= 0.5,
       px: Math.round(this.player.x), pz: Math.round(this.player.z),
@@ -6349,13 +6486,13 @@ export class GameEngine {
               slot: this.mpSlot, name: this.playerName + (this.youPossessed && this.phase === "night" ? " 🐾" : ""),
               points: this.points, kills: this.kills, money: this.money,
               hp: Math.round(this.hp), alive: !this.lost, beast: this.youPossessed && this.phase === "night",
-              drive: !!this.drive, self: true,
+              drive: !!this.drive, ride: !!this.ride, self: true,
             }]
           : []),
         ...this.remotes.map((r) => ({
           slot: r.slot, name: r.name + (r.beast ? " 🐾" : ""),
           points: r.points, kills: r.kills, money: r.money,
-          hp: Math.round(r.hp), alive: r.alive, beast: r.beast, drive: r.drive, self: false,
+          hp: Math.round(r.hp), alive: r.alive, beast: r.beast, drive: r.drive, ride: !!r.ride, self: false,
         })),
       ].sort((a, b) => b.points - a.points),
     };

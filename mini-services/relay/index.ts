@@ -73,6 +73,7 @@ function leaveRoom(io: Server, sid: string) {
   const m = room.members.get(sid);
   room.members.delete(sid);
   memberRoom.delete(sid);
+  console.log(`[relay] leave ${m?.name ?? sid} room=${room.code} souls=${room.members.size}`);
   io.to(room.code).emit("mp:lobby", { t: "left", sid, by: m?.name ?? "someone" });
   if (room.members.size === 0) {
     rooms.delete(room.code);
@@ -99,6 +100,7 @@ function seatInRoom(io: Server, sock: { join: (c: string) => void; id: string; d
   room.members.set(sock.id, { sid: sock.id, slot, name, ready: false, look: look ?? null });
   sock.to(room.code).emit("mp:lobby", { t: "join", name, by: name });
   io.to(room.code).emit("mp:lobby", { t: "roster", lobby: lobbyPayload(room) });
+  console.log(`[relay] seat ${name} slot=${slot} room=${room.code} souls=${room.members.size}`);
   return slot;
 }
 
@@ -117,6 +119,8 @@ export const io = new Server(PORT, {
 
 io.on("connection", (sock) => {
   sock.data.name = "Survivor";
+  console.log(`[relay] connect ${sock.id}`);
+  sock.on("disconnect", (r: string) => console.log(`[relay] disconnect ${sock.id} (${r})`));
 
   /* ---------------- lobby lifecycle ---------------- */
   sock.on("mp:create", (p: { name?: string; look?: unknown } = {}, ack?: (r: unknown) => void) => {
@@ -213,6 +217,16 @@ io.on("connection", (sock) => {
     sock.data.slot = room.members.get(sock.id)?.slot ?? sock.data.slot ?? 0;
     if (process.env.MP_DEBUG) console.log(`[relay] state slot=${sock.data.slot} room=${room.code} len=${len}`);
     sock.to(room.code).emit("mp:state", buf instanceof Buffer ? buf : Buffer.from(buf as Uint8Array), sock.data.slot);
+  });
+
+  // 🚗 driven-car stream (8-byte pose + headlights packet — see protocol.ts);
+  // same transport-dumb fan-out as mp:state, stamped with the sender's slot
+  sock.on("mp:car", (buf: Buffer | ArrayBuffer | Uint8Array) => {
+    const room = roomOf(sock.id);
+    const len = buf instanceof Buffer ? buf.length : (buf as Uint8Array)?.byteLength ?? 0;
+    if (!room || !buf || len === 0 || len > 64) return;
+    sock.data.slot = room.members.get(sock.id)?.slot ?? sock.data.slot ?? 0;
+    sock.to(room.code).emit("mp:car", buf instanceof Buffer ? buf : Buffer.from(buf as Uint8Array), sock.data.slot);
   });
 
   /* reliable gameplay events (phase clock, possession roster, damage, kills…)
