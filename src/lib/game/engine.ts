@@ -316,6 +316,9 @@ export interface DriveState {
    *  side the instant speed crosses zero (a brake-to-reverse nose twitch). We
    *  keep the old side until the car is genuinely rolling the other way. */
   lastDir: 1 | -1;
+  /** 🔆 headlamps on/off — streamed in the car packet (bit 0) so every peer's
+   *  mirror blazes or dims with us in real time (L toggles while driving). */
+  lights: boolean;
 }
 
 /** The pose subset the shared car-physics helpers (resolveCarBody / syncCarColliders)
@@ -1655,7 +1658,7 @@ export class GameEngine {
       return;
     }
     const car = this.world.cars[ci];
-    this.drive = { ci, x: car.x, z: car.z, rot: car.rot, v: 0, c: car.c, t: car.t, vx: car.x, vz: car.z, vrot: car.rot, spin: 0, hitT: 0, steerVis: 0, steer: 0, pedal: 0, lastDir: 1 };
+    this.drive = { ci, x: car.x, z: car.z, rot: car.rot, v: 0, c: car.c, t: car.t, vx: car.x, vz: car.z, vrot: car.rot, spin: 0, hitT: 0, steerVis: 0, steer: 0, pedal: 0, lastDir: 1, lights: true };
     // 🚗 hopping into a car that's still coasting — inherit its rolling speed
     // (the coast entry hands control over; we keep the momentum it had)
     const coast = this.carCoast.get(ci);
@@ -1667,7 +1670,7 @@ export class GameEngine {
     p.vx = p.vz = p.vy = 0;
     sfx.engine();
     sfx.door();
-    this.toast(`${VEHICLE_LABELS[car.t % VEHICLE_LABELS.length]} Vroom! W/S gas & brake · A/D steer · E hop out · H horn!`, "good");
+    this.toast(`${VEHICLE_LABELS[car.t % VEHICLE_LABELS.length]} Vroom! W/S gas & brake · A/D steer · E hop out · H horn · L lights!`, "good");
   }
 
   /** Hop out — the car stays parked where you left it (its colliders move along).
@@ -1696,6 +1699,18 @@ export class GameEngine {
 
   /** H key while driving — beep beep! */
   horn() { if (this.drive) sfx.horn(); }
+
+  /** 🚗 L while driving — flip the headlamps. The TRUE state rides the car
+   *  packet (bit 0), so every peer's mirror blazes or dims with us in real
+   *  time — never a hardcoded "always on" lie on the wire. */
+  toggleHeadlights() {
+    if (!this.drive) return;
+    this.drive.lights = !(this.drive.lights ?? true);
+    sfx.click();
+    this.toast(this.drive.lights
+      ? "🔆 Headlights ON — the whole street can see you coming!"
+      : "🌙 Headlights OFF — running dark.", "info");
+  }
 
   /* ---------------- 🚗 riding shotgun (multiplayer passenger seat) ---------------- */
 
@@ -4019,7 +4034,7 @@ export class GameEngine {
     if (this.drive?.ci === ci || this.crew.some((o) => o.drive && o.drive.ci === ci)) return;
     c.job = null;
     this.carCoast.delete(ci); // a bot taking the wheel ends any coasting drift
-    c.drive = { ci, x: car.x, z: car.z, rot: car.rot, v: 0, c: car.c, t: car.t, vx: car.x, vz: car.z, vrot: car.rot, spin: 0, hitT: 0, steerVis: 0, steer: 0, pedal: 0, lastDir: 1 };
+    c.drive = { ci, x: car.x, z: car.z, rot: car.rot, v: 0, c: car.c, t: car.t, vx: car.x, vz: car.z, vrot: car.rot, spin: 0, hitT: 0, steerVis: 0, steer: 0, pedal: 0, lastDir: 1, lights: true };
     this.botDriven.add(ci);
     // 🛣️ cruise waypoint — bots tour the streets like any joyrider
     const spot = spotNear(this.rnd, this.world, car.x, car.z, 70, 160);

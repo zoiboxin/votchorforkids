@@ -1246,7 +1246,7 @@ function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutabl
       drvY.current += (gy - drvY.current) * Math.min(1, dt * 14); // eased — bumpy ground never jitters the body
       if (isKitType(c.t)) hideCar(P, d.ci); // 🏁 kit body renders in KitCars from the same smoothed pose
       else placeCar(P, d.ci, d.vx, drvY.current, d.vz, d.vrot, c.c, c.t, true, d.spin, d.steerVis);
-      setLampGlow(P, d.ci, nightFactor(clockRef.current));
+      setLampGlow(P, d.ci, (d.lights ?? true) ? nightFactor(clockRef.current) : 0);
       dirty = true;
     }
     if ((d ? d.ci : -1) !== lit.current) {
@@ -1353,7 +1353,7 @@ function KitCars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mut
         if (mine && d) {
           x = d.vx; z = d.vz; rot = d.vrot; steerA = d.steerVis;
           k.spin = -d.spin; // engine accumulates forward-negative; kit wheels roll +x forward
-          lit = nf > 0.14;
+          lit = nf > 0.14 && (d.lights ?? true); // 🔆 our own L toggle dims the beams too
         } else if (engine.botDriven.has(k.i)) {
           x = c.x; z = c.z; rot = c.rot;
           // roll by the distance actually covered — no skating
@@ -1402,7 +1402,7 @@ function DriveLight({ engine, clockRef }: { engine: GameEngine; clockRef: React.
     if (!l) return;
     const d = engine.drive;
     const nf = nightFactor(clockRef.current);
-    l.visible = !!d && nf > 0.12;
+    l.visible = !!d && nf > 0.12 && (d.lights ?? true); // 🔆 L respects our own toggle
     if (l.visible && d) {
       // ride the terrain — on the ⛰️ band a flat 1.5 buries the glow inside the hill
       l.position.set(d.x + Math.sin(d.rot) * 5.2, terrainHeight(d.x, d.z) + 1.5, d.z + Math.cos(d.rot) * 5.2);
@@ -1410,6 +1410,45 @@ function DriveLight({ engine, clockRef }: { engine: GameEngine; clockRef: React.
     }
   });
   return <pointLight ref={ref} args={[0xffe2a0, 0, 24, 1.6]} visible={false} />;
+}
+
+/** 🌐 Warm pools of light ahead of REMOTE-driven cars — a teammate's headlights
+ *  must light the road on OUR screen too (the pool above only follows the local
+ *  driver). Two pooled lights cover up to two streaming cars; a car whose light
+ *  flag is off (or daylight) folds its pool. Shaded shadow-free — dirt cheap. */
+function RemoteDriveLights({ engine, clockRef }: { engine: GameEngine; clockRef: React.MutableRefObject<number> }) {
+  const refs = useRef<(THREE.PointLight | null)[]>([]);
+  useFrame(() => {
+    const nf = nightFactor(clockRef.current);
+    let i = 0;
+    for (const [ci, st] of engine.remoteDriven) {
+      if (i >= refs.current.length) break;
+      const l = refs.current[i];
+      i++;
+      if (!l) continue;
+      const car = engine.world.cars[ci];
+      if (!car || !st.lights || nf <= 0.12) { l.visible = false; continue; }
+      l.visible = true;
+      l.position.set(car.x + Math.sin(car.rot) * 5.2, terrainHeight(car.x, car.z) + 1.5, car.z + Math.cos(car.rot) * 5.2);
+      l.intensity = 30 * nf;
+    }
+    for (; i < refs.current.length; i++) {
+      const l = refs.current[i];
+      if (l) l.visible = false;
+    }
+  });
+  return (
+    <>
+      {[0, 1].map((i) => (
+        <pointLight
+          key={i}
+          ref={(el) => { refs.current[i] = el; }}
+          args={[0xffe2a0, 0, 24, 1.6]}
+          visible={false}
+        />
+      ))}
+    </>
+  );
 }
 
 /* ------------------------- street lamps (glow at night) ------------------------- */
@@ -4876,6 +4915,7 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
       <KitCars engine={engine} clockRef={clockRef} />
       <RingTraffic engine={engine} clockRef={clockRef} />
       <DriveLight engine={engine} clockRef={clockRef} />
+      <RemoteDriveLights engine={engine} clockRef={clockRef} />
       <PoliceVans engine={engine} />
       <Planes engine={engine} />
       <Lamps clockRef={clockRef} />

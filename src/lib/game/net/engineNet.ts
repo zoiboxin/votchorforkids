@@ -83,11 +83,13 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
   /* ---------- 🚗 publish our driven car @15 Hz (pose + headlights) ----------
    * The deterministic world makes the car INDEX mean the same vehicle on every
    * client, so 8 bytes of pose are enough — every peer re-renders the exact
-   * body, colliders, wheels & blazing lamps in real time. On foot → no packet. */
+   * body, colliders, wheels & blazing lamps in real time. The light flag is
+   * the driver's REAL headlamp state (L toggles it) — never a hardcoded lie.
+   * On foot → no packet. */
   net.startCarPublishing(() => {
     const d = engine.drive;
     if (!d) return null;
-    return packCar({ ci: d.ci, x: d.x, z: d.z, rot: d.rot, lights: true });
+    return packCar({ ci: d.ci, x: d.x, z: d.z, rot: d.rot, lights: d.lights !== false });
   });
 
   /* ---------- remote streams → engine.remotes ---------- */
@@ -114,10 +116,15 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       if (s.attack) r.attackT = 0.35;
       // 🚗 their car stream — mirror pose + headlights so the vehicle MOVES on
       // our world (and its lamps BLAZE at night) exactly like it does on theirs.
-      // Only FRESH packets (≤1.2 s old) keep the mirror alive — a driver who
-      // parked lets the car settle here and its lamps fold off via the sweep.
+      // Only FRESH packets keep the mirror alive — a driver who parked lets the
+      // car settle here and its lamps fold off via the sweep. The window is
+      // generous (2.5 s @15 Hz ≈ 37 missed packets): a busy main thread (heavy
+      // scene, GC pause, throttled tab) delays arrivals well past a second, and
+      // the old 1.2 s window kept DROPPING the mirror mid-drive — the car sat
+      // parked with dead lights while its driver was still streaming (the
+      // "their headlights show off" bug), then popped back a beat later.
       const cs = net.sampleCar(r.slot);
-      if (cs && now - cs.t < 1200) {
+      if (cs && now - cs.t < 2500) {
         slotCars.set(r.slot, { ci: cs.ci, at: now });
         engine.netRemoteCar(cs.ci, cs.x, cs.z, cs.rot, cs.lights);
       }
@@ -125,7 +132,7 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
     // a driver who parked (no more car packets) leaves their car parked here —
     // lamps fold off; passengers it carried are set back on their feet
     for (const [sl, e] of Array.from(slotCars)) {
-      if (now - e.at > 1500) {
+      if (now - e.at > 3000) {
         engine.netRemoteCarStop(e.ci);
         slotCars.delete(sl);
       }
@@ -151,10 +158,15 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       // 🕐 a mid-night join must land on the host's SKY too — without the clock
       // sync a guest dropping into night 4 stares at day-1 morning light while
       // the roster hunts in the dark. Snap when the drift is big, ease when small.
+      // Clock is time-of-day 0..1 (it WRAPS at midnight) — take the shortest
+      // path around the circle, and snap past ⅓ of a day. The old `|dc| > 3`
+      // threshold could NEVER fire (max diff is 1), so joiners EASED through
+      // noon for ~10 s — their lamps rendered day-plain while the night raged.
       if (ev.clock !== undefined) {
-        const dc = ev.clock - engine.clock;
-        if (Math.abs(dc) > 3) engine.clock = ev.clock;
-        else engine.clock += dc * 0.25;
+        let dc = ev.clock - engine.clock;
+        dc = ((dc + 0.5) % 1 + 1) % 1 - 0.5; // shortest path across midnight
+        if (Math.abs(dc) > 0.34) engine.clock = (engine.clock + dc + 1) % 1;
+        else engine.clock = (engine.clock + dc * 0.25 + 1) % 1;
       }
       // a phase jump must land with its side effects (our local machine missed them)
       if (ph === "night") {
@@ -174,9 +186,13 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       if (Math.abs(engine.phaseT - ev.phaseLeft) > 1.5) engine.phaseT = ev.phaseLeft;
       if (engine.nightNo !== ev.nightNo) engine.nightNo = ev.nightNo;
       // gentle clock drift-correction keeps every client's sky on the same beat
+      // (shortest path around the wrap, same ⅓-day snap rule as above)
       if (ev.clock !== undefined) {
-        const dc = ev.clock - engine.clock;
-        engine.clock += Math.abs(dc) > 3 ? dc : dc * 0.15;
+        let dc = ev.clock - engine.clock;
+        dc = ((dc + 0.5) % 1 + 1) % 1 - 0.5;
+        engine.clock = Math.abs(dc) > 0.34
+          ? (engine.clock + dc + 1) % 1
+          : (engine.clock + dc * 0.15 + 1) % 1;
       }
     }
   });

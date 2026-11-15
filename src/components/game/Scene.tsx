@@ -116,6 +116,7 @@ export function useGameInput(engine: GameEngine | null) {
       if (e.code === "KeyR" && !e.repeat) engine.accuse();
       if (e.code === "KeyQ" && !e.repeat) engine.tryBlink(); // 🌀 Blink Teleport
       if (e.code === "KeyH" && !e.repeat) engine.horn();     // 🚗 car horn while driving
+      if (e.code === "KeyL" && !e.repeat) engine.toggleHeadlights(); // 🔆 headlamps while driving
       applyKey();
     };
     const up = (e: KeyboardEvent) => { keys.delete(e.code); applyKey(); };

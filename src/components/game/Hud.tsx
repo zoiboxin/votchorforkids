@@ -1726,7 +1726,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
                 <p className="text-amber-200/90">🥭 Run over food to pocket it — eat with <b>1-8</b> (heals ❤ · refills ⚡)</p>
                 <p className="text-fuchsia-200/95">🎒 Arms &amp; ✨ gem powers sit on the belt — press <b>G</b> for the tool wheel · <b>Q</b> blink</p>
                 <p className="text-lime-200/95">🪓🪨 Axe fells trees, hammer smashes boulders — then <b>B</b> barricade · <b>V</b> campfire</p>
-                <p className="text-sky-200/95">🪪 License card + <b>E</b> beside a car = drive (W/S gas · A/D steer · <b>H</b> horn · E hop out)</p>
+                <p className="text-sky-200/95">🪪 License card + <b>E</b> beside a car = drive (W/S gas · A/D steer · <b>H</b> horn · <b>L</b> lights · E hop out)</p>
                 {!touch && <p className="text-white/55">WASD move · mouse camera · Space double-jump · M map · Esc pause</p>}
               </div>
               <p className="mt-1.5 text-[9px] font-bold uppercase tracking-widest text-white/40">Press <b className="text-white/70">I</b> to toggle · auto-hides</p>
@@ -1775,7 +1775,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         <div role="status" className="absolute bottom-36 left-1/2 flex -translate-x-1/2 items-center gap-2.5 rounded-full bg-slate-900/85 px-4 py-2 text-white shadow-xl backdrop-blur-md sm:bottom-28">
           <motion.span animate={{ scale: [1, 1.15, 1] }} transition={{ repeat: Infinity, duration: 1.2 }} className="text-lg leading-none" aria-hidden>🚗</motion.span>
           <span className="text-base font-black tabular-nums text-yellow-300">{Math.round(hud.speed * 4)} km/h</span>
-          <span className="hidden whitespace-nowrap text-[10px] font-bold uppercase tracking-widest text-white/70 sm:inline">W/S gas · A/D steer · E hop out · H horn</span>
+          <span className="hidden whitespace-nowrap text-[10px] font-bold uppercase tracking-widest text-white/70 sm:inline">W/S gas · A/D steer · E hop out · H horn · L lights</span>
         </div>
       )}
 
