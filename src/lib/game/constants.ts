@@ -689,6 +689,15 @@ export const ZONE_DRAIN_STEP = 1.8;  // extra hp/s per extra level (late walls b
 export const ZONE_GRACE_S = 14;      // seconds after a shrink before the drain hits full strength
 export const ZONE_WALL_H = 26;       // visual height of the transparent wall (u)
 
+/* ---------- 📉 the endgame must COLLAPSE ----------
+ *  Hard ceiling on how many AI contestants may still breathe at each dawn
+ *  (index = the night that just passed). Feeding packs keep the lobby crowded
+ *  on their own — every prey killed FEEDS a zombie that then survives the
+ *  sunrise — so without a ceiling nights 5-7 still show crowds of "players".
+ *  Surplus souls become quiet cold cases at sunrise (the wall's shadow took
+ *  them). You are never counted; the 🌐 multiplayer roster is authoritative. */
+export const DAWN_ALIVE_CAP: readonly number[] = [0, 55, 30, 16, 9, 6, 4, 2];
+
 /* ---------- arms & tools (collect multiple of the same!) ---------- */
 export type ToolKind = "axe" | "sword" | "hammer" | "builder";
 export interface ToolDef {

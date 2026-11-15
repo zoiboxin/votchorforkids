@@ -17,7 +17,7 @@ import {
   POINTS_BUILD, POINTS_HARVEST, POINTS_KILL_BEAST, POINTS_KILL_ZOMBIE, POINTS_NIGHT, POINTS_RIGHT_ACCUSE,
   POINTS_WRONG_ACCUSE, ROCK_HITS, ROCK_PER_BOULDER, TOOL_PICKUP_R, TOOL_SPAWN, TOOLS,
   TREE_HITS, WOOD_PER_TREE, WIN_BONUS, PLAYERS_TOTAL, ZOMBIE_CREW_DMG, ZOMBIE_HP,
-  ZONE_DRAIN_BASE, ZONE_DRAIN_STEP, ZONE_GRACE_S, ZONE_RADII,
+  ZONE_DRAIN_BASE, ZONE_DRAIN_STEP, ZONE_GRACE_S, ZONE_RADII, DAWN_ALIVE_CAP,
   MONEY_PER_PILE, CASH_RESPAWN_S, CREW_PURSE, CIV_PURSE, ZOMBIE_PURSE, POINTS_LOOT, POLICE_CREW,
   POLICE_OUTFITS,
   CIV_PANIC_R, CREW_PANIC_R, ZOMBIE_HUNT_R, ZOMBIE_SNIFF, ZOMBIE_SWARM_CAP,
@@ -3078,6 +3078,27 @@ export class GameEngine {
     }
     this.zombies = [];
     this.zRev++;
+    // 📉 DAWN ALIVE CAP — the endgame must collapse toward the final duel. Feeding
+    //  packs keep the lobby crowded on their own (every prey killed FEEDS a zombie
+    //  that then survives the sunrise), so however the night played out the sunrise
+    //  enforces the ceiling: surplus contestants become quiet cold cases — the
+    //  wall's shadow took them mid-step. Solo only; the 🌐 roster is authoritative.
+    if (!this.mp) {
+      const cap = DAWN_ALIVE_CAP[Math.min(this.nightNo, DAWN_ALIVE_CAP.length - 1)];
+      const aliveIdx = this.crew.map((c, i) => (c.alive ? i : -1)).filter((i) => i >= 0);
+      let over = aliveIdx.length - cap;
+      if (over > 0 && aliveIdx.length > 1) {
+        over = Math.min(over, aliveIdx.length - 1); // never take the LAST contestant here
+        for (let i = aliveIdx.length - 1; i > 0; i--) { const j = Math.floor(this.rnd() * (i + 1)); [aliveIdx[i], aliveIdx[j]] = [aliveIdx[j], aliveIdx[i]]; }
+        for (let k = 0; k < over; k++) {
+          this.killCrew(aliveIdx[k], false, -1, true); // silent — the summary toast below carries it
+          this.crew[aliveIdx[k]].clue = "no wounds at all — they just stopped, cold, mid-step. The night itself took them.";
+        }
+        const left = this.crew.filter((c) => c.alive).length;
+        this.toast(`🌅 Sunrise reveals ${over} more the night claimed — ${left} of ${PLAYERS_TOTAL} still breathe.`, "bad");
+        this.trace(`📉 dawn n${this.nightNo} collapse: ${over} over cap ${cap} claimed (${left} crew alive after)`);
+      }
+    }
     this.nightsSurvived = Math.min(NIGHTS_TOTAL, this.nightNo);
     // 🔍 dawn forensics — the "everyone died in the same place" report card
     if (this.nightDeaths.length > 0) {
