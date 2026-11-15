@@ -2967,6 +2967,29 @@ export class GameEngine {
   private choosePossessed() {
     // idempotent: clear last dusk's flags before re-choosing (restarts & re-entries)
     for (const c of this.crew) { c.zombieTonight = false; c.fed = 0; }
+    // 🧱 late-nights cull — with the wall ring tiny, the weak get claimed each
+    // dusk (exhaustion, the cold, the things in the dark): night 5 takes ~22%
+    // of the lobby, night 6 ~30%, night 7 ~40%. Without this the feeding packs
+    // keep the town crowded through the endgame — the last nights must COLLAPSE
+    // toward the final duel. Solo only; the 🌐 roster is authoritative elsewhere.
+    if (this.nightNo >= 5 && !this.mp) {
+      const share = this.nightNo === 5 ? 0.22 : this.nightNo === 6 ? 0.3 : 0.4;
+      const pool = this.crew.map((c, i) => (c.alive ? i : -1)).filter((i) => i >= 0);
+      const aliveAll0 = pool.length + this.remotes.filter((r) => r.alive).length + (this.lost ? 0 : 1);
+      if (aliveAll0 > 4 && pool.length > 1) {
+        const n = Math.min(pool.length - 1, Math.round(pool.length * share));
+        for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(this.rnd() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
+        for (let k = 0; k < n; k++) {
+          this.killCrew(pool[k], false, -1, true); // silent — the summary toast below carries it
+          this.crew[pool[k]].clue = "no wounds at all — they just stopped, cold, mid-step. The night itself took them.";
+        }
+        if (n > 0) {
+          const alive = this.crew.filter((c) => c.alive).length;
+          this.toast(`🧱 The wall's shadow takes ${n} — too slow reaching shelter. ${alive} of ${PLAYERS_TOTAL} still breathe.`, "bad");
+          this.trace(`🧱 dusk n${this.nightNo} cull: ${n} of ${pool.length} claimed (${alive} alive after)`);
+        }
+      }
+    }
     const aliveIdx = this.crew.map((c, i) => (c.alive ? i : -1)).filter((i) => i >= 0);
     const aliveAll = aliveIdx.length + this.remotes.filter((r) => r.alive).length + (this.lost ? 0 : 1);
     this.possessed = [];
@@ -3112,11 +3135,17 @@ export class GameEngine {
     }
     if (!early) this.points += POINTS_NIGHT;
     if (crumbled > 0) this.toast(`💀 ${crumbled} zombie${crumbled > 1 ? "s" : ""} crumbled at sunrise — the hunger won.`, "info");
-    // 🌤️ the living city refills: everyone the night took is replaced by fresh faces
+    // 🌤️ the living city refills — but the later nights scare newcomers off:
+    // dawns after nights 1-2 the town repopulates like nothing happened, night 3
+    // only the brave return, night 4 a last trickle, and from night 5 on the
+    // streets stay EMPTY — the endgame town belongs to the contestants alone.
     let revived = 0;
+    const deadCivs = this.civs.filter((c) => c.dead);
+    const revShare = this.nightNo <= 2 ? 1 : this.nightNo === 3 ? 0.6 : this.nightNo === 4 ? 0.3 : 0;
     const revMax = Math.max(20, Math.min(CITY_RADIUS - 10, this.zoneRadius() - 12)); // 🧱 fresh faces wake INSIDE the wall
-    for (const c of this.civs) {
-      if (!c.dead) continue;
+    const revQuota = Math.floor(deadCivs.length * revShare);
+    for (const c of deadCivs) {
+      if (revived >= revQuota) break;
       const t = freeSpot(this.rnd, this.world, 12, revMax);
       c.x = t.x; c.z = t.z; c.tx = t.x; c.tz = t.z;
       c.vx = 0; c.vz = 0; c.dead = false; c.looted = false;
@@ -3126,6 +3155,7 @@ export class GameEngine {
       revived++;
     }
     if (revived > 0) this.toast(`🌤️ Dawn light… ${revived} fresh face${revived > 1 ? "s" : ""} wander${revived > 1 ? "" : "s"} back into town (and 💰 loot may still lie where the fallen did).`, "info");
+    else if (deadCivs.length > 0 && this.nightNo >= 5) this.toast(`🏚️ The streets stay empty — after night ${this.nightNo}, nobody dares wander back into town.`, "info");
     this.civsLostTonight = 0;
     stopDrone(); stopInsects(); // 🦗 the chorus falls silent with the light
     sfx.bell();

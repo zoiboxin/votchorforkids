@@ -98,6 +98,9 @@ const GOLD = "#ffd447";
 
 /** Darkened hex variant for cuffs/collars so outfits read layered. */
 const shade = (hex: string, f: number) => `#${new THREE.Color(hex).multiplyScalar(f).getHexString()}`;
+/** Soft blend toward another colour — hair shine, tinted brows… */
+const mix = (hex: string, to: string, t: number) => `#${new THREE.Color(hex).lerp(new THREE.Color(to), t).getHexString()}`;
+const LASH = "#241a12";
 
 /* ------------------------------------------------------------------ */
 /* Blob shadow (one shared radial texture)                             */
@@ -137,7 +140,8 @@ const lidGeo = () => sphere(0.115, 10, 6, 0, Math.PI * 2, 0, Math.PI / 2);
 
 function addFace(
   head: THREE.Group, skin: string, toon: Bucket, unlit: Bucket,
-  lids: THREE.Group[], brows: THREE.Group[], opts: { droopy?: boolean; scale?: number; freckles?: boolean },
+  lids: THREE.Group[], brows: THREE.Group[],
+  opts: { droopy?: boolean; scale?: number; freckles?: boolean; girl?: boolean; hairCol?: string },
 ) {
   const s = opts.scale ?? 1;
 
@@ -146,9 +150,16 @@ function addFace(
     // white of the eye + iris + pupil + glints (unlit so they always pop)
     unlit.add(sphere(0.105 * s, 10, 8), "#ffffff", true, ex, 0.03 * s, 0.315 * s, 0, 0, 0, 1, 1.32, 0.5);
     unlit.add(sphere(0.062 * s, 8, 6), IRIS, true, ex, 0.028 * s, 0.36 * s, 0, 0, 0, 1, 1.25, 0.45);
+    unlit.add(sphere(0.041 * s, 6, 5), mix(IRIS, "#c88a4a", 0.55), true, ex, 0.026 * s, 0.372 * s, 0, 0, 0, 1, 1.1, 0.42); // warm inner iris — two-tone depth
     unlit.add(sphere(0.031 * s, 6, 5), EYE_B, true, ex, 0.022 * s, 0.393 * s);
     unlit.add(sphere(0.018 * s, 6, 5), GLINT, true, ex + 0.022 * s, 0.062 * s, 0.402 * s);
     unlit.add(sphere(0.009 * s, 5, 4), GLINT, true, ex - 0.024 * s, -0.005 * s, 0.402 * s);
+
+    // 👁️ girls' lashes — three tiny lashes sweep down the outer corner
+    if (opts.girl && !opts.droopy)
+      for (let l = 0; l < 3; l++)
+        unlit.add(sphere((0.017 - l * 0.003) * s, 5, 4), LASH, true,
+          ex + side * (0.078 + l * 0.03) * s, (0.118 - l * 0.036) * s, (0.302 - l * 0.014) * s);
 
     // eyelid — animated dome that blinks
     const lid = new THREE.Group();
@@ -160,12 +171,13 @@ function addFace(
     head.add(lid);
     lids.push(lid);
 
-    // brow — chunky capsule, sits proud of the hairline
+    // brow — chunky capsule, sits proud of the hairline; tinted to match the
+    // hair so blondes/reds stop wearing near-black brows
     const brow = new THREE.Group();
     brow.position.set(ex, 0.19 * s, 0.385 * s);
     const bGeo = capsule(0.024 * s, 0.09 * s).clone();
     bGeo.rotateZ(Math.PI / 2);
-    const bm = new THREE.Mesh(bGeo, new THREE.MeshToonMaterial({ color: opts.droopy ? "#2a3218" : "#241a12", gradientMap: getGradient() }));
+    const bm = new THREE.Mesh(bGeo, new THREE.MeshToonMaterial({ color: opts.droopy ? "#2a3218" : shade(opts.hairCol ?? "#241a12", 0.52), gradientMap: getGradient() }));
     brow.add(bm);
     brow.rotation.z = side * -0.08;
     head.add(brow);
@@ -285,14 +297,16 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
   body.add(head);
   headToon.add(sphere(0.4, 16, 13), skin, false, 0, 0, 0, 0, 0, 0, 1, 0.95, 0.94);
   const lids: THREE.Group[] = [], brows: THREE.Group[] = [];
-  addFace(head, skin, headToon, headUnlit, lids, brows, { droopy: zombie, scale: 1.05, freckles: civvie && a.age === "kid" });
+  addFace(head, skin, headToon, headUnlit, lids, brows, { droopy: zombie, scale: 1.05, freckles: civvie && a.age === "kid", girl: !!a.girl, hairCol });
 
   if (zombie) {
     headUnlit.add(sphere(0.05, 8, 6), TONGUE, true, 0.03, -0.24, 0.37, 0, 0, 0, 0.8, 0.5, 1.3);
     headUnlit.add(box(0.06, 0.05, 0.03), "#f8f4e8", true, -0.07, -0.2, 0.38);
   }
   if (opts.mustache && !zombie) {
-    headToon.add(capsule(0.024, 0.1), a.age === "old" ? "#dcdcdc" : "#241a12", false, 0, -0.1, 0.38, 0, 0, Math.PI / 2);
+    // mustache follows the hair colour (grey for elders) instead of every man
+    // wearing the same near-black lip-warmer
+    headToon.add(capsule(0.024, 0.1), a.age === "old" ? "#dcdcdc" : shade(hairCol, 0.52), false, 0, -0.1, 0.38, 0, 0, Math.PI / 2);
   }
 
   /* hair — hidden under the uniform cap, but the detective's hair shows off-duty */
@@ -318,9 +332,16 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
           Math.cos(ang) * 0.3, 0.24 + (i % 3) * 0.07, Math.sin(ang) * 0.28 - 0.05);
       }
       headToon.add(sphere(0.2, 9, 7), hairCol, false, 0, 0.5, -0.06);
+      // crown shine — the puff catches a soft light up top
+      headToon.add(sphere(0.26, 10, 6), mix(hairCol, "#ffffff", 0.32), false, 0, 0.52, -0.02, 0, 0, 0, 1.4, 0.5, 1.0);
     } else {
       const domeTheta = style === "bowl" ? Math.PI * 0.62 : Math.PI * 0.5;
       headToon.add(sphere(0.425, 14, 10, 0, Math.PI * 2, 0, domeTheta), hairCol, false, 0, 0.015, style === "bowl" ? 0.03 : 0, 0, 0, 0, 1.04, style === "bowl" ? 1.02 : 1.08, 1.04);
+      // nape skirt — hair wraps the BACK of the head down to the collar (the old
+      // dome stopped at the equator, leaving every guy bald-backed from behind)
+      headToon.add(sphere(0.43, 12, 8, Math.PI * 1.5 - 1.15, 2.3, Math.PI * 0.3, Math.PI * 0.42), hairCol, false, 0, 0.02, -0.01, 0, 0, 0, 1.02, 1.0, 1.02);
+      // crown shine — a lighter patch catches the light, anime-style
+      headToon.add(sphere(0.24, 10, 6), mix(hairCol, "#ffffff", 0.3), false, 0, 0.36, 0.1, 0, 0, 0, 1.5, 0.5, 1.0);
       if (style === "spiky") {
         for (let i = 0; i < 6; i++) {
           const ang = i * 1.35;
