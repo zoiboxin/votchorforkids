@@ -160,7 +160,10 @@ io.on("connection", (sock) => {
     const existing = roomOf(sock.id);
     if (existing) return ack?.({ ok: true, code: existing.code, lobby: lobbyPayload(existing), started: existing.started });
     const open = [...rooms.values()].filter((r) => r.members.size < MAX_PLAYERS);
-    const live = open.filter((r) => r.started);
+    // a live night is only worth joining if its host socket is actually alive —
+    // a "live" room with a dead host has no story clock and no one to sync to
+    // (the sweeper migrates the crown within ~10 s, healing the room instead)
+    const live = open.filter((r) => r.started && io.sockets.sockets.has(r.hostSid));
     const pool = live.length ? live : open; // live nights win — that's "join the current game"
     pool.sort((a, b) => b.members.size - a.members.size); // fullest session first
     if (pool[0]) {
@@ -257,6 +260,41 @@ io.on("connection", (sock) => {
   /* ---------------- teardown ---------------- */
   sock.on("disconnect", () => leaveRoom(io, sock.id));
 });
+
+/* 🧹 staleness sweeper — sockets that die WITHOUT a clean disconnect event
+ * (dev hot-reload, process hiccup) never trigger leaveRoom, so their ghost
+ * member lingers in the roster: the seat stays taken, quick-join keeps landing
+ * in a "live" session whose host is long gone, and a frozen spectre stands at
+ * spawn forever. Every 10 s we evict members whose socket no longer exists,
+ * migrate the crown off a dead host, and prune abandoned rooms. */
+setInterval(() => {
+  for (const [code, room] of rooms) {
+    let changed = false;
+    for (const sid of [...room.members.keys()]) {
+      if (!io.sockets.sockets.has(sid)) {
+        const m = room.members.get(sid);
+        room.members.delete(sid);
+        memberRoom.delete(sid);
+        changed = true;
+        console.log(`[relay] sweep ghost ${m?.name ?? sid} room=${code} souls=${room.members.size}`);
+      }
+    }
+    if (room.members.size === 0) {
+      rooms.delete(code);
+      console.log(`[relay] sweep empty room ${code}`);
+      continue;
+    }
+    if (changed) {
+      if (!io.sockets.sockets.has(room.hostSid)) {
+        const next = [...room.members.values()][0];
+        room.hostSid = next.sid;
+        io.to(room.code).emit("mp:lobby", { t: "host", sid: next.sid, name: next.name });
+        console.log(`[relay] host migrated → ${next.name} room=${code}`);
+      }
+      io.to(room.code).emit("mp:lobby", { t: "roster", lobby: lobbyPayload(room) });
+    }
+  }
+}, 10000);
 
 // stats heartbeat — tiny ops insight at / (helps confirm the relay is alive)
 setInterval(() => {

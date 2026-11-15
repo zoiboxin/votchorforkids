@@ -8,7 +8,8 @@ import {
   ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon, Mouse, Eye, ScrollText,
 } from "lucide-react";
 import type { GameEngine } from "@/lib/game/engine";
-import { DETAIN_SECONDS, GRAVEYARD, ITEMS, INV_SLOTS, NIGHTS_TOTAL, POLICE_STATIONS, POWERS, TOOLS } from "@/lib/game/constants";
+import { AIRPORT, DETAIN_SECONDS, GRAVEYARD, ITEMS, INV_SLOTS, NIGHTS_TOTAL, POLICE_STATIONS, POWERS, TOOLS } from "@/lib/game/constants";
+import { HOSPITAL, RAILWAY, RAILWAY_stationHouse } from "@/lib/game/worldgen";
 import { useGame } from "./store";
 import { requestGameLock } from "./Scene";
 import { setMuted as setAudioMuted, sfx, stopMusic, startMusic } from "@/lib/game/audio";
@@ -18,10 +19,24 @@ import { HowToPlay, SettingsDialog } from "./Panels";
 /** 🌐 per-slot colors for the co-op souls (matches the lobby chips) */
 const SOUL_COLORS = ["#f472b6", "#fbbf24", "#4ade80", "#2dd4bf", "#f87171", "#c084fc", "#fb923c", "#a3e635"];
 
-/* ------- shared world-map canvas painting (156px minimap + 440px big map).
+/** 📍 a dropped map pin — world coordinates, drawn on the minimap AND the big map */
+type MapPin = { x: number; z: number } | null;
+
+/** 🗺️ named landmarks — badge-marked on BOTH the minimap & big map so players can
+ *  actually FIND the hospital, the railway station, the airport and the graveyard.
+ *  (Police stations draw their own navy-badged squares right below.)
+ *  ly = label offset below the badge, world units (big map only). */
+const MAP_POIS: { x: number; z: number; disc: string; ring: string; glyph: string; label: string; ly: number }[] = [
+  { x: HOSPITAL.x, z: HOSPITAL.z, disc: "#f8fafc", ring: "#b91c1c", glyph: "+", label: "HOSPITAL", ly: 30 },
+  { x: RAILWAY_stationHouse.x, z: RAILWAY_stationHouse.z, disc: "#57534e", ring: "#1c1917", glyph: "T", label: "RAILWAY", ly: 26 },
+  { x: AIRPORT.tower.x, z: AIRPORT.tower.z - 8, disc: "#475569", ring: "#0f172a", glyph: "✈", label: "AIRPORT", ly: 42 },
+  { x: GRAVEYARD.x, z: GRAVEYARD.z, disc: "#343440", ring: "#0b0b12", glyph: "☠", label: "GRAVEYARD", ly: 58 },
+];
+
+/* ------- shared world-map canvas painting (156px minimap + 560px big map).
    mini = true → clean survival view: terrain, landmarks, night zombies & YOU only —
    all the food/loot/police/contestant clutter stays on the big map (M). ------- */
-function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine, night: boolean, mini = false) {
+function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine, night: boolean, mini = false, pin: MapPin = null) {
   const K = S / 1150;         // world units → px (fits the bigger 545-radius wall)
   const U = S / 156;          // scale for the hand-tuned 156px marker sizes
   const dot = (x: number, z: number, r: number, col: string, alpha = 1) => {
@@ -44,6 +59,38 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
   c.fillRect(S / 2 + 215 * K, S / 2 + (300 - 8) * K, 170 * K, 16 * K);
   c.fillStyle = "#8d8d94";
   c.fillRect(S / 2 + 228 * K, S / 2 + 312 * K, 92 * K, 24 * K);
+  // 🚂 countryside railway — a subtle ballast arc so the loop line reads on the map
+  c.strokeStyle = mini ? "rgba(150,126,98,0.5)" : "rgba(150,126,98,0.8)";
+  c.lineWidth = Math.max(1, 6.4 * K);
+  c.beginPath();
+  c.arc(S / 2, S / 2, RAILWAY.R * K, RAILWAY.a0, RAILWAY.a1);
+  c.stroke();
+  // 🗺️ landmark badges — hospital cross, railway station, airport, graveyard
+  c.textAlign = "center";
+  c.textBaseline = "middle";
+  for (const p of MAP_POIS) {
+    const px = S / 2 + p.x * K, pz = S / 2 + p.z * K;
+    const r = (mini ? 5 : 5.4) * U;
+    c.beginPath();
+    c.arc(px, pz, r, 0, 6.3);
+    c.fillStyle = p.disc;
+    c.fill();
+    c.lineWidth = Math.max(1, 0.75 * U);
+    c.strokeStyle = p.ring;
+    c.stroke();
+    if (p.glyph === "+") {
+      // hospital — red cross on the white disc
+      c.fillStyle = "#dc2626";
+      const a = r * 0.62, b = r * 0.26;
+      c.fillRect(px - a, pz - b, a * 2, b * 2);
+      c.fillRect(px - b, pz - a, b * 2, a * 2);
+    } else {
+      c.fillStyle = "#f8fafc";
+      c.font = `900 ${Math.round(r * 1.3)}px ui-sans-serif, system-ui, sans-serif`;
+      c.fillText(p.glyph, px, pz + r * 0.06);
+    }
+  }
+  c.textBaseline = "alphabetic";
   if (S > 300) {
     // big map only: zone rings, graveyard fence and district labels
     c.strokeStyle = "rgba(255,255,255,0.22)";
@@ -61,8 +108,7 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     c.fillText("JUNGLE", S / 2 - 430 * K, S / 2 + 180 * K);
     c.fillText("DEEP JUNGLE", S / 2 + 390 * K, S / 2 - 390 * K);
     c.fillText("⛰ MOUNTAINS", S / 2 + 480 * K, S / 2 + 480 * K);
-    c.fillText("GRAVEYARD", S / 2 + GRAVEYARD.x * K, S / 2 + (GRAVEYARD.z + 52) * K);
-    c.fillText("✈ AIRPORT", S / 2 + 295 * K, S / 2 + 345 * K);
+    for (const p of MAP_POIS) c.fillText(p.label, S / 2 + p.x * K, S / 2 + (p.z + p.ly) * K);
   }
   // 🧱 THE WALL — the shrinking safe zone. Every map (mini & big) shows it:
   // the ground beyond the wall dims red, the boundary glows teal (red when
@@ -221,16 +267,61 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
   c.fill();
   c.stroke();
   c.restore();
+  /* 📍 the player's dropped pin — amber teardrop marker. The big map adds a
+     dashed sight-line from YOU to the pin with the live distance, so it is a
+     real navigation aid, not just a doodle. */
+  if (pin) {
+    const px = S / 2 + pin.x * K, pz = S / 2 + pin.z * K;
+    if (!mini) {
+      c.setLineDash([5, 4]);
+      c.strokeStyle = "rgba(253,224,71,0.65)";
+      c.lineWidth = Math.max(1, 1.1 * U);
+      c.beginPath();
+      c.moveTo(S / 2 + engine.player.x * K, S / 2 + engine.player.z * K);
+      c.lineTo(px, pz);
+      c.stroke();
+      c.setLineDash([]);
+    }
+    const pr = (mini ? 3.6 : 3.2) * U;
+    const hy = -pr * 2.3; // head centre sits above the ground point
+    c.save();
+    c.translate(px, pz);
+    c.beginPath();
+    c.arc(0, hy, pr, Math.PI * 0.75, Math.PI * 2.25); // shoulders: lower-left → top → lower-right
+    c.lineTo(0, 0); // the tail taps exactly where you pinned
+    c.closePath();
+    c.fillStyle = "#f59e0b";
+    c.strokeStyle = "rgba(69,26,3,0.9)";
+    c.lineWidth = Math.max(1, 0.8 * U);
+    c.fill();
+    c.stroke();
+    c.beginPath();
+    c.arc(0, hy, pr * 0.4, 0, 6.3);
+    c.fillStyle = "#fff7ed";
+    c.fill();
+    if (!mini) {
+      const d = Math.round(Math.hypot(engine.player.x - pin.x, engine.player.z - pin.z));
+      c.font = `900 ${Math.round(6.4 * U)}px ui-sans-serif, system-ui, sans-serif`;
+      c.textAlign = "center";
+      c.textBaseline = "bottom";
+      c.strokeStyle = "rgba(0,0,0,0.75)";
+      c.lineWidth = Math.max(1, 1.2 * U);
+      c.strokeText(`${d}u`, 0, hy - pr * 1.3);
+      c.fillStyle = "#fde68a";
+      c.fillText(`${d}u`, 0, hy - pr * 1.3);
+    }
+    c.restore();
+  }
 }
 
 /* ----------------------------- minimap ----------------------------- */
-function Minimap({ engine, onOpen }: { engine: GameEngine; onOpen: () => void }) {
+function Minimap({ engine, onOpen, pin }: { engine: GameEngine; onOpen: () => void; pin: MapPin }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const hud = useGame((s) => s.hud);
   useEffect(() => {
     const c = ref.current?.getContext("2d");
-    if (c) drawWorldMap(c, 156, engine, hud.night > 0.5, true); // mini: decluttered survival view
-  }, [engine, hud]);
+    if (c) drawWorldMap(c, 156, engine, hud.night > 0.5, true, pin); // mini: decluttered survival view
+  }, [engine, hud, pin]);
   return (
     <button
       data-ui type="button" onClick={onOpen}
@@ -246,7 +337,7 @@ function Minimap({ engine, onOpen }: { engine: GameEngine; onOpen: () => void })
 }
 
 /* ----------------------------- big map overlay ----------------------------- */
-const BIG_MAP_S = 440;
+const BIG_MAP_S = 560; // 🗺️ the M-map went full-screen-ish — more room to read the world
 const MAP_LEGEND: [string, string][] = [
   ["#ffffff", "You (arrow = facing)"], ["#f7c948", "💰 Cash piles"], ["#ffd166", "Food"], ["#c084fc", "Power gems (rare!)"],
   ["#38bdf8", "Driving license 🪪"], ["#6aa0ff", "Police"], ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ["#a97b4f", "Animals"], ["#c084fc", "Zombies · night"], ["#1d2a4a", "Police stn"],
@@ -254,14 +345,38 @@ const MAP_LEGEND: [string, string][] = [
   ["#e2e8f0", "Crew survivors (each their color)"], ["#7f1d1d", "Fallen crew ✕"],
   ["#facc15", "Dropped arms"], ["#ffd447", "💰 Loot drops"], ["#92400e", "Barricade"], ["#fb923c", "Campfire"],
   ["#e8b13c", "⛺ Jungle camp (shelter)"],
+  ["#dc2626", "✚ Hospital"], ["#57534e", "Railway station"], ["#475569", "Airport ✈"], ["#343440", "Graveyard ☠"],
+  ["#f59e0b", "📍 Your pin"],
 ];
-function BigMap({ engine, onClose }: { engine: GameEngine; onClose: () => void }) {
+function BigMap({ engine, onClose, pin, onPin }: { engine: GameEngine; onClose: () => void; pin: MapPin; onPin: (p: MapPin) => void }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const hud = useGame((s) => s.hud);
   useEffect(() => {
     const c = ref.current?.getContext("2d");
-    if (c) drawWorldMap(c, BIG_MAP_S, engine, hud.night > 0.5, false); // big map: full detail
-  }, [engine, hud]);
+    if (c) drawWorldMap(c, BIG_MAP_S, engine, hud.night > 0.5, false, pin); // big map: full detail
+  }, [engine, hud, pin]);
+  /* 📍 click → drop a pin at that world spot; click the pin itself → pick it
+     back up. Converts canvas px → world units with the same K the painter uses. */
+  const mapClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const rect = e.currentTarget.getBoundingClientRect();
+    const px = ((e.clientX - rect.left) / rect.width) * BIG_MAP_S;
+    const pz = ((e.clientY - rect.top) / rect.height) * BIG_MAP_S;
+    const K2 = BIG_MAP_S / 1150;
+    const U2 = BIG_MAP_S / 156;
+    if (pin) {
+      // 📍 tap the marker (tail OR head) → pick it back up
+      const gxp = BIG_MAP_S / 2 + pin.x * K2, gzp = BIG_MAP_S / 2 + pin.z * K2;
+      const headY = gzp - 3.2 * U2 * 2.3;
+      if (Math.hypot(px - gxp, pz - gzp) < 12 || Math.hypot(px - gxp, pz - headY) < 3.2 * U2 * 1.6) {
+        onPin(null); sfx.click(); return;
+      }
+    }
+    const wx = (px - BIG_MAP_S / 2) / K2;
+    const wz = (pz - BIG_MAP_S / 2) / K2;
+    if (Math.hypot(wx, wz) > 712) return; // outside the wall — nothing to pin
+    onPin({ x: Math.round(wx), z: Math.round(wz) });
+    sfx.click();
+  };
   return (
     <motion.div
       initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -273,7 +388,7 @@ function BigMap({ engine, onClose }: { engine: GameEngine; onClose: () => void }
         initial={{ scale: 0.92, y: 12 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0 }}
         transition={{ type: "spring", stiffness: 280, damping: 24 }}
         onClick={(e) => e.stopPropagation()}
-        className="w-[min(94vw,480px)] rounded-3xl border border-white/20 bg-slate-900/95 p-4 shadow-2xl"
+        className="max-h-[94dvh] w-[min(96vw,640px)] overflow-y-auto rounded-3xl border border-white/20 bg-slate-900/95 p-4 shadow-2xl"
       >
         <div className="mb-2 flex items-center justify-between">
           <div className="text-sm font-black uppercase tracking-widest text-white">
@@ -284,8 +399,9 @@ function BigMap({ engine, onClose }: { engine: GameEngine; onClose: () => void }
           </Button>
         </div>
         <canvas
-          ref={ref} width={BIG_MAP_S} height={BIG_MAP_S} aria-label="World map canvas"
-          className="h-[min(78vw,440px)] w-[min(78vw,440px)] rounded-2xl border border-white/20"
+          ref={ref} width={BIG_MAP_S} height={BIG_MAP_S} aria-label="World map canvas — click to drop a pin"
+          onClick={mapClick}
+          className="h-[min(82vw,560px,58dvh)] w-[min(82vw,560px,58dvh)] cursor-crosshair rounded-2xl border border-white/20"
         />
         <div className="mt-2 flex flex-wrap items-center justify-center gap-x-3 gap-y-1 text-[10px] font-bold text-white/80">
           {MAP_LEGEND.map(([col, label]) => (
@@ -293,6 +409,25 @@ function BigMap({ engine, onClose }: { engine: GameEngine; onClose: () => void }
               <span className="inline-block h-2 w-2 rounded-full" style={{ background: col }} aria-hidden /> {label}
             </span>
           ))}
+        </div>
+        {/* 📍 pin status / hint — live distance while a pin is down */}
+        <div className="mt-2 flex flex-wrap items-center justify-center gap-2 text-[11px] font-bold text-white/80">
+          {pin ? (
+            <>
+              <span className="rounded-full border border-amber-300/40 bg-amber-950/50 px-2.5 py-1 text-amber-200">
+                📍 Pin X {pin.x} · Z {pin.z} — {Math.round(Math.hypot(engine.player.x - pin.x, engine.player.z - pin.z))}u away
+              </span>
+              <Button
+                size="sm" variant="ghost" onClick={() => { onPin(null); sfx.click(); }}
+                aria-label="Remove the map pin"
+                className="h-8 rounded-lg bg-white/10 px-3 text-white hover:bg-white/20"
+              >
+                <X size={13} className="mr-1" /> Remove pin
+              </Button>
+            </>
+          ) : (
+            <span className="rounded-full bg-white/10 px-2.5 py-1 text-white/70">🗺️ Click the map to drop a pin · click the pin again to remove it</span>
+          )}
         </div>
         <div className="mt-1 text-center text-[10px] font-black uppercase tracking-widest text-white/45">M or Esc to close</div>
       </motion.div>
@@ -1238,6 +1373,8 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
   const mouseLocked = useGame((s) => s.mouseLocked);
   const bigMap = useGame((s) => s.bigMapOpen);
   const setBigMap = useGame((s) => s.setBigMapOpen);
+  // 📍 the dropped map pin — lives here so the corner minimap AND the big map share it
+  const [mapPin, setMapPin] = useState<MapPin>(null);
   const wheelOpen = useGame((s) => s.wheelOpen);
   const licenseOpen = useGame((s) => s.licenseOpen);
   const setLicenseOpen = useGame((s) => s.setLicenseOpen);
@@ -1607,7 +1744,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
 
       {/* top-right: minimap + score */}
       <div className="absolute right-3 top-3 flex flex-col items-end gap-2">
-        <Minimap engine={engine} onOpen={() => setBigMap(true)} />
+        <Minimap engine={engine} pin={mapPin} onOpen={() => setBigMap(true)} />
         {hud.mp && (
           <div className="pointer-events-auto flex flex-col items-end gap-1.5">
             {/* LIVE room chip */}
@@ -2021,7 +2158,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
 
       {/* big world map overlay */}
       <AnimatePresence>
-        {bigMap && <BigMap engine={engine} onClose={() => setBigMap(false)} />}
+        {bigMap && <BigMap engine={engine} pin={mapPin} onPin={setMapPin} onClose={() => setBigMap(false)} />}
       </AnimatePresence>
     </div>
   );
