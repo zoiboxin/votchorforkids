@@ -2912,8 +2912,9 @@ export class GameEngine {
       if (drain > 0) {
         this.hp -= drain * dt;
         if (this.won && this.hp <= 0) this.hp = 1; // 🏆 already won — the wall stings but can't kill you twice
-        this.hurtT = Math.max(this.hurtT, 0.3);
-        this.addShake(0.12); // 💥 small constant dread while standing in the burn
+        this.hurtT = Math.max(this.hurtT, 0.3); // keeps the damage-flash edges red while draining
+        // (NO screen shake here — the HUD paints a pulsing red drain-vignette instead;
+        //  the old per-frame addShake(0.12) pinned trauma at max → violent nonstop shake)
         if (this.zoneToastCd <= 0) {
           this.zoneToastCd = 4.5;
           this.toast(`☢️ OUTSIDE THE WALL — your life is draining! ${Math.round(d - R)}u to safety — RUN!`, "bad");

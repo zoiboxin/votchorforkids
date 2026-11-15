@@ -1906,10 +1906,27 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         </>
       )}
 
-      {/* 🧱 THE WALL — screen-edge burn + big warning while YOU stand beyond it */}
+      {/* 🧱 THE WALL — red drain-shade hugging the screen edges while YOU stand
+          beyond it. NO camera shake — the pulsing red frame IS the warning:
+          a constant deep-red vignette (deeper as HP falls) + a heartbeat pulse. */}
       {hud.outsideWall && !hud.spec.on && (
         <>
-          <div aria-hidden className="pointer-events-none absolute inset-0 z-[5] animate-pulse shadow-[inset_0_0_120px_30px_rgba(244,63,94,0.45)]" />
+          <div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 z-[5]"
+            style={{
+              background:
+                "radial-gradient(ellipse at 50% 50%, transparent 42%, rgba(136,10,10,0.36) 74%, rgba(84,4,4,0.66) 100%)",
+              boxShadow: `inset 0 0 140px ${hud.hp <= 40 ? 52 : 34}px rgba(178,16,22,0.55)`,
+            }}
+          />
+          <motion.div
+            aria-hidden
+            className="pointer-events-none absolute inset-0 z-[5]"
+            animate={{ opacity: [0.3, 0.8, 0.3] }}
+            transition={{ repeat: Infinity, duration: 1.5, ease: "easeInOut" }}
+            style={{ boxShadow: "inset 0 0 160px 40px rgba(244,63,94,0.45)" }}
+          />
           <motion.div
             role="alert"
             initial={{ opacity: 0, y: -14 }}
