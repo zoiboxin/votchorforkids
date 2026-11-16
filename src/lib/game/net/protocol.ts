@@ -47,6 +47,90 @@ export const FLAG_RIDE = 1 << 6;
 export const CAR_BYTES = 8;
 export const CARFLAG_LIGHTS = 1 << 0;
 
+/* ---------------- 🧟 AI replication — the host's horde is the truth ----------------
+ * Every client used to simulate its OWN zombies/hunters/hounds with local RNG:
+ * the host's night had beasts A/B/C hunting it while a guest stared at beasts
+ * D/E/F hunting THEM — two players standing side by side saw two different
+ * nights. Now the host broadcasts the night's AI poses and guests mirror them
+ * (narrow replication of shared facts — same principle as the car stream).
+ *
+ * One `mp:ai` packet = 2-byte header + N×7-byte entries:
+ *
+ *   ┌──────┬───────┬─────────┬──────────────────────────────────────┐
+ *   │ kind │ count │ idx u8  │ x i16×10 │ z i16×10 │ yaw u8 │ flags u8 │
+ *   │ u8   │ u8    │ per ent │      per entity: 7 bytes           │
+ *   └──────┴───────┴─────────┴──────────────────────────────────────┘
+ *
+ * kind: 0 zombies (array index over world zombies) · 1 hunters (possessed crew
+ * index) · 2 hounds (zombie-dog index over the animals array). The arrays are
+ * rebuilt deterministically from the shared roster, so an index means the SAME
+ * beast on every client. flags: 1 dead (fall anim) · 2 attackAnim (claw swipe).
+ * ~60 zombies = 422 B @ 12 Hz ≈ 5 KB/s uplink on the host — nothing. */
+
+export const AIKIND_ZOMBIE = 0;
+export const AIKIND_HUNTER = 1;
+export const AIKIND_HOUND = 2;
+
+export const AI_ENTRY_BYTES = 7;
+
+/** One decoded AI snapshot entry (engine consumes these in applyNetAi). */
+export interface AiEntry {
+  idx: number;
+  x: number; z: number;
+  yaw: number;
+  dead: boolean;
+  atk: boolean;
+}
+
+const AI_FLAG_DEAD = 1 << 0;
+const AI_FLAG_ATK = 1 << 1;
+
+/** Pack one AI stream packet (header + entries). Empty entries → null. */
+export function packAi(kind: number, entries: AiEntry[]): ArrayBuffer | null {
+  if (!entries.length) return null;
+  const buf = new ArrayBuffer(2 + entries.length * AI_ENTRY_BYTES);
+  const v = new DataView(buf);
+  v.setUint8(0, kind & 0xff);
+  v.setUint8(1, Math.min(255, entries.length));
+  let o = 2;
+  for (const e of entries) {
+    v.setUint8(o, Math.max(0, Math.min(255, Math.round(e.idx))));
+    v.setInt16(o + 1, Math.round(Math.max(-3276, Math.min(3276, e.x)) * 10), true);
+    v.setInt16(o + 3, Math.round(Math.max(-3276, Math.min(3276, e.z)) * 10), true);
+    v.setUint8(o + 5, Math.round((wrap(e.yaw) / (Math.PI * 2)) * 255));
+    let f = 0;
+    if (e.dead) f |= AI_FLAG_DEAD;
+    if (e.atk) f |= AI_FLAG_ATK;
+    v.setUint8(o + 6, f);
+    o += AI_ENTRY_BYTES;
+  }
+  return buf;
+}
+
+/** Unpack an AI stream packet. Returns null on malformed input. */
+export function unpackAi(data: BinSrc): { kind: number; entries: AiEntry[] } | null {
+  const v = toDataView(data);
+  if (!v || v.byteLength < 2) return null;
+  const kind = v.getUint8(0);
+  const count = v.getUint8(1);
+  if (v.byteLength < 2 + count * AI_ENTRY_BYTES) return null;
+  const entries: AiEntry[] = [];
+  let o = 2;
+  for (let i = 0; i < count; i++) {
+    const f = v.getUint8(o + 6);
+    entries.push({
+      idx: v.getUint8(o),
+      x: v.getInt16(o + 1, true) / 10,
+      z: v.getInt16(o + 3, true) / 10,
+      yaw: (v.getUint8(o + 5) / 255) * Math.PI * 2,
+      dead: !!(f & AI_FLAG_DEAD),
+      atk: !!(f & AI_FLAG_ATK),
+    });
+    o += AI_ENTRY_BYTES;
+  }
+  return { kind, entries };
+}
+
 /** One decoded snapshot of a remote-driven car. */
 export interface CarState {
   slot: number;
@@ -175,7 +259,15 @@ export class Interp {
     this.a = { ...s, t: performance.now() };
   }
 
-  /** Extrapolated pose for "now". Falls back to the last raw snapshot. */
+  /** Extrapolated pose for "now". Falls back to the last raw snapshot.
+   *
+   *  🎮 DEAD RECKONING — a busy main thread (heavy scene, GC pause, throttled
+   *  tab) delays packet arrivals past a second; the old buffer clamped at k=1.35
+   *  and the remote soul FROZE mid-stride ("player 1 is ahead, player 2 shows
+   *  something else"). Now, once the render target runs past the newest
+   *  snapshot, the pose keeps GLIDING along the last measured velocity (with a
+   *  gentle decay so a stale ghost never flies across the map) until fresh
+   *  packets land and the lerp takes over again. */
   sample(): NetState | null {
     if (!this.a) return null;
     if (!this.b) return this.a;
@@ -185,12 +277,30 @@ export class Interp {
     // render target sits `delay` behind the newest snapshot
     const target = now - this.delay;
     let k = (target - tb) / span;
-    k = Math.max(0, Math.min(1.35, k)); // mild extrapolation when packets hiccup
-    const lerp = (p: number, q: number) => p + (q - p) * k;
     // yaw eases the SHORT way around the circle
     let dy = this.a.yaw - this.b.yaw;
     while (dy > Math.PI) dy -= Math.PI * 2;
     while (dy < -Math.PI) dy += Math.PI * 2;
+    if (k > 1) {
+      // 🎯 dead reckoning — velocity from the last two snapshots carries the
+      // soul forward through the gap; decays after ~1.5 s so a gone-silent
+      // peer coasts to a stop instead of ghosting to the map edge
+      const over = Math.min((k - 1) * span, 1500);
+      const decay = Math.exp(-over / 900);
+      const vx = ((this.a.x - this.b.x) / span) * 1000;
+      const vz = ((this.a.z - this.b.z) / span) * 1000;
+      const vy = ((this.a.y - this.b.y) / span) * 1000;
+      return {
+        ...this.a,
+        x: this.a.x + (vx * over / 1000) * decay,
+        z: this.a.z + (vz * over / 1000) * decay,
+        y: Math.max(0, this.a.y + (vy * over / 1000) * decay),
+        yaw: this.a.yaw + dy * decay,
+        hp: this.a.hp,
+      };
+    }
+    k = Math.max(0, k);
+    const lerp = (p: number, q: number) => p + (q - p) * k;
     return {
       ...this.a,
       x: lerp(this.b.x, this.a.x),

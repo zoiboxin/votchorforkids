@@ -13,7 +13,7 @@
  * the host additionally owns the story clock & possession roster.
  */
 import { io, type Socket } from "socket.io-client";
-import { Interp, packState, unpackState, unpackCar, type NetState, type CarState } from "./protocol";
+import { Interp, packState, unpackAi, unpackState, unpackCar, type AiEntry, type NetState, type CarState } from "./protocol";
 import type { Appearance } from "../constants";
 
 export interface LobbyPlayer {
@@ -46,6 +46,7 @@ export type MpEvent =
   | { t: "dead" }
   | { t: "gift"; kind: "license"; toSlot: number; from: string }
   | { t: "dropLicense"; x: number; z: number; from: string }
+  | { t: "zhit"; kind: "zombie" | "hound"; idx: number; amt: number }
   | { t: "reset" }
   | { t: "start" }
   | { t: "hello" };
@@ -62,6 +63,8 @@ export class NetClient {
   private interps = new Map<number, Interp>(); // slot → interpolation buffer
   /** latest mirrored car pose per driving slot (8-byte `mp:car` packets) */
   private carStates = new Map<number, CarState>();
+  /** 🧟 latest host AI stream per kind (zombies/hunters/hounds) — guests mirror */
+  private aiStates = new Map<number, { entries: AiEntry[]; t: number }>();
   private evHandlers = new Map<EventKind, Set<(ev: MpEvent, fromSlot: number) => void>>();
   private publishTimer: ReturnType<typeof setInterval> | null = null;
   private publishFn: (() => ArrayBuffer) | null = null;
@@ -173,6 +176,15 @@ export class NetClient {
         this.carStates.set(c.slot, c);
       });
 
+      // 🧟 host AI stream — the night's horde poses (zombies/hunters/hounds).
+      // Only the session host publishes; every guest mirrors. The packet itself
+      // carries its kind, so one channel serves all three streams.
+      sock.on("mp:ai", (buf: Buffer) => {
+        const p = unpackAi(buf);
+        if (!p) return;
+        this.aiStates.set(p.kind, { entries: p.entries, t: performance.now() });
+      });
+
       sock.on("mp:event", (ev: MpEvent & { s?: number }) => {
         if (!ev || typeof ev !== "object" || !ev.t) return;
         markLive(ev);
@@ -233,6 +245,7 @@ export class NetClient {
     this.sock = null;
     this.interps.clear();
     this.carStates.clear();
+    this.aiStates.clear();
     this.code = "";
     this.slot = -1;
     this.lobby = null;
@@ -351,6 +364,19 @@ export class NetClient {
     this.sock.emit("mp:event", ev);
   }
 
+  /** 🧟 host-only — publish one AI stream packet (kind is inside the packet). */
+  emitAi(buf: ArrayBuffer) {
+    if (!this.sock?.connected) return;
+    this.sock.emit("mp:ai", buf);
+  }
+
+  /** 🧟 guests — latest AI entries for a kind (null = no fresh host stream). */
+  sampleAi(kind: number): AiEntry[] | null {
+    const s = this.aiStates.get(kind);
+    if (!s || performance.now() - s.t > 1500) return null;
+    return s.entries;
+  }
+
   on<K extends EventKind>(kind: K, h: (ev: Extract<MpEvent, { t: K }>, fromSlot: number) => void): () => void {
     let set = this.evHandlers.get(kind);
     if (!set) { set = new Set(); this.evHandlers.set(kind, set); }
@@ -372,6 +398,11 @@ export class NetClient {
   /** True once we've ever heard from this slot (drives ghost timeouts). */
   knowsRemote(slot: number): boolean {
     return this.interps.has(slot);
+  }
+
+  /** Socket live? (lets timers skip their work without touching the socket) */
+  get sockConnected(): boolean {
+    return !!this.sock?.connected;
   }
 }
 

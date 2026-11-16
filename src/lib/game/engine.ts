@@ -34,6 +34,7 @@ import { preloadModels } from "./models";
 import { preloadAirportModels } from "./airportModels";
 import { preloadGraveyardModels } from "./graveyardModels";
 import type { MpEvent } from "@/lib/game/net/client";
+import { AIKIND_HOUND, AIKIND_HUNTER, AIKIND_ZOMBIE, type AiEntry } from "./net/protocol";
 
 const TAU = Math.PI * 2; // full circle — used to keep the camera yaw wrapped
 
@@ -276,7 +277,7 @@ export interface Animal { id: number; kind: AnimalKind; x: number; z: number; vx
   variant?: number; baby?: boolean;
   /* 🎯 hound prey latch — same diverse-pick brain as the shamblers (crew id /
    * townsfolk id they're chasing, plus the attention-recheck cadence) */
-  preyCrew?: number; preyCiv?: number; pickT?: number; }
+  preyCrew?: number; preyCiv?: number; preySlot?: number; pickT?: number; }
 export interface ItemEnt { id: number; def: number; x: number; z: number; active: boolean; respawn: number }
 export interface VoteEnt { id: number; x: number; z: number; state: "world" | "carried" | "delivered"; /** runner only: which runner holds this vote */ carrierId?: number; /** police side: a runner-delivered vote sneaks back into the city after this timer */ respawnT?: number; /** AI vote-claim ticket: the bot currently walking to grab it (spread bots across the map) */ claimBy?: number }
 /** A rare super-power gem glowing somewhere in the jungle (or a mystery spot). */
@@ -584,7 +585,7 @@ export class GameEngine {
    * toward it every frame — body, colliders and the renderer all follow the
    * real driver's car, headlights included, in real time.
    * ride: the car WE are riding shotgun in (someone else drives — E hops out). */
-  remoteDriven = new Map<number, { x: number; z: number; rot: number; lights: boolean; spin: number }>();
+  remoteDriven = new Map<number, { x: number; z: number; rot: number; lights: boolean; spin: number; vx: number; vz: number; at: number }>();
   ride: { ci: number } | null = null;
 
   /* --- 🤖 bots acting like real players ---
@@ -2058,7 +2059,7 @@ export class GameEngine {
     if (ci < 0 || ci >= this.world.cars.length) return;
     let st = this.remoteDriven.get(ci);
     if (!st) {
-      st = { x, z, rot, lights, spin: 0 };
+      st = { x, z, rot, lights, spin: 0, vx: 0, vz: 0, at: performance.now() };
       this.remoteDriven.set(ci, st);
       const car = this.world.cars[ci];
       car.x = x; car.z = z; car.rot = rot; // first packet snaps — never ease across the map
@@ -2066,7 +2067,14 @@ export class GameEngine {
       if (this.drive?.ci === ci) this.exitCar();
       this.carCoast.delete(ci);
     } else {
-      st.x = x; st.z = z; st.rot = rot; st.lights = lights;
+      // 🎮 keep the last measured velocity — stepRemoteCars dead-reckons the
+      // target pose through packet gaps (a janked main thread delays 15 Hz
+      // streams past a second; without this the car freezes mid-road)
+      const now = performance.now();
+      const dtms = Math.max(16, now - (st.at || now - 66));
+      st.vx = ((x - st.x) / dtms) * 1000;
+      st.vz = ((z - st.z) / dtms) * 1000;
+      st.x = x; st.z = z; st.rot = rot; st.lights = lights; st.at = now;
     }
   }
 
@@ -2075,6 +2083,90 @@ export class GameEngine {
   netRemoteCarStop(ci: number) {
     if (!this.remoteDriven.delete(ci)) return;
     if (this.ride?.ci === ci) this.exitRide(true);
+  }
+
+  /* ---------------- 🧟 host-authoritative AI mirror ----------------
+   * The night is ONE shared drama: the host's simulation is the truth, guests
+   * mirror it from the 12 Hz `mp:ai` stream. These three methods are the
+   * guest-side half of that contract. */
+
+  /** last raw AI pose per entity — velocity estimates for the walk anims */
+  private aiPrev = new Map<string, { x: number; z: number; t: number }>();
+
+  /** Guests mirror the host's horde. kind picks the pool: zombies (array
+   *  index, roster-built), hunters (possessed crew index), hounds (animals
+   *  with the rot). Entries carry pose + dead/attack flags. */
+  applyNetAi(kind: number, entries: AiEntry[]) {
+    if (!this.mp || this.mpHost) return;
+    const now = performance.now();
+    if (kind === AIKIND_ZOMBIE) {
+      for (const e of entries) {
+        let zb = this.zombies[e.idx];
+        if (!zb) {
+          // stream entry we don't have yet (mid-night joiner, roster in flight)
+          this.reconcileZombies();
+          zb = this.zombies[e.idx];
+          if (!zb) continue; // roster still inbound — the next packet places them
+        }
+        const prev = this.aiPrev.get(`z${e.idx}`);
+        const dtms = prev ? Math.max(16, now - prev.t) : 84;
+        zb.vx = prev ? ((e.x - prev.x) / dtms) * 1000 : 0;
+        zb.vz = prev ? ((e.z - prev.z) / dtms) * 1000 : 0;
+        this.aiPrev.set(`z${e.idx}`, { x: e.x, z: e.z, t: now });
+        // a body we already felled locally (optimistic kill) stays fallen —
+        // the host's dead flag lands a beat later and never contradicts it
+        if (zb.dead && !e.dead) continue;
+        zb.x = e.x; zb.z = e.z; zb.face = e.yaw;
+        if (e.dead && !zb.dead) { zb.dead = true; zb.deadT = 0; } // fall plays here too
+      }
+    } else if (kind === AIKIND_HUNTER) {
+      for (const e of entries) {
+        const c = this.crew[e.idx];
+        if (!c || !c.alive) continue;
+        const prev = this.aiPrev.get(`h${e.idx}`);
+        const dtms = prev ? Math.max(16, now - prev.t) : 84;
+        c.vx = prev ? ((e.x - prev.x) / dtms) * 1000 : 0;
+        c.vz = prev ? ((e.z - prev.z) / dtms) * 1000 : 0;
+        this.aiPrev.set(`h${e.idx}`, { x: e.x, z: e.z, t: now });
+        c.x = e.x; c.z = e.z; c.face = e.yaw;
+        if (e.atk) c.attackAnimT = 0.45; // the claw swipe mirrors
+      }
+    } else if (kind === AIKIND_HOUND) {
+      for (const e of entries) {
+        const an = this.animals[e.idx];
+        if (!an || !an.zombie) continue;
+        const prev = this.aiPrev.get(`d${e.idx}`);
+        const dtms = prev ? Math.max(16, now - prev.t) : 84;
+        an.vx = prev ? ((e.x - prev.x) / dtms) * 1000 : 0;
+        an.vz = prev ? ((e.z - prev.z) / dtms) * 1000 : 0;
+        this.aiPrev.set(`d${e.idx}`, { x: e.x, z: e.z, t: now });
+        an.x = e.x; an.z = e.z; an.face = e.yaw;
+        if (e.dead && !an.dead) { an.dead = true; an.deadT = 0; }
+      }
+    }
+  }
+
+  /** 🗡️ a teammate's swing tore into the horde — the HOST's hp is the verdict
+   *  (the killer's client already showed its optimistic hit; this keeps every
+   *  horde on one sheet of music, and the verdict rides the AI stream back out
+   *  as the dead flag). Loot spill is NOT duplicated here: the killer's own
+   *  dropLoot already broadcast the identical stash. */
+  netZombieHit(kind: "zombie" | "hound", idx: number, amt: number) {
+    if (!this.mpHost) return;
+    if (kind === "zombie") {
+      const zb = this.zombies[idx];
+      if (!zb || zb.dead) return;
+      zb.hp = (zb.hp ?? ZOMBIE_HP) - amt;
+      if (zb.hp <= 0) {
+        zb.dead = true; zb.deadT = 0;
+        this.fxQueue.push({ type: "soul", x: zb.x, y: 1.0, z: zb.z, hue: 0.45 });
+      }
+    } else {
+      const an = this.animals[idx];
+      if (!an || !an.zombie || an.dead) return;
+      an.hp = (an.hp ?? ZOMDOG_HP) - amt;
+      if (an.hp <= 0) { an.dead = true; an.deadT = 0; an.zombie = false; }
+    }
   }
 
   /** Ease every remote-driven car toward its streamed target pose. The body,
@@ -2086,6 +2178,15 @@ export class GameEngine {
     for (const [ci, st] of this.remoteDriven) {
       const car = this.world.cars[ci];
       if (!car) { this.remoteDriven.delete(ci); continue; }
+      // 🎮 dead reckoning — when the stream hiccups (busy main thread, GC
+      // pause), coast the target along the last measured velocity with a
+      // gentle decay; fresh packets (<140 ms) overwrite it instantly
+      const stale = performance.now() - st.at;
+      if (stale > 140 && stale < 5000 && (Math.abs(st.vx) > 0.05 || Math.abs(st.vz) > 0.05)) {
+        const decay = Math.exp(-stale / 700);
+        st.x += st.vx * dt * decay;
+        st.z += st.vz * dt * decay;
+      }
       const px = car.x, pz = car.z;
       car.x += (st.x - car.x) * k;
       car.z += (st.z - car.z) * k;
@@ -3109,6 +3210,17 @@ export class GameEngine {
   private choosePossessed() {
     // idempotent: clear last dusk's flags before re-choosing (restarts & re-entries)
     for (const c of this.crew) { c.zombieTonight = false; c.fed = 0; }
+    // 🌐 THE HOST'S ROSTER IS THE LAW. Every client used to roll its OWN beasts
+    // with local RNG at dusk — player 1's night had beasts A/B/C hunting while
+    // player 2 stared at a DIFFERENT trio hunting THEM: two screens, two
+    // different nights, standing on the same street. Now guests pick nothing
+    // (the roster event + the 2 Hz night piggyback deliver the host's list),
+    // and the host broadcasts its list the moment it's drawn.
+    if (this.mp && !this.mpHost) {
+      this.possessed = [];
+      this.nightDeaths = []; // fresh pile forensics each night
+      return;
+    }
     // 🧱 late-nights cull — with the wall ring tiny, the weak get claimed each
     // dusk (exhaustion, the cold, the things in the dark): night 5 takes ~22%
     // of the lobby, night 6 ~30%, night 7 ~40%. Without this the feeding packs
@@ -3147,6 +3259,8 @@ export class GameEngine {
     if (want > 0) this.toast(`🌙 DUSK — ${want} of ${aliveAll} survivors are TURNING. They must FEED before dawn… or crumble.`, "bad");
     this.trace(`🌙 dusk n${this.nightNo}: roster ${this.possessed.length} turned of ${aliveAll} alive (${aliveIdx.length} bots + ${this.remotes.filter((r) => r.alive).length} remote + ${this.lost ? 0 : 1} you); nightDeaths cleared`);
     this.nightDeaths = []; // fresh pile forensics each night
+    // 🌐 the drawn roster rides the wire — every guest's night mirrors ours
+    if (this.mp) this.netEmit?.({ t: "roster", possessed: [...this.possessed], beastSlots: [...this.mpBeastSlots], nightNo: this.nightNo });
   }
 
   /** Night falls: the TURNED rise from the dirt where they stood — a hungering
@@ -3391,8 +3505,11 @@ export class GameEngine {
       const zR = this.zoneRadius();
       const dCz = Math.hypot(c.x, c.z);
       if (dCz > zR - 2) {
-        c.hp -= this.zoneDrain() * dt * 1.5; // bots wither a touch faster — keeps the lobby inside the circle
-        if (c.hp <= 0) { this.killCrew(i, false, -1, false, false, true); continue; }
+        // 🌐 guests don't judge a host-driven hunter's fate (stream + events own it)
+        if (!(this.mp && !this.mpHost && c.mode === "possessed")) {
+          c.hp -= this.zoneDrain() * dt * 1.5; // bots wither a touch faster — keeps the lobby inside the circle
+          if (c.hp <= 0) { this.killCrew(i, false, -1, false, false, true); continue; }
+        }
         if (dCz > zR - 12 && c.mode !== "possessed") {
           const k = Math.max(4, zR - 15) / (dCz || 1);
           stepNpc(c, c.x * k, c.z * k, CREW_SPEED * 1.35, dt, this.world);
@@ -3402,6 +3519,13 @@ export class GameEngine {
 
       if (c.mode === "possessed") {
         // 🩸 THE PACK — each beast hunts a living soul (crew, townsfolk, or you), fears fire, chews barricades
+        if (this.mp && !this.mpHost) {
+          // 🌐 the host's pack is the truth — guests mirror poses from the AI
+          // stream (their claw damage rides the host's dmg event, so nobody
+          // bleeds twice from mirrored packs); only the swipe clock runs here
+          c.attackAnimT = Math.max(0, c.attackAnimT - dt);
+          continue;
+        }
         if (c.drive) this.endBotDrive(c); // 🚗 the turning never finishes a joyride
         c.attackAnimT = Math.max(0, c.attackAnimT - dt);
         // nearest-prey scan (crew → townsfolk → real players)
@@ -4409,6 +4533,9 @@ export class GameEngine {
         zb.hp = (zb.hp ?? ZOMBIE_HP) - dmg;
         sfx.stab();
         this.fxQueue.push({ type: "confetti", x: zb.x, y: 1.1, z: zb.z, hue: 0.35 });
+        // 🌐 the HOST's hp is the verdict — guests report the hit and keep
+        // swinging; the authoritative dead flag rides the AI stream back
+        if (this.mp && !this.mpHost) this.netEmit?.({ t: "zhit", kind: "zombie", idx: this.zombies.indexOf(zb), amt: dmg });
         if (zb.hp <= 0) {
           zb.dead = true;
           zb.deadT = 0; // ⏱️ the body falls & sinks into the dirt
@@ -4443,6 +4570,8 @@ export class GameEngine {
       bestDog.hp = (bestDog.hp ?? ZOMDOG_HP) - dmg;
       sfx.whine();
       this.fxQueue.push({ type: "confetti", x: bestDog.x, y: 0.9, z: bestDog.z, hue: 0.35 });
+      // 🌐 report the hit — the host's hp decides the fall (stream dead flag)
+      if (this.mp && !this.mpHost) this.netEmit?.({ t: "zhit", kind: "hound", idx: this.animals.indexOf(bestDog), amt: dmg });
       if (bestDog.hp <= 0) {
         bestDog.dead = true;      // lies where it fell; a fresh stray wanders in at dawn
         bestDog.deadT = 0;        // ⏱️ fall → sink → gone
@@ -5728,6 +5857,11 @@ export class GameEngine {
     if (night > 0.55) this.rebuildPreyLoad();
     for (const zb of this.zombies) {
       if (zb.dead) { zb.deadT = (zb.deadT ?? 0) + dt; continue; } // ⏱️ slain — the body falls & sinks; a fresh shambler rises next dusk
+      // 🌐 THE HOST'S HORDE IS THE TRUTH — guests mirror poses from the 12 Hz
+      // AI stream and skip the private simulation entirely. The maul damage
+      // rides the host's dmg event, so a guest never bleeds twice from two
+      // mirrored packs.
+      if (this.mp && !this.mpHost) continue;
       zb.touchCd = Math.max(0, zb.touchCd - dt);
       zb.avoidT = Math.max(0, (zb.avoidT ?? 0) - dt); // 🧱 walled-in prey ban decays
       const d2p = dist2(zb.x, zb.z, p.x, p.z);
@@ -5754,6 +5888,7 @@ export class GameEngine {
         const fire = this.nearFire(zb.x, zb.z);
         const scared = !!fire && dist2(fire.x, fire.z, zb.x, zb.z) < CAMPFIRE_R * CAMPFIRE_R;
         const beastYou = this.youPossessed && this.phase === "night"; // monsters don't fight monsters
+        let remoteVictim: RemotePlayer | null = null; // 🌐 real players are prey too (latched in the hunt below)
         if (scared) {
           // fire wins — the zombie stumbles away from the flames
           const dx = zb.x - fire!.x, dz = zb.z - fire!.z, dl = Math.hypot(dx, dz) || 1;
@@ -5777,6 +5912,13 @@ export class GameEngine {
               const d = dist2(zb.x, zb.z, o.x, o.z);
               if (d < 95 * 95) { tx = o.x; tz = o.z; td = d; victimCrew = vi; latched = true; }
             }
+          } else if (zb.preyKind === "remote" && zb.preySlot !== undefined) {
+            // 🌐 latched on a REAL player — their streamed avatar is the prey
+            const r = this.remotes.find((o) => o.slot === zb.preySlot);
+            if (r && r.alive) {
+              const d = dist2(zb.x, zb.z, r.x, r.z);
+              if (d < 95 * 95) { tx = r.x; tz = r.z; td = d; victimCrew = -1; remoteVictim = r; latched = true; }
+            }
           } else if (zb.preyKind === "you" && !beastYou && this.detainedT <= 0 && !this.drive && !this.ride) {
             if (d2p < 95 * 95) { tx = p.x; tz = p.z; td = d2p; victimCrew = -1; latched = true; }
           }
@@ -5787,7 +5929,7 @@ export class GameEngine {
             zb.pickT = 0.6;
             const steal = this.pickDiversePrey(zb, {
               avoidId: zb.avoidV, avoidT: zb.avoidT,
-              includeYou: true, includeCivs: false, includeRemotes: false,
+              includeYou: true, includeCivs: false, includeRemotes: true,
               sniff: 13, cap: ZOMBIE_SWARM_CAP, farHunt: false,
             });
             if (steal) {
@@ -5796,6 +5938,13 @@ export class GameEngine {
                 zb.preyKind = "crew"; zb.preyId = this.crew[steal.ci].id;
                 tx = this.crew[steal.ci].x; tz = this.crew[steal.ci].z;
                 td = dist2(zb.x, zb.z, tx, tz);
+              } else if (steal.kind === "remote") {
+                const r = this.remotes.find((o) => o.slot === steal.slot);
+                if (r) {
+                  victimCrew = -1; remoteVictim = r;
+                  zb.preyKind = "remote"; zb.preySlot = steal.slot; zb.preyId = undefined;
+                  tx = r.x; tz = r.z; td = dist2(zb.x, zb.z, tx, tz);
+                }
               } else {
                 victimCrew = -1;
                 zb.preyKind = "you"; zb.preyId = undefined;
@@ -5810,17 +5959,24 @@ export class GameEngine {
             const pick = this.pickDiversePrey(zb, {
               avoidId: zb.avoidV, avoidT: zb.avoidT,
               includeYou: !beastYou && this.detainedT <= 0 && !this.drive && !this.ride,
-              includeCivs: false, includeRemotes: false,
+              includeCivs: false, includeRemotes: true,
               sniff: ZOMBIE_SNIFF, cap: ZOMBIE_SWARM_CAP, farHunt: true,
             });
             if (pick) {
-              zb.preyKind = pick.kind === "crew" ? "crew" : "you";
-              zb.preyId = pick.kind === "crew" ? this.crew[pick.ci].id : undefined;
               if (pick.kind === "crew") {
+                zb.preyKind = "crew"; zb.preyId = this.crew[pick.ci].id;
                 victimCrew = pick.ci;
                 tx = this.crew[pick.ci].x; tz = this.crew[pick.ci].z;
                 td = dist2(zb.x, zb.z, tx, tz);
+              } else if (pick.kind === "remote") {
+                const r = this.remotes.find((o) => o.slot === pick.slot);
+                if (r) {
+                  zb.preyKind = "remote"; zb.preySlot = pick.slot; zb.preyId = undefined;
+                  victimCrew = -1; remoteVictim = r;
+                  tx = r.x; tz = r.z; td = dist2(zb.x, zb.z, tx, tz);
+                } else { zb.preyKind = undefined; zb.preyId = undefined; }
               } else {
+                zb.preyKind = "you"; zb.preyId = undefined;
                 victimCrew = -1; tx = p.x; tz = p.z; td = d2p;
               }
               latched = true;
@@ -5859,6 +6015,12 @@ export class GameEngine {
                 if (d2p < 30 * 30) this.toast(`🧟 ${victim.name} fell to the horde… their 💰 dropped!`, "bad");
               }
             }
+            // 🌐 the horde mauls a REAL player's avatar — their own client bleeds
+            // for it (one authoritative bite; the mirrored pack never double-hits)
+            else if (remoteVictim && zb.touchCd <= 0 && td < 1.6 * 1.6) {
+              zb.touchCd = ZOMBIE_TOUCH_CD;
+              this.netEmit?.({ t: "dmg", target: remoteVictim.slot, amount: ZOMBIE_DMG });
+            }
           } else {
             // 🌙 no soul within sniff range — prowl the night streets near HERE.
             // The old drift dragged every idle shambler to ONE graveyard point,
@@ -5894,6 +6056,10 @@ export class GameEngine {
             if (owner) owner.fed = (owner.fed ?? 0) + 1; // a kill is a kill — this beast lives to see dawn
             this.die();
           }
+        } else if (remoteVictim && d2p < 1.6 * 1.6 && zb.touchCd <= 0) {
+          // 🌐 the pack caught a REAL player standing right here — their client bleeds
+          zb.touchCd = ZOMBIE_TOUCH_CD;
+          this.netEmit?.({ t: "dmg", target: remoteVictim.slot, amount: ZOMBIE_DMG });
         }
         if (this.groanT <= 0 && d2p < 20 * 20) { this.groanT = range(this.rnd, 2, 6); sfx.zombie(); }
       }
@@ -5951,6 +6117,9 @@ export class GameEngine {
       if (an.zombie) {
         an.touchCd = Math.max(0, (an.touchCd ?? 0) - dt);
         an.barkT = Math.max(0, (an.barkT ?? 0) - dt);
+        // 🌐 the host drives the hound pack — guests mirror poses (AI stream);
+        // bites land through the host's dmg events, never locally
+        if (this.mp && !this.mpHost) continue;
         const fire = this.nearFire(an.x, an.z);
         if (fire && dist2(fire.x, fire.z, an.x, an.z) < CAMPFIRE_R * CAMPFIRE_R) {
           // fire wins — the hound paces snarling just outside the glow
@@ -5960,6 +6129,7 @@ export class GameEngine {
           // 🧟 hunt the living — weighted-random over nearby souls (you, a
           // survivor, a townsfolk) so the hound pack fans out like the horde
           let victimCrew = -1, victimCiv: Npc | null = null;
+          let remoteVictim: RemotePlayer | null = null; // 🌐 real players are prey too
           let tx = p.x, tz = p.z;
           const youOk = !(this.detainedT > 0 || this.drive || (this.youPossessed && this.phase === "night"));
           let td = youOk ? d2p : Infinity;
@@ -5973,6 +6143,13 @@ export class GameEngine {
               const d = dist2(an.x, an.z, o.x, o.z);
               if (d < 80 * 80) { td = d; tx = o.x; tz = o.z; victimCrew = vi; victimCiv = null; latched = true; }
             }
+          } else if (an.preySlot !== undefined) {
+            // 🌐 latched on a REAL player — their streamed avatar is the prey
+            const r = this.remotes.find((o) => o.slot === an.preySlot);
+            if (r && r.alive) {
+              const d = dist2(an.x, an.z, r.x, r.z);
+              if (d < 80 * 80) { td = d; tx = r.x; tz = r.z; victimCrew = -1; victimCiv = null; remoteVictim = r; latched = true; }
+            }
           } else if (an.preyCiv !== undefined) {
             const cv = this.civs.find((o) => o.id === an.preyCiv);
             if (cv && !cv.dead) {
@@ -5985,22 +6162,29 @@ export class GameEngine {
           if (latched && td > 12 * 12 && (an.pickT ?? 0) <= 0) {
             an.pickT = 0.6;
             const steal = this.pickDiversePrey(an, {
-              includeYou: youOk, includeCivs: true, includeRemotes: false,
+              includeYou: youOk, includeCivs: true, includeRemotes: true,
               sniff: 12, cap: ZOMBIE_SWARM_CAP, farHunt: false,
             });
             if (steal && steal.kind === "crew") {
-              an.preyCrew = this.crew[steal.ci].id; an.preyCiv = undefined;
-              victimCrew = steal.ci; victimCiv = null;
+              an.preyCrew = this.crew[steal.ci].id; an.preyCiv = undefined; an.preySlot = undefined;
+              victimCrew = steal.ci; victimCiv = null; remoteVictim = null;
               tx = this.crew[steal.ci].x; tz = this.crew[steal.ci].z;
               td = dist2(an.x, an.z, tx, tz);
             } else if (steal && steal.kind === "civ" && steal.civ) {
-              an.preyCiv = steal.civ.id; an.preyCrew = undefined;
-              victimCrew = -1; victimCiv = steal.civ;
+              an.preyCiv = steal.civ.id; an.preyCrew = undefined; an.preySlot = undefined;
+              victimCrew = -1; victimCiv = steal.civ; remoteVictim = null;
               tx = steal.civ.x; tz = steal.civ.z;
               td = dist2(an.x, an.z, tx, tz);
+            } else if (steal && steal.kind === "remote") {
+              const r = this.remotes.find((o) => o.slot === steal.slot);
+              if (r) {
+                an.preySlot = steal.slot; an.preyCrew = undefined; an.preyCiv = undefined;
+                victimCrew = -1; victimCiv = null; remoteVictim = r;
+                tx = r.x; tz = r.z; td = dist2(an.x, an.z, tx, tz);
+              }
             } else if (steal && steal.kind === "you") {
-              an.preyCrew = undefined; an.preyCiv = undefined;
-              victimCrew = -1; victimCiv = null;
+              an.preyCrew = undefined; an.preyCiv = undefined; an.preySlot = undefined;
+              victimCrew = -1; victimCiv = null; remoteVictim = null;
               tx = p.x; tz = p.z; td = d2p;
             }
           }
@@ -6008,28 +6192,36 @@ export class GameEngine {
             // 🎯 fresh mark — weighted random over every living thing in scent
             // range; swarmed souls discounted, 1-in-6 catches a far scent
             const pick = this.pickDiversePrey(an, {
-              includeYou: youOk, includeCivs: true, includeRemotes: false,
+              includeYou: youOk, includeCivs: true, includeRemotes: true,
               sniff: ZOMDOG_SENSE, cap: ZOMBIE_SWARM_CAP, farHunt: true,
             });
             if (pick && pick.kind === "crew") {
-              an.preyCrew = this.crew[pick.ci].id; an.preyCiv = undefined;
-              victimCrew = pick.ci; victimCiv = null;
+              an.preyCrew = this.crew[pick.ci].id; an.preyCiv = undefined; an.preySlot = undefined;
+              victimCrew = pick.ci; victimCiv = null; remoteVictim = null;
               tx = this.crew[pick.ci].x; tz = this.crew[pick.ci].z;
               td = dist2(an.x, an.z, tx, tz);
               latched = true;
             } else if (pick && pick.kind === "civ" && pick.civ) {
-              an.preyCiv = pick.civ.id; an.preyCrew = undefined;
-              victimCrew = -1; victimCiv = pick.civ;
+              an.preyCiv = pick.civ.id; an.preyCrew = undefined; an.preySlot = undefined;
+              victimCrew = -1; victimCiv = pick.civ; remoteVictim = null;
               tx = pick.civ.x; tz = pick.civ.z;
               td = dist2(an.x, an.z, tx, tz);
               latched = true;
+            } else if (pick && pick.kind === "remote") {
+              const r = this.remotes.find((o) => o.slot === pick.slot);
+              if (r) {
+                an.preySlot = pick.slot; an.preyCrew = undefined; an.preyCiv = undefined;
+                victimCrew = -1; victimCiv = null; remoteVictim = r;
+                tx = r.x; tz = r.z; td = dist2(an.x, an.z, tx, tz);
+                latched = true;
+              }
             } else if (pick) { // "you"
-              an.preyCrew = undefined; an.preyCiv = undefined;
-              victimCrew = -1; victimCiv = null;
+              an.preyCrew = undefined; an.preyCiv = undefined; an.preySlot = undefined;
+              victimCrew = -1; victimCiv = null; remoteVictim = null;
               tx = p.x; tz = p.z; td = d2p;
               latched = true;
             } else {
-              an.preyCrew = undefined; an.preyCiv = undefined;
+              an.preyCrew = undefined; an.preyCiv = undefined; an.preySlot = undefined;
             }
           }
           if (td < ZOMDOG_SENSE * ZOMDOG_SENSE || latched) {
@@ -6050,6 +6242,10 @@ export class GameEngine {
                   this.killCrew(victimCrew, false, -1, true); // quiet — the hound toast below is the required one
                   if (d2p < 30 * 30) this.toast(`🐕‍🦺 A zombie hound brought down ${victim.name}… their 💰 dropped!`, "bad");
                 }
+              } else if (remoteVictim) {
+                // 🌐 the pack caught a REAL player — their own client bleeds for it
+                an.touchCd = ZOMDOG_TOUCH_CD;
+                this.netEmit?.({ t: "dmg", target: remoteVictim.slot, amount: ZOMDOG_DMG });
               } else if (victimCiv) {
                 an.touchCd = ZOMDOG_TOUCH_CD;
                 victimCiv.hp = (victimCiv.hp ?? 30) - ZOMDOG_DMG;
@@ -6078,6 +6274,15 @@ export class GameEngine {
             this.hurtT = HURT_FLASH_S;
             this.addShake(0.35); // 💥 MEDIUM — teeth in your leg
             sfx.zdog();
+          } else {
+            // 🌐 a hound is on a REAL player — their own client bleeds for it
+            for (const r of this.remotes) {
+              if (!r.alive) continue;
+              if (dist2(an.x, an.z, r.x, r.z) < 1.5 * 1.5 && (an.touchCd ?? 0) <= 0) {
+                an.touchCd = ZOMDOG_TOUCH_CD;
+                this.netEmit?.({ t: "dmg", target: r.slot, amount: ZOMDOG_DMG });
+              }
+            }
           }
         }
         continue;
@@ -6236,14 +6441,17 @@ export class GameEngine {
               // the catch — the body falls where it stood, the hunter feeds
               if (mCrew >= 0) {
                 const cc = this.crew[mCrew];
-                this.killCrew(mCrew, false, -1, true); // quiet — the wolf toast below is the required one
-                const d2p2 = dist2(this.player.x, this.player.z, cc.x, cc.z);
-                if (d2p2 < 30 * 30 && this.botDeathCd <= 0) {
-                  this.botDeathCd = 6;
-                  this.toast(`🐺 The night pack dragged down ${cc.name}… their 💰 dropped!`, "bad");
+                // 🌐 the host's wolves do the real culling — guests stalk for show
+                if (!(this.mp && !this.mpHost)) {
+                  this.killCrew(mCrew, false, -1, true); // quiet — the wolf toast below is the required one
+                  const d2p2 = dist2(this.player.x, this.player.z, cc.x, cc.z);
+                  if (d2p2 < 30 * 30 && this.botDeathCd <= 0) {
+                    this.botDeathCd = 6;
+                    this.toast(`🐺 The night pack dragged down ${cc.name}… their 💰 dropped!`, "bad");
+                  }
                 }
               } else if (mCiv) {
-                this.killCiv(mCiv, "beast");
+                if (!(this.mp && !this.mpHost)) this.killCiv(mCiv, "beast");
               }
               an.resting = true; an.timer = range(this.rnd, 12, 22);
               an.tx = an.x; an.tz = an.z;
@@ -6531,6 +6739,13 @@ export class GameEngine {
     this.mpBeastSlots = [...beastSlots];
     this.youPossessed = beastSlots.includes(this.mpSlot);
     for (const r of this.remotes) r.beast = beastSlots.includes(r.slot);
+    // 🏷️ tag WHO turns tonight — guests skipped the local dusk pick, so this
+    // event is the only place their flags get set (dawn crumbles downstream)
+    for (let i = 0; i < this.crew.length; i++) {
+      const on = this.possessed.includes(i);
+      this.crew[i].zombieTonight = on;
+      if (!on) this.crew[i].fed = 0;
+    }
     if (this.phase === "night") {
       // roster arrived after our local beginNight — transform right now
       for (const idx of this.possessed) {
@@ -6539,6 +6754,36 @@ export class GameEngine {
       }
       if (this.youPossessed) this.held = -1;
     }
+    // 🧟 rebuild the night's horde from the SHARED roster — the guest's own
+    // (void) dusk pick produced nothing, and a mid-night joiner had no dusk at
+    // all. Array order matches the host's beginNight, so the AI stream's
+    // indices mean the same beast on every client. (Dusk rosters wait — the
+    // pack rises at NIGHT only, or shells would shambling around at sunset.)
+    if (this.phase === "night" || this.zombies.length > 0) this.reconcileZombies();
+  }
+
+  /** 🧟 rebuild this.zombies from the shared possessed roster — the SAME order
+   *  the host's beginNight used (possessed order, alive-filtered), so stream
+   *  indices match. Existing bodies (hp/dead/pose) survive when the owner crew
+   *  still anchors them; fresh shells rise where their crew stands. Idempotent:
+   *  the 2 Hz night piggyback calls this constantly and it must NOT churn the
+   *  rig pool when the pack hasn't actually changed. */
+  private reconcileZombies() {
+    if (!this.mp || this.mpHost) return;
+    const next: Zombie[] = [];
+    for (const idx of this.possessed) {
+      const c = this.crew[idx];
+      if (!c || !c.alive) continue;
+      const prev = this.zombies.find((z) => z.owner === c.id);
+      if (prev) { next.push(prev); continue; }
+      next.push({ id: this.nid(), owner: c.id, x: c.x, z: c.z, vx: 0, vz: 0, face: c.face, phase: Math.random() * 6, touchCd: 0, hp: ZOMBIE_HP, dead: false, hoard: 0, chkT: 0, chkX: 0, chkZ: 0, sideT: 0, sideDx: 0, sideDz: 0 });
+    }
+    // same owner sequence → the pack is identical (same objects found) — no-op
+    const oldOwners = this.zombies.map((z) => z.owner).join(",");
+    const newOwners = next.map((z) => z.owner).join(",");
+    if (oldOwners === newOwners) { this.zombies = next; return; }
+    this.zombies = next;
+    this.zRev++; // renderer rebuilds rigs
   }
 
   /** A teammate's client reported a crew death (or accusation) — mirror it here.

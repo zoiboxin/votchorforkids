@@ -232,6 +232,17 @@ io.on("connection", (sock) => {
     sock.to(room.code).emit("mp:car", buf instanceof Buffer ? buf : Buffer.from(buf as Uint8Array), sock.data.slot);
   });
 
+  // 🧟 AI replication stream (host → guests: zombies/hunters/hounds poses, see
+  // protocol.ts packAi). Only the host's packets matter but the relay stays
+  // transport-dumb — clients that shouldn't publish simply never do. Fan out
+  // verbatim like mp:car; the header carries the kind, no slot stamp needed.
+  sock.on("mp:ai", (buf: Buffer | ArrayBuffer | Uint8Array) => {
+    const room = roomOf(sock.id);
+    const len = buf instanceof Buffer ? buf.length : (buf as Uint8Array)?.byteLength ?? 0;
+    if (!room || !buf || len < 2 || len > 1200) return;
+    sock.to(room.code).emit("mp:ai", buf instanceof Buffer ? buf : Buffer.from(buf as Uint8Array));
+  });
+
   /* reliable gameplay events (phase clock, possession roster, damage, kills…)
    * 🔎 sniff only the START event so the relay knows which sessions are live */
   sock.on("mp:event", (ev: Record<string, unknown>) => {

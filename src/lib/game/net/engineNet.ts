@@ -10,7 +10,7 @@
  */
 import type { GameEngine } from "../engine";
 import type { Appearance } from "../constants";
-import { packState, packCar } from "./protocol";
+import { AIKIND_HOUND, AIKIND_HUNTER, AIKIND_ZOMBIE, packAi, packState, packCar, type AiEntry } from "./protocol";
 import { net, type LobbyPlayer, type MpEvent } from "./client";
 
 export interface AttachNetOpts {
@@ -92,6 +92,42 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
     return packCar({ ci: d.ci, x: d.x, z: d.z, rot: d.rot, lights: d.lights !== false });
   });
 
+  /* ---------- 🧟 AI replication — host publishes, guests mirror ----------
+   * The night's horde is ONE shared drama: the host's simulation is the truth
+   * (it already hunts real players and streams the damage), and every guest
+   * mirrors its zombies / possessed hunters / zombie hounds from these 12 Hz
+   * packets instead of running a private RNG night of their own. On the host
+   * this publishes; on guests the streamTimer below applies the mirror. */
+  let aiTimer: ReturnType<typeof setInterval> | null = null;
+  if (isHost) {
+    aiTimer = setInterval(() => {
+      if (!engine.running || !net.sockConnected) return;
+      // zombies — array indices are deterministic (same roster on every client)
+      const zombies: AiEntry[] = engine.zombies.map((zb, idx) => ({
+        idx, x: zb.x, z: zb.z, yaw: zb.face, dead: !!zb.dead, atk: false,
+      }));
+      const zb = packAi(AIKIND_ZOMBIE, zombies);
+      if (zb) net.emitAi(zb);
+      // possessed hunters — the night's stalking beasts
+      const hunters: AiEntry[] = [];
+      for (const idx of engine.possessed) {
+        const c = engine.crew[idx];
+        if (!c || !c.alive) continue;
+        hunters.push({ idx, x: c.x, z: c.z, yaw: c.face, dead: false, atk: c.attackAnimT > 0 });
+      }
+      const hu = packAi(AIKIND_HUNTER, hunters);
+      if (hu) net.emitAi(hu);
+      // zombie hounds — the turned strays (animals with the rot)
+      const hounds: AiEntry[] = [];
+      engine.animals.forEach((an, idx) => {
+        if (!an.zombie) return;
+        hounds.push({ idx, x: an.x, z: an.z, yaw: an.face, dead: !!an.dead, atk: false });
+      });
+      const ho = packAi(AIKIND_HOUND, hounds);
+      if (ho) net.emitAi(ho);
+    }, 84); // ~12 Hz — the horde shambles, this is plenty
+  }
+
   /* ---------- remote streams → engine.remotes ---------- */
   const streamTimer = setInterval(() => {
     engine.mpPing = net.ping;
@@ -136,6 +172,15 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
         engine.netRemoteCarStop(e.ci);
         slotCars.delete(sl);
       }
+    }
+    // 🧟 guests mirror the host's horde — one apply per kind, ~12.5 Hz
+    if (!isHost) {
+      const zb = net.sampleAi(AIKIND_ZOMBIE);
+      if (zb) engine.applyNetAi(AIKIND_ZOMBIE, zb);
+      const hu = net.sampleAi(AIKIND_HUNTER);
+      if (hu) engine.applyNetAi(AIKIND_HUNTER, hu);
+      const ho = net.sampleAi(AIKIND_HOUND);
+      if (ho) engine.applyNetAi(AIKIND_HOUND, ho);
     }
   }, 80); // 12.5 Hz matches the stream rate
 
@@ -234,6 +279,12 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
     if (ev.kind === "license" && ev.toSlot === slot) engine.receiveLicense(ev.from);
   });
 
+  // 🗡️ a teammate's swing connected with the horde — the HOST'S hp is the truth
+  on("zhit", (ev) => {
+    if (!isHost) return; // guests get the verdict via the AI stream's dead flag
+    engine.netZombieHit(ev.kind, ev.idx, ev.amt);
+  });
+
   // 📦🪪 a teammate DROPPED their license on the ground — spawn the card here
   // so everyone can race over and snatch it
   on("dropLicense", (ev) => engine.spawnDroppedLicense(ev.x, ev.z, ev.from));
@@ -263,6 +314,12 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
   const phaseTimer = setInterval(() => {
     if (!isHost || !engine.running) return;
     net.send({ t: "phase", phase: engine.phase, nightNo: engine.nightNo, phaseLeft: Math.max(0, Math.round(engine.phaseT)), clock: Math.round(engine.clock * 100) / 100 });
+    // 🌐 the possession roster rides along at night — a mid-night quick-joiner
+    // lands with NO local dusk (they never ran choosePossessed), so unless the
+    // roster arrives on a timer they'd stare at an empty, zombie-less night
+    if (engine.phase === "night") {
+      net.send({ t: "roster", possessed: [...engine.possessed], beastSlots: [...engine.mpBeastSlots], nightNo: engine.nightNo });
+    }
   }, 500);
 
   /* ---------- our death → tell the room ---------- */
@@ -285,6 +342,7 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       clearInterval(slowTimer);
       clearInterval(phaseTimer);
       clearInterval(endWatcher);
+      if (aiTimer) clearInterval(aiTimer);
       net.stopPublishing();
       net.stopCarPublishing();
       engine.netEmit = null;
