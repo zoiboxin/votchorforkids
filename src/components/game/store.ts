@@ -5,7 +5,7 @@ import { defaultAppearance, normalizeAppearance, type Appearance } from "@/lib/g
 import type { HudData } from "@/lib/game/engine";
 import { DAILY_TASK_POOL, ALL_DONE_BONUS, applyRunToDaily, ensureDaily, freshDaily, type DailyState, type DailyRunFacts } from "@/lib/game/daily";
 
-export type Screen = "landing" | "profile" | "select" | "outfit" | "creator" | "connecting" | "lobby" | "play";
+export type Screen = "landing" | "profile" | "select" | "outfit" | "creator" | "connecting" | "lobby" | "matchlobby" | "play";
 export interface Toast { msg: string; kind: "info" | "good" | "bad"; id: number }
 
 export interface ScoreRow { id: string; name: string; points: number; votes: number; rescues: number; won: boolean; timeMs: number; createdAt: string }
@@ -156,6 +156,12 @@ export interface GameStore {
     slot: number;
     players: { sid: string; slot: number; name: string; ready: boolean; self: boolean }[];
     chat: { name: string; msg: string; at: number }[];
+    /** 🏟️ epoch ms when the PUBG-style match lobby countdown fires (0 = none).
+     *  ONE shared deadline — the relay stamps it, every client renders it. */
+    matchEndsAt: number;
+    /** lobby flavor for the UI copy: "gather" (pre-match) · "relobby" (a night
+     *  is running and restarts so everyone plays together) · "solo" (relay off) */
+    matchMode: "" | "gather" | "relobby" | "solo";
   };
   setMpOpen: (v: boolean) => void;
   patchMp: (p: Partial<GameStore["mp"]>) => void;
@@ -218,6 +224,7 @@ let toastId = 1;
 const freshMp = () => ({
   open: false, busy: false, error: "", code: "", isHost: false, ping: 0, slot: 0,
   players: [] as GameStore["mp"]["players"], chat: [] as GameStore["mp"]["chat"],
+  matchEndsAt: 0, matchMode: "" as GameStore["mp"]["matchMode"],
 });
 
 /** Hydrate persisted player identity once at module load (client only). */

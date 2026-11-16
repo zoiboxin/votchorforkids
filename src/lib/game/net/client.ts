@@ -28,6 +28,10 @@ export interface LobbySnapshot {
   code: string;
   host: string;
   players: LobbyPlayer[];
+  /** 🏟️ "lobby" = pre-match countdown gathering · "live" = night running */
+  phase?: "lobby" | "live";
+  /** epoch ms when the shared match-lobby countdown fires (0/absent = none) */
+  lobbyEndsAt?: number;
 }
 
 export type ConnState = "idle" | "connecting" | "lobby" | "room" | "error" | "closed";
@@ -116,8 +120,14 @@ export class NetClient {
       // relative URL + gateway port transform — NEVER an absolute localhost URL
       const sock = io("/?XTransformPort=3030", {
         transports: ["websocket", "polling"],
-        reconnectionAttempts: 6,
+        // 🛡️ a stuttery main thread (heavy scene, GC pause, throttled tab) can
+        // miss socket heartbeats for many seconds — the old 6-attempt cap left
+        // a hitched tab DISCONNECTED forever (its soul ghosted off every peer's
+        // screen and sync died silently). Keep trying until the wire breathes
+        // again; the relay sweeper + rejoin-by-code heal the seat on return.
+        reconnectionAttempts: Infinity,
         reconnectionDelay: 900,
+        reconnectionDelayMax: 4000,
         timeout: 8000,
       });
       this.sock = sock;
@@ -312,6 +322,13 @@ export class NetClient {
 
   setReady(ready: boolean) {
     this.sock?.emit("mp:ready", ready);
+  }
+
+  /** 🏟️ arm (or extend) the shared match-lobby countdown — the relay stamps
+   *  ONE source-of-truth deadline and broadcasts it in the roster payload, so
+   *  every client renders the same 30 s clock and launches together. */
+  startCountdown(durationMs = 30000) {
+    this.sock?.emit("mp:countdown", { durationMs });
   }
 
   chat(msg: string) {

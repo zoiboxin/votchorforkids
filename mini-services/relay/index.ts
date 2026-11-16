@@ -3,9 +3,15 @@
  * -------------------------
  * A lightweight socket.io relay that glues co-op sessions together:
  *   • sessions with 4-char codes (max 8 real souls), host election + migration
- *   • `mp:quick` — AUTO-MATCHMAKING: drop into the current live session (one
- *     bot's seat is freed for you on the clients); if every session is full,
- *     a brand-new session is opened and you host it
+ *   • 🏟️ MATCH LOBBY — every session carries a phase:
+ *       "lobby" = pre-match gathering (30 s countdown, PUBG-style — players
+ *                quick-join INTO the lobby and everyone launches together)
+ *       "live"  = the night is running (a joiner waits in a fresh 30 s lobby
+ *                and the whole room restarts together when it fires)
+ *   • `mp:countdown` — start/extend the shared lobby countdown (any member;
+ *     the relay owns the single source-of-truth deadline and fans it out)
+ *   • `mp:quick` — AUTO-MATCHMAKING: prefer a lobby that's gathering → then a
+ *     live session → then any open room → else open a brand-new one as host
  *   • `mp:state`  — binary player state stream (9 bytes/soul @ ~12 Hz) fan-out
  *   • `mp:event`  — reliable JSON gameplay events (phase, roster, damage, kills…)
  *   • `mp:lobby`  — create / join / leave / ready / start + roster broadcasts
@@ -37,6 +43,10 @@ interface Room {
   createdAt: number;
   /** true once the host started the 7 nights — live sessions take mid-game joins */
   started: boolean;
+  /** 🏟️ "lobby" = pre-match countdown gathering · "live" = night running */
+  phase: "lobby" | "live";
+  /** epoch ms when the shared lobby countdown fires (0 = no countdown armed) */
+  lobbyEndsAt: number;
 }
 
 const rooms = new Map<string, Room>();
@@ -59,6 +69,8 @@ const lobbyPayload = (room: Room) => ({
   players: [...room.members.values()].map((m) => ({
     sid: m.sid, slot: m.slot, name: m.name, ready: m.ready, look: m.look,
   })),
+  phase: room.phase,
+  lobbyEndsAt: room.lobbyEndsAt,
 });
 
 const roomOf = (sid: string): Room | null => {
@@ -105,7 +117,7 @@ function seatInRoom(io: Server, sock: { join: (c: string) => void; id: string; d
 }
 
 function createRoom(hostSid: string): Room {
-  const room: Room = { code: makeCode(), hostSid, members: new Map(), createdAt: Date.now(), started: false };
+  const room: Room = { code: makeCode(), hostSid, members: new Map(), createdAt: Date.now(), started: false, phase: "lobby", lobbyEndsAt: 0 };
   rooms.set(room.code, room);
   return room;
 }
@@ -131,6 +143,8 @@ io.on("connection", (sock) => {
       members: new Map(),
       createdAt: Date.now(),
       started: false,
+      phase: "lobby",
+      lobbyEndsAt: 0,
     };
     rooms.set(room.code, room);
     sock.join(room.code);
@@ -151,20 +165,39 @@ io.on("connection", (sock) => {
     ack?.({ ok: true, code: room.code, lobby: lobbyPayload(room) });
   });
 
+  /* ---------------- 🏟️ match lobby countdown ----------------
+   * Any member can arm/extend the shared countdown (a joiner into a LIVE night
+   * uses it to call a PUBG-style restart-together). The relay owns the ONE
+   * source-of-truth deadline and broadcasts it in every roster payload, so
+   * every client renders the same clock and fires the launch together. */
+  sock.on("mp:countdown", (p: { durationMs?: number } = {}) => {
+    const room = roomOf(sock.id);
+    if (!room) return;
+    const dur = Math.max(5000, Math.min(120000, Math.round(p.durationMs ?? 30000)));
+    room.phase = "lobby";
+    room.lobbyEndsAt = Date.now() + dur;
+    console.log(`[relay] countdown room=${room.code} ends in ${dur / 1000}s souls=${room.members.size}`);
+    io.to(room.code).emit("mp:lobby", { t: "roster", lobby: lobbyPayload(room) });
+  });
+
   /* ---------------- ⚡ auto-matchmaking ----------------
-   * "Join the current game": drop into the fullest LIVE session first (one
-   * bot's seat is freed for you client-side), else any open lobby; only when
+   * "Join the current game" — PUBG-style: prefer a lobby that's GATHERING
+   * (countdown running — you land in the pre-match lobby and launch with
+   * everyone), then a LIVE session (you wait in a fresh 30 s lobby while the
+   * room regathers for a restart-together), then any open lobby; only when
    * EVERY session is full does this soul open a brand-new one (as host). */
   sock.on("mp:quick", (p: { name?: string; look?: unknown } = {}, ack?: (r: unknown) => void) => {
     const name = sanitizeName(p.name);
     const existing = roomOf(sock.id);
     if (existing) return ack?.({ ok: true, code: existing.code, lobby: lobbyPayload(existing), started: existing.started });
     const open = [...rooms.values()].filter((r) => r.members.size < MAX_PLAYERS);
+    // rooms still counting down to launch — the ideal landing spot
+    const gathering = open.filter((r) => r.phase === "lobby" && r.lobbyEndsAt > Date.now());
     // a live night is only worth joining if its host socket is actually alive —
     // a "live" room with a dead host has no story clock and no one to sync to
     // (the sweeper migrates the crown within ~10 s, healing the room instead)
     const live = open.filter((r) => r.started && io.sockets.sockets.has(r.hostSid));
-    const pool = live.length ? live : open; // live nights win — that's "join the current game"
+    const pool = gathering.length ? gathering : live.length ? live : open; // gathering lobbies win
     pool.sort((a, b) => b.members.size - a.members.size); // fullest session first
     if (pool[0]) {
       const room = pool[0];
@@ -248,7 +281,11 @@ io.on("connection", (sock) => {
   sock.on("mp:event", (ev: Record<string, unknown>) => {
     const room = roomOf(sock.id);
     if (!room || !ev || typeof ev !== "object") return;
-    if ((ev as { t?: string }).t === "start") room.started = true;
+    if ((ev as { t?: string }).t === "start") {
+      room.started = true;
+      room.phase = "live"; // the lobby countdown is done — the night owns the room now
+      room.lobbyEndsAt = 0;
+    }
     const m = room.members.get(sock.id);
     // stamp the sender's slot so clients can attribute events (host stamps `phase`/`roster`)
     sock.to(room.code).emit("mp:event", { ...ev, s: m?.slot ?? 0 });

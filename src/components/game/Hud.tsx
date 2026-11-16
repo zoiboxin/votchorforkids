@@ -1294,7 +1294,7 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
               </Button>
             )}
             <Button onClick={onQuit} variant="outline" className="h-11 w-full rounded-2xl border-rose-300/40 bg-rose-500/15 font-bold text-rose-200 hover:bg-rose-500/30">
-              <Home size={16} className="mr-2" /> Quit to menu
+              <Home size={16} className="mr-2" /> Main menu
             </Button>
           </div>
         </motion.div>
@@ -1340,7 +1340,7 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
             <SettingsIcon size={16} className="mr-2" /> Settings
           </Button>
           <Button onClick={onQuit} variant="outline" className="h-11 w-full rounded-2xl border-rose-300/40 bg-rose-500/15 font-bold text-rose-200 hover:bg-rose-500/30">
-            <Home size={16} className="mr-2" /> Quit to menu
+            <Home size={16} className="mr-2" /> Main menu
           </Button>
         </div>
         {hud.money > 0 && (

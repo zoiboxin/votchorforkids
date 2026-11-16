@@ -28,6 +28,8 @@ export interface AttachNetOpts {
 
 export interface NetHandle {
   detach: () => void;
+  /** 🏟️ re-seed remote souls from the current roster (after a local engine reset) */
+  resync: () => void;
 }
 
 const lastRaw = new Map<number, { x: number; z: number; t: number }>(); // slot → last raw sample (velocity estimate)
@@ -336,6 +338,11 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
   engine.netEmit = (ev) => net.send(ev);
 
   return {
+    /** 🏟️ re-seed the remote roster (engine.reset doesn't re-run attachNet —
+     *  after a restart-together the host re-syncs souls from the lobby) */
+    resync() {
+      if (net.lobby) syncFromLobby(net.lobby.players);
+    },
     detach() {
       for (const u of unsubs) u();
       clearInterval(streamTimer);

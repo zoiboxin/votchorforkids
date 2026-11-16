@@ -14,6 +14,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useGame } from "./store";
 import { net, type LobbyPlayer } from "@/lib/game/net/client";
+import { enterMatchLobby } from "@/lib/game/net/matchlobby";
 import type { Appearance } from "@/lib/game/constants";
 import { useGame as storeHook } from "./store";
 
@@ -71,11 +72,9 @@ export function Multiplayer() {
     const unChat = net.onChat((n, m) => pushMpChat(n, m));
     const unJoin = net.onPeerJoin((n) => pushToast(`🌐 ${n} joined the room!`, "good"));
     const unLeave = net.onPeerLeave((n) => pushToast(`🌐 ${n} left the room`, "info"));
-    // 🌐 the host started — every guest auto-launches into the same night
-    const unStart = net.on("start", () => {
-      if (!net.isHost && useGame.getState().screen !== "play") useGame.getState().mpStartRun?.();
-    });
-    return () => { unLobby(); unState(); unChat(); unJoin(); unLeave(); unStart(); };
+    // 🏟️ the host's `start` event is handled globally in GameRoot (works on the
+    // match lobby screen too) — no duplicate listener here
+    return () => { unLobby(); unState(); unChat(); unJoin(); unLeave(); };
   }, [patchMp, pushMpChat, pushToast]);
 
   // ping chip
@@ -114,7 +113,7 @@ export function Multiplayer() {
         busy: false, code: lobby.code, isHost: lobby.host === net.mySid, error: "",
         players: lobby.players.map((p) => ({ sid: p.sid, slot: p.slot, name: p.name, ready: p.ready, self: p.sid === net.mySid })),
       });
-      pushToast(net.sessionStarted ? "⚡ Joined a LIVE night — dropping you in!" : `🌐 Joined room ${lobby.code}!`, "good");
+      pushToast(net.sessionStarted ? "⚡ Joined a LIVE night — waiting in the match lobby!" : `🌐 Joined room ${lobby.code}!`, "good");
     } catch (e) {
       patchMp({ busy: false, error: e instanceof Error ? e.message : "Could not join" });
     }
@@ -133,11 +132,15 @@ export function Multiplayer() {
         players: r.lobby.players.map((p) => ({ sid: p.sid, slot: p.slot, name: p.name, ready: p.ready, self: p.sid === net.mySid })),
       });
       if (r.started) {
-        pushToast("⚡ Night already running — a bot freed their seat for you!", "good");
-        // 💫 drop straight in — the auto-launch effect below is the backstop for
-        // by-code joins; here we fire immediately (the screen guard inside
-        // mpStartRun keeps a double-launch harmless)
-        setTimeout(() => useGame.getState().mpStartRun?.(), 350);
+        pushToast("⚡ Night already running — you'll wait in the match lobby, then EVERYONE restarts together!", "good");
+        // 🏟️ PUBG flow: never drop into a mismatched mid-match world — park in
+        // the shared 30 s lobby; the whole room rewinds to night 1 when it fires
+        void enterMatchLobby();
+      } else if (r.lobby.phase === "lobby" && (r.lobby.lobbyEndsAt ?? 0) > Date.now()) {
+        // 🏟️ the room is mid-gathering (shared countdown running) — park in the
+        // match lobby and launch together when the clock fires
+        pushToast(`⚡ Matched into a gathering lobby (${r.lobby.players.length} souls) — launching together!`, "good");
+        void enterMatchLobby();
       } else if (r.lobby.players.length > 1) {
         pushToast(`🌐 Joined an open session (${r.lobby.players.length} souls waiting)!`, "good");
       } else {
@@ -148,17 +151,18 @@ export function Multiplayer() {
     }
   }, [name, look, patchMp, pushToast]);
 
-  /* a live session + not the host = drop straight into the running night
-   * (covers quick-join AND joining-by-code while the week is underway) */
+  /* 🏟️ a live session + not the host = wait in the PUBG-style match lobby
+   * (covers by-code joins while the week is underway — the room regathers and
+   * everyone restarts together when the shared clock fires) */
   const inRoom = !!mp.code;
   const joiningLive = inRoom && net.sessionStarted && !net.isHost;
   useEffect(() => {
     if (!inRoom || !net.sessionStarted || net.isHost) return;
     const t = setTimeout(() => {
-      if (useGame.getState().screen === "landing" || useGame.getState().screen === "lobby") {
-        useGame.getState().mpStartRun?.();
+      if (useGame.getState().screen === "lobby") {
+        void enterMatchLobby();
       }
-    }, 900);
+    }, 600);
     return () => clearTimeout(t);
   }, [inRoom, mp.code]);
 
@@ -192,9 +196,21 @@ export function Multiplayer() {
               The beast pack grows with every player…
             </p>
           </div>
-          <Button variant="ghost" size="sm" onClick={() => (inRoom ? doLeave() : setMpOpen(false))}>
-            {inRoom ? "Leave room" : "✕ Close"}
-          </Button>
+          <div className="flex shrink-0 gap-2">
+            {inRoom && (
+              <Button variant="ghost" size="sm" onClick={doLeave}>
+                Leave room
+              </Button>
+            )}
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={doLeave}
+              className="border-white/25 bg-white/10 font-bold text-slate-100 hover:bg-white/20"
+            >
+              🏠 Main menu
+            </Button>
+          </div>
         </div>
 
         {/* connection error */}
@@ -275,7 +291,7 @@ export function Multiplayer() {
             {/* ⚡ live session banner — dropping into the running night */}
             {joiningLive && (
               <div className="rounded-2xl border border-cyan-400/40 bg-cyan-400/10 px-5 py-3 text-sm font-bold text-cyan-100 md:col-span-5">
-                🔴 Night in progress — dropping you into the running session (a bot freed their seat)…
+                🔴 Night in progress — you&apos;ll wait in the match lobby; the night <b>restarts fresh</b> so everyone plays together.
               </div>
             )}
             {/* room + players */}
@@ -393,7 +409,7 @@ export function Multiplayer() {
           <h3 className="font-black text-slate-200">How co-op works</h3>
           <ul className="mt-2 grid gap-1.5 md:grid-cols-2">
             <li>🌙 The host owns the story clock &amp; the possession dice.</li>
-            <li>🎮 <b className="text-slate-200">Even SOLO nights are joinable</b> — press Play and anyone who Quick joins lands in <b className="text-slate-200">your</b> world; a bot frees their seat (100 souls, always).</li>
+            <li>🎮 <b className="text-slate-200">Every Play press opens a PUBG-style match lobby</b> — a shared 30 s countdown gathers friends before the night launches; AI bots (survivors, vote-runners &amp; police) fill the rest of the 100-soul session.</li>
             <li>🐾 <b className="text-slate-200">Any soul can turn</b> — beasts hunt everyone, and a player-beast&apos;s claws reach across the wire.</li>
             <li>🚗 <b className="text-slate-200">Ride shotgun</b> — walk up to a car someone is driving and press E: passengers ride along, license-free.</li>
             <li>💡 Cars are mirrored live — their pose, <b className="text-slate-200">headlights</b> and wheels stream to every screen in real time.</li>

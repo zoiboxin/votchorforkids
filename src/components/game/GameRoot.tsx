@@ -10,6 +10,7 @@ import { sfx, startMusic, stopMusic, stopDrone } from "@/lib/game/audio";
 import { useGameInput, requestGameLock } from "./Scene";
 import { net } from "@/lib/game/net/client";
 import { attachNet, type NetHandle } from "@/lib/game/net/engineNet";
+import { enterMatchLobby, leaveMatchmaking } from "@/lib/game/net/matchlobby";
 import type { Appearance } from "@/lib/game/constants";
 import { Hud } from "./Hud";
 import { Creator } from "./Creator";
@@ -17,6 +18,7 @@ import { Landing } from "./Landing";
 import { Profile } from "./Profile";
 import { VictoryModal } from "./VictoryModal";
 import { Multiplayer } from "./Multiplayer";
+import { MatchLobby } from "./MatchLobby";
 
 const Scene = dynamic(() => import("./Scene").then((m) => m.Scene), {
   ssr: false,
@@ -52,6 +54,19 @@ export function GameRoot() {
       engineRef.current.reset(useGame.getState().look);
       useGame.getState().setVictoryOpen(false);
     }
+  }, []);
+
+  /** 🏟️ PUBG-style entry: don't boot the world alone — park in the MATCH LOBBY
+   *  with a shared 30 s countdown. Friends who Quick join during the window
+   *  launch TOGETHER with you; AI bots (survivors, runners & police) fill the
+   *  rest of the 100-soul session. */
+  const startMatchLobby = useCallback(() => {
+    useGame.getState().setPaused(false);
+    useGame.getState().setPauseReport(false);
+    useGame.getState().setVictoryOpen(false);
+    sfx.click();
+    startMusic();
+    void enterMatchLobby();
   }, []);
 
   const startGame = useCallback(() => {
@@ -148,16 +163,69 @@ export function GameRoot() {
     }, 650);
   }, [pushToast, makeOnReset]);
 
-  /* ---------- 🌐 host presses START in the lobby → everyone boots a net run ---------- */
+  /* ---------- 🌐 match launch — every lobby member boots the night together ----------
+   * The MatchLobby countdown is the primary trigger; this shared fn is the ONE
+   * launch path (guarded so a timer + a racing `start` event can't double-boot). */
   useEffect(() => {
     useGame.getState().setMpStartRun(() => {
+      const sc = useGame.getState().screen;
+      if (sc === "play" || sc === "connecting") return; // already in a run
       mpRef.current = true;
-      if (net.isHost) net.send({ t: "start" }); // guests auto-launch on this
+      if (net.isHost) {
+        net.send({ t: "start" }); // guests auto-launch on this
+        net.sessionStarted = true; // our room is LIVE now (relobby-aware)
+      }
       net.send({ t: "hello" }); // a friendly wave that also verifies the wire
       startGame();
     });
     return () => useGame.getState().setMpStartRun(null);
   }, [startGame]);
+
+  /* ---------- 🏟️ the host's `start` event = the launch backstop ----------
+   * The shared countdown fires on every client's own clock; machines a beat
+   * apart still converge because the host's start event sweeps the lobbies. */
+  useEffect(() => {
+    const unStart = net.on("start", () => {
+      if (net.isHost) return; // the host launches itself via the countdown
+      const sc = useGame.getState().screen;
+      if (sc === "matchlobby" || sc === "lobby" || sc === "landing") {
+        useGame.getState().mpStartRun?.();
+      }
+    });
+    return unStart;
+  }, []);
+
+  /* ---------- 🔄 restart-together (relobby) ----------
+   * While WE are inside a running night, a fresh shared countdown means new
+   * survivors are waiting in the match lobby — arm a self-reset so the whole
+   * room rewinds to night 1 TOGETHER when it fires. Nobody ever plays a
+   * mismatched mid-match world (the "P1 is ahead, P2 sees something else" bug). */
+  const relobbyAtRef = useRef(0);
+  useEffect(() => {
+    const unLobby = net.onLobby((l) => {
+      if (useGame.getState().screen !== "play") return;
+      if (l.phase === "lobby" && l.lobbyEndsAt && l.lobbyEndsAt > Date.now() && l.lobbyEndsAt !== relobbyAtRef.current) {
+        relobbyAtRef.current = l.lobbyEndsAt;
+        useGame.getState().pushToast("🏟️ New survivors are gathering in the lobby — the night RESTARTS fresh for everyone shortly!", "info");
+      }
+    });
+    const t = setInterval(() => {
+      const at = relobbyAtRef.current;
+      if (!at || Date.now() < at) return;
+      relobbyAtRef.current = 0;
+      if (useGame.getState().screen !== "play") return;
+      const eng = engineRef.current;
+      if (eng) {
+        endSavedRef.current = false; // 💾 the fresh week saves its own end
+        eng.reset(useGame.getState().look);
+        netRef.current?.resync(); // 🏟️ re-seed remote souls after the rewind
+        useGame.getState().setVictoryOpen(false);
+        useGame.getState().pushToast("🌙 Fresh night — the whole squad starts together!", "good");
+      }
+      if (net.isHost) net.send({ t: "start" }); // flip the room back to live for the next joiner
+    }, 500);
+    return () => { unLobby(); clearInterval(t); };
+  }, []);
 
   const backToMenu = useCallback(() => {
     stopMusic();
@@ -189,16 +257,15 @@ export function GameRoot() {
     }
     useGame.getState().setPaused(false);
     useGame.getState().setPauseReport(false);
-    // leaving a net run: drop the relay wiring but STAY in the lobby room
+    // 🏠 quit → the MAIN LANDING PAGE, always (it used to strand players on the
+    // Multiplayer Nights panel with no obvious way back). The relay seat is
+    // released cleanly — quick-joiners get a fresh matchmaking room of their own.
     netRef.current?.detach();
     netRef.current = null;
     mpRef.current = false;
-    if (net.code) {
-      useGame.getState().setScreen("lobby");
-      useGame.getState().setMpOpen(true);
-    } else {
-      setScreen("landing");
-    }
+    leaveMatchmaking();
+    useGame.getState().setMpOpen(false);
+    setScreen("landing");
   }, [setScreen]);
 
   useGameInput(engine);
@@ -241,13 +308,16 @@ export function GameRoot() {
       {screen === "profile" && <Profile />}
 
       {/* 7Nights: no side selection — everyone joins as a survivor (screen kept for legacy saves) */}
-      {screen === "select" && <Creator onStart={startGame} />}
+      {screen === "select" && <Creator onStart={startMatchLobby} />}
 
-      {screen === "outfit" && <Creator onStart={startGame} />}
+      {screen === "outfit" && <Creator onStart={startMatchLobby} />}
 
-      {screen === "creator" && <Creator onStart={startGame} />}
+      {screen === "creator" && <Creator onStart={startMatchLobby} />}
 
       {screen === "lobby" && <Multiplayer />}
+
+      {/* 🏟️ PUBG-style match lobby — the shared 30 s countdown before the night */}
+      {screen === "matchlobby" && <MatchLobby />}
 
       {(screen === "connecting" || screen === "play") && engine && (
         <>
@@ -256,10 +326,11 @@ export function GameRoot() {
           <VictoryModal
             engine={engine}
             onReplay={() => {
-              // 🌐 the host's "Play again" rewinds the WHOLE room to day 1
-              if (mpRef.current && net.isHost) net.send({ t: "reset" });
+              // 🏟️ "Play again" re-queues through the match lobby — the host,
+              // guests & fresh quick-joiners all regather on the shared clock
+              // and launch a brand-new 100-soul night together
               setRunId((r) => r + 1);
-              startGame();
+              startMatchLobby();
             }}
             onMenu={backToMenu}
           />
