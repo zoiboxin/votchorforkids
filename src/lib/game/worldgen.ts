@@ -386,10 +386,21 @@ export function railPoint(a: number, off = 0): { x: number; z: number; rot: numb
   const r = RAILWAY.R + off;
   return { x: Math.cos(a) * r, z: Math.sin(a) * r, rot: -(a + Math.PI / 2) };
 }
+
+/** 🚂 true while (x,z) sits within `margin` of the branch line's track bed —
+ *  the arc only spans angles [a0, a1] (the eastern wedge is rail-free), so
+ *  points outside that sweep are always clear. Farms, sheds, fields and
+ *  props all keep off the rails with this check. */
+export function nearRailway(x: number, z: number, margin: number): boolean {
+  const a = Math.atan2(z, x);
+  if (!(a >= RAILWAY.a0 || a <= RAILWAY.a1 - Math.PI * 2)) return false;
+  return Math.abs(Math.hypot(x, z) - RAILWAY.R) < margin;
+}
 /** the country station house sits just inside the platform, and the crossing
- *  keeper's cottage guards the farm lane at the level crossing */
+ *  keeper's cottage guards the farm lane at the level crossing (tucked clear
+ *  of the track bed — its corner used to brush the rails) */
 export const RAILWAY_stationHouse = railPoint(RAILWAY.station.a, -14.5);
-export const RAILWAY_crossCottage = { x: 9.5, z: RAILWAY.R - 9 };
+export const RAILWAY_crossCottage = { x: 10, z: RAILWAY.R - 13 };
 export const RAILWAY_waterTower = railPoint(RAILWAY.station.a + 0.055, -20);
 export const RAILWAY_signalBox = railPoint(RAILWAY.station.a - 0.055, -20);
 
@@ -399,11 +410,15 @@ export const RAILWAY_signalBox = railPoint(RAILWAY.station.a - 0.055, -20);
 export const FIELDS_BASE: { x: number; z: number; rot: number; crop: number }[] = [
   { x: 410, z: -85, rot: 0.3, crop: 0 }, { x: 434, z: -159, rot: -0.2, crop: 1 },
   { x: 366, z: 222, rot: 0.5, crop: 0 }, { x: 407, z: 198, rot: -0.4, crop: 2 },
-  { x: -403, z: 137, rot: 0.2, crop: 1 }, { x: -368, z: -210, rot: -0.3, crop: 2 },
+  // 🚂 west-arc paddocks sit INSIDE the branch line (the old -403/-368/-430
+  // plots had corners on the track bed); the north-west one moved OUTSIDE it
+  { x: -390, z: 133, rot: 0.2, crop: 1 }, { x: -359, z: -205, rot: -0.3, crop: 2 },
   // 🚜 three fresh paddocks — more to harvest, more to guard at night
-  { x: 430, z: -60, rot: 0.15, crop: 1 }, { x: -430, z: 40, rot: -0.35, crop: 0 }, { x: -360, z: 262, rot: 0.25, crop: 1 },
+  { x: 430, z: -60, rot: 0.15, crop: 1 }, { x: -411, z: 38, rot: -0.35, crop: 0 }, { x: -373, z: 271, rot: 0.25, crop: 1 },
 ];
-export const BARN_BASE: [number, number][] = [[425, -122], [374, 271], [-418, 93]];
+// 🚂 the third barn slid out past the branch line — its old corner (and the
+// woodshed it spawned) stood right on the track bed
+export const BARN_BASE: [number, number][] = [[425, -122], [374, 271], [-453, 101]];
 
 export const FARMKIT = (() => {
   const farmhouses = BARN_BASE.map(([x, z]) => ({ x: x - 17, z: z + 10, rot: Math.atan2(-z, -x) }));
@@ -1306,11 +1321,12 @@ export function generateWorld(seed = WORLD_SEED): World {
     }
   }
 
-  /** every scatter prop must clear the landmarks, water, paths & tree trunks */
+  /** every scatter prop must clear the landmarks, water, paths, tree trunks & the branch line */
   const clearOf = (x: number, z: number, pad: number) => {
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + pad) return false;
     if (graveyardLaneDist(x, z) < pad) return false;
     if (inAirportPlot(x, z)) return false;
+    if (nearRailway(x, z, 5 + pad)) return false; // 🚂 no tufts/bushes/ferns sprouting on the rails
     if (buildings.some((b) => Math.abs(x - b.x) < b.w + pad && Math.abs(z - b.z) < b.d + pad)) return false;
     if (fields.some((f) => Math.abs(x - f.x) < f.w + pad && Math.abs(z - f.z) < f.d + pad)) return false;
     if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 8.5)) return false;
@@ -1494,6 +1510,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     const a = Math.atan2(bz, bx);
     const wx = bx + Math.cos(a + 0.9) * 16, wz = bz + Math.sin(a + 0.9) * 16;
     if (fields.some((f) => Math.abs(wx - f.x) < f.w + 2 && Math.abs(wz - f.z) < f.d + 2)) continue;
+    if (nearRailway(wx, wz, 8)) continue; // 🚂 never a woodshed on the branch line
     woodsheds.push({ x: wx, z: wz, rot: a + Math.PI });
   }
   // 🛒 hand carts lean against two farmhouses
@@ -1554,6 +1571,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     const a = range(rnd, 0, Math.PI * 2), d = range(rnd, CITY_RADIUS + 6, FARM_RADIUS - 8);
     const x = Math.cos(a) * d, z = Math.sin(a) * d;
     if (inAirportPlot(x, z)) continue;                         // keep the apron pretty
+    if (nearRailway(x, z, 7)) continue;                        // 🚂 no flowers on the branch line
     if (fields.some((f) => Math.abs(x - f.x) < f.w + 1 && Math.abs(z - f.z) < f.d + 1)) continue;
     addFlower(x, z);
   }
