@@ -45,6 +45,8 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
   engine.mpSlot = slot;
   engine.mpCode = code;
   engine.playerName = name;
+  engine.ambientMirror = false; // a fresh seat restarts the ambient mirror cleanly
+  engine.applySeatSpawn(slot); // 🎲 pin our drop to the deterministic seat spot
   void look; // the player's own look is already baked into the engine
 
   // 🛡️ a reconnect reclaims our seat — possibly at a NEW slot: re-bind the
@@ -242,6 +244,9 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
           : (engine.clock + dc * 0.15 + 1) % 1;
       }
     }
+    // 🌐✈️ ambient mirror — snap traffic angles + the bot-plane fleet onto the
+    // host's truth (guest-side; the host's own sim IS the truth)
+    if (ev.amb) engine.applyNetAmbient(ev.amb);
   });
 
   on("crewDeath", (ev) => engine.netCrewDeath(ev.idx, ev.clue, ev.slain, ev.loot));
@@ -315,7 +320,16 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
   // host keeps a tight 2 Hz clock so guest transitions never drift far
   const phaseTimer = setInterval(() => {
     if (!isHost || !engine.running) return;
-    net.send({ t: "phase", phase: engine.phase, nightNo: engine.nightNo, phaseLeft: Math.max(0, Math.round(engine.phaseT)), clock: Math.round(engine.clock * 100) / 100 });
+    // 🌐✈️ ride the ambient-world snapshot along with the clock — ring-traffic
+    // angles + the bot-plane fleet pose, so every guest's screen shows the SAME
+    // vehicles in the SAME places (only streamed when someone else is listening)
+    const amb = net.lobby && net.lobby.players.length > 1
+      ? {
+          tr: engine.traffic.map((t) => Math.round(t.a * 1000) / 1000),
+          pl: engine.planes.map((p) => [Math.round(p.x * 10) / 10, Math.round(p.z * 10) / 10, Math.round(p.alt * 10) / 10, Math.round(p.hdg * 1000) / 1000]),
+        }
+      : undefined;
+    net.send({ t: "phase", phase: engine.phase, nightNo: engine.nightNo, phaseLeft: Math.max(0, Math.round(engine.phaseT)), clock: Math.round(engine.clock * 100) / 100, amb });
     // 🌐 the possession roster rides along at night — a mid-night quick-joiner
     // lands with NO local dusk (they never ran choosePossessed), so unless the
     // roster arrives on a timer they'd stare at an empty, zombie-less night

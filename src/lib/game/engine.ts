@@ -512,6 +512,9 @@ function roadPath(fx: number, fz: number, tx: number, tz: number): { x: number; 
 
 export class GameEngine {
   world: World;
+  /** 🌐 shared gameplay seed — relay sessions derive it from the room code so
+   *  every client grows the same bots/loot/plane schedule; solo stays random. */
+  rngSeed: number | undefined;
   rnd = mulberry32(2024 + Math.floor(Math.random() * 1e6));
   look: Appearance;
   playerName = "You";
@@ -799,12 +802,22 @@ export class GameEngine {
   netEmit: ((ev: MpEvent) => void) | null = null;
   /** wired by the net glue: called at the end of every update() tick */
   netTick: ((dt: number) => void) | null = null;
+  /** 🌐✈️ ambient-world mirror (guests) — the HOST flies the bot planes and owns
+   *  the ring-traffic clock; guests park their local ATC machine and render the
+   *  host-streamed truth so every screen shows the same vehicles in the sky. */
+  ambientMirror = false;
 
-  constructor(world: World, look: Appearance, toast: ToastFn) {
+  constructor(world: World, look: Appearance, toast: ToastFn, rngSeed?: number, seat?: number) {
     this.world = world;
     this.look = look;
     this.rawToast = toast;
     this.side = look.fac;
+    // 🌐 a relay session shares ONE gameplay seed (from the room code) and ONE
+    // seat slot — set BEFORE rollPlayerSpawn/spawnAll so the whole world grows
+    // identically on every client (same bots, same loot, same plane schedule,
+    // and YOUR drop spot = the deterministic per-seat spot).
+    if (rngSeed !== undefined) { this.rngSeed = rngSeed; this.rnd = mulberry32(2024 + (rngSeed % 1000000)); }
+    if (seat !== undefined && seat >= 0) { this.mp = true; this.mpSlot = seat; }
     // 🌲 start fetching the polyfork wildlife GLBs right away — by the time you
     // reach the jungle they should be parsed and ready to spawn
     preloadModels();
@@ -873,6 +886,17 @@ export class GameEngine {
   spawnSpotFor(slot: number): { x: number; z: number } {
     const r = mulberry32(0x7e57123 ^ ((slot + 1) * 2654435761));
     return freeSpot(r, this.world, 14, CITY_RADIUS - 14);
+  }
+
+  /** 🌐 pin OUR spawn to the deterministic per-seat drop spot (same answer on
+   *  every client) — the net glue calls this the moment the seat is known, so a
+   *  fresh remote avatar materialises exactly where we actually stand. */
+  applySeatSpawn(slot: number) {
+    this.mpSlot = slot;
+    const s = this.spawnSpotFor(slot);
+    this.playerSpawn = s;
+    this.player.x = s.x;
+    this.player.z = s.z;
   }
   /** 🎲 PUBG-style drop: YOU parachute into a random street every match.
    *  Multiplayer: your seat slot picks the spot (same on every client). */
@@ -1192,6 +1216,21 @@ export class GameEngine {
   private updatePlanes(dt: number) {
     for (let pi = 0; pi < this.planes.length; pi++) {
       const pl = this.planes[pi];
+      if (this.ambientMirror) {
+        // 🌐 guest mirror — the HOST flies this fleet: extrapolate the mirrored
+        // pose between 2 Hz packets, spin props, keep the fuselage discs glued;
+        // the local ATC state machine below stays dark.
+        const pv = this.planeNetPrev.get(pi);
+        if (pv) {
+          pl.x += pv.vx * dt;
+          pl.z += pv.vz * dt;
+          pl.alt = Math.max(0, pl.alt + pv.valt * dt);
+          pl.hdg += pv.vh * dt;
+        }
+        pl.propT += dt * (pl.alt > 0.5 ? 12 : 0.6);
+        const wantPitchM = pv ? (pv.valt > 2 ? 0.14 : pv.valt < -2 ? -0.1 : 0) : 0;
+        pl.pitch += clamp(wantPitchM - pl.pitch, -0.4 * dt, 0.4 * dt);
+      } else {
       pl.propT += dt * (pl.mode === "parked" ? 0.6 : 9 + pl.spd * 0.35);
       switch (pl.mode) {
         case "parked": {
@@ -1315,19 +1354,33 @@ export class GameEngine {
         case "final": {
           // Two-stage landing: (a) sweep onto the extended centreline FIRST —
           // planes can arrive at the entry fix on ANY heading (the cruise arc
-          // ends anywhere) — and only once lined up eastbound does (b) start
-          // the steady glide down the centreline into the touchdown zone.
-          // Nothing descends until it is lined up, so every touchdown is a
-          // straight, on-centreline landing inside the runway.
-          const aligned = Math.abs(pl.z - AIRPORT.rz) < 7 && Math.abs(Math.sin(pl.hdg)) < 0.35;
+          // ends anywhere) — and only once lined up EASTBOUND (hdg ≈ 0, not
+          // merely |sin hdg| small: a westbound crosser used to read as
+          // "aligned" and touch down flying the wrong way) does (b) start the
+          // steady glide — gated by glide distance (≈ alt × 26/11 u) so the
+          // predicted touchdown ALWAYS lands inside the strip, clear of BOTH
+          // thresholds (east gate rx1-8, west gate rx0+8 — a plane that crosses
+          // the entry fix already low on the centreline used to start its glide
+          // too early and drop short of the west threshold). Nothing descends
+          // until lined up AND the math lands on the runway.
+          const hd = ((pl.hdg + Math.PI) % TAU + TAU) % TAU - Math.PI;
+          const glided = (pl.alt * PLANE_APPR_SPD) / 11;
+          const aligned = Math.abs(pl.z - AIRPORT.rz) < 7 && Math.abs(hd) < 0.35
+            && pl.x + glided >= AIRPORT.rx0 + 8 && pl.x + glided <= AIRPORT.rx1 - 8;
           if (aligned) {
             // stage (b) — straight approach down the centreline
             pl.hdg = this.steerHdg(pl.hdg, 0, PLANE_TURN_AIR * 0.9 * dt);
             pl.z += (AIRPORT.rz - pl.z) * Math.min(1, 1.6 * dt);
             pl.x += Math.cos(pl.hdg) * pl.spd * dt;
             pl.z += Math.sin(pl.hdg) * pl.spd * dt;
-            // steady glide slope (26 u/s × ~6s ≈ 156u of descent)
+            // steady glide slope (11 u/s × ~6s ≈ 156u of descent)
             pl.alt = Math.max(0, pl.alt - Math.max(11, pl.alt * 0.15) * dt);
+            // 🛩️ defensive: descending but somehow past the strip — climb out
+            if (pl.x > AIRPORT.rx1 + 6 && pl.alt > 5) {
+              pl.mode = "climb";
+              pl.arcR = 336 + this.rnd() * 96;
+              break;
+            }
           } else {
             // stage (a) — converge onto the extended centreline, altitude held
             const aimX = Math.max(pl.x + 65, AIRPORT.rx0 + 20);
@@ -1391,16 +1444,18 @@ export class GameEngine {
           break;
         }
       }
-      // ✈️ ATC safety net — the runway holder must always be in a runway phase.
-      // If a holder ever ends up parked or cruising (impossible by design, but
-      // cheap to prove wrong) the lock self-releases instead of dead-locking.
-      if (this.runwayBy >= 0 && this.runwayBy < this.planes.length) {
-        const hold = this.planes[this.runwayBy];
-        if (hold.mode === "parked" || hold.mode === "cruise" || hold.mode === "joinArc") this.runwayBy = -1;
-      }
       // visual pitch: nose up while climbing, down on approach, level elsewhere
       const wantPitch = pl.mode === "climb" ? 0.16 : pl.mode === "final" && pl.alt > 2 ? -0.1 : pl.mode === "roll" ? 0.05 : 0;
       pl.pitch += clamp(wantPitch - pl.pitch, -0.4 * dt, 0.4 * dt);
+      } // ✈️ end of the local-ATC branch — guests mirror the host's fleet instead
+      // ✈️ ATC safety net — the runway holder must always be in a runway phase.
+      // If a holder ever ends up parked or cruising (impossible by design, but
+      // cheap to prove wrong) the lock self-releases instead of dead-locking.
+      // (guests skip it — the host's fleet holds the locks, guests just watch)
+      if (!this.ambientMirror && this.runwayBy >= 0 && this.runwayBy < this.planes.length) {
+        const hold = this.planes[this.runwayBy];
+        if (hold.mode === "parked" || hold.mode === "cruise" || hold.mode === "joinArc") this.runwayBy = -1;
+      }
 
       // ✈️ drag the fuselage discs along the body — airborne planes fold their
       // colliders away so kids can play right underneath a cruising airliner.
@@ -1551,6 +1606,9 @@ export class GameEngine {
     this.look = look;
     this.side = look.fac;
     this.policePerk = policeOutfitOf(look.fac === "police" ? look.outfit : "").stats;
+    // 🌐 rewind the shared RNG to the session seed — a restart-together re-rolls
+    // votes/cops from the SAME stream on every client (no per-client drift).
+    if (this.rngSeed !== undefined) this.rnd = mulberry32(2024 + (this.rngSeed % 1000000));
     // 🎲 a fresh match drops you somewhere NEW (cops & crew scatter around it)
     this.rollPlayerSpawn();
     this.player = newBody(this.playerSpawn.x, this.playerSpawn.z);
@@ -1608,6 +1666,7 @@ export class GameEngine {
     for (const te of this.toolEnts) { te.active = true; te.respawn = 0; }
     this.crew = [];
     this.spawnCrew();
+    this.replacedKey = ""; // 🌐 crew was rebuilt — let applyBotReplacement free the real-soul chairs again
     // 🌐 net bookkeeping starts clean — the PEOPLE (remotes) stay across resets
     this.mpBeastSlots = [];
     this.netScores.clear();
@@ -2242,6 +2301,47 @@ export class GameEngine {
         this.aiPrev.set(`d${e.idx}`, { x: e.x, z: e.z, t: now });
         an.x = e.x; an.z = e.z; an.face = e.yaw;
         if (e.dead && !an.dead) { an.dead = true; an.deadT = 0; }
+      }
+    }
+  }
+
+  /** per-plane mirror extrapolation state (packet-to-packet velocity estimates) */
+  private planeNetPrev = new Map<number, { x: number; z: number; alt: number; hdg: number; t: number; vx: number; vz: number; valt: number; vh: number }>();
+
+  /** 🌐✈️ ambient-world mirror (guests only) — the host streams the ring-road
+   *  traffic angles and the bot-plane fleet poses @2 Hz inside the phase event;
+   *  guests snap their copies onto the host's truth so EVERY screen shows the
+   *  same vehicles in the same places (the "buildings match but traffic/planes
+   *  differ" bug). Local integration + velocity extrapolation keep motion
+   *  smooth between the 2 Hz corrections. */
+  applyNetAmbient(amb: { tr: number[]; pl: number[][] }) {
+    if (!this.mp || this.mpHost) return;
+    this.ambientMirror = true;
+    const now = performance.now();
+    if (amb.tr) {
+      for (let i = 0; i < amb.tr.length && i < this.traffic.length; i++) {
+        const t = this.traffic[i];
+        t.a = amb.tr[i];
+        const pt = ringTrafficPoint(t.a, t.r, t.dir);
+        t.x = pt.x; t.z = pt.z; t.rot = pt.rot;
+      }
+    }
+    if (amb.pl) {
+      for (let i = 0; i < amb.pl.length && i < this.planes.length; i++) {
+        const p = amb.pl[i];
+        const pl = this.planes[i];
+        if (!p || p.length < 4) continue;
+        const prev = this.planeNetPrev.get(i);
+        const dtms = prev ? Math.max(16, now - prev.t) : 500;
+        const vx = prev ? Math.max(-60, Math.min(60, ((p[0] - prev.x) / dtms) * 1000)) : 0;
+        const vz = prev ? Math.max(-60, Math.min(60, ((p[1] - prev.z) / dtms) * 1000)) : 0;
+        const valt = prev ? Math.max(-30, Math.min(30, ((p[2] - prev.alt) / dtms) * 1000)) : 0;
+        const vh = prev ? Math.max(-1.2, Math.min(1.2, (((p[3] - prev.hdg + Math.PI) % TAU + TAU) % TAU - Math.PI) / dtms * 1000)) : 0;
+        this.planeNetPrev.set(i, { x: p[0], z: p[1], alt: p[2], hdg: p[3], t: now, vx, vz, valt, vh });
+        pl.x = p[0]; pl.z = p[1]; pl.alt = p[2]; pl.hdg = p[3];
+        pl.spd = pl.alt > 0.5 ? PLANE_CRUISE_SPD : PLANE_TAXI_SPD;
+        pl.mode = "parked"; // inert — ambientMirror keeps the local ATC machine dark
+        pl.t = 9e9; // never request the runway locally
       }
     }
   }

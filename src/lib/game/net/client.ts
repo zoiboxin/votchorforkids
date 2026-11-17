@@ -16,6 +16,15 @@ import { io, type Socket } from "socket.io-client";
 import { Interp, packState, unpackAi, unpackState, unpackCar, type AiEntry, type NetState, type CarState } from "./protocol";
 import type { Appearance } from "../constants";
 
+/** 🎲 derive the shared gameplay RNG seed from the room code — every client in
+ *  the same session grows IDENTICAL bots / loot / plane schedules from the same
+ *  mulberry32 stream (the deterministic-world promise now covers gameplay too). */
+export function sessionSeed(code: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < code.length; i++) { h ^= code.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return Math.abs(h) % 1000000;
+}
+
 export interface LobbyPlayer {
   sid: string;
   slot: number;
@@ -37,8 +46,12 @@ export interface LobbySnapshot {
 export type ConnState = "idle" | "connecting" | "lobby" | "room" | "error" | "closed";
 
 /** Every wire event the gameplay layer understands (relay stamps `s` = sender slot). */
+/** 🌐✈️ host-streamed ambient world snapshot riding the 2 Hz phase event:
+ *  tr = ring-traffic angles (radians, one per car), pl = [x, z, alt, hdg] per bot plane. */
+export interface NetAmbient { tr: number[]; pl: number[][]; }
+
 export type MpEvent =
-  | { t: "phase"; phase: string; nightNo: number; phaseLeft: number; clock?: number }
+  | { t: "phase"; phase: string; nightNo: number; phaseLeft: number; clock?: number; amb?: NetAmbient }
   | { t: "roster"; possessed: number[]; beastSlots: number[]; nightNo: number }
   | { t: "crewDeath"; idx: number; clue: string; slain: boolean; loot?: { x: number; z: number; amt: number; label: string } }
   | { t: "dmg"; target: number; amount: number }

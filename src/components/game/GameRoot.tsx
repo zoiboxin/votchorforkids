@@ -8,7 +8,7 @@ import { terrainHeight } from "@/lib/game/worldgen";
 import { useGame } from "./store";
 import { sfx, startMusic, stopMusic, stopDrone } from "@/lib/game/audio";
 import { useGameInput, requestGameLock } from "./Scene";
-import { net } from "@/lib/game/net/client";
+import { net, sessionSeed } from "@/lib/game/net/client";
 import { attachNet, type NetHandle } from "@/lib/game/net/engineNet";
 import { enterMatchLobby, leaveMatchmaking } from "@/lib/game/net/matchlobby";
 import type { Appearance } from "@/lib/game/constants";
@@ -52,6 +52,7 @@ export function GameRoot() {
     endSavedRef.current = false; // 💾 the fresh week saves its own end
     if (engineRef.current) {
       engineRef.current.reset(useGame.getState().look);
+      netRef.current?.resync(); // 🌐 fresh crew — re-free the real-soul chairs
       useGame.getState().setVictoryOpen(false);
     }
   }, []);
@@ -83,83 +84,104 @@ export function GameRoot() {
       // read the look FRESH from the store — the join screen applies the final
       // look right before calling this, so a closure-captured look would lag a beat
       const freshLook = useGame.getState().look;
-      let eng = engineRef.current;
-      if (!eng) {
-        eng = new GameEngine(WORLD, freshLook, (msg, kind) => pushToast(msg, kind));
-        engineRef.current = eng;
-        setEngine(eng);
-        (window as unknown as { __vc?: unknown }).__vc = { engine: eng, world: WORLD, terrainH: terrainHeight, net };
-        (window as unknown as { __vcStore?: unknown }).__vcStore = useGame; // debug/test hook
+
+      /** 🌐 ONE boot path for every seat state — engine + (optional) net glue.
+       *  The seat is claimed BEFORE the world boots so the gameplay seed (room
+       *  code) and the drop slot are known at construction: bots, loot, planes
+       *  and your spawn point grow IDENTICALLY on every client. */
+      const boot = () => {
+        const mpSeat = mpRef.current && net.code && net.slot >= 0;
+        const seed = mpSeat ? sessionSeed(net.code) : undefined;
+        const seat = mpSeat ? net.slot : undefined;
+        let eng = engineRef.current;
+        if (!eng) {
+          eng = new GameEngine(WORLD, freshLook, (msg, kind) => pushToast(msg, kind), seed, seat);
+          engineRef.current = eng;
+          setEngine(eng);
+          (window as unknown as { __vc?: unknown }).__vc = { engine: eng, world: WORLD, terrainH: terrainHeight, net };
+          (window as unknown as { __vcStore?: unknown }).__vcStore = useGame; // debug/test hook
+        }
+        // 🌐 net glue BEFORE reset — the engine learns mp/mpSlot first, so the
+        // reset's rollPlayerSpawn lands on the deterministic per-seat drop spot
+        if (mpSeat) {
+          netRef.current?.detach();
+          const me = net.lobby?.players.find((p) => p.sid === net.mySid);
+          netRef.current = attachNet({
+            engine: eng,
+            code: net.code,
+            slot: net.slot,
+            isHost: net.isHost,
+            name: useGame.getState().playerName || me?.name || "Survivor",
+            look: freshLook as Appearance,
+            onReset: makeOnReset(),
+          });
+        } else {
+          netRef.current?.detach();
+          netRef.current = null;
+        }
         // FIRST RUN init: the constructor spawns the town, but only reset() grants
         // the driving license, scatters the cash piles, homes the vans & calms the cops.
-        // The reuse path (below) always reset — a fresh page never did, so E-to-
-        // enter-car silently failed ("need a license") until a second run. 🐛
         eng.reset(freshLook);
-      } else {
-        eng.reset(freshLook);
+        netRef.current?.resync(); // 🌐 fresh crew — re-free the real-soul bot chairs
         eng.setToast((msg, kind) => pushToast(msg, kind));
-      }
-      eng.playerName = useGame.getState().playerName || "You"; // survivor name for the start toast
+        eng.playerName = useGame.getState().playerName || "You"; // survivor name for the start toast
+        useGame.getState().setScreen("play");
+        eng.start();
+        // weld the mouse to the camera as the world appears — the helper retries
+        // via rAF until the 3D canvas mounts; blocked locks fall back to
+        // free-look + hold Z / X to turn (HUD shows the hint)
+        requestGameLock();
+      };
 
-      /* ---------- 🌐 wire the co-op relay if we're in a room ---------- */
       if (mpRef.current && net.code && net.slot >= 0) {
-        netRef.current?.detach();
-        const me = net.lobby?.players.find((p) => p.sid === net.mySid);
-        netRef.current = attachNet({
-          engine: eng,
-          code: net.code,
-          slot: net.slot,
-          isHost: net.isHost,
-          name: useGame.getState().playerName || me?.name || "Survivor",
-          look: freshLook as Appearance,
-          onReset: makeOnReset(),
-        });
-      } else {
-        netRef.current?.detach();
-        netRef.current = null;
-        // 🌐 SOLO GAMES ARE JOINABLE — quietly claim a relay session in the
-        // background (relay down? nothing changes, pure solo keeps working).
-        //   • nobody else around → we HOST a fresh room and mark it LIVE: any
-        //     player who hits Quick join lands in THIS world, and a bot frees
-        //     their seat (100 souls, always).
-        //   • a live night already running → we JOIN it instead: two players
-        //     who both pressed Play end up in the SAME game, seeing each other.
-        //   • already in a session (replay after leaving a net run)? quick()
-        //     reclaims that seat instantly.
-        const myName = useGame.getState().playerName || "Survivor";
-        net.quick(myName, freshLook as Appearance)
-          .then((r) => {
-            if (engineRef.current !== eng || useGame.getState().screen !== "play") {
-              net.disconnect(); // run was replaced / quit before the seat landed
-              return;
-            }
+        boot(); // 🏟️ lobby / match-lobby path — the seat is already ours
+        return;
+      }
+
+      /* ---------- 🌐 SOLO GAMES ARE JOINABLE — claim the seat FIRST ----------
+       *   • nobody else around → we HOST a fresh room and mark it LIVE
+       *   • a live night already running → we JOIN it (two players who both
+       *     press Play land in the SAME world and see each other)
+       * Claiming before boot also pins the shared seed + drop slot. Relay down?
+       * A 2.5 s grace falls back to pure solo — with a VISIBLE heads-up (the old
+       * silent catch stranded players in an invisible-to-others solo world). */
+      const myName = useGame.getState().playerName || "Survivor";
+      const quickP = net.quick(myName, freshLook as Appearance).catch(() => null);
+      void Promise.race([
+        quickP,
+        new Promise<null>((res) => setTimeout(() => res(null), 2500)),
+      ]).then((r) => {
+        if (useGame.getState().screen !== "connecting") return; // user quit mid-claim
+        if (r) mpRef.current = true;
+        boot();
+        const booted = engineRef.current;
+        if (r && net.isHost && !r.started) {
+          net.send({ t: "start" }); // the relay marks this room LIVE for quick-joiners
+          net.sessionStarted = true;
+          pushToast("🌐 Your night is LIVE — anyone who Quick joins lands in YOUR world!", "good");
+        } else if (r && r.started) {
+          pushToast("🌐 You joined the live night — the other survivors are in this world too!", "good");
+        } else if (!r) {
+          pushToast("📡 Relay unreachable — playing SOLO for now (will link up if it answers).", "info");
+          // the claim may still land late — attach the seat as soon as it does
+          void quickP.then((r2) => {
+            if (!r2 || netRef.current || !booted || engineRef.current !== booted) return;
+            if (useGame.getState().screen !== "play") { net.disconnect(); return; }
             mpRef.current = true;
             netRef.current = attachNet({
-              engine: eng,
-              code: net.code,
-              slot: net.slot,
-              isHost: net.isHost,
-              name: myName,
-              look: freshLook as Appearance,
-              onReset: makeOnReset(),
+              engine: booted, code: net.code, slot: net.slot, isHost: net.isHost,
+              name: myName, look: useGame.getState().look as Appearance, onReset: makeOnReset(),
             });
-            if (net.isHost && !r.started) {
-              net.send({ t: "start" }); // the relay marks this room LIVE for quick-joiners
+            if (net.isHost && !r2.started) {
+              net.send({ t: "start" });
               net.sessionStarted = true;
-              pushToast("🌐 Your night is LIVE — anyone who Quick joins lands in YOUR world!", "good");
-            } else if (r.started) {
-              pushToast("🌐 You joined the live night — the other survivors are in this world too!", "good");
+              pushToast("🌐 Relay answered — your night is LIVE for quick-joiners!", "good");
+            } else if (r2.started) {
+              pushToast("🌐 Relay answered — you joined the live night!", "good");
             }
-          })
-          .catch(() => { /* relay unreachable — the night goes on solo */ });
-      }
-
-      useGame.getState().setScreen("play");
-      eng.start();
-      // weld the mouse to the camera as the world appears — the helper retries
-      // via rAF until the 3D canvas mounts; blocked locks fall back to
-      // free-look + hold Z / X to turn (HUD shows the hint)
-      requestGameLock();
+          });
+        }
+      });
     }, 650);
   }, [pushToast, makeOnReset]);
 
