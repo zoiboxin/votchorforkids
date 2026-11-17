@@ -308,7 +308,12 @@ export const RING_W = 12;
  * clear of the runway slab, the taxi connector and the approach bars). Traffic
  * rides the chord with speed continuity: chord length ≈ arc length.           */
 const DEG = Math.PI / 180;
-export const RING_GAP = { a0: 47.5 * DEG, a1: 61 * DEG } as const;
+/* ✈️ gap widened to [45°, 68°]: the old chord squeezed just 5.5m past the runway
+ * slab's NW corner (the ring circle at ~55° grazes the slab edge). The wider
+ * swing keeps the bypass ~10m clear of the slab corner and ~16m clear of the
+ * approach light bars — and its north end still lands on empty grass clear of
+ * the parked cars along the x=270 street. */
+export const RING_GAP = { a0: 45 * DEG, a1: 68 * DEG } as const;
 const GAP_A = { x: RING_R * Math.cos(RING_GAP.a0), z: RING_R * Math.sin(RING_GAP.a0) };
 const GAP_B = { x: RING_R * Math.cos(RING_GAP.a1), z: RING_R * Math.sin(RING_GAP.a1) };
 const GAP_DX = GAP_B.x - GAP_A.x, GAP_DZ = GAP_B.z - GAP_A.z;
@@ -341,6 +346,16 @@ export const TOWN_SQUARE = { x: 0, z: 48 };        // welcome-banner arch over t
  *  Trees, cottages and flowers all keep out of the flight ops area. */
 export function inAirportPlot(x: number, z: number): boolean {
   return x > AIRPORT.rx0 - 46 && x < AIRPORT.rx1 + 26 && z > AIRPORT.rz - 34 && z < AIRPORT.terminal.z + AIRPORT.terminal.d + 12;
+}
+
+/** ✈️ Strict flight-zone keep-out — the airport plot PLUS the climb-out corridor
+ *  east of the runway (planes lift off past the east threshold and climb straight
+ *  out before banking back, so no tree/rock/pond may sprout under that path).
+ *  The jungle bands (r 472–610) overlap the plot's far corner and the corridor —
+ *  without this check trees spawned ON the runway and INSIDE the hangar. */
+export function inFlightZone(x: number, z: number): boolean {
+  if (inAirportPlot(x, z)) return true;
+  return x > AIRPORT.rx1 && x < AIRPORT.rx1 + 80 && z > AIRPORT.rz - 40 && z < AIRPORT.rz + 40;
 }
 
 /* ---------------- 🚂 countryside railway — the loop line through the farm band ----------------
@@ -418,7 +433,9 @@ export const FIELDS_BASE: { x: number; z: number; rot: number; crop: number }[] 
 ];
 // 🚂 the third barn slid out past the branch line — its old corner (and the
 // woodshed it spawned) stood right on the track bed
-export const BARN_BASE: [number, number][] = [[425, -122], [374, 271], [-453, 101]];
+// ✈️ the second barn slid north out of the airport plot — it, its farmhouse,
+// coop and silo used to sit on the runway's north grass (inside the fence)
+export const BARN_BASE: [number, number][] = [[425, -122], [374, 242], [-453, 101]];
 
 export const FARMKIT = (() => {
   const farmhouses = BARN_BASE.map(([x, z]) => ({ x: x - 17, z: z + 10, rot: Math.atan2(-z, -x) }));
@@ -852,14 +869,21 @@ export function generateWorld(seed = WORLD_SEED): World {
 
   /* ---- outer suburb home blocks (between the new outer road and the ring highway) ----
    * Pushed BEFORE the fringe cottages so cottages never overlap these plots. */
+  /** 🛣️ the ring highway is a ROAD — no block home may stand in its lanes
+   *  (the ±236 corner blocks used to drop a cottage right on the ring at
+   *  (±253.75, ±245) — dead centre of the tarmac near the airport). */
+  const onRingHighway = (x: number, z: number, pad = 9) =>
+    Math.abs(Math.hypot(x, z) - RING_R) < RING_W / 2 + pad;
   const OUTER_BLOCKS = [
     [-168.75, -236.25], [168.75, -236.25], [-168.75, 236.25], [168.75, 236.25],
     [-236.25, -168.75], [236.25, -168.75], [-236.25, 168.75], [236.25, 168.75],
   ] as const;
   for (const [bx, bz] of OUTER_BLOCKS) {
     for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) {
+      const hx = bx + (i - 1) * 17.5, hz = bz + (j - 0.5) * 17.5;
+      if (onRingHighway(hx, hz)) continue;    // 🛣️ same ring guard (future-proof)
       const fz: 1 | -1 = bz < 0 ? 1 : -1;
-      push(bx + (i - 1) * 17.5, bz + (j - 0.5) * 17.5, 4.2, 3.6, range(rnd, 5.2, 6.6), 2,
+      push(hx, hz, 4.2, 3.6, range(rnd, 5.2, 6.6), 2,
         HOME_COLS[buildings.length % HOME_COLS.length],
         HOME_ROOFS[buildings.length % HOME_ROOFS.length], 0, fz);
     }
@@ -893,8 +917,10 @@ export function generateWorld(seed = WORLD_SEED): World {
   ] as const;
   for (const [bx, bz] of BELT_HOMES) {
     for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) {
+      const hx = bx + (i - 1) * 17.5, hz = bz + (j - 0.5) * 17.5;
+      if (onRingHighway(hx, hz)) continue;    // 🛣️ skip homes that would stand in the ring lanes
       const fz: 1 | -1 = bz < 0 ? 1 : -1;
-      push(bx + (i - 1) * 17.5, bz + (j - 0.5) * 17.5, 4.2, 3.6, range(rnd, 5.2, 6.6), 2,
+      push(hx, hz, 4.2, 3.6, range(rnd, 5.2, 6.6), 2,
         HOME_COLS[buildings.length % HOME_COLS.length],
         HOME_ROOFS[buildings.length % HOME_ROOFS.length], 0, fz);
     }
@@ -990,6 +1016,9 @@ export function generateWorld(seed = WORLD_SEED): World {
         const spot = vertical
           ? { x: k + side * 5.2, z: d }
           : { x: d, z: k + side * 5.2 };
+        // ✈️ the z=270 street ends at the airport fence (x=171) — no cars on
+        // the grass stub east of its dead-end
+        if (!vertical && k === 270 && d > 171) continue;
         if (inAirportPlot(spot.x, spot.z)) continue; // never park on the runway / apron / taxi paths
         const off = main ? 9.5 : 5.2;
         cars.push(vertical
@@ -1157,6 +1186,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   while (pn < 2 && pn < 40) {
     const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 486, 556);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (inFlightZone(x, z)) continue;        // ✈️ never a jungle pond flooding the runway / taxiway
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 30 || graveyardLaneDist(x, z) < 30) continue;
     if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 46)) continue;    // not in a camp glade
     if (ponds.some((p) => Math.hypot(p.x - x, p.z - z) < 130)) continue;      // spread apart
@@ -1176,6 +1206,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   while (n < 560) {
     const a = range(rnd, 0, Math.PI * 2), r = range(rnd, 472, DEEP_JUNGLE_RADIUS);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (inFlightZone(x, z)) continue;        // ✈️ no trees ON the runway / INSIDE the hangar / under the climb-out
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8 || graveyardLaneDist(x, z) < 9) continue;
     if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 10.5)) continue; // keep camp glades clear
     if (ponds.some((p) => Math.hypot(p.x - x, p.z - z) < p.r + 3.4)) continue; // 🌲 pond banks stay open
@@ -1186,6 +1217,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   while (n < 520) {
     const a = range(rnd, 0, Math.PI * 2), r = range(rnd, DEEP_JUNGLE_RADIUS + 2, JUNGLE_RADIUS - 2);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (inFlightZone(x, z)) continue;        // ✈️ keep the climb-out corridor east of the runway forest-free too
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8 || graveyardLaneDist(x, z) < 9) continue;
     if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 10.5)) continue; // keep camp glades clear
     addTree(x, z, range(rnd, 1.1, 1.95), treeKindRoll(rnd, DEEP_TREE_MIX)); // dark round canopies still dominate
@@ -1208,6 +1240,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   while (n < 40) {
     const a = range(rnd, 0, Math.PI * 2), r = range(rnd, DEEP_JUNGLE_RADIUS + 3, JUNGLE_RADIUS - 6);
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
+    if (inFlightZone(x, z)) continue;        // ✈️ no boulders under the climb-out path either
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 6 || graveyardLaneDist(x, z) < 7) continue;
     if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 7)) continue; // not inside a camp glade
     if (trees.some((t) => Math.hypot(t.x - x, t.z - z) < 2.6)) continue;
@@ -1325,7 +1358,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   const clearOf = (x: number, z: number, pad: number) => {
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + pad) return false;
     if (graveyardLaneDist(x, z) < pad) return false;
-    if (inAirportPlot(x, z)) return false;
+    if (inFlightZone(x, z)) return false; // ✈️ plot + climb-out corridor stay prop-free
     if (nearRailway(x, z, 5 + pad)) return false; // 🚂 no tufts/bushes/ferns sprouting on the rails
     if (buildings.some((b) => Math.abs(x - b.x) < b.w + pad && Math.abs(z - b.z) < b.d + pad)) return false;
     if (fields.some((f) => Math.abs(x - f.x) < f.w + pad && Math.abs(z - f.z) < f.d + pad)) return false;
@@ -1511,6 +1544,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     const wx = bx + Math.cos(a + 0.9) * 16, wz = bz + Math.sin(a + 0.9) * 16;
     if (fields.some((f) => Math.abs(wx - f.x) < f.w + 2 && Math.abs(wz - f.z) < f.d + 2)) continue;
     if (nearRailway(wx, wz, 8)) continue; // 🚂 never a woodshed on the branch line
+    if (inFlightZone(wx, wz)) continue;   // ✈️ nor one parked on the airfield
     woodsheds.push({ x: wx, z: wz, rot: a + Math.PI });
   }
   // 🛒 hand carts lean against two farmhouses
@@ -1536,6 +1570,7 @@ export function generateWorld(seed = WORLD_SEED): World {
       const x = fh.x + Math.cos(oa) * 9.5, z = fh.z + Math.sin(oa) * 9.5;
       if (fields.some((f) => Math.abs(x - f.x) < f.w + 2.5 && Math.abs(z - f.z) < f.d + 2.5)) continue;
       if (buildings.some((b) => Math.abs(x - b.x) < b.w + 2.5 && Math.abs(z - b.z) < b.d + 2.5)) continue;
+      if (inFlightZone(x, z)) continue;     // ✈️ no orchard trees shading the runway
       if (Math.hypot(x, z) > FARM_RADIUS - 6) continue;
       addTree(x, z, range(rnd, 0.85, 1.2), 1); // round crown = orchard look
     }

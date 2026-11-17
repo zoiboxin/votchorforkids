@@ -613,6 +613,17 @@ export class GameEngine {
    *  planes are SOLID, and the discs glide across the collider grid every frame */
   private planeCols: number[][] = [];
 
+  /** ✈️ ATC — index of the plane that currently holds the RUNWAY (-1 = clear).
+   *  Exactly one plane may be in a runway phase (taxi-to-line-up, roll, low
+   *  climb, final, rollout, taxi-back-off) at a time: departures hold at their
+   *  stand and arrivals keep circling until the holder hands the runway back.
+   *  No two planes can ever roll, land or cross on the tarmac at once. */
+  private runwayBy = -1;
+  /** hand the runway back (only the holder may release it) */
+  private releaseRunway(pi: number): void {
+    if (this.runwayBy === pi) this.runwayBy = -1;
+  }
+
   faintT = 0;   // >0 while the world spins after a car bonk — input is ignored, stars orbit
   carHitCd = 0; // old-game hitCd — no double-bonks from the same bumper
 
@@ -1145,10 +1156,39 @@ export class GameEngine {
   private steerHdg(hdg: number, want: number, maxTurn: number): number {
     let dh = ((want - hdg + Math.PI) % TAU + TAU) % TAU - Math.PI;
     if (dh > maxTurn) dh = maxTurn;
-    if (dh < -maxTurn) dh = maxTurn;
+    if (dh < -maxTurn) dh = -maxTurn; // ✈️ was `= maxTurn` — left turns clamped to a full-RIGHT turn, sending taxis into loops
     return hdg + dh;
   }
 
+  /* ✈️ ATC FLIGHT CYCLE — the step-by-step plan every bot airliner follows.
+   * A single runway lock (`runwayBy`) guarantees ONE plane on the tarmac at a
+   * time, so flights can never roll into each other on the ground:
+   *
+   *  DEPARTURE
+   *   1. PARKED    — nose-in at its apron stand. When the turn-around expires it
+   *                  REQUESTS the runway: if another plane holds it, the plane
+   *                  stays parked and retries every ~1.2s (engines stay cold).
+   *   2. TAXI      — cleared! Taxi stand → staging point short of the threshold
+   *                  → line up on the centreline facing east.
+   *   3. ROLL      — take-off roll: accelerate down the runway, rotate at VR.
+   *   4. CLIMB     — lift off past the east threshold, gear up, climb STRAIGHT
+   *                  OUT (away from downtown) until above every rooftop, then
+   *                  RELEASE the runway for the next flight.
+   *  EN ROUTE
+   *   5. JOIN ARC  — curve onto a clean cruise circle around the whole city at
+   *                  the plane's own altitude (per-slot vertical separation).
+   *   6. CRUISE    — circle ~1.2–2.3 laps sightseeing.
+   *  ARRIVAL
+   *   7. REQUEST   — laps done: if the runway is busy the plane KEEPS CIRCLING
+   *                  (extended holding arcs) until the runway is handed over.
+   *   8. JOIN FINAL — cleared to land: fly to the approach gate west of the
+   *                  field, staying at cruise altitude over the city.
+   *   9. FINAL     — descend over the runway fence, flare, touch down in the
+   *                  touchdown zone (the same lock that kept departures waiting
+   *                  guarantees nobody is rolling under it).
+   *  10. ROLLOUT   — brake to taxi speed past the east end.
+   *  11. TAXI BACK — turn off south, RELEASE the runway once clear of the
+   *                  strip, then taxi the apron back to its stand → PARKED. */
   private updatePlanes(dt: number) {
     for (let pi = 0; pi < this.planes.length; pi++) {
       const pl = this.planes[pi];
@@ -1157,6 +1197,10 @@ export class GameEngine {
         case "parked": {
           pl.t -= dt;
           if (pl.t <= 0) {
+            // step 1 — request take-off clearance: hold at the stand while ANY
+            // other plane owns the runway (it may be taxiing, rolling or landing)
+            if (this.runwayBy !== -1 && this.runwayBy !== pi) { pl.t = 1.2; break; }
+            this.runwayBy = pi;
             // push back: taxi to a staging point just south of the runway threshold —
             // the dogleg (staging → threshold → line-up) makes the plane face east for the roll
             pl.mode = "taxi";
@@ -1202,6 +1246,9 @@ export class GameEngine {
           pl.hdg = this.steerHdg(pl.hdg, want, PLANE_TURN_AIR * 1.15 * dt);
           pl.x += Math.cos(pl.hdg) * pl.spd * dt;
           pl.z += Math.sin(pl.hdg) * pl.spd * dt;
+          // step 4 — once safely above every rooftop the runway is free again:
+          // hand it back so the next departure (or arrival) can start
+          if (pl.alt >= PLANE_ROOF_SAFE) this.releaseRunway(pi);
           if (pl.alt >= PLANE_CALT + pl.slot * 9 - 0.5) {
             pl.mode = "joinArc"; // steer onto a clean circle around the city
             pl.arcR = 336 + this.rnd() * 96;
@@ -1236,11 +1283,18 @@ export class GameEngine {
           pl.z = Math.sin(pl.arcA) * pl.arcR;
           pl.hdg = pl.arcA + pl.arcDir * (Math.PI / 2);
           if (pl.arcLeft <= 0) {
+            // step 7 — request landing clearance: while the runway is busy the
+            // plane KEEPS CIRCLING (an extended holding arc) and asks again —
+            // it will never start a final while someone rolls or lands
+            if (this.runwayBy !== -1 && this.runwayBy !== pi) {
+              pl.arcLeft = 0.55 + this.rnd() * 0.9; // hold: another ~quarter–half lap
+              break;
+            }
+            this.runwayBy = pi; // cleared to land — the runway is ours until off the strip
             pl.mode = "joinFinal";
-            // stay at cruise altitude while crossing back to the approach gate —
-            // descending early used to clip planes straight through the downtown
-            // towers on the diagonal; the descent only happens over the runway
-            pl.wx = AIRPORT.rx0 - 120; pl.wz = AIRPORT.rz; pl.walt = PLANE_CALT;
+            // stay at cruise altitude while crossing back to the entry fix well
+            // west of the field — the descent only happens down the centreline
+            pl.wx = AIRPORT.rx0 - 150; pl.wz = AIRPORT.rz; pl.walt = PLANE_CALT;
           }
           break;
         }
@@ -1259,13 +1313,36 @@ export class GameEngine {
           break;
         }
         case "final": {
-          const d = Math.hypot(pl.wx - pl.x, pl.wz - pl.z);
-          pl.hdg = this.steerHdg(pl.hdg, Math.atan2(pl.wz - pl.z, pl.wx - pl.x), PLANE_TURN_AIR * 0.8 * dt);
-          pl.x += Math.cos(pl.hdg) * pl.spd * dt;
-          pl.z += Math.sin(pl.hdg) * pl.spd * dt;
-          // hold altitude until over the runway fence, then flare down onto the
-          // tarmac — a steeper dive shortens the float so we still stop in range
-          if (pl.x > AIRPORT.rx0 - 40) pl.alt = Math.max(0, pl.alt - 13 * dt);
+          // Two-stage landing: (a) sweep onto the extended centreline FIRST —
+          // planes can arrive at the entry fix on ANY heading (the cruise arc
+          // ends anywhere) — and only once lined up eastbound does (b) start
+          // the steady glide down the centreline into the touchdown zone.
+          // Nothing descends until it is lined up, so every touchdown is a
+          // straight, on-centreline landing inside the runway.
+          const aligned = Math.abs(pl.z - AIRPORT.rz) < 7 && Math.abs(Math.sin(pl.hdg)) < 0.35;
+          if (aligned) {
+            // stage (b) — straight approach down the centreline
+            pl.hdg = this.steerHdg(pl.hdg, 0, PLANE_TURN_AIR * 0.9 * dt);
+            pl.z += (AIRPORT.rz - pl.z) * Math.min(1, 1.6 * dt);
+            pl.x += Math.cos(pl.hdg) * pl.spd * dt;
+            pl.z += Math.sin(pl.hdg) * pl.spd * dt;
+            // steady glide slope (26 u/s × ~6s ≈ 156u of descent)
+            pl.alt = Math.max(0, pl.alt - Math.max(11, pl.alt * 0.15) * dt);
+          } else {
+            // stage (a) — converge onto the extended centreline, altitude held
+            const aimX = Math.max(pl.x + 65, AIRPORT.rx0 + 20);
+            pl.hdg = this.steerHdg(pl.hdg, Math.atan2(AIRPORT.rz - pl.z, aimX - pl.x), PLANE_TURN_AIR * 1.5 * dt);
+            pl.x += Math.cos(pl.hdg) * pl.spd * dt;
+            pl.z += Math.sin(pl.hdg) * pl.spd * dt;
+            // 🛩️ go-around safety: somehow past the runway end and still not
+            // lined up — climb back out, rejoin the cruise arc and try again
+            // (the lock releases above roof-safe altitude, exactly like a climb)
+            if (pl.x > AIRPORT.rx1 + 10 && pl.alt > 5) {
+              pl.mode = "climb";
+              pl.arcR = 336 + this.rnd() * 96;
+              break;
+            }
+          }
           if (pl.alt <= 0.05) {
             pl.mode = "rollout"; pl.t = 0; pl.alt = 0;
           }
@@ -1277,19 +1354,35 @@ export class GameEngine {
           pl.z += Math.sin(pl.hdg) * pl.spd * dt;
           if (pl.spd <= PLANE_TAXI_SPD + 0.1 || pl.x > AIRPORT.rx1 + 20) {
             pl.mode = "taxiBack";
-            const ax = AIRPORT.terminal.x - 26 + pl.slot * 22;
-            pl.wx = ax; pl.wz = AIRPORT.apronZ; pl.walt = 0;
+            // step 11 first leg — turn OFF the runway onto the apron service
+            // strip (the lane between the runway edge and the parked row)
+            pl.wx = pl.x; pl.wz = AIRPORT.rz + 11.5; pl.walt = 0;
           }
           break;
         }
         case "taxiBack": {
           pl.spd = PLANE_TAXI_SPD;
           const d = Math.hypot(pl.wx - pl.x, pl.wz - pl.z);
+          const ax = AIRPORT.terminal.x - 26 + pl.slot * 22;
+          // hand the runway back once we're off the strip and swinging into
+          // our slot — a waiting departure may then line up behind us
+          if (pl.z > AIRPORT.rz + 22) this.releaseRunway(pi);
           if (d < 6) {
-            pl.mode = "parked";
-            pl.t = 5 + this.rnd() * 10;   // random turn-around before the next flight
-            pl.hdg = 0; pl.pitch = 0; pl.spd = 0;
-            pl.x = pl.wx; pl.z = pl.wz;
+            if (pl.wz < AIRPORT.apronZ) {
+              if (Math.abs(pl.wx - ax) > 2) {
+                // leg 2 — westbound along the service strip (south of the
+                // runway, north of the parked row's fuselages) to our stand
+                pl.wx = ax; pl.wz = AIRPORT.rz + 11.5;
+              } else {
+                // leg 3 — hop north into our own parking slot
+                pl.wx = ax; pl.wz = AIRPORT.apronZ;
+              }
+            } else {
+              pl.mode = "parked";
+              pl.t = 5 + this.rnd() * 10;   // random turn-around before the next flight
+              pl.hdg = 0; pl.pitch = 0; pl.spd = 0;
+              pl.x = pl.wx; pl.z = pl.wz;
+            }
           } else {
             pl.hdg = this.steerHdg(pl.hdg, Math.atan2(pl.wz - pl.z, pl.wx - pl.x), PLANE_TURN_TAXI * dt);
             pl.x += Math.cos(pl.hdg) * pl.spd * dt;
@@ -1297,6 +1390,13 @@ export class GameEngine {
           }
           break;
         }
+      }
+      // ✈️ ATC safety net — the runway holder must always be in a runway phase.
+      // If a holder ever ends up parked or cruising (impossible by design, but
+      // cheap to prove wrong) the lock self-releases instead of dead-locking.
+      if (this.runwayBy >= 0 && this.runwayBy < this.planes.length) {
+        const hold = this.planes[this.runwayBy];
+        if (hold.mode === "parked" || hold.mode === "cruise" || hold.mode === "joinArc") this.runwayBy = -1;
       }
       // visual pitch: nose up while climbing, down on approach, level elsewhere
       const wantPitch = pl.mode === "climb" ? 0.16 : pl.mode === "final" && pl.alt > 2 ? -0.1 : pl.mode === "roll" ? 0.05 : 0;

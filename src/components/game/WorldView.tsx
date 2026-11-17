@@ -60,11 +60,13 @@ function Ring({ a, b, color, y }: { a: number; b: number; color: string; y: numb
  * ✈️ The ring highway breaks for the airport and swings around its north-west
  * corner on a straight connector chord (RING_GAP + matching ringTrafficPoint
  * in the engine) — no more road over the runway's approach. The z=270 street
- * now runs east to meet the ring at that junction. */
+ * stops at the airport fence so the whole plot stays road-free. */
 function Roads() {
   const SPAN = 320;
-  /** east end of the z=270 street — reaches the ring junction by the airport */
-  const STREET_END = 248;
+  /** ✈️ east end of the z=270 street — stops 8m short of the airport plot fence
+   *  (it used to run to x=248, dead-ending INSIDE the airfield beside the
+   *  runway threshold; now the plot stays fully road-free) */
+  const STREET_END = 171;
   const dashes = useMemo(() => {
     const out: { x: number; z: number; rot: number }[] = [];
     for (const k of ROADS)
