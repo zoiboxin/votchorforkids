@@ -10,8 +10,9 @@
  */
 import type { GameEngine } from "../engine";
 import type { Appearance } from "../constants";
+import { mulberry32 } from "../rng";
 import { AIKIND_HOUND, AIKIND_HUNTER, AIKIND_ZOMBIE, packAi, packState, packCar, type AiEntry } from "./protocol";
-import { net, type LobbyPlayer, type MpEvent } from "./client";
+import { net, sessionSeed, type LobbyPlayer, type MpEvent } from "./client";
 
 export interface AttachNetOpts {
   engine: GameEngine;
@@ -36,9 +37,22 @@ const lastRaw = new Map<number, { x: number; z: number; t: number }>(); // slot 
 const slotCars = new Map<number, { ci: number; at: number }>(); // slot → their last streamed car (staleness bookkeeping)
 
 export function attachNet(opts: AttachNetOpts): NetHandle {
-  const { engine, code, isHost, name, look } = opts;
+  const { engine, code, name, look } = opts;
   let slot = opts.slot; // mutable — a mid-game rejoin can reseat us
+  let isHost = opts.isHost; // mutable — host migration can crown us mid-run
   const unsubs: (() => void)[] = [];
+
+  // 🛡️ a seat can only ever ride a SESSION-seeded engine. An engine booted
+  // before the relay answered (solo fallback) carries a RANDOM private RNG
+  // stream — its bots, loot, vote cards & plane schedule would differ from
+  // every peer forever (the "same buildings, different vehicles" bug). Stamp
+  // the session seed NOW so the boot's reset() rebuilds the world on the
+  // shared stream; harmless (already-equal) on engines constructed with it.
+  if (engine.rngSeed === undefined) {
+    engine.rngSeed = sessionSeed(code);
+    engine.rnd = mulberry32(2024 + (engine.rngSeed % 1000000));
+    engine.trace(`🌐 seat attached to a solo-built engine — world re-seeded to session seed of room ${code}`);
+  }
 
   engine.mp = true;
   engine.mpHost = isHost;
@@ -61,7 +75,17 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
     );
   };
   if (net.lobby) syncFromLobby(net.lobby.players);
-  unsubs.push(net.onLobby((l) => syncFromLobby(l.players)));
+  unsubs.push(net.onLobby((l) => {
+    syncFromLobby(l.players);
+    // 👑 host migration — the crown landed on OUR socket mid-run: take over the
+    // AI truth + the ambient world (traffic clock & bot planes the old host's
+    // stream froze) so the room keeps a live clock and a flying fleet.
+    if (!isHost && l.host === net.mySid && engine.mp) {
+      isHost = true;
+      engine.mpHost = true;
+      engine.resumeAmbientOwnership();
+    }
+  }));
 
   /* ---------- publish our own survivor @12 Hz ---------- */
   net.startPublishing(() =>
@@ -100,37 +124,35 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
    * The night's horde is ONE shared drama: the host's simulation is the truth
    * (it already hunts real players and streams the damage), and every guest
    * mirrors its zombies / possessed hunters / zombie hounds from these 12 Hz
-   * packets instead of running a private RNG night of their own. On the host
-   * this publishes; on guests the streamTimer below applies the mirror. */
-  let aiTimer: ReturnType<typeof setInterval> | null = null;
-  if (isHost) {
-    aiTimer = setInterval(() => {
-      if (!engine.running || !net.sockConnected) return;
-      // zombies — array indices are deterministic (same roster on every client)
-      const zombies: AiEntry[] = engine.zombies.map((zb, idx) => ({
-        idx, x: zb.x, z: zb.z, yaw: zb.face, dead: !!zb.dead, atk: false,
-      }));
-      const zb = packAi(AIKIND_ZOMBIE, zombies);
-      if (zb) net.emitAi(zb);
-      // possessed hunters — the night's stalking beasts
-      const hunters: AiEntry[] = [];
-      for (const idx of engine.possessed) {
-        const c = engine.crew[idx];
-        if (!c || !c.alive) continue;
-        hunters.push({ idx, x: c.x, z: c.z, yaw: c.face, dead: false, atk: c.attackAnimT > 0 });
-      }
-      const hu = packAi(AIKIND_HUNTER, hunters);
-      if (hu) net.emitAi(hu);
-      // zombie hounds — the turned strays (animals with the rot)
-      const hounds: AiEntry[] = [];
-      engine.animals.forEach((an, idx) => {
-        if (!an.zombie) return;
-        hounds.push({ idx, x: an.x, z: an.z, yaw: an.face, dead: !!an.dead, atk: false });
-      });
-      const ho = packAi(AIKIND_HOUND, hounds);
-      if (ho) net.emitAi(ho);
-    }, 84); // ~12 Hz — the horde shambles, this is plenty
-  }
+   * packets instead of running a private RNG night of their own. The timer
+   * runs on EVERY seat but only the current host emits — a host migration
+   * (crown lands on our socket mid-run) starts publishing automatically. */
+  const aiTimer = setInterval(() => {
+    if (!isHost || !engine.running || !net.sockConnected) return;
+    // zombies — array indices are deterministic (same roster on every client)
+    const zombies: AiEntry[] = engine.zombies.map((zb, idx) => ({
+      idx, x: zb.x, z: zb.z, yaw: zb.face, dead: !!zb.dead, atk: false,
+    }));
+    const zb = packAi(AIKIND_ZOMBIE, zombies);
+    if (zb) net.emitAi(zb);
+    // possessed hunters — the night's stalking beasts
+    const hunters: AiEntry[] = [];
+    for (const idx of engine.possessed) {
+      const c = engine.crew[idx];
+      if (!c || !c.alive) continue;
+      hunters.push({ idx, x: c.x, z: c.z, yaw: c.face, dead: false, atk: c.attackAnimT > 0 });
+    }
+    const hu = packAi(AIKIND_HUNTER, hunters);
+    if (hu) net.emitAi(hu);
+    // zombie hounds — the turned strays (animals with the rot)
+    const hounds: AiEntry[] = [];
+    engine.animals.forEach((an, idx) => {
+      if (!an.zombie) return;
+      hounds.push({ idx, x: an.x, z: an.z, yaw: an.face, dead: !!an.dead, atk: false });
+    });
+    const ho = packAi(AIKIND_HOUND, hounds);
+    if (ho) net.emitAi(ho);
+  }, 84); // ~12 Hz — the horde shambles, this is plenty
 
   /* ---------- remote streams → engine.remotes ---------- */
   const streamTimer = setInterval(() => {
@@ -363,7 +385,7 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       clearInterval(slowTimer);
       clearInterval(phaseTimer);
       clearInterval(endWatcher);
-      if (aiTimer) clearInterval(aiTimer);
+      clearInterval(aiTimer);
       net.stopPublishing();
       net.stopCarPublishing();
       engine.netEmit = null;

@@ -140,46 +140,100 @@ export function GameRoot() {
 
       /* ---------- 🌐 SOLO GAMES ARE JOINABLE — claim the seat FIRST ----------
        *   • nobody else around → we HOST a fresh room and mark it LIVE
-       *   • a live night already running → we JOIN it (two players who both
-       *     press Play land in the SAME world and see each other)
+       *   • a live night already running → the whole room RESTARTS TOGETHER
+       *     through the shared lobby countdown (never a mismatched mid-match
+       *     drop: the joiner's fresh world would show home-parked cars, dead
+       *     bots alive and picked loot still on the ground — the "same
+       *     buildings, different vehicles" bug)
        * Claiming before boot also pins the shared seed + drop slot. Relay down?
-       * A 2.5 s grace falls back to pure solo — with a VISIBLE heads-up (the old
-       * silent catch stranded players in an invisible-to-others solo world). */
+       * A 2.5 s grace boots pure solo WITH A VISIBLE heads-up, and a retry loop
+       * keeps claiming a seat while the night runs — a hiccuped relay no longer
+       * strands you in an invisible-to-others solo world forever. When the claim
+       * lands late, the solo-seeded engine is torn down and rebuilt from the
+       * session seed so every screen shows the SAME world. */
       const myName = useGame.getState().playerName || "Survivor";
+      let linked = false; // one seat claim wins — retries and the original race can't double-link
+
+      /** 🔁 the relay answered late (hiccup / slow LAN): a solo-built engine
+       *  carries a PRIVATE seed — attaching a seat to it would leave this
+       *  client's world permanently different from every peer. Tear it down
+       *  and boot a fresh one from the seat's session seed (or, if the night
+       *  is already live, gather in the match lobby for a restart-together). */
+      const linkUpLate = (r2: { started: boolean }) => {
+        if (linked || netRef.current) return;
+        linked = true;
+        mpRef.current = true;
+        endSavedRef.current = false;
+        engineRef.current = null;
+        setEngine(null);
+        setRunId((v) => v + 1);
+        if (r2.started) {
+          pushToast("🌐 Relay answered — a live night is running; the room restarts together shortly!", "good");
+          void enterMatchLobby(); // arms the shared relobby countdown; mpStartRun reboots us fresh
+        } else {
+          pushToast("🌐 Relay answered — relinking your world to the session!", "good");
+          startGame(); // the seat is known → boot() constructs a fresh seeded engine
+          if (net.isHost && !net.sessionStarted) {
+            net.send({ t: "start" }); // our own fresh room → mark it LIVE for quick-joiners
+            net.sessionStarted = true;
+          }
+        }
+      };
+
+      /** one seat-claim attempt with link-up handling (shared by the race loser + retries) */
+      const claimSeat = (p: Promise<{ started: boolean } | null>) => {
+        void p.then((r2) => {
+          if (!r2 || linked || netRef.current) return;
+          const sc = useGame.getState().screen;
+          if (sc !== "play" && sc !== "connecting") { net.disconnect(); return; } // user quit mid-claim
+          linkUpLate(r2);
+        });
+      };
+
       const quickP = net.quick(myName, freshLook as Appearance).catch(() => null);
       void Promise.race([
         quickP,
         new Promise<null>((res) => setTimeout(() => res(null), 2500)),
       ]).then((r) => {
         if (useGame.getState().screen !== "connecting") return; // user quit mid-claim
+        if (r && r.started) {
+          // 🏟️ live night → NEVER drop into a mismatched mid-match world —
+          // park in the match lobby; the shared countdown restarts everyone
+          // together and mpStartRun boots a fresh same-seed engine
+          mpRef.current = true;
+          linked = true;
+          pushToast("🌐 You joined a live night — the room restarts together shortly!", "good");
+          void enterMatchLobby();
+          return;
+        }
         if (r) mpRef.current = true;
         boot();
-        const booted = engineRef.current;
         if (r && net.isHost && !r.started) {
           net.send({ t: "start" }); // the relay marks this room LIVE for quick-joiners
           net.sessionStarted = true;
           pushToast("🌐 Your night is LIVE — anyone who Quick joins lands in YOUR world!", "good");
-        } else if (r && r.started) {
-          pushToast("🌐 You joined the live night — the other survivors are in this world too!", "good");
         } else if (!r) {
-          pushToast("📡 Relay unreachable — playing SOLO for now (will link up if it answers).", "info");
-          // the claim may still land late — attach the seat as soon as it does
-          void quickP.then((r2) => {
-            if (!r2 || netRef.current || !booted || engineRef.current !== booted) return;
-            if (useGame.getState().screen !== "play") { net.disconnect(); return; }
-            mpRef.current = true;
-            netRef.current = attachNet({
-              engine: booted, code: net.code, slot: net.slot, isHost: net.isHost,
-              name: myName, look: useGame.getState().look as Appearance, onReset: makeOnReset(),
-            });
-            if (net.isHost && !r2.started) {
-              net.send({ t: "start" });
-              net.sessionStarted = true;
-              pushToast("🌐 Relay answered — your night is LIVE for quick-joiners!", "good");
-            } else if (r2.started) {
-              pushToast("🌐 Relay answered — you joined the live night!", "good");
+          pushToast("📡 Relay unreachable — playing SOLO for now (linking up the moment it answers).", "info");
+          // the claim may still land late — link up as soon as it does…
+          claimSeat(quickP);
+          // …and keep trying while the solo night runs (relay restarts, slow LAN)
+          let tries = 0;
+          let inFlight = false;
+          const retryT = setInterval(() => {
+            tries++;
+            const sc = useGame.getState().screen;
+            if (linked || netRef.current || (sc !== "play" && sc !== "connecting") || tries > 12) {
+              clearInterval(retryT);
+              return;
             }
-          });
+            if (inFlight) return; // quick's own 8 s timeout still pending
+            inFlight = true;
+            claimSeat(
+              net.quick(myName, useGame.getState().look as Appearance)
+                .catch(() => null)
+                .finally(() => { inFlight = false; }),
+            );
+          }, 4000);
         }
       });
     }, 650);

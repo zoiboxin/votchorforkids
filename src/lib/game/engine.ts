@@ -2346,6 +2346,30 @@ export class GameEngine {
     }
   }
 
+  /** 👑 host migration — the promoted host must OWN the ambient world again:
+   *  the guest-side mirror (fed by the OLD host) froze its traffic clock and
+   *  bot planes in "parked", and as the new host it now streams that frozen
+   *  fleet to everyone else. Clear the mirror and resume the local machines
+   *  from wherever everything currently sits: airborne planes rejoin their
+   *  cruise arcs, grounded ones re-queue for a staggered take-off. */
+  resumeAmbientOwnership() {
+    if (!this.ambientMirror && this.planes.every((pl) => pl.mode !== "parked" || pl.t < 1e8)) return;
+    this.ambientMirror = false;
+    this.planeNetPrev.clear();
+    this.planes.forEach((pl, i) => {
+      if (pl.alt > 2) {
+        pl.mode = "climb"; // rejoin the climb → arc pipeline at the current altitude
+        pl.spd = PLANE_CRUISE_SPD;
+      } else {
+        pl.mode = "parked";
+        pl.alt = 0;
+        pl.t = 1.5 + i * 4; // staggered re-launch from wherever they sit
+      }
+      pl.walt = 0;
+    });
+    this.trace("👑 promoted to host — ambient mirror cleared, traffic & planes resumed");
+  }
+
   /** 🗡️ a teammate's swing tore into the horde — the HOST's hp is the verdict
    *  (the killer's client already showed its optimistic hit; this keeps every
    *  horde on one sheet of music, and the verdict rides the AI stream back out
