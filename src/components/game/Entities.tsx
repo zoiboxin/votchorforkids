@@ -1667,8 +1667,14 @@ export function RemotesView({ engine }: { engine: GameEngine }) {
       const tag = beast ? v.btag : v.tag;
       const otherTag = beast ? v.tag : v.btag;
       if (otherTag) otherTag.visible = false;
+      // ⏸ their personal pause is on — the ⏸ tag outranks the plain name (and the
+      // beast hunt mark): a frozen body must read as AFK, never as a laggy ghost
+      if (v.ptag) {
+        v.ptag.visible = r.paused ? close : false;
+        if (r.paused) tag.visible = false;
+      }
       // 🌐 real players KEEP their names at night — the mystery is about the crew bots
-      if (tag) tag.visible = close;
+      if (tag && !r.paused) tag.visible = close;
     });
   });
 
@@ -1688,6 +1694,11 @@ function buildRemoteRig(look: Appearance, name: string, colorIdx: number) {
   const tag = nameTag(name, hexToTagBg(SLOT_TAG_COLORS[colorIdx % SLOT_TAG_COLORS.length]));
   tag.position.y = 2.95;
   mesh.add(tag);
+  // ⏸ the paused/AFK tag — swapped in while their personal pause streams hot
+  const ptag = nameTag(`⏸ ${name}`, "rgba(46,46,74,0.9)");
+  ptag.position.y = 2.95;
+  ptag.visible = false;
+  mesh.add(ptag);
   // possessed body — swapped in while their beast flag is up
   const beast = buildCharacter({ ...CREW_ZOMBIE_LOOK, girl: look.girl }, { zombie: true });
   const btag = nameTag(`${name}?!`, "rgba(120,10,10,0.9)");
@@ -1701,7 +1712,7 @@ function buildRemoteRig(look: Appearance, name: string, colorIdx: number) {
   ring.position.y = 0.06;
   mesh.add(ring);
   beast.add(ring.clone());
-  return { mesh, beast, tag, btag };
+  return { mesh, beast, tag, btag, ptag };
 }
 
 const SLOT_TAG_COLORS = ["#f472b6", "#fbbf24", "#4ade80", "#2dd4bf", "#f87171", "#c084fc", "#fb923c", "#a3e635"];

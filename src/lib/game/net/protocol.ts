@@ -10,6 +10,8 @@
  *
  * flags bits: 0 sprint · 1 airborne · 2 beast · 3 dead · 4 driving · 5 attackAnim
  *                        · 6 riding (passenger — inside a car someone else drives)
+ *                        · 7 paused (personal pause / AFK — the town kept living,
+ *                          their body stands still; peers show a ⏸ tag)
  *
  * A DRIVER additionally publishes a 8-byte car packet @15 Hz on `mp:car` so
  * every peer sees the vehicle MOVE (and its lamps BLAZE) in real time:
@@ -43,6 +45,7 @@ export const FLAG_DEAD = 1 << 3;
 export const FLAG_DRIVE = 1 << 4;
 export const FLAG_ATTACK = 1 << 5;
 export const FLAG_RIDE = 1 << 6;
+export const FLAG_PAUSE = 1 << 7;
 
 export const CAR_BYTES = 8;
 export const CARFLAG_LIGHTS = 1 << 0;
@@ -150,6 +153,8 @@ export interface NetState {
   sprint: boolean; air: boolean; beast: boolean; dead: boolean; drive: boolean; attack: boolean;
   /** riding shotgun — inside a car someone else is driving */
   ride: boolean;
+  /** ⏸ personal pause — their world kept living, their body stands still */
+  paused: boolean;
   /** receive timestamp (ms, performance.now) — interpolation bookkeeping */
   t: number;
 }
@@ -160,6 +165,7 @@ const wrap = (yaw: number): number => ((yaw % (Math.PI * 2)) + Math.PI * 2) % (M
 export function packState(s: {
   slot: number; x: number; z: number; y: number; yaw: number; hp: number;
   sprint?: boolean; air?: boolean; beast?: boolean; dead?: boolean; drive?: boolean; attack?: boolean; ride?: boolean;
+  paused?: boolean;
 }): ArrayBuffer {
   const buf = new ArrayBuffer(STATE_BYTES);
   const v = new DataView(buf);
@@ -177,6 +183,7 @@ export function packState(s: {
   if (s.drive) f |= FLAG_DRIVE;
   if (s.attack) f |= FLAG_ATTACK;
   if (s.ride) f |= FLAG_RIDE;
+  if (s.paused) f |= FLAG_PAUSE;
   v.setUint8(8, f);
   return buf;
 }
@@ -240,6 +247,7 @@ export function unpackState(data: BinSrc, t = 0): NetState | null {
     drive: !!(f & FLAG_DRIVE),
     attack: !!(f & FLAG_ATTACK),
     ride: !!(f & FLAG_RIDE),
+    paused: !!(f & FLAG_PAUSE),
     t,
   };
 }

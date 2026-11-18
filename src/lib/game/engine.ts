@@ -257,6 +257,9 @@ export interface RemotePlayer {
   beast: boolean; drive: boolean; sprint: boolean; air: boolean; attackT: number;
   /** 🚗 riding shotgun in someone else's car (their body hides inside it) */
   ride?: boolean;
+  /** ⏸ their personal pause is on — the world kept living, their body stands
+   *  still; we render a ⏸ tag so nobody mistakes them for a laggy ghost */
+  paused?: boolean;
   /** points reported by their client (HUD scoreboard) */
   points: number; kills: number; money: number;
   lastSeen: number;
@@ -3349,6 +3352,11 @@ export class GameEngine {
     const lvl = Math.max(0, this.zoneLevel - 1);
     const graceK = this.zoneGraceT > 0 ? 1 - this.zoneGraceT / ZONE_GRACE_S : 1;
     return (ZONE_DRAIN_BASE + ZONE_DRAIN_STEP * lvl) * graceK;
+  }
+
+  /** 🧱 public read for the pause report: hp/s burning while you stand outside. */
+  zoneDrainNow(): number {
+    return this.zoneDrain();
   }
 
   /** Dawn after night N: the transparent wall slams down one ring tighter.

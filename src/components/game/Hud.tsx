@@ -1225,13 +1225,22 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
   if (pauseReport) {
     const alive = hud.crewAlive + hud.remotesAlive + (engine.lost ? 0 : 1);
     const log = engine.pauseLog;
+    // 🧱 where you stand RIGHT NOW — the wall kept shrinking while you were away,
+    // so the spot you paused at may be draining death ground by now
+    const wallD = Math.hypot(engine.player.x, engine.player.z);
+    const wallOut = engine.outsideWall && !engine.lost && !engine.won;
+    const wallOver = Math.max(0, Math.round(wallD - engine.zoneRadius()));
+    const finished = engine.won && !engine.lost;
     const chips: { t: string; c: string }[] = [
       { t: hud.phase === "night" ? `🌙 Night ${hud.nightNo}/${NIGHTS_TOTAL}` : `☀️ Day ${hud.nightNo}/${NIGHTS_TOTAL}`, c: "text-amber-200" },
       { t: `🧍 ${alive}/${hud.aliveTotal} alive`, c: "text-white" },
       { t: hud.beastCount > 0 ? `🧟 ${hud.beastCount} hunting` : "🧟 pack asleep", c: hud.beastCount > 0 ? "text-purple-300" : "text-white/70" },
       { t: `❤️ ${hud.hp} hp`, c: hud.hp < 40 ? "text-rose-300" : "text-white" },
       { t: `💰 $${hud.money}`, c: "text-emerald-200" },
-      { t: `📍 ${hud.zone}`, c: "text-sky-200" },
+      // 🧱 the safe-zone verdict chip — red when your body stands in death ground
+      wallOut
+        ? { t: "☢️ OUTSIDE the wall", c: "text-rose-300" }
+        : { t: `🧱 inside the wall · ${engine.zoneRadius()}u`, c: "text-teal-200" },
     ];
     return (
       <motion.div
@@ -1252,6 +1261,14 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
                 You placed <b className="text-rose-200">#{hud.crewAlive + hud.remotesAlive + 1} of {hud.aliveTotal}</b>.
               </p>
             </>
+          ) : finished ? (
+            <>
+              <div className="mb-1 text-center text-3xl font-black text-yellow-300">🏆 The Week Is Over</div>
+              <p className="mb-3 text-center text-xs text-white/70">
+                All 7 nights passed while you were away — <b className="text-yellow-200">YOU SURVIVED</b> and the town is yours.
+                The recap &amp; leaderboard opens when you return.
+              </p>
+            </>
           ) : (
             <>
               <div className="mb-1 text-center text-3xl font-black text-yellow-300">Welcome back 👀</div>
@@ -1259,6 +1276,13 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
                 This is a living town — {hud.aliveTotal - alive} fell while you were gone. Here&apos;s what you missed.
               </p>
             </>
+          )}
+          {/* 🧱 resumed OUTSIDE the shrinking wall? say it LOUD before anything else */}
+          {wallOut && (
+            <div className="mb-3 rounded-2xl border border-rose-400/50 bg-rose-500/15 px-3 py-2.5 text-center text-xs font-black text-rose-200" role="alert" aria-label="outside the safe zone warning">
+              ☢️ You are OUTSIDE THE WALL — your life is DRAINING {engine.zoneDrainNow().toFixed(1)} hp/s!
+              <br />Safety is <b>{wallOver}u</b> back toward the circle — run the moment you resume.
+            </div>
           )}
           {/* right-now status */}
           <div className="mb-2 grid grid-cols-2 gap-1.5 text-[11px] font-bold sm:grid-cols-3" aria-label="current status">
@@ -1288,9 +1312,13 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
                   <ScrollText size={16} className="mr-2" /> Death recap &amp; leaderboard
                 </Button>
               </>
+            ) : finished ? (
+              <Button onClick={() => leavePause(() => useGame.getState().setVictoryOpen(true))} className="h-12 w-full rounded-2xl bg-gradient-to-r from-amber-400 to-yellow-300 text-lg font-black text-amber-950">
+                <ScrollText size={18} className="mr-2" /> Open the recap &amp; leaderboard
+              </Button>
             ) : (
               <Button onClick={() => leavePause()} className="h-12 w-full rounded-2xl bg-gradient-to-r from-amber-400 to-yellow-300 text-lg font-black text-amber-950">
-                <PlayIcon size={18} className="mr-2" fill="currentColor" /> Back to the hunt
+                <PlayIcon size={18} className="mr-2" fill="currentColor" /> {wallOut ? "Back in — RUN to the wall!" : "Back to the hunt"}
               </Button>
             )}
             <Button onClick={onQuit} variant="outline" className="h-11 w-full rounded-2xl border-rose-300/40 bg-rose-500/15 font-bold text-rose-200 hover:bg-rose-500/30">
@@ -1322,16 +1350,33 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
         <div className="mb-1 text-center text-3xl font-black text-yellow-300">Paused ⏸</div>
         <p className="mb-3 text-center text-xs text-white/60">
           The town keeps living without you — bots forage, the pack hunts, the clock runs.
+          Other players keep playing and see you standing with a ⏸ tag.
         </p>
         {engine.lost && (
           <div className="mb-3 rounded-2xl border border-rose-400/40 bg-rose-500/15 px-3 py-2 text-center text-xs font-black text-rose-200">
             🩸 You died while you were away — Resume to see the report &amp; free cam.
           </div>
         )}
+        {/* 🏆 the week ended while you were out — the recap waits behind Resume */}
+        {engine.won && !engine.lost && (
+          <div className="mb-3 rounded-2xl border border-yellow-400/40 bg-yellow-500/15 px-3 py-2 text-center text-xs font-black text-yellow-200">
+            🏆 The week is over — you survived all 7 nights! Resume opens the recap.
+          </div>
+        )}
+        {/* 🧱 live drain warning — pausing inside death ground still burns you */}
+        {engine.outsideWall && !engine.lost && !engine.won && (
+          <div className="mb-3 rounded-2xl border border-rose-400/40 bg-rose-500/15 px-3 py-2 text-center text-xs font-black text-rose-200" role="alert">
+            ☢️ Your body is OUTSIDE THE WALL — {engine.zoneDrainNow().toFixed(1)} hp/s drain while you stand here! Resume and run {Math.max(0, Math.round(Math.hypot(engine.player.x, engine.player.z) - engine.zoneRadius()))}u to safety.
+          </div>
+        )}
         <p className="mb-4 text-center text-xs text-white/60">Run time {mm}:{ss} · score {hud.points} · 🌙 night {hud.nightNo}</p>
         <div className="space-y-2">
-          <Button onClick={() => leavePause(() => useGame.getState().setPauseReport(true))} className="h-12 w-full rounded-2xl bg-gradient-to-r from-amber-400 to-yellow-300 text-lg font-black text-amber-950">
-            <PlayIcon size={18} className="mr-2" fill="currentColor" /> Resume
+          {/* ⏸ Resume shows the welcome-back report FIRST — the pause holds (the
+              town keeps living, your body stays frozen) until the report's own
+              button sends you back. The old flow unpaused BEFORE swapping to the
+              report, so the menu unmounted and the report never rendered. 🐛 */}
+          <Button onClick={() => { sfx.click(); useGame.getState().setPauseReport(true); }} className="h-12 w-full rounded-2xl bg-gradient-to-r from-amber-400 to-yellow-300 text-lg font-black text-amber-950">
+            <PlayIcon size={18} className="mr-2" fill="currentColor" /> Resume — catch up first
           </Button>
           <Button onClick={() => setHelp(true)} variant="outline" className="h-11 w-full rounded-2xl border-white/25 bg-white/10 font-bold text-white hover:bg-white/20">
             <CircleHelp size={16} className="mr-2" /> How to play

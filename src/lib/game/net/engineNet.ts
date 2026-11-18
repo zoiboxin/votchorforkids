@@ -105,6 +105,10 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       drive: !!engine.drive,
       ride: !!engine.ride, // 🚗 riding shotgun in someone else's car
       attack: engine.attackCd > 0.3, // just-swung window (ATTACK_CD = 0.45)
+      // ⏸ personal pause — our world keeps living, our body stands still; peers
+      // swap the name tag for a ⏸ one so the frozen survivor reads as AFK,
+      // never as a laggy ghost or a disconnected soul
+      paused: engine.personalPause && !engine.lost,
     }),
   );
 
@@ -175,6 +179,7 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       r.ride = s.ride;
       r.sprint = s.sprint;
       r.air = s.air;
+      r.paused = s.paused && !s.dead; // a dead soul isn't "paused", they're gone
       if (s.attack) r.attackT = 0.35;
       // 🚗 their car stream — mirror pose + headlights so the vehicle MOVES on
       // our world (and its lamps BLAZE at night) exactly like it does on theirs.
