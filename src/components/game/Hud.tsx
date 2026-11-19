@@ -1205,9 +1205,23 @@ function MobileButtons({ engine }: { engine: GameEngine }) {
 function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void }) {
   const setPaused = useGame((s) => s.setPaused);
   const pauseReport = useGame((s) => s.pauseReport);
+  const endKickAt = useGame((s) => s.endKickAt);
   const [help, setHelp] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const hud = useGame((s) => s.hud);
+
+  // 🏁 the run finished while you stand here — seconds until the finished night
+  // walks you back to the main screen (hud ticks at ~8 Hz keep this counting live)
+  const endLeftS = endKickAt > 0 ? Math.max(0, Math.ceil((endKickAt - Date.now()) / 1000)) : 0;
+  const endKickBanner = endKickAt > 0 && (
+    <div
+      className="mb-3 rounded-2xl border border-teal-300/40 bg-teal-500/10 px-3 py-2 text-center text-xs font-bold text-teal-200"
+      role="status"
+      aria-label="run finished, returning to main menu countdown"
+    >
+      🏁 The night is over — the town finished without you. Back to the main menu in <b>{endLeftS}s</b>…
+    </div>
+  );
 
   /** leave the pause menu — back to play, the free cam, or the death recap */
   const leavePause = (after?: () => void) => {
@@ -1302,6 +1316,8 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
               </ul>
             )}
           </div>
+          {/* 🏁 finished run + idle at the report — the countdown to the main screen */}
+          {endKickBanner}
           <div className="space-y-2">
             {engine.lost ? (
               <>
@@ -1369,6 +1385,8 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
             ☢️ Your body is OUTSIDE THE WALL — {engine.zoneDrainNow().toFixed(1)} hp/s drain while you stand here! Resume and run {Math.max(0, Math.round(Math.hypot(engine.player.x, engine.player.z) - engine.zoneRadius()))}u to safety.
           </div>
         )}
+        {/* 🏁 finished run + idle at the pause menu — the countdown to the main screen */}
+        {endKickBanner}
         <p className="mb-4 text-center text-xs text-white/60">Run time {mm}:{ss} · score {hud.points} · 🌙 night {hud.nightNo}</p>
         <div className="space-y-2">
           {/* ⏸ Resume shows the welcome-back report FIRST — the pause holds (the

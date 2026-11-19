@@ -40,13 +40,6 @@ export function VictoryModal({ engine, onReplay, onMenu }: { engine: GameEngine;
       .then(() => fetch("/api/scores").then((r) => r.json()))
       .then((d) => { useGame.getState().setScores(d.scores ?? []); setSaved(true); })
       .catch(() => {});
-  }, [open, hud.points, hud.elapsed, engine, won]);
-
-  // 🔁 re-arm the leaderboard POST whenever the recap closes — deaths no longer
-  // auto-open it (the auto free cam takes over), so the same modal instance must
-  // post again when the player calls it back up with Esc, or on the next run
-  useEffect(() => {
-    if (!open) posted.current = false;
   }, [open]);
 
   const secs = Math.round(hud.elapsed);

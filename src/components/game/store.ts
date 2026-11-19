@@ -123,6 +123,10 @@ export interface GameStore {
   paused: boolean;
   /** true while the ⏸ pause menu shows the welcome-back report (what happened while you were away) */
   pauseReport: boolean;
+  /** 🏁 epoch ms when the finished run auto-returns the idle player to the main
+   *  screen (0 = none). Armed only while the run is over AND the player sits at
+   *  the pause menu — the town kept living, so nothing is left to wait for. */
+  endKickAt: number;
   /** true while the big world map overlay is open (M) */
   bigMapOpen: boolean;
   /** true while the 🎒 tool wheel is open at screen center (G) — cursor is free, world keeps running */
@@ -184,6 +188,7 @@ export interface GameStore {
   setVictoryOpen: (v: boolean) => void;
   setPaused: (p: boolean) => void;
   setPauseReport: (v: boolean) => void;
+  setEndKickAt: (t: number) => void;
   setBigMapOpen: (v: boolean) => void;
   setWheelOpen: (v: boolean) => void;
   setLicenseOpen: (v: boolean) => void;
@@ -246,6 +251,7 @@ export const useGame = create<GameStore>()((set, get) => ({
   victoryOpen: false,
   paused: false,
   pauseReport: false,
+  endKickAt: 0,
   bigMapOpen: false,
   wheelOpen: false,
   licenseOpen: false,
@@ -307,6 +313,7 @@ export const useGame = create<GameStore>()((set, get) => ({
   setVictoryOpen: (v) => set({ victoryOpen: v }),
   setPaused: (p) => set({ paused: p }),
   setPauseReport: (v) => set({ pauseReport: v }),
+  setEndKickAt: (t) => set({ endKickAt: t }),
   setMouseLocked: (v) => set({ mouseLocked: v }),
   setBigMapOpen: (v) => set({ bigMapOpen: v }),
   setWheelOpen: (v) => set({ wheelOpen: v }),

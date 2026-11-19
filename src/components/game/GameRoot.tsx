@@ -31,6 +31,11 @@ const Scene = dynamic(() => import("./Scene").then((m) => m.Scene), {
   ),
 });
 
+/** 🏁 once the run is over, an idle paused player gets this long at the pause
+ *  menu before the finished night walks them back to the main screen — the
+ *  town kept living while they were away, so nothing is left to wait for. */
+const END_IDLE_GRACE_MS = 20_000;
+
 export function GameRoot() {
   const screen = useGame((s) => s.screen);
   const look = useGame((s) => s.look);
@@ -44,18 +49,32 @@ export function GameRoot() {
   const mpRef = useRef(false);
   /** 💾 the end-of-run record saves exactly once per run (death no longer pops a modal) */
   const endSavedRef = useRef(false);
+  /** 🏁 when the run ended while the player sits at the pause menu — ms tick when
+   *  the countdown started (0 = idle timer not running). Drives endKickAt. */
+  const endIdleRef = useRef(0);
+  /** 📝 the leaderboard POST happens once per run: the VictoryModal owns it when
+   *  the recap opens; backToMenu covers runs whose recap never opened. */
+  const recapPostedRef = useRef(false);
+
+  /** clear the 🏁 auto-return countdown (fresh run / rewind / leaving play) */
+  const clearEndKick = useCallback(() => {
+    endIdleRef.current = 0;
+    if (useGame.getState().endKickAt !== 0) useGame.getState().setEndKickAt(0);
+  }, []);
 
   /** 👑 the host restarted the week — everyone rewinds to day 1 together
    *  (shared by the multiplayer path AND the auto-hosted solo session) */
   const makeOnReset = useCallback(() => () => {
     useGame.getState().pushToast("👑 The host restarted the 7 nights — back to DAY 1!", "info");
     endSavedRef.current = false; // 💾 the fresh week saves its own end
+    recapPostedRef.current = false; // 📝 the fresh week posts its own score
+    clearEndKick();
     if (engineRef.current) {
       engineRef.current.reset(useGame.getState().look);
       netRef.current?.resync(); // 🌐 fresh crew — re-free the real-soul chairs
       useGame.getState().setVictoryOpen(false);
     }
-  }, []);
+  }, [clearEndKick]);
 
   /** 🏟️ PUBG-style entry: don't boot the world alone — park in the MATCH LOBBY
    *  with a shared 30 s countdown. Friends who Quick join during the window
@@ -65,10 +84,11 @@ export function GameRoot() {
     useGame.getState().setPaused(false);
     useGame.getState().setPauseReport(false);
     useGame.getState().setVictoryOpen(false);
+    clearEndKick();
     sfx.click();
     startMusic();
     void enterMatchLobby();
-  }, []);
+  }, [clearEndKick]);
 
   const startGame = useCallback(() => {
     useGame.getState().setScreen("connecting");
@@ -78,6 +98,8 @@ export function GameRoot() {
     useGame.getState().setShowHelp(true); // goal card re-shows every round, auto-hides after 12 s
     useGame.getState().setWheelOpen(false); // never carry a stale 🎒 tool wheel into a fresh run
     endSavedRef.current = false; // 💾 fresh run → its end gets saved again
+    recapPostedRef.current = false; // 📝 fresh run → its own leaderboard POST
+    clearEndKick();
     sfx.click();
     startMusic();
     setTimeout(() => {
@@ -237,7 +259,7 @@ export function GameRoot() {
         }
       });
     }, 650);
-  }, [pushToast, makeOnReset]);
+  }, [pushToast, makeOnReset, clearEndKick]);
 
   /* ---------- 🌐 match launch — every lobby member boots the night together ----------
    * The MatchLobby countdown is the primary trigger; this shared fn is the ONE
@@ -293,6 +315,8 @@ export function GameRoot() {
       const eng = engineRef.current;
       if (eng) {
         endSavedRef.current = false; // 💾 the fresh week saves its own end
+        recapPostedRef.current = false; // 📝 the fresh week posts its own score
+        clearEndKick();
         eng.reset(useGame.getState().look);
         netRef.current?.resync(); // 🏟️ re-seed remote souls after the rewind
         useGame.getState().setVictoryOpen(false);
@@ -301,7 +325,7 @@ export function GameRoot() {
       if (net.isHost) net.send({ t: "start" }); // flip the room back to live for the next joiner
     }, 500);
     return () => { unLobby(); clearInterval(t); };
-  }, []);
+  }, [clearEndKick]);
 
   const backToMenu = useCallback(() => {
     stopMusic();
@@ -311,17 +335,27 @@ export function GameRoot() {
       eng.setPersonalPause(false);
       eng.spectating = false;
       eng.running = false;
-      // save unfinished runs too (quit mid-story) — wins are recorded by the victory watcher
-      if (!eng.won && eng.points > 0) {
+      // 💾 save any run whose end the watcher hasn't recorded yet (quit mid-story,
+      // or death → instant quit inside the 400 ms watcher gap). The endSavedRef
+      // guard keeps finished runs from being recorded twice.
+      if (eng.points > 0 && !endSavedRef.current) {
+        endSavedRef.current = true;
         const timeMs = Math.round(eng.elapsed * 1000);
-        useGame.getState().recordRun(eng.points, eng.money, eng.rescues, eng.caughtCount, false, timeMs);
+        useGame.getState().recordRun(eng.points, eng.money, eng.rescues, eng.caughtCount, eng.won, timeMs);
+      }
+      // 📝 one leaderboard POST per run: the VictoryModal posts when the recap
+      // opens; this covers runs whose recap never opened (AFK finish, quit
+      // mid-story) so a paused-away death still reaches the hall of fame.
+      if (eng.points > 0 && !recapPostedRef.current) {
+        recapPostedRef.current = true;
+        const timeMs = Math.round(eng.elapsed * 1000);
         fetch("/api/scores", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             name: useGame.getState().playerName || "Guest",
             points: eng.points, votes: eng.delivered, rescues: eng.rescues,
-            caught: eng.caughtCount, won: false, timeMs,
+            caught: eng.caughtCount, won: eng.won, timeMs,
           }),
         })
           .then((r) => r.json())
@@ -333,6 +367,7 @@ export function GameRoot() {
     }
     useGame.getState().setPaused(false);
     useGame.getState().setPauseReport(false);
+    clearEndKick();
     // 🏠 quit → the MAIN LANDING PAGE, always (it used to strand players on the
     // Multiplayer Nights panel with no obvious way back). The relay seat is
     // released cleanly — quick-joiners get a fresh matchmaking room of their own.
@@ -342,39 +377,52 @@ export function GameRoot() {
     leaveMatchmaking();
     useGame.getState().setMpOpen(false);
     setScreen("landing");
-  }, [setScreen]);
+  }, [setScreen, clearEndKick]);
 
   useGameInput(engine);
 
-  // watch for the win OR the death → save the record once; wins still pop the
-  // recap — deaths hand the camera to the living (the engine auto-spectates)
+  // watch for the win OR the death → save the record once, then settle the run:
+  // wins pop the recap for the present player; a finished run with the player
+  // parked at the pause menu counts down and walks them back to the main screen
   useEffect(() => {
     const eng = engineRef.current;
     if (!eng) return;
     const id = setInterval(() => {
+      const st = useGame.getState();
       // screen guard: a "Play again" click closes the modal while the OLD engine still
       // has won/lost=true for the 650 ms connecting window — never re-open in that gap
-      if (useGame.getState().screen !== "play") return;
-      // ⏸ the end screen waits while the player is personally paused (the welcome-back
-      // report reveals the death itself)
-      if (useGame.getState().paused || useGame.getState().pauseReport) return;
-      if (!(eng.won || eng.lost)) return;
+      if (st.screen !== "play") return;
+      if (!(eng.won || eng.lost)) { clearEndKick(); return; }
       // 🎬 let the death fall play out first — the body folds, rests, and the dark
       // takes it; only THEN does the end-game flow begin
       if (eng.lost && eng.deathT < 2.1) return;
-      // 💾 save the run record exactly once, whether or not any menu ever opens —
-      // deaths no longer force-pop the recap, the auto free cam takes over instead
+      // 📝 the VictoryModal posts the leaderboard score whenever the recap is
+      // open — mark it so backToMenu never double-posts after a recap visit
+      if (st.victoryOpen) recapPostedRef.current = true;
+      // 💾 save the run record exactly once — even while the player sits at the
+      // pause menu: the town kept living and FINISHED the night without them,
+      // so the story still counts (no more runs lost to an abandoned Esc)
       if (!endSavedRef.current) {
         endSavedRef.current = true;
-        const h = useGame.getState().hud;
+        const h = st.hud;
         useGame.getState().recordRun(h.points, h.money, h.rescues, eng.caughtCount, eng.won, Math.round(h.elapsed * 1000));
       }
-      // 🏆 wins still open the recap automatically; deaths keep the world on screen
-      // (the recap is one Esc away — the spectate banner and the death toast say so)
-      if (eng.won && !useGame.getState().victoryOpen) useGame.getState().setVictoryOpen(true);
+      // ⏸ paused/AFK at the pause menu while the run is over → arm the 🏁
+      // countdown; when it fires, the finished night returns to the main screen
+      if (st.paused || st.pauseReport) {
+        if (endIdleRef.current <= 0) endIdleRef.current = Date.now();
+        const kickAt = endIdleRef.current + END_IDLE_GRACE_MS;
+        if (Date.now() >= kickAt) { backToMenu(); return; }
+        if (st.endKickAt !== kickAt) useGame.getState().setEndKickAt(kickAt);
+      } else {
+        clearEndKick();
+        // 🏆 wins still open the recap automatically; deaths keep the world on screen
+        // (the recap is one Esc away — the spectate banner and the death toast say so)
+        if (eng.won && !st.victoryOpen) useGame.getState().setVictoryOpen(true);
+      }
     }, 400);
     return () => clearInterval(id);
-  }, [engine, runId]);
+  }, [engine, runId, backToMenu, clearEndKick]);
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-slate-950">
