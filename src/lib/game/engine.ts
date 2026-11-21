@@ -581,7 +581,6 @@ export class GameEngine {
   private followOn = false;
   /** hop-out cooldown — stops an E press from instantly re-entering the car */
   exitCd = 0;
-  private carHome: { x: number; z: number; rot: number }[] = [];            // parked spots — reset() restores them
   private carAxles = new Map<number, [CircleCollider, CircleCollider]>();  // car idx → its two live colliders
   private driveMsgT = 0;   // throttles "you need a license" / "park first" toasts
   /** 🚗 driverless cars still rolling on momentum (driver bailed at speed, or the
@@ -863,9 +862,7 @@ export class GameEngine {
     this.player.x = this.playerSpawn.x; this.player.z = this.playerSpawn.z;
     this.hud = this.buildHud();
     this.spawnAll();
-    // remember where every car is parked (driving scatters them — reset brings them home)
-    // and index each car's two axle colliders so a driven car can move them along
-    this.carHome = this.world.cars.map((c) => ({ x: c.x, z: c.z, rot: c.rot }));
+    // index each car's two axle colliders so a driven car can move them along
     for (const cc of this.world.circles) {
       if (cc.car === undefined) continue;
       const pair = this.carAxles.get(cc.car);
@@ -1643,23 +1640,16 @@ export class GameEngine {
     this.carriedVotes = []; this.delivered = 0; this.points = 0; this.rescues = 0; this.caughtCount = 0;
     this.snacksEaten = 0; this.powersUsed = 0;
     this.runnerDelivered = 0; this.lost = false; this.catchCd = 0;
-    // driving: hop out, re-hide the licenses, bring every car back to its parking spot
+    // driving: hop out & re-hide the licenses — but the CARS STAY WHERE THEY ARE!
+    // A parked ride is part of the town's story: your joyride parked at your base,
+    // a bot's abandoned cruise rusting on a street corner — none of it may
+    // teleport back to the dealership just because the week restarted (that was
+    // the "my car vanished and reappeared at its parking spot" bug).
     this.hasLicense = false; this.drive = null; this.exitCd = 0; this.driveMsgT = 0;
     this.ride = null; // 🚗 the passenger seat rewinds too
-    this.carCoast.clear(); // 🚗 every abandoned coasting drift rewinds too
+    this.carCoast.clear(); // 🚗 every abandoned coasting drift freezes where it sits
     this.remoteDriven.clear(); // 🌐 mirrored remote cars re-fill from the live stream
     for (const lc of this.licenses) lc.active = true;
-    this.world.cars.forEach((c, i) => {
-      const h = this.carHome[i];
-      c.x = h.x; c.z = h.z; c.rot = h.rot;
-      const pair = this.carAxles.get(i);
-      if (pair) {
-        const fx = Math.sin(h.rot), fz = Math.cos(h.rot);
-        const ax = VEHICLE_AXLE[c.t] ?? 1.25;
-        pair[0].x = h.x - fx * ax; pair[0].z = h.z - fz * ax;
-        pair[1].x = h.x + fx * ax; pair[1].z = h.z + fz * ax;
-      }
-    });
     this.detainedT = 0; this.invulnT = 8; this.elapsed = 0; this.won = false; this.lost = false; this.clock = 0.3;
     this.arrest = "free"; this.arrestStation = -1; this.playerInVan = false; this.vanNeeded = false;
     /* --- 7 Nights: rewind the story --- */
@@ -1863,6 +1853,17 @@ export class GameEngine {
     }
     this.drive = null;
     this.exitCd = 0.6;
+    // 🚗 park the car EXACTLY where the driver SAW it — the smoothed visual pose
+    // (d.vx/vz/vrot) is the truth on screen; writing it into the world entry keeps
+    // the mesh, the axle colliders and any re-entry in perfect sync. Writing the
+    // raw sim pose instead made the body JUMP a beat on exit right after a crash
+    // (the smoothed pose was still easing toward the shoved true pose).
+    // (A fast bail-out skips this — the coast entry above owns the pose now.)
+    if (!this.carCoast.has(d.ci)) {
+      const car = this.world.cars[d.ci];
+      car.x = d.vx; car.z = d.vz; car.rot = d.vrot;
+      this.syncCarColliders({ ci: d.ci, x: car.x, z: car.z, rot: car.rot, t: d.t });
+    }
     const p = this.player;
     // climb out on the door side; resolve nudges us clear of walls & the car itself
     p.x = d.x + Math.cos(d.rot) * 2.3;
@@ -2175,7 +2176,7 @@ export class GameEngine {
       const lat = (ph.vx * cs - ph.vz * sn) * Math.exp(-dt * CAR_SLIDE_FRICTION);
       ph.w *= Math.exp(-dt * CAR_SPIN_FRICTION);
       ph.rot += ph.w * dt;
-      if (Math.abs(fwd) < 0.14 && Math.abs(lat) < 0.14 && Math.abs(ph.w) < 0.06) {
+      if (Math.abs(fwd) < 0.25 && Math.abs(lat) < 0.25 && Math.abs(ph.w) < 0.06) {
         this.carCoast.delete(ci); // eased to a stop — it's a parked car again
         continue;
       }
