@@ -33,7 +33,7 @@ export const GLB_CHARACTERS: readonly GlbCharacterDef[] = [
   { slug: "airline-pilot-63226a", name: "Airline Pilot", emoji: "✈️", url: cdn("airline-pilot-63226a") },
   { slug: "flight-attendant-befaf4", name: "Flight Attendant", emoji: "🛫", url: cdn("flight-attendant-befaf4") },
   { slug: "traveller-92f20c", name: "Traveller", emoji: "🎒", url: cdn("traveller-92f20c") },
-  { slug: "baggage-handler-0823f5", name: "Baggage Handler", emoji: "🧳", url: cdn("baggage-handler-0823f5") },
+  { slug: "aircraft-maintenance-engineer-8bd28d", name: "Aircraft Engineer", emoji: "🔧", url: cdn("aircraft-maintenance-engineer-8bd28d") },
   { slug: "ground-marshaller-8e8631", name: "Ground Marshaller", emoji: "🦺", url: cdn("ground-marshaller-8e8631") },
   { slug: "fuel-technician-df4ce0", name: "Fuel Technician", emoji: "⛽", url: cdn("fuel-technician-df4ce0") },
   { slug: "bellhop-053c4d", name: "Bellhop", emoji: "🛎️", url: cdn("bellhop-053c4d") },
@@ -109,6 +109,42 @@ function measure(scene: THREE.Object3D): { h: number } {
   return { h: Math.max(0.01, box.max.y - box.min.y) };
 }
 
+/** Validate + cache a parsed GLB as a cast template (throws if unusable).
+ *  A file without its Idle/Walk/Run trio is a static prop frozen in a
+ *  T-pose — rejected so the cartoon body keeps that soul animated. */
+function registerTemplate(
+  slug: string,
+  gltf: { scene: THREE.Object3D; animations?: THREE.AnimationClip[] },
+): GlbTemplate {
+  const scene = gltf.scene;
+  scene.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (m.isMesh) {
+      m.castShadow = false;
+      m.receiveShadow = false;
+      m.frustumCulled = false;
+    }
+  });
+  const clips = gltf.animations ?? [];
+  if (!clips.some((c) => c.name === "Idle" || c.name === "Walk" || c.name === "Run")) {
+    throw new Error(`glb ${slug}: no Idle/Walk/Run clips — static prop`);
+  }
+  const { h } = measure(scene);
+  const tpl: GlbTemplate = {
+    slug,
+    scene,
+    clips,
+    unitScale: CHAR_TARGET_H / h,
+    hip: h * 0.52 * (CHAR_TARGET_H / h),
+    handBone: scene.getObjectByName("attach-righthand") ?? null,
+  };
+  templates.set(slug, tpl);
+  pending.delete(slug);
+  makeThumb(slug);
+  bump();
+  return tpl;
+}
+
 /** Load (and cache) a cast character. Resolves from cache when ready. */
 export function loadGlbTemplate(slug: string): Promise<GlbTemplate> {
   const tpl = templates.get(slug);
@@ -122,28 +158,14 @@ export function loadGlbTemplate(slug: string): Promise<GlbTemplate> {
     loader.load(
       url,
       (gltf) => {
-        const scene = gltf.scene;
-        scene.traverse((o) => {
-          const m = o as THREE.Mesh;
-          if (m.isMesh) {
-            m.castShadow = false;
-            m.receiveShadow = false;
-            m.frustumCulled = false;
-          }
-        });
-        const { h } = measure(scene);
-        const tpl2: GlbTemplate = {
-          slug,
-          scene,
-          clips: gltf.animations ?? [],
-          unitScale: CHAR_TARGET_H / h,
-          hip: h * 0.52 * (CHAR_TARGET_H / h),
-          handBone: scene.getObjectByName("attach-righthand") ?? null,
-        };
-        templates.set(slug, tpl2);
-        pending.delete(slug);
-        bump();
-        resolve(tpl2);
+        try {
+          resolve(registerTemplate(slug, gltf));
+        } catch (e) {
+          pending.delete(slug);
+          failed.add(slug); // no retry hammering — the cartoon body stays
+          bump();
+          reject(e);
+        }
       },
       undefined,
       (err) => {
@@ -208,6 +230,84 @@ export function crossToGlb(st: GlbInstance, name: string): void {
   st.cur = name;
 }
 
+/* ---------------- creator thumbnails (real portraits of the cast) ---------------- */
+
+const thumbs = new Map<string, string>();
+const thumbPending = new Set<string>();
+let thumbVersion = 0;
+const thumbListeners = new Set<() => void>();
+const bumpThumbs = () => { thumbVersion++; thumbListeners.forEach((l) => l()); };
+
+/** React hook — re-renders the hero picker as finished portraits arrive. */
+export function useGlbThumbs(): number {
+  return useSyncExternalStore(
+    (cb) => { thumbListeners.add(cb); return () => { thumbListeners.delete(cb); }; },
+    () => thumbVersion,
+  );
+}
+
+/** Cached data-URL portrait of a cast character (undefined while rendering). */
+export const glbThumb = (slug: string): string | undefined => thumbs.get(slug);
+
+let thumbRenderer: THREE.WebGLRenderer | null = null;
+
+/** One-off offscreen portrait: clone the template, strike an Idle pose,
+ *  frame the whole body, capture the pixels. Tiny (128²), runs once. */
+function renderThumb(tpl: GlbTemplate): string {
+  const SIZE = 128;
+  if (!thumbRenderer) {
+    thumbRenderer = new THREE.WebGLRenderer({
+      alpha: true,
+      antialias: true,
+      preserveDrawingBuffer: true, // the canvas is read right after the render
+    });
+    thumbRenderer.setSize(SIZE, SIZE);
+    thumbRenderer.setPixelRatio(1);
+  }
+  const scene = new THREE.Scene();
+  scene.add(new THREE.AmbientLight(0xffffff, 0.95));
+  const key = new THREE.DirectionalLight(0xfff2d0, 1.5);
+  key.position.set(3, 5, 4);
+  scene.add(key);
+  const rim = new THREE.DirectionalLight(0xa8d8ff, 0.55);
+  rim.position.set(-4, 3, -3);
+  scene.add(rim);
+
+  const inst = skeletonClone(tpl.scene);
+  scene.add(inst);
+  if (tpl.clips.some((c) => c.name === "Idle")) {
+    const mixer = new THREE.AnimationMixer(inst);
+    mixer.clipAction(tpl.clips.find((c) => c.name === "Idle")!).play();
+    mixer.update(0.42); // a relaxed, natural stance
+  }
+  inst.updateMatrixWorld(true);
+  const box = new THREE.Box3().setFromObject(inst);
+  const h = Math.max(0.01, box.max.y - box.min.y);
+  const mid = (box.max.y + box.min.y) / 2;
+  const cam = new THREE.PerspectiveCamera(32, 1, 0.1, 60);
+  cam.position.set(h * 0.18, mid + h * 0.14, h * 1.5);
+  cam.lookAt(0, mid, 0);
+  thumbRenderer.render(scene, cam);
+  const url = thumbRenderer.domElement.toDataURL("image/png");
+  scene.remove(inst); // geometry & materials are shared with the template — never dispose
+  return url;
+}
+
+/** Queue a portrait for a loaded template (cosmetic — failures are fine). */
+function makeThumb(slug: string): void {
+  if (thumbs.has(slug) || thumbPending.has(slug)) return;
+  const tpl = templates.get(slug);
+  if (!tpl) return;
+  thumbPending.add(slug);
+  setTimeout(() => {
+    try {
+      thumbs.set(slug, renderThumb(tpl));
+      bumpThumbs();
+    } catch { /* portraits are decoration — the emoji keeps standing in */ }
+    thumbPending.delete(slug);
+  }, 0);
+}
+
 /* ---------------- background preload ---------------- */
 
 let preloadStarted = false;
@@ -239,32 +339,19 @@ export function preloadGlbCharacters(): void {
         const slug = todo[i].slug;
         if (templates.has(slug)) continue;
         loader.parse(bufs[i], "", (gltf) => {
-          const scene = gltf.scene;
-          scene.traverse((o) => {
-            const m = o as THREE.Mesh;
-            if (m.isMesh) {
-              m.castShadow = false;
-              m.receiveShadow = false;
-              m.frustumCulled = false;
-            }
-          });
-          const { h } = measure(scene);
-          const unitScale = CHAR_TARGET_H / h;
-          templates.set(slug, {
-            slug,
-            scene,
-            clips: gltf.animations ?? [],
-            unitScale,
-            hip: h * 0.52 * unitScale,
-            handBone: scene.getObjectByName("attach-righthand") ?? null,
-          });
-          pending.delete(slug);
-          bump();
+          try {
+            registerTemplate(slug, gltf); // throws on clipless props
+          } catch {
+            failed.add(slug);
+            pending.delete(slug);
+            bump();
+          }
         });
         // give the main thread a breather between parses
         await new Promise((r) => setTimeout(r, 0));
       } catch {
         failed.add(todo[i].slug);
+        pending.delete(todo[i].slug);
         bump();
       }
     }

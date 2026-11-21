@@ -19,7 +19,7 @@ import {
   type AgeGroup, type Appearance, type HairStyle, type OutfitPreset,
 } from "@/lib/game/constants";
 import { buildCharacter, poseCharacter } from "@/lib/game/character";
-import { GLB_CHARACTERS, POLICE_CHAR_DEF, glbCharDef, preloadGlbCharacters } from "@/lib/game/glbCharacters";
+import { GLB_CHARACTERS, POLICE_CHAR_DEF, glbCharDef, glbThumb, preloadGlbCharacters, useGlbThumbs } from "@/lib/game/glbCharacters";
 import { sfx } from "@/lib/game/audio";
 import { useGame } from "./store";
 import { Leaderboard } from "./Leaderboard";
@@ -62,7 +62,7 @@ export function Preview({ look }: { look: Appearance }) {
       onPointerCancel={endDrag}
       onPointerLeave={endDrag}
       role="img"
-      aria-label={`3D preview of your survivor: ${look.girl ? "girl" : "boy"}, ${look.age}, ${look.hairStyle} hair`}
+      aria-label={`3D preview of your survivor: ${look.char ? (glbCharDef(look.char)?.name ?? "rigged character") : look.girl ? "girl" : "boy"}, ${look.age}, ${look.hairStyle} hair`}
     >
       <Canvas
         className="absolute inset-0"
@@ -226,8 +226,11 @@ function matchesPreset(look: Appearance, p: OutfitPreset) {
 }
 
 /* 🧍 Hero picker — the Polyfork cast: real rigged, animated characters.
- * "Classic" keeps the hand-built cartoon body the color tabs style. */
+ * Each card shows a real rendered portrait of the character (captured
+ * offscreen once its GLB lands); "Classic" keeps the paintable cartoon. */
 function HeroPicker({ value, onChange }: { value: string | undefined; onChange: (slug: string | undefined) => void }) {
+  const thumbV = useGlbThumbs(); // re-renders as portraits finish
+  void thumbV;
   const heroes: { slug: string | undefined; name: string; emoji: string }[] = [
     { slug: undefined, name: "Classic", emoji: "🎨" },
     ...GLB_CHARACTERS,
@@ -239,10 +242,12 @@ function HeroPicker({ value, onChange }: { value: string | undefined; onChange: 
       <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-5">
         {heroes.map((h) => {
           const on = value === h.slug;
+          const thumb = h.slug ? glbThumb(h.slug) : undefined;
           return (
             <button
               key={h.slug ?? "classic"}
               aria-pressed={on}
+              title={h.name}
               onClick={() => { sfx.click(); onChange(h.slug); }}
               className={`rounded-xl border-2 p-1.5 text-center transition-all hover:scale-105 ${
                 on
@@ -250,8 +255,17 @@ function HeroPicker({ value, onChange }: { value: string | undefined; onChange: 
                   : "border-white/20 bg-white/5"
               }`}
             >
-              <div className="text-xl leading-none">{h.emoji}</div>
-              <div className="mt-1 truncate text-[10px] font-bold leading-tight text-white/85">{h.name}</div>
+              {thumb ? (
+                <img
+                  src={thumb}
+                  alt=""
+                  draggable={false}
+                  className="mx-auto h-12 w-full object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,0.45)]"
+                />
+              ) : (
+                <div className="flex h-12 items-center justify-center text-xl leading-none">{h.emoji}</div>
+              )}
+              <div className="mt-0.5 truncate text-[10px] font-bold leading-tight text-white/85">{h.name}</div>
             </button>
           );
         })}
@@ -335,10 +349,13 @@ export function Creator({ onStart }: { onStart: () => void }) {
   // joins, the characters are parsed and the town spawns already rigged
   useEffect(() => { preloadGlbCharacters(); }, []);
 
-  // the old side-selection flow is gone — normalize any stale saved "police" look
+  // the old side-selection flow is gone — normalize any stale saved "police" look,
+  // and drop a hero pick that's no longer part of the cast (e.g. a slug the
+  // catalog rejected) back to the paintable Classic
   useEffect(() => {
     const s = useGame.getState();
     if (s.look.fac === "police" || s.look.outfit) s.setLook({ fac: "protester", outfit: "" });
+    if (s.look.char && !glbCharDef(s.look.char)) s.setLook({ char: undefined });
   }, []);
 
   const update = (p: Partial<Appearance>) => setLook(p);
@@ -431,7 +448,16 @@ export function Creator({ onStart }: { onStart: () => void }) {
                 <div className="flex gap-1.5">
                   <Button
                     size="sm" variant="outline" aria-label="Randomize appearance"
-                    onClick={() => { sfx.click(); applyLook(randomAppearance()); }}
+                    onClick={() => {
+                      sfx.click();
+                      const pool: (string | undefined)[] = [
+                        undefined,
+                        ...GLB_CHARACTERS.map((c) => c.slug),
+                        POLICE_CHAR_DEF.slug,
+                      ];
+                      const hero = pool[Math.floor(Math.random() * pool.length)];
+                      applyLook({ ...randomAppearance(), char: hero });
+                    }}
                     className="h-8 rounded-full border-white/25 bg-white/10 px-3 text-xs font-black text-white hover:bg-white/20"
                   >
                     <Dices size={14} className="mr-1" /> Random
