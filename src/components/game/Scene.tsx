@@ -111,6 +111,9 @@ export function useGameInput(engine: GameEngine | null) {
       }
       // ⚔️ F swing · 🔨 B barricade · 🔥 V campfire · ⚖️ R accuse — the 7Nights verbs
       if (e.code === "KeyF" && !e.repeat) engine.attack();
+      // 🎭 emotes — C party-dance toggle · T wave hello (any action cancels)
+      if (e.code === "KeyC" && !e.repeat) engine.emote("dance");
+      if (e.code === "KeyT" && !e.repeat) engine.emote("wave");
       if (e.code === "KeyB" && !e.repeat) engine.placeBuild("barricade");
       if (e.code === "KeyV" && !e.repeat) engine.placeBuild("campfire");
       if (e.code === "KeyR" && !e.repeat) engine.accuse();

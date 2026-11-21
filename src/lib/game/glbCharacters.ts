@@ -26,6 +26,19 @@ export interface GlbCharacterDef {
   url: string;
 }
 
+/* --- the standard Mixamo bone set every cast GLB shares -------------------
+ * Procedural overlays (jump / fight / dance / death / drive …) ride these
+ * named bones directly — one pose table animates the whole cast, because
+ * every Polyfork character ships the identical 22-joint skeleton.        */
+export const GLB_BONES = [
+  "Hips", "Spine", "Spine1", "Spine2", "Neck", "Head",
+  "LeftShoulder", "LeftArm", "LeftForeArm", "LeftHand",
+  "RightShoulder", "RightArm", "RightForeArm", "RightHand",
+  "LeftUpLeg", "LeftLeg", "LeftFoot", "LeftToeBase",
+  "RightUpLeg", "RightLeg", "RightFoot", "RightToeBase",
+] as const;
+export type GlbBoneName = (typeof GLB_BONES)[number];
+
 const cdn = (slug: string) => `https://polyfork.dev/cdn/${slug}.glb`;
 
 /** The cast — kit-slugged Polyfork characters (verified slugs + sizes). */
@@ -70,6 +83,9 @@ export interface GlbTemplate {
   hip: number;
   /** named attachment socket for held tools */
   handBone: THREE.Object3D | null;
+  /** bind-pose parent-chain orientation per bone (model space) — the authoring
+   *  basis that turns model-axis rotations into per-bone local offsets */
+  chain: Record<string, THREE.Quaternion>;
 }
 
 export interface GlbInstance {
@@ -81,6 +97,17 @@ export interface GlbInstance {
   baseScale: number;
   hip: number;
   handBone: THREE.Object3D | null;
+  /** live bone map for overlay posing */
+  bones: Partial<Record<GlbBoneName, THREE.Object3D>>;
+  /** bind-pose chain quats (shared with the template — read-only) */
+  chain: Record<string, THREE.Quaternion>;
+  /** Idle-struck neutral LOCAL quats — overlay targets compose onto this FIXED
+   *  reference (composing onto the live bone would compound every frame) */
+  neutral: Record<string, THREE.Quaternion>;
+  /** Hips rest position (model units, Idle pose) — sit/crouch offsets ride it */
+  hipsRest: THREE.Vector3;
+  /** eased overlay envelope amounts (name → 0..1) */
+  ovAmt: Record<string, number>;
 }
 
 const loader = new GLTFLoader();
@@ -109,6 +136,18 @@ function measure(scene: THREE.Object3D): { h: number } {
   return { h: Math.max(0.01, box.max.y - box.min.y) };
 }
 
+/** Accumulate the bind-pose LOCAL quats from the scene root down to `o`'s
+ *  parent — the bone's parent-chain orientation in model space. Computed once
+ *  at registration (the scene is still pristine bind pose then); overlay
+ *  authoring converts model-axis rotations into local offsets with it. */
+function parentChainQuat(o: THREE.Object3D, out: THREE.Quaternion): THREE.Quaternion {
+  const stack: THREE.Object3D[] = [];
+  for (let p = o.parent; p; p = p.parent) stack.push(p);
+  out.identity();
+  for (let i = stack.length - 1; i >= 0; i--) out.multiply(stack[i].quaternion);
+  return out;
+}
+
 /** Validate + cache a parsed GLB as a cast template (throws if unusable).
  *  A file without its Idle/Walk/Run trio is a static prop frozen in a
  *  T-pose — rejected so the cartoon body keeps that soul animated. */
@@ -130,6 +169,12 @@ function registerTemplate(
     throw new Error(`glb ${slug}: no Idle/Walk/Run clips — static prop`);
   }
   const { h } = measure(scene);
+  // bind-pose parent-chain quats for every standard bone (overlay basis)
+  const chain: Record<string, THREE.Quaternion> = {};
+  for (const name of GLB_BONES) {
+    const b = scene.getObjectByName(name);
+    if (b) chain[name] = parentChainQuat(b, new THREE.Quaternion());
+  }
   const tpl: GlbTemplate = {
     slug,
     scene,
@@ -137,6 +182,7 @@ function registerTemplate(
     unitScale: CHAR_TARGET_H / h,
     hip: h * 0.52 * (CHAR_TARGET_H / h),
     handBone: scene.getObjectByName("attach-righthand") ?? null,
+    chain,
   };
   templates.set(slug, tpl);
   pending.delete(slug);
@@ -207,6 +253,26 @@ export function makeGlbInstance(slug: string, ageScale: number): GlbInstance | n
       actions[clip.name] = a;
     }
   }
+  // 🦴 live bone map + a struck-neutral pose the procedural overlays compose
+  // onto (Idle sampled a few frames in = the relaxed stance every emote
+  // blends from — captured ONCE per instance, then the mixer runs free)
+  const bones: Partial<Record<GlbBoneName, THREE.Object3D>> = {};
+  for (const name of GLB_BONES) {
+    const b = scene.getObjectByName(name);
+    if (b) bones[name] = b;
+  }
+  const neutral: Record<string, THREE.Quaternion> = {};
+  let hipsRest = new THREE.Vector3(0, tpl.hip / Math.max(0.0001, s), 0);
+  if (actions.Idle) {
+    mixer.update(1 / 30); // strike a relaxed Idle frame — the overlay reference
+    for (const name of GLB_BONES) {
+      const b = bones[name];
+      if (b) neutral[name] = b.quaternion.clone();
+    }
+    const hips = bones.Hips;
+    if (hips) hipsRest = hips.position.clone();
+    mixer.setTime(0); // back to the top — the loop plays from a clean start
+  }
   return {
     slug,
     body,
@@ -216,17 +282,112 @@ export function makeGlbInstance(slug: string, ageScale: number): GlbInstance | n
     baseScale: s,
     hip: tpl.hip * ageScale,
     handBone: scene.getObjectByName("attach-righthand") ?? null,
+    bones,
+    chain: tpl.chain,
+    neutral,
+    hipsRest,
+    ovAmt: {},
   };
 }
 
-/** Crossfade the live clip — cheap (two weight eases) and always smooth. */
+/* ---------------- locomotion & procedural overlays ---------------- */
+
+const clamp = (v: number, a: number, b: number) => Math.min(b, Math.max(a, v));
+const sstep01 = (a: number, b: number, x: number) => {
+  const p = clamp((x - a) / (b - a), 0, 1);
+  return p * p * (3 - 2 * p);
+};
+
+/** Continuous locomotion blend: Idle ⇄ Walk ⇄ JOG (Walk+Run mixed) ⇄ Run,
+ *  all as simultaneous clip weights — no more hard speed thresholds, so
+ *  walking no longer plays the Run clip and mid-speeds jog for real. The
+ *  stride timeScale also follows ground speed so feet don't skate. */
+export function setGlbLocomotion(st: GlbInstance, speed: number): void {
+  const wIn = sstep01(0.25, 0.7, speed);    // 0 = standing · 1 = moving
+  const jogK = sstep01(4.2, 8.2, speed);    // 0 = walk · 1 = full run
+  const iw = 1 - wIn;
+  const ww = wIn * (1 - jogK);
+  const rw = wIn * jogK;
+  const set = (name: string, w: number) => {
+    const a = st.actions[name];
+    if (a) a.setEffectiveWeight(w);
+  };
+  set("Idle", iw); set("Walk", ww); set("Run", rw);
+  // stride cadence tracks ground speed (clamped — a frantic blur reads worse
+  // than a little foot-slide on the cartoon proportions)
+  const walk = st.actions.Walk;
+  if (walk && ww > 0.01) walk.setEffectiveTimeScale(clamp(speed / 4.6, 0.6, 1.5));
+  const run = st.actions.Run;
+  if (run && rw > 0.01) run.setEffectiveTimeScale(clamp(speed / 9.6, 0.7, 1.4));
+  st.cur = rw > ww ? "Run" : ww > 0.01 ? "Walk" : "Idle";
+}
+
+const _ovE = new THREE.Euler();
+const _ovR = new THREE.Quaternion();
+
+/** Target local quat for a bone from a MODEL-AXIS euler offset: the model-space
+ *  rotation R (applied in the bone's bind parent-chain frame) becomes
+ *  local' = chain⁻¹ · R · chain · local. All cast members share the chain
+ *  basis, so one pose table steers every character identically. */
+export function glbBoneTarget(
+  st: GlbInstance, bone: string,
+  rx: number, ry: number, rz: number,
+  out: THREE.Quaternion,
+): boolean {
+  const chain = st.chain[bone];
+  if (!chain) return false;
+  _ovE.set(rx, ry, rz, "XYZ");
+  _ovR.setFromEuler(_ovE);
+  out.copy(chain).invert().multiply(_ovR).multiply(chain);
+  return true;
+}
+
+/** Slerp a bone toward a composed overlay target by `amt` (0..1). The target
+ *  is ABSOLUTE — chain⁻¹·R·chain composed onto the FIXED Idle-neutral quat —
+ *  so repeated application converges to the pose instead of compounding.
+ *  No-op when the bone or its neutral reference is missing. */
+const _ovT = new THREE.Quaternion();
+export function glbApplyBone(
+  st: GlbInstance, bone: string,
+  rx: number, ry: number, rz: number,
+  amt: number,
+): void {
+  if (amt <= 0.001) return;
+  const b = st.bones[bone as GlbBoneName];
+  const nq = st.neutral[bone];
+  if (!b || !nq) return;
+  if (!glbBoneTarget(st, bone, rx, ry, rz, _ovT)) return;
+  _ovT.multiply(nq); // the fixed neutral stance — stable frame-over-frame
+  b.quaternion.slerp(_ovT, Math.min(1, amt));
+}
+
+/** Ease Hips toward a crouch/sit height: rest×k in model units. */
+export function glbHipsTo(st: GlbInstance, k: number, amt: number): void {
+  const hips = st.bones.Hips;
+  if (!hips || amt <= 0.001) return;
+  const target = st.hipsRest.y * k;
+  hips.position.y += (target - hips.position.y) * Math.min(1, amt);
+}
+
+/** Per-frame eased envelope for a named overlay (fast attack, soft release). */
+export function glbOvEase(st: GlbInstance, name: string, want: number, dt: number): number {
+  const cur = st.ovAmt[name] ?? 0;
+  const rate = want > cur ? 9 : 7.5; // snap on · ease off
+  const next = cur + (want - cur) * Math.min(1, dt * rate);
+  st.ovAmt[name] = next;
+  return next;
+}
+
+/** Crossfade the live clip — cheap (two weight eases) and always smooth.
+ *  (The in-game pose path uses setGlbLocomotion; this stays for one-off users.) */
 export function crossToGlb(st: GlbInstance, name: string): void {
   if (st.cur === name) return;
   const next = st.actions[name];
   if (!next) return;
   next.reset().setEffectiveWeight(1).fadeIn(0.18).play();
-  const prev = st.actions[st.cur];
-  if (prev) prev.fadeOut(0.18);
+  for (const other of Object.keys(st.actions)) {
+    if (other !== name) st.actions[other]?.setEffectiveWeight(0);
+  }
   st.cur = name;
 }
 

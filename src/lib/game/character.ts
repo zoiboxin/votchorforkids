@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { AGE_STATS, ITEMS, POLICE_UNIFORM, policeOutfitOf, type Appearance } from "./constants";
-import { loadGlbTemplate, makeGlbInstance, crossToGlb, POLICE_CHAR, type GlbInstance } from "./glbCharacters";
+import { loadGlbTemplate, makeGlbInstance, crossToGlb, setGlbLocomotion, glbApplyBone, glbHipsTo, glbOvEase, POLICE_CHAR, type GlbInstance } from "./glbCharacters";
 
 /* ------------------------------------------------------------------ */
 /* Shared caches + merged-geometry "buckets"                           */
@@ -611,20 +611,20 @@ function attachGlbBody(root: THREE.Object3D, slug: string): void {
 }
 
 /** 🧍 Clip-driven pose for rigged bodies — the GLB twin of poseCharacter.
- *  Idle/Walk/Run crossfade by speed (all the pose opts the game drives map
- *  onto group-level transforms: flips, squash, faints, cuffs, tool swings). */
+ *  Locomotion blends continuously (Idle ⇄ Walk ⇄ JOG ⇄ Run) and a family of
+ *  procedural BONE overlays plays on top of the mixer — jump, fight, dance,
+ *  wave, cheer, drive, death & get-up — all authored once on the shared
+ *  Mixamo bone set, so every cast member animates identically. The cartoon
+ *  pose opts (flips, squash, faints, cuffs, tool swings) keep working. */
 function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: number, o: PoseOpts): void {
   const gs = (g.userData.gaitGlb ??= { lastT: t }) as { lastT: number };
   const dt = Math.min(0.1, Math.max(0, t - gs.lastT));
   gs.lastT = t;
 
-  // clip pick — walk/run thresholds match the sim's speeds (sprint ≈ 1.65×)
-  let want = "Idle";
-  if (o.detained) want = "Idle";
-  else if (o.faint != null && o.faint > 0) want = "Idle";
-  else if (speed > 6.2) want = "Run";
-  else if (speed > 0.45) want = "Walk";
-  crossToGlb(st, want);
+  // clip pick — continuous weights by speed (jog = Walk+Run mix); while a
+  // hard pose owns the body (drive / death / get-up) the legs keep feeding
+  // the mixer but the overlay slerps over them, so transitions stay smooth
+  setGlbLocomotion(st, o.drive || o.death || o.getup ? Math.min(speed, 0.3) : speed);
   st.mixer.update(dt); // callers only pose VISIBLE bodies — free animation LOD
 
   const body = st.body;
@@ -637,6 +637,151 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
     st.baseScale * (1 - sq),
     st.baseScale * (1 + sq * 0.7),
   );
+
+  /* ---------------- procedural bone overlays (in priority order) -------- */
+
+  // ☠️ DEATH — limbs go loose while the root tips over & sinks (the caller
+  // rotates/sinks the root; this overlay sells the collapse on the bones)
+  if (o.death != null && o.death > 0) {
+    const d = Math.min(1, o.death);
+    const loose = d * d * (3 - 2 * d);
+    glbApplyBone(st, "LeftArm", -0.3 * loose, 0, 0.95 * loose, loose);
+    glbApplyBone(st, "RightArm", -0.15 * loose, 0, -1.05 * loose, loose);
+    glbApplyBone(st, "LeftForeArm", -0.35 * loose, 0, 0.2 * loose, loose);
+    glbApplyBone(st, "RightForeArm", -0.2 * loose, 0, -0.25 * loose, loose);
+    glbApplyBone(st, "LeftUpLeg", -0.3 * loose, 0, 0.22 * loose, loose);
+    glbApplyBone(st, "RightUpLeg", -0.12 * loose, 0, -0.3 * loose, loose);
+    glbApplyBone(st, "LeftLeg", 0.5 * loose, 0, 0, loose);
+    glbApplyBone(st, "RightLeg", 0.34 * loose, 0, 0, loose);
+    glbApplyBone(st, "Head", 0.16 * loose, 0, 0.26 * loose, loose);
+    glbApplyBone(st, "Spine", 0.06 * loose, 0, 0.1 * loose, loose);
+  }
+
+  // 🪫 GET UP — a crouched push-off that unfolds as the timer drains 1 → 0
+  if (o.getup != null && o.getup > 0) {
+    const c = Math.min(1, o.getup);              // 1 = down · 0 = standing
+    const amt = glbOvEase(st, "getup", Math.min(1, c * 2.4), dt);
+    glbHipsTo(st, 1 - 0.4 * c, amt);
+    glbApplyBone(st, "Spine", 0.5 * c, 0, 0, amt);
+    glbApplyBone(st, "Spine1", 0.22 * c, 0, 0, amt);
+    glbApplyBone(st, "Head", 0.3 * c, 0, 0, amt);
+    glbApplyBone(st, "LeftUpLeg", -1.12 * c, 0, 0.1 * c, amt);
+    glbApplyBone(st, "RightUpLeg", -0.85 * c, 0, -0.12 * c, amt);
+    glbApplyBone(st, "LeftLeg", 1.5 * c, 0, 0, amt);
+    glbApplyBone(st, "RightLeg", 1.36 * c, 0, 0, amt);
+    glbApplyBone(st, "LeftArm", -0.45 * c, 0, 0.2 * c, amt);
+    glbApplyBone(st, "RightArm", -0.6 * c, 0, -0.22 * c, amt);
+    glbApplyBone(st, "LeftForeArm", -0.25 * c, 0, 0, amt);
+    glbApplyBone(st, "RightForeArm", -0.3 * c, 0, 0, amt);
+  }
+
+  // 🚗 DRIVE — seated at the wheel: hips sink, thighs go horizontal, shins
+  // drop, arms reach the rim. Static hold, blended over whatever the mixer
+  // was playing when the door shut.
+  if (o.drive) {
+    const amt = glbOvEase(st, "drive", 1, dt);
+    glbHipsTo(st, 0.56, amt);
+    glbApplyBone(st, "Spine", 0.1, 0, 0, amt);
+    glbApplyBone(st, "Spine1", 0.06, 0, 0, amt);
+    glbApplyBone(st, "Head", 0.07, 0, 0, amt);
+    glbApplyBone(st, "LeftUpLeg", -1.5, 0, 0.08, amt);
+    glbApplyBone(st, "RightUpLeg", -1.44, 0, -0.1, amt);
+    glbApplyBone(st, "LeftLeg", 1.36, 0, 0, amt);
+    glbApplyBone(st, "RightLeg", 1.3, 0, 0, amt);
+    glbApplyBone(st, "LeftFoot", -0.3, 0, 0, amt);
+    glbApplyBone(st, "RightFoot", -0.26, 0, 0, amt);
+    glbApplyBone(st, "LeftArm", -1.18, 0, 0.2, amt);
+    glbApplyBone(st, "RightArm", -1.14, 0, -0.22, amt);
+    glbApplyBone(st, "LeftForeArm", -0.38, 0, 0, amt);
+    glbApplyBone(st, "RightForeArm", -0.34, 0, 0, amt);
+  }
+
+  // 🕺 DANCE — a looping party shimmy: hips bounce, torso sways, arms
+  // alternate pump-the-air, head rides the beat. Pure sin() math, loops forever.
+  if (o.dance) {
+    const amt = glbOvEase(st, "dance", 1, dt);
+    const b = t * 6.6;                          // the beat (~1 Hz pairs)
+    glbHipsTo(st, 0.955 + Math.abs(Math.sin(b)) * 0.045, amt);
+    glbApplyBone(st, "Hips", 0, Math.sin(b * 0.5) * 0.22, 0, amt);
+    glbApplyBone(st, "Spine", 0.05, -Math.sin(b * 0.5) * 0.26, Math.sin(b) * 0.05, amt);
+    glbApplyBone(st, "Spine1", 0, -Math.sin(b * 0.5) * 0.14, 0, amt);
+    glbApplyBone(st, "Head", 0.04, Math.sin(b * 0.5 + 0.5) * 0.3, -Math.sin(b) * 0.07, amt);
+    glbApplyBone(st, "LeftArm", -2.2 + Math.sin(b) * 0.6, 0, 0.55, amt);
+    glbApplyBone(st, "RightArm", -0.55 - Math.cos(b) * 0.5, 0, -0.5, amt);
+    glbApplyBone(st, "LeftForeArm", -0.85 - Math.sin(b) * 0.3, 0, 0, amt);
+    glbApplyBone(st, "RightForeArm", -0.6 + Math.cos(b) * 0.3, 0, 0, amt);
+  }
+
+  // 👋 WAVE — right arm high, forearm flapping hello; a little head tilt
+  if (o.wave) {
+    const amt = glbOvEase(st, "wave", 1, dt);
+    glbApplyBone(st, "RightArm", -2.72, 0, -0.28, amt);
+    glbApplyBone(st, "RightForeArm", 0, 0, Math.sin(t * 7.6) * 0.55, amt);
+    glbApplyBone(st, "Head", 0, 0, -0.13, amt);
+    glbApplyBone(st, "LeftArm", 0.08, 0, 0.1, amt);
+  }
+
+  // 🙌 CHEER — both arms thrown up, little victory hops, face to the sky
+  if (o.cheer) {
+    const amt = glbOvEase(st, "cheer", 1, dt);
+    glbHipsTo(st, 0.94 + Math.abs(Math.sin(t * 5.2)) * 0.1, amt);
+    glbApplyBone(st, "LeftArm", -2.85, 0, 0.42, amt);
+    glbApplyBone(st, "RightArm", -2.85, 0, -0.42, amt);
+    glbApplyBone(st, "LeftForeArm", -0.3, 0, 0, amt);
+    glbApplyBone(st, "RightForeArm", -0.3, 0, 0, amt);
+    glbApplyBone(st, "Head", -0.24, 0, 0, amt);
+    glbApplyBone(st, "Spine", -0.07, 0, 0, amt);
+  }
+
+  // 🦘 JUMP — rise (superhero arms, knees tucked) ⇄ fall (arms out, legs
+  // reaching for the ground), blended by vertical speed like the cartoon air pose
+  if (o.airborne && !(o.flip != null && o.flip > 0)) {
+    const amt = glbOvEase(st, "jump", 1, dt);
+    const upB = Math.min(1, Math.max(0, ((o.vy ?? 0) + 1.8) / 3.6)); // 1 = rising
+    const A = (bone: string, rise: number, fall: number, rz = 0) =>
+      glbApplyBone(st, bone, rise + (fall - rise) * (1 - upB), 0, rz, amt);
+    A("LeftArm", -2.5, -1.05, 0.5);
+    A("RightArm", -2.5, -1.05, -0.5);
+    glbApplyBone(st, "LeftForeArm", -0.3, 0, 0, amt);
+    glbApplyBone(st, "RightForeArm", -0.3, 0, 0, amt);
+    A("LeftUpLeg", -0.9, -0.5);
+    A("RightUpLeg", -0.25, -0.18);
+    glbApplyBone(st, "LeftLeg", 1.2, 0.6, 0, amt);
+    glbApplyBone(st, "RightLeg", 0.55, 0.4, 0, amt);
+    glbApplyBone(st, "Spine", -0.1 + 0.16 * (1 - upB), 0, 0, amt);
+    glbApplyBone(st, "Head", -0.12 * upB + 0.1 * (1 - upB), 0, 0, amt);
+  } else {
+    glbOvEase(st, "jump", 0, dt);
+  }
+
+  // 🥊 FIGHT — bare-hand jab (the tool chop owns the arc when a tool is held):
+  // windup behind → straight thrust with a torso twist → settle
+  const bareHand = !g.userData.heldTool;
+  if (o.swing != null && o.swing > 0 && !o.drive && bareHand) {
+    const sw = Math.min(1, o.swing);
+    const amt = glbOvEase(st, "fight", Math.min(1, sw * 6), dt);
+    if (sw < 0.2) {
+      const k = sw / 0.2;                       // windup — pull back
+      glbApplyBone(st, "RightArm", 0.5 * k, -0.3 * k, -0.12 * k, amt);
+      glbApplyBone(st, "RightForeArm", 1.35 * k, 0, 0, amt);
+      glbApplyBone(st, "Spine1", 0, 0.32 * k, 0, amt);
+    } else if (sw < 0.42) {
+      const k = (sw - 0.2) / 0.22;              // the strike — thrust forward
+      glbApplyBone(st, "RightArm", 0.5 + (-1.55 - 0.5) * k * k, 0.12, -0.05, amt);
+      glbApplyBone(st, "RightForeArm", 1.35 * (1 - k) - 0.1 * k, 0, 0, amt);
+      glbApplyBone(st, "Spine1", 0, -0.42 * k, 0, amt);
+    } else {
+      const k = sstep(0, 1, (sw - 0.42) / 0.58); // settle back to guard
+      glbApplyBone(st, "RightArm", -1.55 + 0.55 * k, 0, -0.05, amt);
+      glbApplyBone(st, "RightForeArm", -0.1 + 1.15 * k, 0, 0, amt);
+      glbApplyBone(st, "Spine1", 0, -0.42 + 0.42 * k, 0, amt);
+    }
+    // left arm guards the face through the whole exchange
+    glbApplyBone(st, "LeftArm", -1.35, 0, 0.3, amt);
+    glbApplyBone(st, "LeftForeArm", 1.5, 0, 0, amt);
+  } else {
+    glbOvEase(st, "fight", 0, dt);
+  }
 
   if (o.detained) {
     // cuffed slump — the rig can't tuck the legs, so sink + lean sells it
@@ -658,7 +803,8 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
   }
 
   // ⚔️ swing — the tool (riding the hand socket) whistles through the chop arc;
-  // between swings it eases back to the ready-stance tilt
+  // between swings it eases back to the ready-stance tilt (bare-hand fights
+  // use the bone-level punch overlay above instead)
   const tool = g.userData.heldTool as THREE.Object3D | undefined;
   if (tool) {
     const base = (tool.userData.baseRx as number | undefined) ?? -0.5;
@@ -686,7 +832,7 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
 /* ------------------------------------------------------------------ */
 /* Posing — walk / run / jump / idle / sit + auto-blink & expressions  */
 /* ------------------------------------------------------------------ */
-export interface PoseOpts { phase?: number; airborne?: boolean; detained?: boolean; zombie?: boolean; /** 😱 fleeing a horror — arms thrown up, flailing, glancing over the shoulder */ panic?: boolean; vy?: number; flip?: number; squash?: number; faint?: number; /** 0..1 progress of an arm swing (axe chop / sword slash / beast claw) — 0 = none */ swing?: number }
+export interface PoseOpts { phase?: number; airborne?: boolean; detained?: boolean; zombie?: boolean; /** 😱 fleeing a horror — arms thrown up, flailing, glancing over the shoulder */ panic?: boolean; vy?: number; flip?: number; squash?: number; faint?: number; /** 0..1 progress of an arm swing (axe chop / sword slash / beast claw) — 0 = none */ swing?: number; /** 🕺 emotes — dance loops until canceled, wave says hello, cheer celebrates */ dance?: boolean; wave?: boolean; cheer?: boolean; /** 🚗 seated at the wheel (rigged bodies only — the car hides cartoon sit poses) */ drive?: boolean; /** ☠️ 0..1 death collapse progress — limbs go loose while the root tips over */ death?: number; /** 🪫 get-up timer (1 → 0): crouched push-off unfolding to standing */ getup?: number; }
 
 /** All channels poseCharacter drives — computed as targets, blended, then applied. */
 interface PoseCh {
@@ -903,6 +1049,29 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
   legs[0].rotation.x = _ground.l0; legs[1].rotation.x = _ground.l1;
   arms[0].rotation.x = _ground.a0x; arms[1].rotation.x = _ground.a1x;
   arms[0].rotation.z = _ground.a0z; arms[1].rotation.z = _ground.a1z;
+
+  /* ---- 🎭 emotes for the cartoon rig — dance / wave / cheer ------------
+   * Same spirit as the GLB overlays, painted on the simple channels so
+   * Classic (paintable) heroes can party too. */
+  if (o.dance) {
+    const b = t * 6.6;
+    arms[0].rotation.x = -2.2 + Math.sin(b) * 0.6;
+    arms[1].rotation.x = -0.55 - Math.cos(b) * 0.5;
+    arms[0].rotation.z = 0.55; arms[1].rotation.z = -0.5;
+    body.position.y += Math.abs(Math.sin(b)) * 0.05;
+    body.rotation.y = Math.sin(b * 0.5) * 0.2;
+    head.rotation.y = Math.sin(b * 0.5 + 0.5) * 0.3;
+    head.rotation.z = -Math.sin(b) * 0.07;
+  } else if (o.wave) {
+    arms[1].rotation.x = -2.72;
+    arms[1].rotation.z = -0.28 - Math.sin(t * 7.6) * 0.5;
+    head.rotation.z = -0.13;
+  } else if (o.cheer) {
+    arms[0].rotation.x = arms[1].rotation.x = -2.85;
+    arms[0].rotation.z = 0.42; arms[1].rotation.z = -0.42;
+    body.position.y += Math.abs(Math.sin(t * 5.2)) * 0.12;
+    head.rotation.x = -0.24;
+  }
 
   /* ---- ⚔️ arm swing — wind up → SLAM → recover, overriding the right arm ----
    * Drives axe chops, sword slashes, hammer smashes and beast claws alike.

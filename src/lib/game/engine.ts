@@ -637,6 +637,11 @@ export class GameEngine {
   }
 
   faintT = 0;   // >0 while the world spins after a car bonk — input is ignored, stars orbit
+  /* --- 🎭 emotes — dance (toggle), wave (one-shot), get-up recovery --- */
+  danceOn = false; // 🕺 party shimmy loops until you move / fight / hop in a car
+  waveT = 0;       // 👋 hello-wave plays out over ~2.4 s
+  getupT = 0;      // 🪫 runs 1 → 0 after a dizzy spell — the crouched push-off
+  cheerT = 0;      // 🙌 victory hop loop — fires the moment the match is won
   carHitCd = 0; // old-game hitCd — no double-bonks from the same bumper
 
   /* --- 💥 game-feel: trauma screen shake --- */
@@ -1640,6 +1645,7 @@ export class GameEngine {
     this.inv = []; this.hurtT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0; this.powerFullT = 0;
     this.invOnceT = 0; this.toolOnceT = 0; this.botDriven.clear();
     this.flipT = 0; this.squashT = 0; this.faintT = 0; this.carHitCd = 0;
+    this.danceOn = false; this.waveT = 0; this.getupT = 0; this.wasFaint = false; this.cheerT = 0; // 🎭 emotes rewind too
     this.activePower = null; this.powerT = 0; this.powerPockets = []; this.morphKind = null; this.blinkCd = 0;
     for (const pw of this.powers) { pw.active = true; pw.respawn = 0; }
     this.carriedVotes = []; this.delivered = 0; this.points = 0; this.rescues = 0; this.caughtCount = 0;
@@ -1832,6 +1838,7 @@ export class GameEngine {
       return;
     }
     const car = this.world.cars[ci];
+    this.breakEmote(); // 🎭 no dancing behind the wheel
     this.drive = { ci, x: car.x, z: car.z, rot: car.rot, v: 0, c: car.c, t: car.t, vx: car.x, vz: car.z, vrot: car.rot, spin: 0, hitT: 0, steerVis: 0, steer: 0, pedal: 0, lastDir: 1, lights: true };
     // 🚗 hopping into a car that's still coasting — inherit its rolling speed
     // (the coast entry hands control over; we keep the momentum it had)
@@ -2769,6 +2776,7 @@ export class GameEngine {
     }
     if (this.caughtCount >= BUST_TARGET) {
       this.won = true; this.wonAt = Date.now();
+      this.cheerT = 8; // 🙌 the bust quota is met — strike the victory pose
       this.points += 500;
       sfx.win();
       this.toast(`🏆 ALL ${BUST_TARGET} RUNNERS BUSTED! The city is safe — great work, Officer!`, "good");
@@ -2912,6 +2920,7 @@ export class GameEngine {
       this.toast(n === 1 ? `Loot delivered! +${POINTS_DELIVER}` : `${n} loot bags delivered! +${POINTS_DELIVER * n}`, "good");
       if (left === 0) {
         this.won = true; this.wonAt = Date.now();
+        this.cheerT = 8; // 🙌 every vote home — celebrate!
         this.points += 500;
         sfx.win();
         this.toast("🏆 ALL VOTES DELIVERED! Democracy saved — you legend!", "good");
@@ -3733,6 +3742,7 @@ export class GameEngine {
   private winGame(reason: "dawn" | "solo" | "beast") {
     if (this.won || this.lost) return;
     this.won = true;
+    this.cheerT = 8; // 🙌 victory — arms up, little hops
     this.wonAt = this.elapsed;
     if (reason === "dawn") this.nightsSurvived = NIGHTS_TOTAL;
     this.points += WIN_BONUS;
@@ -3747,6 +3757,7 @@ export class GameEngine {
   private die() {
     if (this.won || this.lost) return;
     this.lost = true;
+    this.breakEmote(); // 🎭 the party is over
     this.deathT = 0; // 🎬 the death fall starts — the recap waits until the body settles
     stopDrone(); stopInsects(); // 🦗 the chorus falls silent with the light
     sfx.lose();
@@ -4773,9 +4784,29 @@ export class GameEngine {
 
   /* ---------------- combat & harvesting (F) ---------------- */
 
+  /* --- 🎭 emotes --- */
+  wasFaint = false; // faint→getup edge detector
+
+  /** 🕺👋 C = dance toggle · T = wave. Any real action cancels an emote —
+   *  movement, jumping, fighting, driving, getting cuffed, dying. */
+  emote(kind: "dance" | "wave") {
+    if (!this.running || this.lost || this.detainedT > 0 || this.drive || this.playerInVan) return;
+    if (kind === "dance") {
+      this.danceOn = !this.danceOn;
+      if (this.danceOn) this.waveT = 0;
+    } else {
+      this.waveT = 2.4;
+      this.danceOn = false;
+    }
+  }
+
+  /** Any gameplay action interrupts the party tricks. */
+  private breakEmote() { this.danceOn = false; this.waveT = 0; }
+
   /** Swing the held arm — claws, blade, axe, hammer… or sad bare fists. */
   attack() {
     if (!this.running || this.personalPause || this.lost || this.attackCd > 0 || this.faintT > 0 || this.detainedT > 0 || this.drive) return;
+    this.breakEmote();
     const p = this.player;
     this.attackCd = ATTACK_CD;
     // 🩸 possessed player = the beast: claws tear the crew
@@ -5446,6 +5477,11 @@ export class GameEngine {
     this.flipT = Math.max(0, this.flipT - dt);
     this.squashT = Math.max(0, this.squashT - dt);
     this.faintT = Math.max(0, this.faintT - dt);
+    if (this.faintT === 0 && this.getupT <= 0 && (this.wasFaint as boolean)) { this.getupT = 1; this.wasFaint = false; } // 🪫 shake it off — stand back up
+    else if (this.faintT > 0) this.wasFaint = true;
+    this.waveT = Math.max(0, this.waveT - dt);
+    this.getupT = Math.max(0, this.getupT - dt * (1 / 1.05)); // the push-off unfolds over ~1 s
+    this.cheerT = Math.max(0, this.cheerT - dt); // 🙌 the victory dance rides out the confetti
     this.shakeT = Math.max(0, this.shakeT - dt * 1.5); // 💥 trauma decays — juice returns to rest
     this.carHitCd = Math.max(0, this.carHitCd - dt);
     this.exitCd = Math.max(0, this.exitCd - dt);
@@ -5517,6 +5553,8 @@ export class GameEngine {
       p.stamina = this.stamina; // engine stamina is the single source of truth
       // while dizzy from a car bonk the legs don't answer — momentum carries the tumble
       const faint = this.faintT > 0;
+      // 🎭 real actions cancel the party tricks — first step / jump ends the dance
+      if ((this.input.f !== 0 || this.input.r !== 0 || this.input.jump) && (this.danceOn || this.waveT > 0)) this.breakEmote();
       stepBody(p, faint
         ? { f: 0, r: 0, sprint: false, jump: false }
         : { f: this.input.f, r: this.input.r, sprint: this.input.sprint, jump: this.input.jump },
@@ -5537,6 +5575,7 @@ export class GameEngine {
       if (this.activePower === "sonic" && this.stamina < staminaBefore) this.stamina = staminaBefore;
       if (p.jumps === 1 && prevJumps === 0) {
         sfx.jump();
+        this.breakEmote(); // 🎭 a hop cancels the shimmy
         // 🦘 kangaroo legs jump for free while the power lasts
         if (this.activePower !== "jump") this.stamina = Math.max(0, this.stamina - JUMP_COST);
       } else if (p.jumps === 2 && prevJumps === 1) {

@@ -28,7 +28,26 @@ import { HowToPlay } from "./Panels";
 /* ============================ 3D preview ============================ */
 /* Drag to spin the hero; auto turntable resumes after you let go.     */
 
-export function Preview({ look }: { look: Appearance }) {
+/* 🎬 animation showcase — one click plays any move on the preview stage */
+export type PoseAnimName =
+  | "idle" | "walk" | "run" | "jump" | "fight" | "dance"
+  | "wave" | "cheer" | "drive" | "death" | "getup";
+
+const ANIM_BUTTONS: { id: PoseAnimName; label: string }[] = [
+  { id: "idle", label: "Idle" },
+  { id: "walk", label: "Walk" },
+  { id: "run", label: "Run" },
+  { id: "jump", label: "Jump" },
+  { id: "fight", label: "Fight" },
+  { id: "dance", label: "Dance" },
+  { id: "wave", label: "Wave" },
+  { id: "cheer", label: "Cheer" },
+  { id: "drive", label: "Drive" },
+  { id: "death", label: "Death" },
+  { id: "getup", label: "Get up" },
+];
+
+export function Preview({ look, anim = "idle" }: { look: Appearance; anim?: PoseAnimName }) {
   const mesh = useMemo(
     () => buildCharacter(look, { shadow: true }),
     [look],
@@ -86,19 +105,20 @@ export function Preview({ look }: { look: Appearance }) {
         <group ref={g}>
           <primitive object={mesh} />
         </group>
-        <PreviewAnim mesh={mesh} g={g} spin={spin} drag={drag} />
+        <PreviewAnim mesh={mesh} g={g} spin={spin} drag={drag} anim={anim} />
       </Canvas>
     </div>
   );
 }
 
 function PreviewAnim({
-  mesh, g, spin, drag,
+  mesh, g, spin, drag, anim,
 }: {
   mesh: THREE.Object3D;
   g: React.RefObject<THREE.Group | null>;
   spin: { current: number };
   drag: { current: { on: boolean; lastX: number; idle: number } };
+  anim: PoseAnimName;
 }) {
   useFrame((s, dt) => {
     const t = s.clock.elapsedTime;
@@ -114,12 +134,45 @@ function PreviewAnim({
     if (g.current) {
       const sway = !d.on && d.idle > 1.0 ? Math.sin(t * 0.42) * 0.5 : 0;
       g.current.rotation.y = spin.current + sway;
-      // a joyful little hop every few seconds to show off the animation
-      const hopPhase = t % 4.2;
-      const h = hopPhase > 3.4 ? Math.sin(((hopPhase - 3.4) / 0.8) * Math.PI) : 0;
-      g.current.position.y = h * 0.55;
+      // scripted air arcs: idle keeps the old periodic hop · jump draws a real leap
+      let y = 0;
+      if (anim === "idle") {
+        const hopPhase = t % 4.2;
+        y = hopPhase > 3.4 ? Math.sin(((hopPhase - 3.4) / 0.8) * Math.PI) * 0.55 : 0;
+      } else if (anim === "jump") {
+        const p = (t % 1.4) / 1.4;
+        y = Math.sin(p * Math.PI) * 1.05;
+      }
+      g.current.position.y = y;
     }
-    poseCharacter(mesh, 0, t, { airborne: t % 4.2 > 3.45 });
+    // 🎬 the chosen move — routed through the same poseCharacter the town uses,
+    // so the stage previews EXACTLY what the game will play
+    if (anim === "walk") poseCharacter(mesh, 2.6, t, {});
+    else if (anim === "run") poseCharacter(mesh, 9.6, t, {});
+    else if (anim === "jump") {
+      const p = (t % 1.4) / 1.4;
+      poseCharacter(mesh, 0, t, { airborne: p < 0.85, vy: Math.cos(p * Math.PI) * 4.6 });
+    } else if (anim === "fight") poseCharacter(mesh, 0, t, { swing: (t % 0.9) / 0.9 });
+    else if (anim === "dance") poseCharacter(mesh, 0, t, { dance: true });
+    else if (anim === "wave") poseCharacter(mesh, 0, t, { wave: true });
+    else if (anim === "cheer") poseCharacter(mesh, 0, t, { cheer: true });
+    else if (anim === "drive") poseCharacter(mesh, 0, t, { drive: true });
+    else if (anim === "death") {
+      // fall → rest a beat → restart (the root tips over like the real corpse fall)
+      const p = (t % 4.6) / 4.6;
+      const ez = Math.min(1, p / 0.28);
+      mesh.rotation.x = -(ez * ez * (3 - 2 * ez)) * Math.PI / 2.1;
+      poseCharacter(mesh, 0, t, { death: ez });
+    } else if (anim === "getup") {
+      // down → push-off → stand → a beat of idle → loop
+      const p = t % 3.6;
+      const g8 = Math.max(0, 1 - p / 1.35);
+      mesh.rotation.x = 0;
+      poseCharacter(mesh, 0, t, { getup: g8 });
+    } else {
+      mesh.rotation.x = 0;
+      poseCharacter(mesh, 0, t, { airborne: t % 4.2 > 3.45 });
+    }
   });
   return null;
 }
@@ -338,6 +391,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
   const [starting, setStarting] = useState(false);
   const [help, setHelp] = useState(false);
   const [tab, setTab] = useState("outfit");
+  const [anim, setAnim] = useState<PoseAnimName>("idle");
 
   useEffect(() => {
     const unlock = () => { sfx.click(); window.removeEventListener("pointerdown", unlock); };
@@ -403,7 +457,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
           {/* -------- left: preview + leaderboard -------- */}
           <div className="flex w-full min-w-0 flex-col items-center gap-4">
             <div className="relative h-[340px] w-full max-w-[430px] overflow-hidden rounded-3xl border-2 border-white/20 bg-gradient-to-b from-sky-400/55 via-emerald-400/35 to-emerald-700/45 shadow-2xl sm:h-[400px] lg:w-full">
-              <Preview look={look} />
+              <Preview look={look} anim={anim} />
               <div className="pointer-events-none absolute inset-x-0 bottom-0 h-16 bg-gradient-to-t from-black/50 to-transparent" />
               <div className="pointer-events-none absolute right-2 top-2 flex items-center gap-1 whitespace-nowrap rounded-full bg-black/45 px-2 py-1 text-[10px] font-bold text-white/85 backdrop-blur">
                 <Hand size={11} /> drag to spin
@@ -411,6 +465,29 @@ export function Creator({ onStart }: { onStart: () => void }) {
               <div className="pointer-events-none absolute bottom-2 left-0 right-0 text-center text-xs font-bold text-white/85">
                 {ready ? playerName : "Name your survivor"} · {lookChips.join(" · ")}
               </div>
+            </div>
+
+            {/* 🎬 animation showcase — try every move the survivor will play in-game */}
+            <div
+              className="flex w-full max-w-[430px] flex-wrap items-center justify-center gap-1.5 lg:w-full"
+              role="toolbar"
+              aria-label="Preview animations"
+            >
+              {ANIM_BUTTONS.map((b) => (
+                <button
+                  key={b.id}
+                  type="button"
+                  aria-pressed={anim === b.id}
+                  onClick={() => { sfx.click(); setAnim(b.id); }}
+                  className={`rounded-full px-3 py-1.5 text-[11px] font-black transition-all ${
+                    anim === b.id
+                      ? "bg-yellow-400 text-slate-950 shadow-lg shadow-yellow-400/30"
+                      : "bg-white/10 text-white/80 hover:bg-white/20 hover:text-white"
+                  }`}
+                >
+                  {b.label}
+                </button>
+              ))}
             </div>
 
             <div className="flex items-center gap-2 rounded-full bg-white/10 px-4 py-2 text-center text-xs text-white/85 backdrop-blur">

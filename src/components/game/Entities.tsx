@@ -24,6 +24,22 @@ import { useGame } from "./store";
 
 export type ClockRef = { current: number };
 
+/* 🚗 per-body-style driver seat offsets — (x = side, z = forward of the nose
+ * axis, y = floor height above ground). `null` = sealed body style, the
+ * driver stays hidden (a head through a roof reads as a bug, not a mod). */
+const DRIVE_SEAT: ({ x: number; z: number; y: number } | null)[] = [
+  null,               // 0 sedan — sealed roof
+  null,               // 1 hatchback — sealed roof
+  { x: -0.42, z: 0.6, y: 0.42 },  // 2 delivery van — big windscreen, tall cab
+  null,               // 3 pickup — sealed cab
+  { x: -0.55, z: 1.7, y: 0.55 },  // 4 city bus — glass all around
+  { x: -0.38, z: 0.18, y: 0.42 }, // 5 jeep — open top
+  null,               // 6 muscle car — sealed roof
+  { x: -0.36, z: 0.05, y: 0.16 }, // 7 convertible — top down, of course
+  null,               // 8 station wagon — sealed roof
+  null,               // 9 sports coupe — sealed roof
+];
+
 /* ------------------------------------------------------------------ */
 /* Player + camera + engine tick                                       */
 /* ------------------------------------------------------------------ */
@@ -118,7 +134,7 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     const heldKind = !beast && !morphing && !engine.drive && engine.held >= 0 && engine.tools[engine.held]
       ? engine.tools[engine.held].kind as HeldToolKind : null;
     if (heldRef.current !== heldKind) { setHeldTool(mesh, heldKind); heldRef.current = heldKind; }
-    mesh.visible = (!engine.lost || engine.deathT < 3.4) && !engine.playerInVan && !morphing && !engine.drive && !engine.ride && !beast; // 🩸 the dark takes the body too — after one final fall
+    mesh.visible = (!engine.lost || engine.deathT < 3.4) && !engine.playerInVan && !morphing && !engine.ride && !beast; // 🩸 the dark takes the body too — after one final fall · 🚗 the driver STAYS visible in open-top cars
     beastMesh.visible = beast && !engine.lost && !engine.playerInVan && !engine.drive && !engine.ride;
     if (beastMesh.visible) {
       beastMesh.position.set(p.x, p.y, p.z);
@@ -145,7 +161,28 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       squash: engine.squashT > 0 ? engine.squashT / LAND_SQUASH_S : 0,
       faint: engine.faintT > 0 ? engine.faintT / FAINT_S : 0,
       swing,
+      dance: engine.danceOn,
+      wave: engine.waveT > 0,
+      cheer: engine.cheerT > 0,
+      drive: !!engine.drive,
+      getup: engine.getupT > 0 ? engine.getupT : 0,
+      death: engine.lost ? Math.min(1, engine.deathT / 0.85) : 0,
     });
+    // 🚗 the visible driver — the body glues to the car's seat and plays the
+    // Drive pose (open-top rides only: a sealed sedan would clip the roof)
+    if (engine.drive) {
+      const dv = engine.drive;
+      const seat = DRIVE_SEAT[dv.t % DRIVE_SEAT.length] ?? null;
+      if (seat && !engine.lost) {
+        const sin = Math.sin(dv.rot), cos = Math.cos(dv.rot);
+        mesh.position.set(dv.x + sin * seat.z + cos * seat.x, seat.y, dv.z + cos * seat.z - sin * seat.x);
+        mesh.rotation.y = dv.rot;
+        mesh.rotation.x = 0;
+        mesh.rotation.z = 0;
+      } else {
+        mesh.visible = false; // sealed body styles keep the classic hidden driver
+      }
+    }
     // 🩸 DEATH — the body folds to the dirt where it stands, rests a beat, then
     // the dark reclaims it (the recap menu waits for this to play out first)
     if (engine.lost) {
@@ -954,10 +991,10 @@ const camV1 = new THREE.Vector3(); // scratch for the driving chase-cam glide
  *  polyfork GLB wildlife heights (see public/models/CREDITS.md). */
 const ANIMAL_SCALES: Record<string, number> = {
   cow: 1.7, chicken: 0.95, deer: 1.65, monkey: 1.1, dog: 1.05,
-  wolf: 1.3, bear: 1.65, fox: 1.0, owl: 0.75, crow: 0.6, rabbit: 0.6, stag: 2.0,
-  // 🏔️ alpine · 🚜 farmyard · 🎃 halloween newcomers
-  ibex: 1.4, hare: 0.55, pig: 1.1, sheep: 1.05, goat: 1.15, duck: 0.75,
-  cat: 0.65, spider: 1.5,
+  wolf: 1.5, bear: 1.95, fox: 1.15, owl: 0.95, crow: 0.9, rabbit: 1.0, stag: 2.1,
+  // 🏔️ alpine · 🚜 farmyard · 🎃 halloween newcomers (bodies were bumped up — shadows follow)
+  ibex: 1.6, hare: 1.0, pig: 1.35, sheep: 1.25, goat: 1.35, duck: 0.95,
+  cat: 1.0, spider: 1.7,
 };
 
 export function Pickups({ engine }: { engine: GameEngine }) {
@@ -1258,6 +1295,10 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
           v.mesh.rotation.y = c.face;
           v.mesh.rotation.x = -ez * Math.PI / 2.1;
           v.mesh.rotation.z = 0;
+          // 🧍 rigged corpse — keep the mixer ticking and play the death
+          // collapse on the bones (loose limbs while the root tips over).
+          // Cartoon corpses keep their frozen mid-stride fall — no change.
+          if (v.mesh.userData.glb) poseCharacter(v.mesh, 0, t, { phase: c.phase, death: ez });
           const rig = v.mesh.userData.rig as { lids: THREE.Object3D[]; brows: THREE.Object3D[] } | undefined;
           if (rig) {
             for (const l of rig.lids) l.visible = false;

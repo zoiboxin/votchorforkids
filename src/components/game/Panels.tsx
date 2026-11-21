@@ -22,6 +22,8 @@ const CONTROLS: [string, string][] = [
   ["Shift", "Sprint — drains ⚡ stamina fast"],
   ["Space", "Jump — press again mid-air for a double-jump! 🤸"],
   ["F", "Attack / swing — chop trees, smash rocks, fight the beasts"],
+  ["C", "🕺 Dance toggle — party anywhere, any action stops it"],
+  ["T", "👋 Wave hello at the town"],
   ["G", "🎒 Tool wheel — pick axe / sword / hammer / builder · 🪪 show your driving license"],
   ["B", "Build a barricade — 4 🪓 wood"],
   ["V", "Build a campfire — 2 🪓 wood + 2 🪨 stone"],
