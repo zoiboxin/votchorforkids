@@ -6,12 +6,12 @@ import * as THREE from "three";
 import { motion } from "framer-motion";
 import {
   Play, Sparkles, ArrowLeft, Dices, HelpCircle, Check, Hand, Moon,
-  Gauge, ChevronsUp, HeartPulse, Shirt, Palette, Baby, UserRound,
+  Gauge, ChevronsUp, HeartPulse, Shirt, Palette, Baby, UserRound, Loader2,
 } from "lucide-react";
-// (icons kept minimal — Hand = drag hint)
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Switch } from "@/components/ui/switch";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
   AGE_STATS, CAP_COLORS, HAIR_COLORS, HAIR_STYLES, NAME_SUGGESTIONS, OUTFIT_PRESETS, PANTS_COLORS, SHIRT_COLORS, SHOE_COLORS, SKIN_TONES,
@@ -19,7 +19,11 @@ import {
   type AgeGroup, type Appearance, type HairStyle, type OutfitPreset,
 } from "@/lib/game/constants";
 import { buildCharacter, poseCharacter } from "@/lib/game/character";
-import { GLB_CHARACTERS, POLICE_CHAR_DEF, glbCharDef, glbThumb, preloadGlbCharacters, useGlbThumbs } from "@/lib/game/glbCharacters";
+import {
+  ALL_GLB_CHARS, GLB_AREAS, GLB_CHAR_COUNT, TOWN_AREA_ID, ensureGlbArea,
+  glbAreaStatus, glbCharDef, glbCharFailed, glbThumb, preloadGlbCharacters,
+  useGlbAreaState, useGlbThumbs,
+} from "@/lib/game/glbCharacters";
 import { sfx } from "@/lib/game/audio";
 import { useGame } from "./store";
 import { Leaderboard } from "./Leaderboard";
@@ -278,55 +282,112 @@ function matchesPreset(look: Appearance, p: OutfitPreset) {
   return (Object.entries(p.look) as [keyof Appearance, unknown][]).every(([k, v]) => look[k] === v);
 }
 
-/* 🧍 Hero picker — the Polyfork cast: real rigged, animated characters.
- * Each card shows a real rendered portrait of the character (captured
- * offscreen once its GLB lands); "Classic" keeps the paintable cartoon. */
+/* 🧍 Hero picker — browse the whole Polyfork catalog by AREA. A dropdown
+ * lists every kit area from the catalog (Airport, Hotel & Casino, Halloween
+ * Night, Dragon's Lair …) plus the preloaded Town Cast; picking an area
+ * streams that area's rigged citizens in — real rendered portraits captured
+ * once each GLB lands. "Classic" keeps the paintable cartoon. */
 function HeroPicker({ value, onChange }: { value: string | undefined; onChange: (slug: string | undefined) => void }) {
-  const thumbV = useGlbThumbs(); // re-renders as portraits finish
-  void thumbV;
+  useGlbThumbs();    // re-renders as portraits finish
+  useGlbAreaState(); // re-renders when the chosen area starts/finishes streaming
+  // Browsed area as DERIVED state: a manual pick is remembered "for" the
+  // hero currently worn; when the worn hero changes from elsewhere (Random,
+  // restore), the dropdown snaps back to that hero's own area — no effects.
+  const areaOfValue = (v: string | undefined) => (v ? glbCharDef(v)?.area : undefined) ?? TOWN_AREA_ID;
+  const [pick, setPick] = useState<{ for: string | undefined; area: string }>(() => ({
+    for: value, area: areaOfValue(value),
+  }));
+  const areaId = value === pick.for ? pick.area : areaOfValue(value);
+  const setAreaId = (v: string) => setPick({ for: value, area: v });
+  // stream the chosen area's GLBs + portraits (idempotent)
+  useEffect(() => { ensureGlbArea(areaId); }, [areaId]);
+
+  const area = GLB_AREAS.find((a) => a.id === areaId) ?? GLB_AREAS[0];
+  const streaming = glbAreaStatus(areaId) === "loading";
   const heroes: { slug: string | undefined; name: string; emoji: string }[] = [
     { slug: undefined, name: "Classic", emoji: "🎨" },
-    ...GLB_CHARACTERS,
-    POLICE_CHAR_DEF,
+    ...area.chars,
   ];
   return (
     <div>
-      <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-white/70">Character</div>
-      <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-5">
-        {heroes.map((h) => {
-          const on = value === h.slug;
-          const thumb = h.slug ? glbThumb(h.slug) : undefined;
-          return (
-            <button
-              key={h.slug ?? "classic"}
-              aria-pressed={on}
-              title={h.name}
-              onClick={() => { sfx.click(); onChange(h.slug); }}
-              className={`rounded-xl border-2 p-1.5 text-center transition-all hover:scale-105 ${
-                on
-                  ? "border-yellow-300 bg-yellow-300/20 shadow-[0_0_12px_rgba(253,224,71,0.3)]"
-                  : "border-white/20 bg-white/5"
-              }`}
-            >
-              {thumb ? (
-                <img
-                  src={thumb}
-                  alt=""
-                  draggable={false}
-                  className="mx-auto h-12 w-full object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,0.45)]"
-                />
-              ) : (
-                <div className="flex h-12 items-center justify-center text-xl leading-none">{h.emoji}</div>
-              )}
-              <div className="mt-0.5 truncate text-[10px] font-bold leading-tight text-white/85">{h.name}</div>
-            </button>
-          );
-        })}
+      <div className="mb-1.5 flex items-center justify-between">
+        <div className="text-xs font-bold uppercase tracking-wide text-white/70">Character</div>
+        <div className="text-[10px] font-bold text-white/40">{GLB_CHAR_COUNT} rigged heroes · {GLB_AREAS.length} areas</div>
       </div>
+      {/* 🗺️ area dropdown — every catalog kit, one tap away */}
+      <Select value={areaId} onValueChange={(v) => { sfx.click(); setAreaId(v); }}>
+        <SelectTrigger
+          aria-label="Character area"
+          className="h-9 rounded-xl border-white/25 bg-white/10 text-xs font-black text-white shadow-none hover:bg-white/15 focus:ring-0 data-[placeholder]:text-white"
+        >
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent className="max-h-72 rounded-xl border-white/20 bg-slate-900/95 text-white backdrop-blur">
+          {GLB_AREAS.map((a) => (
+            <SelectItem
+              key={a.id}
+              value={a.id}
+              className="text-xs font-bold focus:bg-white/15 focus:text-white data-[state=checked]:text-yellow-300"
+            >
+              <span className="mr-1" aria-hidden>{a.emoji}</span>
+              {a.name}
+              <span className="ml-1.5 font-normal text-white/40">{a.chars.length}</span>
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+      {/* the area's cast — scrollable so big kits (Hotel & Casino = 20) fit */}
+      <div className="mt-2 max-h-64 overflow-y-auto rounded-xl bg-black/20 p-1.5 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/25 [&::-webkit-scrollbar-track]:bg-transparent">
+        <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-5">
+          {heroes.map((h) => {
+            const on = value === h.slug;
+            const thumb = h.slug ? glbThumb(h.slug) : undefined;
+            const dead = h.slug ? glbCharFailed(h.slug) : false;
+            return (
+              <button
+                key={h.slug ?? "classic"}
+                aria-pressed={on}
+                title={dead ? `${h.name} — unavailable` : h.name}
+                disabled={dead}
+                onClick={() => { sfx.click(); onChange(h.slug); }}
+                className={`relative rounded-xl border-2 p-1.5 text-center transition-all ${
+                  dead
+                    ? "cursor-not-allowed border-white/10 bg-white/5 opacity-45"
+                    : on
+                      ? "border-yellow-300 bg-yellow-300/20 shadow-[0_0_12px_rgba(253,224,71,0.3)] hover:scale-105"
+                      : "border-white/20 bg-white/5 hover:scale-105"
+                }`}
+              >
+                {dead && (
+                  <span aria-hidden className="absolute right-1 top-1 text-[10px] font-black text-red-300">✕</span>
+                )}
+                {thumb ? (
+                  <img
+                    src={thumb}
+                    alt=""
+                    draggable={false}
+                    className="mx-auto h-12 w-full object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,0.45)]"
+                  />
+                ) : (
+                  <div className={`flex h-12 items-center justify-center text-xl leading-none ${!dead && h.slug && streaming ? "animate-pulse" : ""}`}>
+                    {h.emoji}
+                  </div>
+                )}
+                <div className="mt-0.5 truncate text-[10px] font-bold leading-tight text-white/85">{h.name}</div>
+              </button>
+            );
+          })}
+        </div>
+      </div>
+      {streaming && (
+        <div className="mt-1.5 flex items-center gap-1.5 text-[10px] font-bold text-white/60" role="status">
+          <Loader2 size={11} className="animate-spin" /> streaming {area.name} portraits…
+        </div>
+      )}
       <div className="mt-2 rounded-xl bg-white/5 p-2.5 text-xs leading-relaxed text-white/70">
-        <b className="text-white">Rigged cast:</b> pick a real animated character — everyone in town walks,
-        runs &amp; idles like a person. <b className="text-white">Classic</b> keeps the cartoon body that the
-        color &amp; style tabs style.
+        <b className="text-white">Pick an area, pick a hero:</b> {GLB_CHAR_COUNT} rigged citizens across{" "}
+        {GLB_AREAS.length} areas — everyone walks, runs &amp; idles like a person. <b className="text-white">Classic</b> keeps
+        the cartoon body that the color &amp; style tabs style.
       </div>
     </div>
   );
@@ -527,11 +588,10 @@ export function Creator({ onStart }: { onStart: () => void }) {
                     size="sm" variant="outline" aria-label="Randomize appearance"
                     onClick={() => {
                       sfx.click();
-                      const pool: (string | undefined)[] = [
-                        undefined,
-                        ...GLB_CHARACTERS.map((c) => c.slug),
-                        POLICE_CHAR_DEF.slug,
-                      ];
+                      // any of the 206 catalog citizens (minus known-broken
+                      // downloads) — or back to the paintable Classic
+                      const ok = ALL_GLB_CHARS.filter((c) => !glbCharFailed(c.slug));
+                      const pool: (string | undefined)[] = [undefined, ...ok.map((c) => c.slug)];
                       const hero = pool[Math.floor(Math.random() * pool.length)];
                       applyLook({ ...randomAppearance(), char: hero });
                     }}
