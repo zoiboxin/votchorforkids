@@ -18,6 +18,7 @@ import {
   type HeldToolKind,
 } from "@/lib/game/character";
 import { camBlocked, terrainHeight } from "@/lib/game/worldgen";
+import { GLB_CHARACTERS } from "@/lib/game/glbCharacters";
 import { WORLD } from "./WorldView";
 import { useGame } from "./store";
 
@@ -334,7 +335,7 @@ export function Npcs({ engine }: { engine: GameEngine }) {
   const views = useMemo(() => {
     const r = mulberry32(4242);
     const pick = <T,>(arr: readonly T[]): T => arr[Math.floor(r() * arr.length)];
-    const civLooks: Appearance[] = engine.civs.map(() => ({
+    const civLooks: Appearance[] = engine.civs.map((_c, i) => ({
       fac: "protester",
       outfit: "",
       skin: pick(SKIN_TONES),
@@ -348,6 +349,9 @@ export function Npcs({ engine }: { engine: GameEngine }) {
       glasses: r() < 0.2,
       age: pick(["kid", "teen", "young", "old"] as const),
       girl: r() < 0.5,
+      // 🧍 the living city wears the same rigged cast as the contestants —
+      // cycled (not rolled) so the seeded stream below stays untouched
+      char: GLB_CHARACTERS[i % GLB_CHARACTERS.length].slug,
     }));
     const map = new Map<number, NpcView>();
     engine.cops.forEach((c, i) => {

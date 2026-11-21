@@ -33,6 +33,7 @@ import { sfx, startDrone, stopDrone, setInsects, stopInsects } from "./audio";
 import { preloadModels } from "./models";
 import { preloadAirportModels } from "./airportModels";
 import { preloadGraveyardModels } from "./graveyardModels";
+import { GLB_CHARACTERS, preloadGlbCharacters } from "./glbCharacters";
 import type { MpEvent } from "@/lib/game/net/client";
 import { AIKIND_HOUND, AIKIND_HUNTER, AIKIND_ZOMBIE, type AiEntry } from "./net/protocol";
 
@@ -842,6 +843,10 @@ export class GameEngine {
     preloadAirportModels();
     // 🪦 and the cemetery kit GLBs — tombstones & the estate stream in alongside
     preloadGraveyardModels();
+    // 🧍 and the Polyfork cast — 13 rigged character GLBs stream in while you
+    // play, so every soul (you, the 99 contestants, police, townsfolk) wears a
+    // real animated body instead of the cartoon stand-in
+    preloadGlbCharacters();
     this.policePerk = policeOutfitOf(look.fac === "police" ? look.outfit : "").stats;
     // snapshot every static collider radius so reset() can un-fell trees & un-smash rocks
     this.circleR0 = world.circles.map((c) => c.r);
@@ -3317,6 +3322,9 @@ export class GameEngine {
     for (let i = 0; i < CREW_COUNT; i++) {
       const spot = spots[i];
       const look = randomAppearance(this.rnd);
+      // 🧍 the cast: each soul wears a rigged Polyfork character — picked from
+      // the same seeded stream so every client's town has the IDENTICAL cast
+      look.char = GLB_CHARACTERS[Math.floor(this.rnd() * GLB_CHARACTERS.length)].slug;
       look.shirt = CREW_COLORS[i % CREW_COLORS.length]; // the color IS the identity — clues depend on it
       // 🚓 every 5th seat is a police officer — POLICE_CREW uniformed souls among
       // the 100. Identity shirt stays (clues depend on it); the squad look adds

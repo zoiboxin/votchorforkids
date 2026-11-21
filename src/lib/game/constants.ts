@@ -159,6 +159,9 @@ export interface Appearance {
   glasses: boolean;
   age: AgeGroup;
   girl: boolean;
+  /** 🧍 Polyfork GLB character slug (glbCharacters pool) — when set, the cartoon
+   *  body is replaced by a rigged, animated low-poly human. ""/unset = classic. */
+  char?: string;
 }
 
 export const SKIN_TONES = ["#ffd9b3", "#f1c27d", "#e0ac69", "#c68642", "#8d5524", "#6b4423"];

@@ -6,7 +6,7 @@ import * as THREE from "three";
 import { motion } from "framer-motion";
 import {
   Play, Sparkles, ArrowLeft, Dices, HelpCircle, Check, Hand, Moon,
-  Gauge, ChevronsUp, HeartPulse, Shirt, Palette, Baby,
+  Gauge, ChevronsUp, HeartPulse, Shirt, Palette, Baby, UserRound,
 } from "lucide-react";
 // (icons kept minimal — Hand = drag hint)
 import { Button } from "@/components/ui/button";
@@ -19,6 +19,7 @@ import {
   type AgeGroup, type Appearance, type HairStyle, type OutfitPreset,
 } from "@/lib/game/constants";
 import { buildCharacter, poseCharacter } from "@/lib/game/character";
+import { GLB_CHARACTERS, POLICE_CHAR_DEF, glbCharDef, preloadGlbCharacters } from "@/lib/game/glbCharacters";
 import { sfx } from "@/lib/game/audio";
 import { useGame } from "./store";
 import { Leaderboard } from "./Leaderboard";
@@ -224,6 +225,46 @@ function matchesPreset(look: Appearance, p: OutfitPreset) {
   return (Object.entries(p.look) as [keyof Appearance, unknown][]).every(([k, v]) => look[k] === v);
 }
 
+/* 🧍 Hero picker — the Polyfork cast: real rigged, animated characters.
+ * "Classic" keeps the hand-built cartoon body the color tabs style. */
+function HeroPicker({ value, onChange }: { value: string | undefined; onChange: (slug: string | undefined) => void }) {
+  const heroes: { slug: string | undefined; name: string; emoji: string }[] = [
+    { slug: undefined, name: "Classic", emoji: "🎨" },
+    ...GLB_CHARACTERS,
+    POLICE_CHAR_DEF,
+  ];
+  return (
+    <div>
+      <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-white/70">Character</div>
+      <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-5">
+        {heroes.map((h) => {
+          const on = value === h.slug;
+          return (
+            <button
+              key={h.slug ?? "classic"}
+              aria-pressed={on}
+              onClick={() => { sfx.click(); onChange(h.slug); }}
+              className={`rounded-xl border-2 p-1.5 text-center transition-all hover:scale-105 ${
+                on
+                  ? "border-yellow-300 bg-yellow-300/20 shadow-[0_0_12px_rgba(253,224,71,0.3)]"
+                  : "border-white/20 bg-white/5"
+              }`}
+            >
+              <div className="text-xl leading-none">{h.emoji}</div>
+              <div className="mt-1 truncate text-[10px] font-bold leading-tight text-white/85">{h.name}</div>
+            </button>
+          );
+        })}
+      </div>
+      <div className="mt-2 rounded-xl bg-white/5 p-2.5 text-xs leading-relaxed text-white/70">
+        <b className="text-white">Rigged cast:</b> pick a real animated character — everyone in town walks,
+        runs &amp; idles like a person. <b className="text-white">Classic</b> keeps the cartoon body that the
+        color &amp; style tabs style.
+      </div>
+    </div>
+  );
+}
+
 /* Quick outfits — professional one-row swipe strip with outfit color dots */
 function PresetStrip({ look, onPick }: { look: Appearance; onPick: (p: Partial<Appearance>) => void }) {
   return (
@@ -290,6 +331,10 @@ export function Creator({ onStart }: { onStart: () => void }) {
     return () => window.removeEventListener("pointerdown", unlock);
   }, []);
 
+  // 🧍 start streaming the Polyfork cast right away — by the time the player
+  // joins, the characters are parsed and the town spawns already rigged
+  useEffect(() => { preloadGlbCharacters(); }, []);
+
   // the old side-selection flow is gone — normalize any stale saved "police" look
   useEffect(() => {
     const s = useGame.getState();
@@ -300,7 +345,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
   const ready = playerName.trim().length > 0;
 
   const lookChips = [
-    "🏕️ Survivor",
+    look.char ? (glbCharDef(look.char)?.name ?? "Rigged") : "🏕️ Survivor",
     look.girl ? "👧 Girl" : "👦 Boy",
     `${look.age.charAt(0).toUpperCase()}${look.age.slice(1)}`,
     HAIR_STYLES.find((h) => h.id === look.hairStyle)?.label ?? "",
@@ -430,12 +475,18 @@ export function Creator({ onStart }: { onStart: () => void }) {
 
               {/* tabbed customization */}
               <Tabs value={tab} onValueChange={setTab}>
-                <TabsList className="grid h-auto w-full grid-cols-3 gap-1 rounded-xl bg-white/10 p-1">
+                <TabsList className="grid h-auto w-full grid-cols-4 gap-1 rounded-xl bg-white/10 p-1">
                   <TabsTrigger
                     value="outfit"
                     className="rounded-lg border-0 py-1.5 text-xs font-black text-white/70 data-[state=active]:bg-yellow-300/90 data-[state=active]:text-amber-950 data-[state=active]:shadow-none"
                   >
                     <Shirt size={13} className="mr-1" /> Outfit
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="hero"
+                    className="rounded-lg border-0 py-1.5 text-xs font-black text-white/70 data-[state=active]:bg-yellow-300/90 data-[state=active]:text-amber-950 data-[state=active]:shadow-none"
+                  >
+                    <UserRound size={13} className="mr-1" /> Hero
                   </TabsTrigger>
                   <TabsTrigger
                     value="style"
@@ -482,6 +533,16 @@ export function Creator({ onStart }: { onStart: () => void }) {
                         ))}
                       </div>
                     </div>
+                  </motion.div>
+                </TabsContent>
+
+                {/* HERO — the rigged Polyfork cast */}
+                <TabsContent value="hero" className="mt-3 outline-none">
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}
+                    className="space-y-3"
+                  >
+                    <HeroPicker value={look.char} onChange={(char) => update({ char })} />
                   </motion.div>
                 </TabsContent>
 

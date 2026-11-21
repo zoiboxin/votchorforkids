@@ -1,6 +1,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { AGE_STATS, ITEMS, POLICE_UNIFORM, policeOutfitOf, type Appearance } from "./constants";
+import { loadGlbTemplate, makeGlbInstance, crossToGlb, POLICE_CHAR, type GlbInstance } from "./glbCharacters";
 
 /* ------------------------------------------------------------------ */
 /* Shared caches + merged-geometry "buckets"                           */
@@ -492,6 +493,12 @@ export function buildCharacter(a: Appearance, opts: { police?: boolean; zombie?:
   root.userData.look = { ...a };
   root.userData.blink = { next: 1.5 + Math.random() * 3, t: -1, amt: 0 };
   if (zombie) head.rotation.z = 0.16;
+  // 🧍 Polyfork cast upgrade — a look with a character slug (or any police
+  // uniform) swaps the cartoon body for a rigged, clip-animated GLB human the
+  // moment its file lands. Until then the cartoon body stands in, so crowds
+  // never pop in empty. Zombies stay hand-built — they're supposed to look wrong.
+  const wantChar = zombie ? "" : opts.police ? POLICE_CHAR : (a.char ?? "");
+  if (wantChar) attachGlbBody(root, wantChar);
   return root;
 }
 
@@ -542,20 +549,137 @@ export function buildToolMesh(kind: HeldToolKind): THREE.Group {
 /** Attach a tool mesh to a character's right hand (removes the previous one).
  *  Returns the attached group or null when kind is null. */
 export function setHeldTool(character: THREE.Object3D, kind: HeldToolKind | null): THREE.Group | null {
-  const rig = rigOf(character);
-  if (!rig) return null;
-  const prev = character.userData.heldTool as THREE.Group | undefined;
+  const prev = character.userData.heldTool as THREE.Object3D | undefined;
   if (prev) {
     prev.removeFromParent();
     character.userData.heldTool = undefined;
   }
+  character.userData.heldKind = kind ?? null;
   if (!kind) return null;
   const tool = buildToolMesh(kind);
-  tool.position.set(0, -0.5, 0.03); // in the fist
-  tool.rotation.set(-0.5, 0, 0);    // head tilted forward, ready stance
-  rig.arms[1].add(tool);
+  tool.userData.baseRx = -0.5; // ready-stance tilt — the swing arc returns here
+  const glb = character.userData.glb as GlbInstance | undefined;
+  if (glb?.handBone) {
+    // 🧍 rigged body — the tool rides the named hand socket, so it follows the
+    // walk/idle animation through every bone pose
+    tool.position.set(0, -0.12, 0.03);
+    tool.rotation.set(-0.5, 0, 0);
+    glb.handBone.add(tool);
+  } else {
+    const rig = rigOf(character);
+    if (!rig) return null;
+    tool.position.set(0, -0.5, 0.03); // in the fist
+    tool.rotation.set(-0.5, 0, 0);    // head tilted forward, ready stance
+    rig.arms[1].add(tool);
+  }
   character.userData.heldTool = tool;
   return tool;
+}
+
+/* ------------------------------------------------------------------ */
+/* 🧍 Polyfork GLB bodies — async upgrade inside the same character root */
+/* ------------------------------------------------------------------ */
+
+/** Swap the rigged GLB body into a cartoon character root once its file
+ *  arrives. The cartoon body stays visible until then (no empty-air souls
+ *  while the cast streams in), then hides and the rig takes over. The pose
+ *  entry point (poseCharacter) reroutes to the clip mixer automatically. */
+function attachGlbBody(root: THREE.Object3D, slug: string): void {
+  if (!slug) return;
+  void (async () => {
+    let inst: GlbInstance | null = null;
+    try {
+      await loadGlbTemplate(slug);
+      inst = makeGlbInstance(slug, 1); // age scale rides the root transform
+    } catch {
+      return; // offline / failed — the cartoon body is already standing there
+    }
+    if (!inst) return;
+    // wait until the mesh is actually mounted (primitive attached) — cap ~10 s
+    for (let i = 0; i < 600 && !root.parent; i++) {
+      await new Promise((r) => requestAnimationFrame(r));
+    }
+    if (!root.parent || root.userData.glb) return;
+    const rig = root.userData.rig as { body: THREE.Object3D } | undefined;
+    if (rig) rig.body.visible = false; // cartoon stand-in steps aside
+    root.add(inst.body);
+    root.userData.glb = inst;
+    // re-seat any tool requested while the cartoon body was on stage
+    const kind = root.userData.heldKind as HeldToolKind | null | undefined;
+    if (kind) setHeldTool(root, kind);
+  })();
+}
+
+/** 🧍 Clip-driven pose for rigged bodies — the GLB twin of poseCharacter.
+ *  Idle/Walk/Run crossfade by speed (all the pose opts the game drives map
+ *  onto group-level transforms: flips, squash, faints, cuffs, tool swings). */
+function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: number, o: PoseOpts): void {
+  const gs = (g.userData.gaitGlb ??= { lastT: t }) as { lastT: number };
+  const dt = Math.min(0.1, Math.max(0, t - gs.lastT));
+  gs.lastT = t;
+
+  // clip pick — walk/run thresholds match the sim's speeds (sprint ≈ 1.65×)
+  let want = "Idle";
+  if (o.detained) want = "Idle";
+  else if (o.faint != null && o.faint > 0) want = "Idle";
+  else if (speed > 6.2) want = "Run";
+  else if (speed > 0.45) want = "Walk";
+  crossToGlb(st, want);
+  st.mixer.update(dt); // callers only pose VISIBLE bodies — free animation LOD
+
+  const body = st.body;
+  body.rotation.set(0, 0, 0);
+  body.position.set(0, 0, 0);
+  // landing squash-and-stretch (same curve as the cartoon bodies)
+  const sq = o.squash ? Math.sin(Math.min(1, o.squash) * Math.PI) * 0.16 : 0;
+  body.scale.set(
+    st.baseScale * (1 + sq * 0.7),
+    st.baseScale * (1 - sq),
+    st.baseScale * (1 + sq * 0.7),
+  );
+
+  if (o.detained) {
+    // cuffed slump — the rig can't tuck the legs, so sink + lean sells it
+    body.position.y = -0.34 * st.baseScale;
+    body.rotation.x = 0.14;
+  } else if (o.faint != null && o.faint > 0) {
+    const w = o.faint;
+    const wob = Math.sin(t * 9) * 0.18 * w;
+    body.rotation.set(-0.55 * w - 0.08, wob * 0.5, wob);
+    body.position.y = -0.2 * w * st.baseScale;
+    body.position.z = -0.12 * w;
+  } else if (o.airborne && o.flip && o.flip > 0) {
+    // mid-air front flip — spin the whole body around the hip pivot
+    const p = 1 - Math.min(1, o.flip);
+    const th = Math.PI * 2 * p;
+    body.rotation.x = th;
+    body.position.y = st.hip * (1 - Math.cos(th));
+    body.position.z = -st.hip * Math.sin(th);
+  }
+
+  // ⚔️ swing — the tool (riding the hand socket) whistles through the chop arc;
+  // between swings it eases back to the ready-stance tilt
+  const tool = g.userData.heldTool as THREE.Object3D | undefined;
+  if (tool) {
+    const base = (tool.userData.baseRx as number | undefined) ?? -0.5;
+    if (o.swing != null && o.swing > 0) {
+      const sw = Math.min(1, o.swing);
+      let ax: number;
+      if (sw < 0.12) {
+        ax = base + (-2.55 - base) * (sw / 0.12); // wind up behind the head
+      } else if (sw < 0.35) {
+        const k = (sw - 0.12) / 0.23;
+        ax = -2.55 + (1.1 + 2.55) * k * k;        // the strike
+      } else {
+        const k = sstep(0, 1, (sw - 0.35) / 0.65);
+        ax = 1.1 + (base - 1.1) * k;              // settle back
+      }
+      tool.rotation.x = ax;
+      body.rotation.y += Math.sin(sw * Math.PI) * -0.18; // torso twist substitute
+    } else {
+      tool.rotation.x = base;
+    }
+  }
 }
 
 
@@ -596,6 +720,13 @@ function updateBlink(g: THREE.Object3D, rig: CharRig, t: number) {
 }
 
 export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: PoseOpts = {}) {
+  // 🧍 rigged GLB body attached? The clip mixer owns locomotion — same entry
+  // point, same opts, every call site keeps working unchanged.
+  const glb = g.userData.glb as GlbInstance | undefined;
+  if (glb) {
+    poseGlbCharacter(g, glb, speed, t, o);
+    return;
+  }
   const rig = rigOf(g);
   if (!rig) return;
   const { legs, arms, body, head } = rig;
