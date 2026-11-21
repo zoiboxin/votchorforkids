@@ -10,7 +10,7 @@ import {
   AIRPORT, PLANE_COUNT, POWER_CARRY,
   WALL_RADIUS, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
   ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, DOG_SPEED, ZOMDOG_DMG, ZOMDOG_HP, ZOMDOG_SENSE, ZOMDOG_SPEED, ZOMDOG_TOUCH_CD, POINTS_KILL_ZOMDOG, BOT_SPAWN_GAP, policeOutfitOf, randomAppearance, stationCage, stationGate,
-  WILDLIFE,
+  WILDLIFE, BUGS, BUG_NIGHT_MULT, BUG_TOAST_CD, BUG_LABEL,
   ACCUSE_RADIUS, ATTACK_CD, ATTACK_RANGE, BARRICADE_COST, BARRICADE_HP, CAMPFIRE_COST, CAMPFIRE_R, CLAW_DMG,
   CREW_COLORS, CREW_COLOR_NAMES, CREW_COUNT, CREW_HP, CREW_NAMES, CREW_SPEED, HANDS_DMG, HUNTER_DMG, HUNTER_HP, HUNTER_SPEED,
   HUNTER_TOUCH_CD, NIGHTS_TOTAL, PHASE_DAY_S, PHASE_DAWN_S, PHASE_DUSK_S, PHASE_NIGHT_S,
@@ -133,6 +133,8 @@ export interface Npc extends SteerMemory {
 }
 export interface Zombie extends SteerMemory {
   id: number; x: number; z: number; vx: number; vz: number; face: number; phase: number; touchCd: number; hp?: number; dead?: boolean;
+  /** 🧟 seconds left of the lunge-bite animation — the renderer plays the ATTACK overlay */
+  attackT?: number;
   /** crew id of the contestant who turned — the contest feed/elimination link */
   owner?: number;
   /** 💰 purses this zombie swallowed off the dirt — spills back when it falls or at dawn */
@@ -279,6 +281,8 @@ export interface Animal { id: number; kind: AnimalKind; x: number; z: number; vx
   zombie?: boolean; hp?: number; barkT?: number; touchCd?: number; dead?: boolean; deadT?: number;
   /* 🎨 coat variant index + 🍼 baby flag — every creature is an individual */
   variant?: number; baby?: boolean;
+  /* 🐜 biting creepy-crawlies — biteCd gates the sting, attackT plays the lunge */
+  biteCd?: number; attackT?: number;
   /* 🎯 hound prey latch — same diverse-pick brain as the shamblers (crew id /
    * townsfolk id they're chasing, plus the attention-recheck cadence) */
   preyCrew?: number; preyCiv?: number; preySlot?: number; pickT?: number; }
@@ -714,6 +718,10 @@ export class GameEngine {
   private groanT = 0;
   /** throttle for "a zombie gulped loot" toasts so 50 shamblers don't spam */
   private zLootCd = 0;
+  /** 🐜 throttles the "something stung you" toasts so the hive doesn't spam */
+  private bugToastT = 0;
+  /** 🐜 names the last biter so the toast reads "A wasp stung you!" */
+  private bugToastKind = "";
   /** throttle for "a bot scooped up …" toasts so 99 foragers don't spam */
   private botLootCd = 0;
   /** throttle for ambient bot DEATH toasts so a hungry night doesn't flood the feed —
@@ -1086,6 +1094,8 @@ export class GameEngine {
     });
     // animals
     let ai = 0;
+    const BUG_NO_BABY = new Set(["wolf", "bear", "stag", "owl", "crow", "cat", "spider",
+      "ant", "wasp", "bee", "mantis", "beetle", "ladybird", "grasshopper", "centipede", "tarantula", "orbweaver"]);
     for (const set of ANIMAL_SET)
       for (let i = 0; i < set.count; i++) {
         // 🏔️ alpine wildlife spawns on WALKABLE mountain slopes only — retry a
@@ -1105,16 +1115,25 @@ export class GameEngine {
         } else if (set.zone === "city") {
           // 🐕🐕‍⬛ strays & the black cat sleep & roam RANDOM city spots — streets, parks, alley mouths
           p = freeSpot(r, this.world, 14, CITY_RADIUS - 14);
+        } else if (set.zone === "grass") {
+          // 🐜 the grass fields — the meadow band between city & farm
+          p = freeSpot(r, this.world, CITY_RADIUS + 6, FARM_RADIUS + 40);
+        } else if (set.zone === "random") {
+          // 🐝 wasps, bees & centipedes nest anywhere — town fringes, meadows, jungle edge
+          p = freeSpot(r, this.world, 24, DEEP_JUNGLE_RADIUS - 10);
+        } else if (set.zone === "farm") {
+          // 🚜 DOMESTIC HERDS — inside the city streets AND the near-city pastures:
+          // cows & chickens & horses graze where the player actually walks
+          p = freeSpot(r, this.world, r() < 0.45 ? 18 : CITY_RADIUS + 6, FARM_RADIUS - 8);
         } else {
-          p = freeSpot(r, this.world, set.zone === "farm" ? CITY_RADIUS + 10 : FARM_RADIUS + 10, set.zone === "farm" ? FARM_RADIUS - 8 : JUNGLE_RADIUS - 30);
+          p = freeSpot(r, this.world, FARM_RADIUS + 10, JUNGLE_RADIUS - 30);
         }
         this.animals.push({
           id: this.nid(), kind: set.kind, x: p.x, z: p.z, vx: 0, vz: 0, face: 0, tx: p.x, tz: p.z,
           timer: range(r, 0, 5), phase: Math.random() * 6, resting: false,
           variant: Math.floor(r() * 4), // 🎨 each creature picks its own coat
           // 🍼 some of the herd are babies — smaller, slower, twice as cute
-          baby: set.kind !== "wolf" && set.kind !== "bear" && set.kind !== "stag" && set.kind !== "owl" && set.kind !== "crow"
-            && set.kind !== "cat" && set.kind !== "spider" && r() < 0.24,
+          baby: !BUG_NO_BABY.has(set.kind) && r() < 0.24,
         });
         ai++;
       }
@@ -3300,10 +3319,11 @@ export class GameEngine {
     const city = an.kind === "dog" || an.kind === "cat";         // 🐕🐕‍⬛ dogs & the black cat wander the STREETS
     const grave = an.kind === "spider";                         // 🕷️ the giant yard spider lurks in the graveyard
     const mountain = an.kind === "ibex" || an.kind === "hare";  // 🏔️ alpine wildlife keeps to the mountain band
+    // 🚜 DOMESTIC herds graze inside the city streets AND the near-city pastures
     const minR = city ? 10 : grave ? GRAVEYARD.r + 2 : mountain ? MOUNTAIN_INNER + 4
-      : farm ? CITY_RADIUS + 6 : FARM_RADIUS + 6;
+      : farm ? 12 : FARM_RADIUS + 6;
     const maxR = city ? CITY_RADIUS - 16 : grave ? GRAVEYARD.r - 3 : mountain ? MOUNTAIN_OUTER - 8
-      : farm ? FARM_RADIUS - 10 : JUNGLE_RADIUS - 30;
+      : farm ? FARM_RADIUS - 8 : JUNGLE_RADIUS - 30;
     for (let i = 0; i < 12; i++) {
       const a = this.rnd() * Math.PI * 2, d = mountain ? 4 + this.rnd() * 8 : city ? 6 + this.rnd() * 14 : 7 + this.rnd() * 16;
       const x = an.x + Math.cos(a) * d, z = an.z + Math.sin(a) * d;
@@ -6198,6 +6218,7 @@ export class GameEngine {
       // mirrored packs.
       if (this.mp && !this.mpHost) continue;
       zb.touchCd = Math.max(0, zb.touchCd - dt);
+      zb.attackT = Math.max(0, (zb.attackT ?? 0) - dt); // 🧟 the lunge-bite animation clock
       zb.avoidT = Math.max(0, (zb.avoidT ?? 0) - dt); // 🧱 walled-in prey ban decays
       const d2p = dist2(zb.x, zb.z, p.x, p.z);
       // 🧱 THE WALL — the dead feel it too: a shambler caught beyond the safe
@@ -6340,6 +6361,7 @@ export class GameEngine {
             // caught a survivor — a few grabs bring them down and the zombie FEEDS
             if (victimCrew >= 0 && zb.touchCd <= 0 && td < 1.5 * 1.5) {
               zb.touchCd = ZOMBIE_TOUCH_CD;
+              zb.attackT = 0.5; // 🧟 the lunge-bite animation
               const victim = this.crew[victimCrew];
               victim.hp -= ZOMBIE_CREW_DMG;
               sfx.zombie();
@@ -6354,6 +6376,7 @@ export class GameEngine {
             // for it (one authoritative bite; the mirrored pack never double-hits)
             else if (remoteVictim && zb.touchCd <= 0 && td < 1.6 * 1.6) {
               zb.touchCd = ZOMBIE_TOUCH_CD;
+              zb.attackT = 0.5; // 🧟 the lunge-bite animation
               this.netEmit?.({ t: "dmg", target: remoteVictim.slot, amount: ZOMBIE_DMG });
             }
           } else {
@@ -6382,6 +6405,7 @@ export class GameEngine {
         }
         if (d2p < 1.6 * 1.6 && zb.touchCd <= 0 && this.detainedT <= 0 && !this.drive && !this.ride && !beastYou) { // the car shell keeps zombies out
           zb.touchCd = ZOMBIE_TOUCH_CD;
+          zb.attackT = 0.5; // 🧟 the lunge-bite animation
           this.hp = Math.max(0, this.hp - ZOMBIE_DMG);
           this.hurtT = HURT_FLASH_S;
           this.addShake(0.4); // 💥 MEDIUM — rotting hands on you
@@ -6688,28 +6712,52 @@ export class GameEngine {
           }
         }
       }
-      // 🕷️ the giant yard spider — a shy web-dweller by day, but after dark it
-      // stops fearing you and CREEPS: eight legs ghost it across the graveyard,
-      // closing to a hair-raising 3.5u and just… watching. It never bites —
-      // the dread is the point. (Daylight falls through to the shy graze cycle.)
-      if (an.kind === "spider" && nightFactor(this.clock) > 0.5 && !this.drive && !this.ride && this.detainedT <= 0) {
-        const hunt = d2p < 16 * 16;
-        if (hunt && d2p > 3.5 * 3.5) {
-          // skitter in — slow, deliberate, legs ticking
-          stepNpc(an, p.x, p.z, 1.9, dt, this.world);
-        } else if (hunt) {
-          // close enough — freeze and stare (the whole graveyard holds its breath)
-          an.vx = 0; an.vz = 0; an.resting = true;
-        } else {
-          // nobody to haunt — prowl its cemetery yard
-          if (an.timer <= 0 || (arrived && !an.resting)) {
-            an.resting = !an.resting;
-            if (!an.resting) { const spot = this.grazeSpot(an, false); if (spot) { an.tx = spot.x; an.tz = spot.z; } an.timer = range(this.rnd, 4, 9); }
-            else { an.tx = an.x; an.tz = an.z; an.timer = range(this.rnd, 2.5, 6); }
+      // 🕷️🐝 INSECT WORLD BITERS — spiders, ants, wasps, bees, mantises,
+      // beetles, ladybirds, grasshoppers, centipedes & tarantulas. They hold
+      // their ground (never flee), and if YOU stray into their patch they
+      // close in and STING. Daylight bites are a nuisance; after dark the
+      // whole hive turns meaner (×BUG_NIGHT_MULT damage & speed). The car
+      // shell keeps every fang out — same rule the zombies obey.
+      const bug = BUGS[an.kind];
+      if (bug) {
+        an.biteCd = Math.max(0, (an.biteCd ?? 0) - dt);
+        an.attackT = Math.max(0, (an.attackT ?? 0) - dt);
+        this.bugToastT = Math.max(0, this.bugToastT - dt);
+        const mean = nightFactor(this.clock) > 0.5 ? BUG_NIGHT_MULT : 1;
+        const shell = this.drive || this.ride || this.detainedT > 0 || this.youPossessed;
+        const senseR = bug.sense * (mean > 1 ? 1.25 : 1);
+        if (!shell && d2p < senseR * senseR) {
+          const stingR = Math.max(1.5, bug.r * (an.kind === "spider" ? 1.4 : 1));
+          if (d2p > stingR * stingR) {
+            // close in — crawlers scuttle, flyers cruise (the renderer bobs them)
+            an.resting = false;
+            stepNpc(an, p.x, p.z, (wild ? wild.walk : 1.2) * 2.7 * mean, dt, this.world);
+          } else if ((an.biteCd ?? 0) <= 0) {
+            // THE STING — hp bites off, a red flash & shake, the lunge plays
+            an.biteCd = bug.cd / mean;
+            an.attackT = 0.5;
+            const dmg = Math.max(1, Math.round(bug.dmg * mean));
+            this.hp = Math.max(0, this.hp - dmg);
+            this.hurtT = HURT_FLASH_S;
+            this.addShake(0.22);
+            sfx.snap();
+            this.fxQueue.push({ type: "confetti", x: p.x, y: 1.1, z: p.z, hue: 0.02 });
+            if (this.hp <= 0) this.die();
+            if (this.bugToastT <= 0 || this.bugToastKind !== an.kind) {
+              this.bugToastT = BUG_TOAST_CD;
+              this.bugToastKind = an.kind;
+              const label = BUG_LABEL[an.kind] ?? "bug";
+              this.toast(mean > 1 ? `🌙 A zombie-${label} bit you — night bugs bite HARD! −${dmg} hp` : `🐛 The ${label} got you — −${dmg} hp! Stay out of its patch.`, "bad");
+            }
+          } else {
+            // fangs reloading — circle the victim impatiently
+            const orbit = this.clock * 2.2 + an.phase;
+            stepNpc(an, p.x + Math.cos(orbit) * 1.6, p.z + Math.sin(orbit) * 1.6, (wild ? wild.walk : 1) * 2, dt, this.world);
           }
-          if (!an.resting) stepNpc(an, an.tx, an.tz, (WILDLIFE.spider?.walk ?? 1.0) * bs, dt, this.world);
+          continue;
         }
-        continue;
+        // nobody in reach — graze the patch like any other critter
+        // (falls through to the generic wander/graze cycle below)
       }
       if (!isDog && this.morphKind == null) {
         // 🐺 prey fears the CLOSER of (you, a hunting wolf/fox) — rabbits bolt
@@ -6869,7 +6917,8 @@ export class GameEngine {
         an.barkT = range(this.rnd, 8, 18);
         if (an.kind === "cow") sfx.moo();
         else if (an.kind === "chicken") sfx.cluck();
-        else if (an.kind === "monkey") sfx.screech();
+        else if (an.kind === "frog") sfx.snap(); // 🐸 a little croak-click when you pass
+        else if (an.kind === "horse") sfx.bonk(); // 🐎 a soft snort-visual… the hoof stamp
         else if (an.kind === "deer") sfx.bleat();
         else if (an.kind === "owl" && nightFactor(this.clock) > 0.45) sfx.owl();
         else if (an.kind === "crow") sfx.caw();
@@ -6884,7 +6933,7 @@ export class GameEngine {
         } else {
           // rest over → amble to a nearby patch of grass
           an.resting = false;
-          const farm = an.kind === "cow" || an.kind === "chicken" || an.kind === "pig" || an.kind === "sheep" || an.kind === "goat" || an.kind === "duck";
+          const farm = an.kind === "cow" || an.kind === "chicken" || an.kind === "pig" || an.kind === "sheep" || an.kind === "goat" || an.kind === "duck" || an.kind === "horse";
           let spot: { x: number; z: number } | null = null;
           // 🐄 herd cohesion — company is comfy: half the time an animal grazes
           // NEAR a same-kind herd-mate instead of a random patch, so flocks,

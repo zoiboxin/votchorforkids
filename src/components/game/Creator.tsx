@@ -151,7 +151,7 @@ function PreviewAnim({
     }
     // 🎬 the chosen move — routed through the same poseCharacter the town uses,
     // so the stage previews EXACTLY what the game will play
-    if (anim === "walk") poseCharacter(mesh, 2.6, t, {});
+    if (anim === "walk") poseCharacter(mesh, 4.6, t, {});
     else if (anim === "run") poseCharacter(mesh, 9.6, t, {});
     else if (anim === "jump") {
       const p = (t % 1.4) / 1.4;

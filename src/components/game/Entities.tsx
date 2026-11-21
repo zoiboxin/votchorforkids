@@ -14,11 +14,12 @@ import { nightFactor } from "@/lib/game/sim";
 import { mulberry32 } from "@/lib/game/rng";
 import {
   buildAnimal, buildZombieDog, buildCharacter, nameTag, helpBubble, poseAnimal, poseCharacter,
-  setHeldTool, voteTokenGeometry, foodGeometry, shadowMaterial, basicVertexMaterial,
+  setHeldTool, voteTokenGeometry, foodGeometry, shadowMaterial, basicVertexMaterial, attachGlbBody,
   type HeldToolKind,
 } from "@/lib/game/character";
 import { camBlocked, terrainHeight } from "@/lib/game/worldgen";
-import { GLB_CHARACTERS } from "@/lib/game/glbCharacters";
+import { GLB_CHARACTERS, glbTemplate, makeGlbInstance, tintGlbZombie, loadGlbTemplate } from "@/lib/game/glbCharacters";
+import { tintRot } from "@/lib/game/models";
 import { WORLD } from "./WorldView";
 import { useGame } from "./store";
 
@@ -48,12 +49,20 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
   const setHud = useGame((s) => s.setHud);
   // police side renders the hero in full uniform (cap, badge, dark pants)
   const mesh = useMemo(() => buildCharacter(look, { police: look.fac === "police" }), [look]);
-  // 🐒 Animal Morph — one animal body per kind, swapped in while the power lasts
+  // 🐒 Animal Morph — one animal body per kind, swapped in while the power lasts.
+  // 🎬 rigged polyfork GLB bodies when the species file is in (mixer-driven);
+  // cartoon stand-ins fill the gap until then, and a rebuild pass swaps them.
+  const [modelsRev, setModelsRev] = useState(0);
+  useEffect(() => onModelsReady(() => setModelsRev((v) => v + 1)), []);
   const morphMeshes = useMemo(() => {
-    const map = new Map<AnimalKind, THREE.Object3D>();
-    for (const k of MORPH_ANIMALS) map.set(k, buildAnimal(k));
+    const map = new Map<AnimalKind, { root: THREE.Object3D; mixer?: THREE.AnimationMixer; clips?: Record<string, THREE.AnimationClip>; cur?: THREE.AnimationAction }>();
+    for (const k of MORPH_ANIMALS) {
+      const sp = spawnModel(k);
+      if (sp) map.set(k, { root: sp.root, mixer: sp.mixer, clips: sp.clips });
+      else map.set(k, { root: buildAnimal(k === "frog" ? "deer" : k as "cow") });
+    }
     return map;
-  }, []);
+  }, [modelsRev]);
   // 🩸 7Nights — the possessed YOU: same face, rotten green skin, dead black eyes
   const beastMesh = useMemo(
     () => buildCharacter({ ...look, shirt: "#7a8a5a" }, { zombie: true }),
@@ -205,15 +214,25 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     // 🐒 animal disguise body mirrors the player's motion (walk, jump and all)
     const mk = engine.morphKind;
     if (mk) {
-      for (const [kind, am] of morphMeshes) {
+      for (const [kind, rig] of morphMeshes) {
+        const am = rig.root;
         const show = kind === mk && !engine.playerInVan;
         am.visible = show;
         if (!show) continue;
         am.position.set(p.x, p.y, p.z);
         am.rotation.y = mesh.rotation.y;
-        poseAnimal(am, Math.hypot(p.vx, p.vz), performance.now() / 1000, 0);
+        if (rig.mixer && rig.clips) {
+          // 🎬 the rigged disguise — same clip state machine as the wild animals
+          const spd = Math.hypot(p.vx, p.vz);
+          const walk = WILDLIFE[kind]?.walk ?? 1.5;
+          const want = spd < 0.25 ? "idle" : spd > walk + 1.5 ? "run" : "walk";
+          rig.cur = playClip(rig.mixer, rig.clips, rig.cur, want);
+          rig.mixer.update(dt);
+        } else {
+          poseAnimal(am, Math.hypot(p.vx, p.vz), performance.now() / 1000, 0);
+        }
       }
-    } else for (const am of morphMeshes.values()) if (am.visible) am.visible = false;
+    } else for (const rig of morphMeshes.values()) if (rig.root.visible) rig.root.visible = false;
 
     // ⚡ sonic afterimages — sample the runner's recent path
     const speed = Math.hypot(p.vx, p.vz);
@@ -347,7 +366,7 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     <>
       <primitive object={mesh} />
       <primitive object={beastMesh} visible={false} />
-      {[...morphMeshes.entries()].map(([kind, am]) => <primitive object={am} key={`morph-${kind}`} visible={false} />)}
+      {[...morphMeshes.entries()].map(([kind, rig]) => <primitive object={rig.root} key={`morph-${kind}-${modelsRev}`} visible={false} />)}
       <primitive object={trail.grp} />
       <primitive object={magnetRing} />
       <primitive object={stars} />
@@ -486,21 +505,31 @@ const ZOMBIE_VARIANTS = [
   { skin: "#7da860", shirt: "#8a8a6a", pants: "#54503a", hair: "#4a3a2a", hairStyle: "bald" as const, age: "old" as const },
 ];
 
-/** Release a built character's GPU buffers (used when the run's zombie cache dies). */
-function disposeTree(obj: THREE.Object3D) {
-  obj.traverse((o) => {
+/** Release a built character's GPU buffers — but ONLY the cartoon stand-in.
+ *  The attached GLB body shares its geometry & skeleton with the cast
+ *  template (every twin of that character reuses the same GPU buffers), so
+ *  disposing the whole tree would corrupt the entire town's cast. */
+function disposeCartoonOnly(root: THREE.Object3D) {
+  const keep = (root.userData.glb as { body?: THREE.Object3D } | undefined)?.body;
+  const walk = (o: THREE.Object3D) => {
+    if (keep && o === keep) return; // prune the shared-geometry subtree
     const m = o as THREE.Mesh;
-    if (m.geometry) m.geometry.dispose();
-    const mat = m.material as THREE.Material | THREE.Material[] | undefined;
-    if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
-    else if (mat) mat.dispose();
-  });
+    if (m.isMesh) {
+      m.geometry?.dispose();
+      const mat = m.material as THREE.Material | THREE.Material[] | undefined;
+      if (Array.isArray(mat)) mat.forEach((x) => x.dispose());
+      else if (mat) mat.dispose();
+    }
+    for (const c of o.children) walk(c);
+  };
+  walk(root);
 }
 
 export function Zombies({ engine }: { engine: GameEngine }) {
-  // 🧟 contest zombies WEAR THEIR FORMER SELVES — each body is built from the
-  // look of the contestant who turned (identity shirt kept), cached once per
-  // contestant for the whole run so nightly risings never rebuild old bodies
+  // 🧟 contest zombies WEAR THEIR FORMER SELVES — each body starts as the
+  // cartoon zombie stand-in, then the contestant's OWN rigged Polyfork GLB
+  // streams in, rots sickly green and takes over. Cached once per contestant
+  // for the whole run so nightly risings never rebuild old bodies.
   const cacheRef = useRef(new Map<number, THREE.Group>());
   const [rev, setRev] = useState(engine.zRev);
   const revRef = useRef(engine.zRev);
@@ -516,6 +545,10 @@ export function Zombies({ engine }: { engine: GameEngine }) {
           owner?.look ?? { fac: "protester", outfit: "", skin: v.skin, shirt: v.shirt, pants: v.pants, shoe: "#3a3a2a", hair: v.hair, hairStyle: v.hairStyle, cap: false, capColor: "#3a4a2a", glasses: false, age: v.age, girl: false },
           { zombie: true, keepShirt: true },
         );
+        // 🧍 the real rotting body — the contestant's own cast GLB, tinted
+        // green with the same three-sickly-tints family as the cartoon pack
+        const slug = owner?.look.char || GLB_CHARACTERS[Math.abs(z.owner) % GLB_CHARACTERS.length].slug;
+        attachGlbBody(g, slug, { zombieSeed: z.owner });
         g.scale.setScalar(0.92 + (Math.abs(z.owner) % 5) * 0.035); // deterministic per-contestant jitter
         cacheRef.current.set(z.owner, g);
       }
@@ -523,9 +556,9 @@ export function Zombies({ engine }: { engine: GameEngine }) {
     }
     return map;
   }, [engine, rev]);
-  // run over → release every cached zombie body
+  // run over → release the cartoon stand-ins (never the shared GLB buffers)
   useEffect(() => () => {
-    for (const g of cacheRef.current.values()) disposeTree(g);
+    for (const g of cacheRef.current.values()) disposeCartoonOnly(g);
     cacheRef.current.clear();
   }, []);
   useFrame((s) => {
@@ -565,7 +598,10 @@ export function Zombies({ engine }: { engine: GameEngine }) {
       dd = Math.atan2(Math.sin(dd), Math.cos(dd));
       m.rotation.y += dd * 0.12;
       m.rotation.x = 0; m.rotation.z = 0; // a risen shambler stands tall again
-      poseCharacter(m, Math.hypot(z.vx, z.vz), t, { phase: z.phase, zombie: true });
+      // 🧟 the GLB shamble: hunched questing arms + lopsided stride, and the
+      // ATTACK lunge whenever the engine's bite timer is live (1 → 0)
+      const atk = (z.attackT ?? 0) / 0.5;
+      poseCharacter(m, Math.hypot(z.vx, z.vz), t, { phase: z.phase, zombie: true, attack: atk > 0 ? atk : 0 });
     }
   });
   return <>{[...views.values()].map((m, i) => <primitive object={m} key={i} />)}</>;
@@ -574,18 +610,24 @@ export function Zombies({ engine }: { engine: GameEngine }) {
 /* ------------------------------------------------------------------ */
 /* Animals                                                             */
 /* ------------------------------------------------------------------ */
-/* 🐾 Two body pipelines:                                          */
-/*  • procedural kinds (cow/chicken/deer/monkey + the dog pair) come
- *    from character.ts buckets, posed by poseAnimal every frame.   */
-/*  • polyfork GLB kinds (wolf/bear/fox/owl/crow/rabbit/stag — see
- *    public/models/CREDITS.md) are skinned meshes with baked clips:
- *    a real AnimationMixer cross-fades Idle → Walk → Run, and the
- *    birds take wing (Fly) when they bolt.                          */
-const GLB_KINDS = new Set(["wolf", "bear", "fox", "owl", "crow", "rabbit", "stag",
-  // 🌲 nature & forest kit — the deer trades its procedural body for the polyfork Forest Deer
-  "deer",
-  // 🏔️ alpine & snow · 🚜 cozy farm · 🎃 halloween night — polyfork GLB species
-  "ibex", "hare", "pig", "sheep", "goat", "duck", "cat", "spider"]);
+/* 🐾 One body pipeline — EVERY species is a rigged polyfork GLB now:
+ * cow, chicken, dog, horse & frog joined the wolf/bear/fox/owl/crow/rabbit/
+ * stag/deer/ibex/hare/pig/sheep/goat/duck/cat/spider cast, plus the biting
+ * insect world (ant/wasp/bee/mantis/beetle/ladybird/grasshopper/centipede/
+ * tarantula/orbweaver). A real AnimationMixer per beast cross-fades Idle →
+ * Walk → Run (flyers take wing), sized to believable real-world heights.
+ * The only procedural bodies left are morph placeholders until GLBs land.  */
+const GLB_KINDS = new Set<string>(["wolf", "bear", "fox", "owl", "crow", "rabbit", "stag",
+  "deer", "ibex", "hare", "pig", "sheep", "goat", "duck", "cat", "spider",
+  // 🚜 the last procedural beasts go rigged — farm & city menagerie
+  "cow", "chicken", "dog", "horse",
+  // 🐸 jungle floor — the frog replaces the old cartoon monkey
+  "frog",
+  // 🐜 insect world — the biting crawlers & flyers
+  "ant", "wasp", "bee", "mantis", "beetle", "ladybird", "grasshopper", "centipede", "tarantula", "orbweaver"]);
+
+/** 🐜 flyers hover above the ground — the renderer bobs them mid-air */
+const FLYERS = new Set(["wasp", "bee", "owl", "crow"]);
 
 /** 🏔️ kinds that live on the raised mountain band — their feet ride the terrain mesh */
 const MOUNTAIN_KINDS = new Set(["ibex", "hare"]);
@@ -622,6 +664,26 @@ interface AnimalRig {
   current?: THREE.AnimationAction;
   /** halo sprite (hound hell-light / stag spirit-mist) */
   halo?: THREE.Sprite;
+  /** 🐕 GLB dog pair — the friendly stray + its rotted night form, each with
+   *  their own mixer; useFrame swaps visibility & drives the active one */
+  dogParts?: {
+    norm: THREE.Object3D; zom: THREE.Object3D;
+    normM: THREE.AnimationMixer; zomM: THREE.AnimationMixer;
+    clips: Record<string, THREE.AnimationClip>;
+    normCur?: THREE.AnimationAction; zomCur?: THREE.AnimationAction;
+  };
+  /** true while this rig is the procedural stand-in (rebuilt when the GLB lands) */
+  proc?: boolean;
+}
+
+/** 🎬 shared clip state machine: cross-fade to the clip `want` (0.22 s). */
+function playClip(mixer: THREE.AnimationMixer, clips: Record<string, THREE.AnimationClip>, cur: THREE.AnimationAction | undefined, want: string): THREE.AnimationAction | undefined {
+  const next = clips[want];
+  if (!next || cur?.getClip() === next) return cur;
+  const action = mixer.clipAction(next);
+  action.reset().fadeIn(0.22).play();
+  if (cur) cur.fadeOut(0.22);
+  return action;
 }
 
 export function Animals({ engine }: { engine: GameEngine }) {
@@ -639,14 +701,42 @@ export function Animals({ engine }: { engine: GameEngine }) {
     return () => { off(); clearInterval(iv); clearTimeout(stop); };
   }, []);
 
-  // build a rig per animal (idempotent — existing rigs are kept)
+  // build a rig per animal (idempotent — existing rigs are kept; procedural
+  // dogs upgrade to the GLB pair the moment their file lands)
   for (const a of engine.animals) {
-    if (rigs.current.has(a.id)) continue;
+    const glbReady = GLB_KINDS.has(a.kind) && spawnModel(a.kind) != null;
+    const existing = rigs.current.get(a.id);
+    if (existing) {
+      // 🐕 the procedural dog pair upgrades to the rigged GLB pair
+      if (a.kind === "dog" && existing.proc && glbReady) {
+        if (holder.current) holder.current.remove(existing.obj);
+        disposeCartoonOnly(existing.obj); // procedural geometry — safe to free
+        rigs.current.delete(a.id);
+      } else continue;
+    }
     if (a.kind === "dog") {
-      // 🐕 strays carry BOTH bodies — the friendly stray by day, the rotting
-      // red-eyed hound at night; useFrame swaps visibility + lights the halo
-      const coat = a.variant ?? a.id % 5;
+      // 🐕 strays carry BOTH bodies — the friendly stray by day, the rotted
+      // green-eyed hound at night; useFrame swaps visibility + lights the halo
       const wrap = new THREE.Group();
+      const glb = spawnModel("dog");
+      if (glb) {
+        const zspawn = spawnModel("dog")!;
+        const zom = tintRot(zspawn.root, "#8fbf6f", 0.55, 0.14); // 🧟 rotting fur
+        zom.visible = false;
+        wrap.add(glb.root, zom);
+        wrap.userData.dogParts = {
+          norm: glb.root, zom,
+          normM: glb.mixer, zomM: zspawn.mixer, clips: glb.clips,
+        };
+        const halo = makeGlowSprite("rgba(255,45,20,0.75)", 1.35);
+        halo.position.y = 0.62;
+        halo.visible = false;
+        wrap.add(halo);
+        rigs.current.set(a.id, { obj: wrap, kind: "dog", halo, dogParts: wrap.userData.dogParts });
+        continue;
+      }
+      // GLB still streaming — cartoon pair stands in (upgraded by the poll)
+      const coat = a.variant ?? a.id % 5;
       const norm = buildAnimal("dog", coat);
       const zom = buildZombieDog(coat);
       zom.visible = false;
@@ -656,7 +746,7 @@ export function Animals({ engine }: { engine: GameEngine }) {
       halo.position.y = 0.85;
       halo.visible = false;
       wrap.add(halo);
-      rigs.current.set(a.id, { obj: wrap, kind: "dog", halo });
+      rigs.current.set(a.id, { obj: wrap, kind: "dog", halo, proc: true });
     } else if (GLB_KINDS.has(a.kind)) {
       const spawned = spawnModel(a.kind);
       if (!spawned) continue; // still loading — the poll retries
@@ -682,17 +772,20 @@ export function Animals({ engine }: { engine: GameEngine }) {
         rig.halo = halo;
         spawned.root.add(halo);
       }
-      if (a.kind === "spider") {
-        // 🕷️ the giant yard spider wears an eerie violet aura after dark
-        const halo = makeGlowSprite("rgba(190,120,255,0.5)", 1.7);
-        halo.position.y = 0.62;
+      if (a.kind === "spider" || a.kind === "tarantula" || a.kind === "orbweaver") {
+        // 🕷️ the spiders wear an eerie aura after dark — violet (yard) / red (biters)
+        const halo = makeGlowSprite(
+          a.kind === "spider" ? "rgba(190,120,255,0.5)" : "rgba(255,80,60,0.5)",
+          a.kind === "spider" ? 1.7 : 0.7,
+        );
+        halo.position.y = a.kind === "spider" ? 0.62 : 0.4;
         rig.halo = halo;
         spawned.root.add(halo);
       }
       rigs.current.set(a.id, rig);
     } else {
       const vi = engine.animals.filter((o) => o.kind === a.kind).findIndex((o) => o.id === a.id);
-      rigs.current.set(a.id, { obj: buildAnimal(a.kind as "cow", a.variant ?? Math.max(0, vi)), kind: a.kind });
+      rigs.current.set(a.id, { obj: buildAnimal(a.kind as "cow", a.variant ?? Math.max(0, vi)), kind: a.kind, proc: true });
     }
   }
 
@@ -738,20 +831,40 @@ export function Animals({ engine }: { engine: GameEngine }) {
       }
       if (!m.visible) continue;
       // 🏔️ alpine wildlife walks the raised terrain band — everyone else stays on the flats
-      m.position.set(a.x, MOUNTAIN_KINDS.has(a.kind) ? terrainHeight(a.x, a.z) : 0, a.z);
+      // 🐜 flyers hover: wasps & bees cruise at chest height on a lazy bob
+      const hoverY = FLYERS.has(a.kind) ? 0.75 + Math.sin(t * 3.1 + a.phase) * 0.28 : 0;
+      m.position.set(a.x, (MOUNTAIN_KINDS.has(a.kind) ? terrainHeight(a.x, a.z) : 0) + hoverY, a.z);
       m.rotation.z = 0; // back on all fours
       // 🍼 babies are little — one scale bump, every frame is idempotent
-      const bs = a.baby ? 0.55 : 1;
-      if (m.scale.x !== bs) m.scale.setScalar(bs);
+      // 🐜 biters LUNGE — a quick size pulse sells the sting as it lands
+      const lunge = a.attackT != null && a.attackT > 0 ? 1 + 0.3 * Math.sin((1 - a.attackT / 0.5) * Math.PI) : 1;
+      const bs = (a.baby ? 0.55 : 1) * lunge;
+      if (Math.abs(m.scale.x - bs) > 0.001) m.scale.setScalar(bs);
       let dd = a.face - m.rotation.y;
       dd = Math.atan2(Math.sin(dd), Math.cos(dd));
       m.rotation.y += dd * 0.12;
       if (a.kind === "dog") {
-        const parts = m.userData.dogParts as { norm: THREE.Object3D; zom: THREE.Object3D };
+        const parts = m.userData.dogParts as { norm: THREE.Object3D; zom: THREE.Object3D; normM?: THREE.AnimationMixer; zomM?: THREE.AnimationMixer; clips?: Record<string, THREE.AnimationClip>; normCur?: THREE.AnimationAction; zomCur?: THREE.AnimationAction } | undefined;
+        if (!parts) continue;
         const active = a.zombie ? parts.zom : parts.norm;
         parts.norm.visible = !a.zombie;
         parts.zom.visible = !!a.zombie;
-        poseAnimal(active, Math.hypot(a.vx, a.vz), t, a.phase);
+        if (parts.clips && parts.normM && parts.zomM) {
+          // 🎬 the GLB pair — drive the ACTIVE form's mixer, freeze the other
+          const speed = Math.hypot(a.vx, a.vz);
+          const walk = WILDLIFE.dog?.walk ?? 1.6;
+          const want = speed < 0.25 ? "idle" : speed > walk + 1.5 ? "run" : "walk";
+          if (a.zombie) {
+            parts.zomCur = playClip(parts.zomM, parts.clips, parts.zomCur, want);
+            parts.zomM.update(dt);
+          } else {
+            parts.normCur = playClip(parts.normM, parts.clips, parts.normCur, want);
+            parts.normM.update(dt);
+          }
+        } else {
+          // procedural stand-in — the old pose math owns it
+          poseAnimal(active, Math.hypot(a.vx, a.vz), t, a.phase);
+        }
         continue;
       }
       if (rig.mixer && rig.clips) {
@@ -759,16 +872,12 @@ export function Animals({ engine }: { engine: GameEngine }) {
         // panicking, Walk while ambling — soft 0.22 s cross-fades
         const speed = Math.hypot(a.vx, a.vz);
         const walk = WILDLIFE[a.kind]?.walk ?? 1.8;
+        const flies = rig.clips["fly"] != null;
         const want = speed < 0.25 || a.resting ? "idle"
+          : flies ? (speed > walk + 1.3 ? (rig.clips["fly fast"] ? "fly fast" : "fly") : "fly")
           : speed > walk + 1.5 ? (a.kind === "owl" || a.kind === "crow" || a.kind === "duck" ? "fly" : "run")
           : "walk";
-        const next = rig.clips[want];
-        if (next && rig.current?.getClip() !== next) {
-          const prev = rig.current;
-          rig.current = rig.mixer.clipAction(next);
-          rig.current.reset().fadeIn(0.22).play();
-          if (prev) prev.fadeOut(0.22);
-        }
+        rig.current = playClip(rig.mixer, rig.clips, rig.current, want);
         rig.mixer.update(dt);
       }
       // procedural fallback pose (unused while a mixer owns the body)

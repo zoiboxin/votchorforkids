@@ -1,7 +1,7 @@
 import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { AGE_STATS, ITEMS, POLICE_UNIFORM, policeOutfitOf, type Appearance } from "./constants";
-import { loadGlbTemplate, makeGlbInstance, crossToGlb, setGlbLocomotion, glbApplyBone, glbHipsTo, glbOvEase, POLICE_CHAR, type GlbInstance } from "./glbCharacters";
+import { loadGlbTemplate, makeGlbInstance, crossToGlb, setGlbLocomotion, glbApplyBone, glbHipsTo, glbOvEase, tintGlbZombie, POLICE_CHAR, type GlbInstance } from "./glbCharacters";
 
 /* ------------------------------------------------------------------ */
 /* Shared caches + merged-geometry "buckets"                           */
@@ -583,8 +583,10 @@ export function setHeldTool(character: THREE.Object3D, kind: HeldToolKind | null
 /** Swap the rigged GLB body into a cartoon character root once its file
  *  arrives. The cartoon body stays visible until then (no empty-air souls
  *  while the cast streams in), then hides and the rig takes over. The pose
- *  entry point (poseCharacter) reroutes to the clip mixer automatically. */
-function attachGlbBody(root: THREE.Object3D, slug: string): void {
+ *  entry point (poseCharacter) reroutes to the clip mixer automatically.
+ *  🧟 zombieSeed — rot the GLB sickly green (the TURNED wear their former
+ *  selves, just… dead). */
+export function attachGlbBody(root: THREE.Object3D, slug: string, opts: { zombieSeed?: number } = {}): void {
   if (!slug) return;
   void (async () => {
     let inst: GlbInstance | null = null;
@@ -600,6 +602,7 @@ function attachGlbBody(root: THREE.Object3D, slug: string): void {
       await new Promise((r) => requestAnimationFrame(r));
     }
     if (!root.parent || root.userData.glb) return;
+    if (opts.zombieSeed != null) tintGlbZombie(inst, opts.zombieSeed);
     const rig = root.userData.rig as { body: THREE.Object3D } | undefined;
     if (rig) rig.body.visible = false; // cartoon stand-in steps aside
     root.add(inst.body);
@@ -802,6 +805,46 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
     body.position.z = -st.hip * Math.sin(th);
   }
 
+  // 🧟 ZOMBIE SHAMBLE — the hunch: spine curls forward, head lolls side to
+  // side, both arms quest out ahead (one stiffer than the other), hips sink.
+  // The stride clips lose their spring (capped timeScale) so the walk reads
+  // as a dragging lurch, not a stroll. Sits UNDER the attack overlay.
+  if (o.zombie) {
+    const ph = o.phase ?? 0;
+    const amt = glbOvEase(st, "zombie", 1, dt);
+    glbHipsTo(st, 0.93, amt);
+    glbApplyBone(st, "Spine", 0.26, 0, Math.sin(t * 1.9 + ph) * 0.07, amt);
+    glbApplyBone(st, "Spine1", 0.15, Math.sin(t * 1.3 + ph) * 0.05, 0, amt);
+    glbApplyBone(st, "Head", 0.18, Math.sin(t * 1.7 + ph) * 0.2, 0.12, amt);
+    glbApplyBone(st, "LeftArm", -1.24, 0, 0.26, amt);
+    glbApplyBone(st, "RightArm", -1.04, 0, -0.32, amt);
+    glbApplyBone(st, "LeftForeArm", -0.42, 0, 0.08, amt);
+    glbApplyBone(st, "RightForeArm", -0.2, 0, -0.1, amt);
+    glbApplyBone(st, "LeftUpLeg", -0.1, 0, 0.07, amt);
+    glbApplyBone(st, "RightUpLeg", 0.07, 0, -0.12, amt);
+    const walkA = st.actions.Walk;
+    if (walkA && walkA.getEffectiveTimeScale() > 0.82) walkA.setEffectiveTimeScale(0.82);
+    const runA = st.actions.Run;
+    if (runA && runA.getEffectiveTimeScale() > 0.88) runA.setEffectiveTimeScale(0.88);
+  }
+
+  // 🧟 ATTACK — the lunge-bite: both arms snap ahead with a torso lurch,
+  // peak mid-swing, then recover into the questing reach. Driven by the
+  // engine's zb.attackT (decays 1 → 0 over 0.5 s).
+  if (o.attack != null && o.attack > 0) {
+    const p = 1 - Math.min(1, o.attack);
+    const amt = glbOvEase(st, "attack", Math.min(1, p * 9), dt);
+    const lunge = Math.sin(Math.min(1, p / 0.72) * Math.PI);
+    glbApplyBone(st, "Spine", 0.1 + lunge * 0.2, 0, 0, amt);
+    glbApplyBone(st, "LeftArm", -1.3 - lunge * 0.6, 0, 0.14, amt);
+    glbApplyBone(st, "RightArm", -1.1 - lunge * 0.66, 0, -0.16, amt);
+    glbApplyBone(st, "LeftForeArm", -0.34 + lunge * 0.14, 0, 0, amt);
+    glbApplyBone(st, "RightForeArm", -0.18 + lunge * 0.12, 0, 0, amt);
+    glbApplyBone(st, "Head", 0.08 + lunge * 0.16, 0, 0, amt);
+  } else {
+    glbOvEase(st, "attack", 0, dt);
+  }
+
   // ⚔️ swing — the tool (riding the hand socket) whistles through the chop arc;
   // between swings it eases back to the ready-stance tilt (bare-hand fights
   // use the bone-level punch overlay above instead)
@@ -832,7 +875,7 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
 /* ------------------------------------------------------------------ */
 /* Posing — walk / run / jump / idle / sit + auto-blink & expressions  */
 /* ------------------------------------------------------------------ */
-export interface PoseOpts { phase?: number; airborne?: boolean; detained?: boolean; zombie?: boolean; /** 😱 fleeing a horror — arms thrown up, flailing, glancing over the shoulder */ panic?: boolean; vy?: number; flip?: number; squash?: number; faint?: number; /** 0..1 progress of an arm swing (axe chop / sword slash / beast claw) — 0 = none */ swing?: number; /** 🕺 emotes — dance loops until canceled, wave says hello, cheer celebrates */ dance?: boolean; wave?: boolean; cheer?: boolean; /** 🚗 seated at the wheel (rigged bodies only — the car hides cartoon sit poses) */ drive?: boolean; /** ☠️ 0..1 death collapse progress — limbs go loose while the root tips over */ death?: number; /** 🪫 get-up timer (1 → 0): crouched push-off unfolding to standing */ getup?: number; }
+export interface PoseOpts { phase?: number; airborne?: boolean; detained?: boolean; zombie?: boolean; /** 🧟 1 → 0 lunge-bite countdown — plays the zombie ATTACK overlay while > 0 */ attack?: number; /** 😱 fleeing a horror — arms thrown up, flailing, glancing over the shoulder */ panic?: boolean; vy?: number; flip?: number; squash?: number; faint?: number; /** 0..1 progress of an arm swing (axe chop / sword slash / beast claw) — 0 = none */ swing?: number; /** 🕺 emotes — dance loops until canceled, wave says hello, cheer celebrates */ dance?: boolean; wave?: boolean; cheer?: boolean; /** 🚗 seated at the wheel (rigged bodies only — the car hides cartoon sit poses) */ drive?: boolean; /** ☠️ 0..1 death collapse progress — limbs go loose while the root tips over */ death?: number; /** 🪫 get-up timer (1 → 0): crouched push-off unfolding to standing */ getup?: number; }
 
 /** All channels poseCharacter drives — computed as targets, blended, then applied. */
 interface PoseCh {

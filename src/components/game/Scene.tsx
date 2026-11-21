@@ -164,11 +164,14 @@ export function useGameInput(engine: GameEngine | null) {
       }
       dragging = false;
     };
-    // RMB belongs to the game while playing — no browser menu over the world
+    // RMB belongs to the game while playing — no browser menu over the world.
+    // Unconditional while playing: Windows fires contextmenu on RIGHT-BUTTON
+    // MOUSEUP, after the tool wheel already popped open — the event then
+    // targets the wheel (a data-ui node) and an exemption here would let the
+    // native menu leak over the game UI. No in-game surface needs it.
     const cm = (e: MouseEvent) => {
       const s = useGame.getState();
       if (s.screen !== "play") return;
-      if (e.target instanceof Element && e.target.closest("[data-ui]")) return;
       e.preventDefault();
     };
     const mm = (e: MouseEvent) => {

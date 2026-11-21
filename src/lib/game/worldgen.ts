@@ -233,6 +233,10 @@ export interface World {
   chopBlocks: { x: number; z: number; rot: number }[];
   firewood: { x: number; z: number; rot: number }[];
   woodsheds: { x: number; z: number; rot: number }[];
+  /** 🐜 insect world kit — meadow micro-landmarks: mushroom rings, ant nests,
+   *  daisies & clover, orb webs, an insect hotel, wasp nests + tiny treasures.
+   *  k = kit key (see insectKit.ts), s = target height in world units. */
+  insectProps: { k: string; x: number; z: number; rot: number; s: number }[];
   /** 🗺️ spatial hash over boxes+circles — makes resolve() O(neighbours) instead of O(world) */
   grid: ColliderGrid;
 }
@@ -1771,7 +1775,79 @@ export function generateWorld(seed = WORLD_SEED): World {
   // every circle remembers its array slot — the driven car refreshes its grid cells via this
   for (let i = 0; i < circles.length; i++) circles[i].idx = i;
 
-  return { buildings, trees, rocks, rockCi, flowers, boxes, circles, cars, lamps, benches, fields, silos, umbrellas, signs, windmills, camps, ponds, ferns, tufts, shrooms, bushes, wilds, stumps, logs, reeds, pads, stones, spires, cabins, ranger: rangerPos, lookout, trucks, bridges, docks, boats, kiosks, trailPosts, trails: trailPts, birdhouses, handcarts, chopBlocks, firewood, woodsheds, grid: buildColliderGrid(boxes, circles) };
+  /* ---- 🐜 INSECT WORLD — the meadow's micro-scaled landmarks ----
+   * Bug villages (ant nests + mushroom rings + flower patches + tiny human
+   * treasures) in the GRASS FIELDS between city & farm, a few near the farm
+   * fields themselves, and singles scattered at random anywhere wild enough.
+   * All steppable decor — nothing solid, pure world flavour. */
+  const insectProps: { k: string; x: number; z: number; rot: number; s: number }[] = [];
+  /** per-kit-key target height (world units) — the shrink-ray sizes */
+  const KIT_SIZE: Record<string, number> = {
+    glowShroom: 0.5, puffball: 0.42, daisy: 0.45, dandelion: 0.55, clover: 0.3,
+    grassPlant: 0.62, moss: 0.3, seedling: 0.28, nestMound: 1.0, nestChamber: 0.9,
+    orbWeb: 0.9, hotel: 1.5, waspNest: 1.1, waspPot: 0.4, honeycomb: 1.2,
+    flowerpot: 0.8, matchbox: 0.5, bottleCap: 0.22, marble: 0.18, button: 0.16,
+    matchstick: 0.5, sugarCube: 0.16, sunflowerSeed: 0.2, eggshell: 0.35,
+    acorn: 0.3, pineCone: 0.45, oakLeaf: 0.35, twig: 0.5, feather: 0.4,
+    petal: 0.18, blackberry: 0.3, dewdrop: 0.14, pebble: 0.25, slate: 0.2,
+    cocoon: 0.3, chrysalis: 0.22, dandelionSeed: 0.12,
+  };
+  const FLORA_KEYS = ["daisy", "dandelion", "clover", "grassPlant", "moss", "glowShroom", "puffball", "seedling", "oakLeaf", "twig"] as const;
+  const TREASURE_KEYS = ["bottleCap", "marble", "button", "acorn", "matchstick", "sugarCube", "sunflowerSeed", "eggshell", "dewdrop", "feather", "petal", "pineCone", "blackberry", "chrysalis", "cocoon", "dandelionSeed", "pebble", "slate"] as const;
+  const pushInsect = (k: string, x: number, z: number, rot = range(rnd, 0, 6.283)) => {
+    const s = KIT_SIZE[k];
+    if (s) insectProps.push({ k, x, z, rot, s: s * range(rnd, 0.8, 1.25) });
+  };
+  // 🐜 six bug villages — three in the grass fields near the farm, three deeper out
+  for (let v = 0; v < 6; v++) {
+    const deep = v >= 3;
+    let cx = 0, cz = 0, placed = false;
+    for (let tries = 0; tries < 60 && !placed; tries++) {
+      const a = range(rnd, 0, Math.PI * 2);
+      const rr = deep ? range(rnd, DEEP_JUNGLE_RADIUS - 55, DEEP_JUNGLE_RADIUS - 8) : range(rnd, CITY_RADIUS + 14, FARM_RADIUS + 46);
+      const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+      if (!clearOf(x, z, 3.2)) continue;
+      if (fields.some((f) => Math.abs(x - f.x) < f.w + 3 && Math.abs(z - f.z) < f.d + 3)) continue;
+      cx = x; cz = z; placed = true;
+    }
+    if (!placed) continue;
+    // the village heart: an ant nest complex (mound + chamber + tunnel run of pupae)
+    pushInsect("nestMound", cx, cz);
+    pushInsect("nestChamber", cx + range(rnd, 1.6, 2.6), cz + range(rnd, -1.8, 1.8));
+    if (v % 2 === 0) pushInsect("cocoon", cx + range(rnd, -2.4, -1.4), cz + range(rnd, 1.2, 2.4));
+    // landmark extras alternate per village — insect hotel, orb web, wasp nest, honeycomb
+    const landmark = (["hotel", "orbWeb", "waspNest", "honeycomb", "waspPot", "flowerpot"] as const)[v];
+    pushInsect(landmark, cx + range(rnd, -3.4, 3.4), cz + range(rnd, -3.4, 3.4));
+    // the meadow floor: daisies, clover, mushrooms, grass, moss…
+    for (let i = 0; i < 11; i++) {
+      const a = range(rnd, 0, Math.PI * 2), d = range(rnd, 1.8, 7.5);
+      const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
+      if (!clearOf(x, z, 0.8)) continue;
+      pushInsect(FLORA_KEYS[Math.floor(rnd() * FLORA_KEYS.length)], x, z);
+    }
+    // the kit's shrunk treasures — a bottle cap here, a lost button there
+    for (let i = 0; i < 5; i++) {
+      const a = range(rnd, 0, Math.PI * 2), d = range(rnd, 2.2, 8.5);
+      const x = cx + Math.cos(a) * d, z = cz + Math.sin(a) * d;
+      if (!clearOf(x, z, 0.6)) continue;
+      pushInsect(TREASURE_KEYS[Math.floor(rnd() * TREASURE_KEYS.length)], x, z);
+    }
+  }
+  // 🍄 stray singles — glowing mushrooms & webs anywhere wild, treasures near trails
+  n = 0;
+  while (n < 46 && n < 900) {
+    const a = range(rnd, 0, Math.PI * 2);
+    const rr = range(rnd, 26, DEEP_JUNGLE_RADIUS - 10);
+    const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
+    if (!clearOf(x, z, 1.1)) continue;
+    const pool = rr < CITY_RADIUS + 4
+      ? TREASURE_KEYS
+      : Math.floor(rnd() * 3) === 0 ? (["glowShroom", "puffball", "orbWeb", "nestMound", "waspPot"] as const) : FLORA_KEYS;
+    pushInsect(pool[Math.floor(rnd() * pool.length)], x, z);
+    n++;
+  }
+
+  return { buildings, trees, rocks, rockCi, flowers, boxes, circles, cars, lamps, benches, fields, silos, umbrellas, signs, windmills, camps, ponds, ferns, tufts, shrooms, bushes, wilds, stumps, logs, reeds, pads, stones, spires, cabins, ranger: rangerPos, lookout, trucks, bridges, docks, boats, kiosks, trailPosts, trails: trailPts, birdhouses, handcarts, chopBlocks, firewood, woodsheds, insectProps, grid: buildColliderGrid(boxes, circles) };
 }
 
 /**

@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useMemo, useRef } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
@@ -12,6 +12,7 @@ import {
   type World,
 } from "@/lib/game/worldgen";
 import { nameTag } from "@/lib/game/character";
+import { loadInsectKit, spawnInsectKit, type InsectKitKind } from "@/lib/game/insectKit";
 import { mulberry32, range } from "@/lib/game/rng";
 import { nightFactor } from "@/lib/game/sim";
 import { isKitType, kitWheelR, makeKitCar } from "@/lib/game/cars/kit";
@@ -4895,6 +4896,52 @@ function NatureExtras() {
   );
 }
 
+/** 🐜 INSECT WORLD — the meadow's micro-scaled landmarks, placed by worldgen.
+ *  Bug villages (ant nests + mushroom rings + flower patches + the kit's tiny
+ *  human-scale treasures) stream in per slug and stamp at their scatter spots.
+ *  Pure decor — no colliders, walk right through the daisies. */
+function InsectWorld() {
+  const props = WORLD.insectProps;
+  const [rev, setRev] = useState(0);
+  // every distinct kit key the scatter needs — kick all their downloads off
+  useEffect(() => {
+    const set = new Set<InsectKitKind>();
+    for (const p of props) set.add(p.k as InsectKitKind);
+    let alive = true;
+    for (const k of set) {
+      void loadInsectKit(k)
+        .then(() => { if (alive) setRev((v) => v + 1); })
+        .catch(() => { /* a lost prop is just an empty patch of grass */ });
+    }
+    return () => { alive = false; };
+  }, [props]);
+  // stamp every prop whose template has landed (clones are cheap; the burst
+  // resolves in a second or two, then this list is stable)
+  const built = useMemo(() => {
+    const out: { obj: THREE.Group; x: number; z: number; rot: number }[] = [];
+    for (const p of props) {
+      const obj = spawnInsectKit(p.k as InsectKitKind);
+      if (!obj) continue; // still streaming
+      obj.rotation.y = p.rot;
+      obj.scale.setScalar(p.s);
+      out.push({ obj, x: p.x, z: p.z, rot: p.rot });
+    }
+    return out;
+  }, [props, rev]);
+  return (
+    <>
+      {built.map((b, i) => (
+        <primitive
+          key={i}
+          object={b.obj}
+          position={[b.x, terrainHeight(b.x, b.z), b.z]}
+          rotation-y={b.rot}
+        />
+      ))}
+    </>
+  );
+}
+
 export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObject<number>; engine: GameEngine }) {
   return (
     <>
@@ -4935,6 +4982,7 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
       <AlpineDecor />
       <Trails />
       <ForestFloor />
+      <InsectWorld />
       <JunglePonds />
       <JungleLandmarks engine={engine} />
       <NatureExtras />

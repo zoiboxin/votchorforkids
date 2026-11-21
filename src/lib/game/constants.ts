@@ -131,10 +131,11 @@ export type AgeGroup = "kid" | "teen" | "young" | "old";
 
 /** Age groups change stats only; none is strictly best. */
 export const AGE_STATS: Record<AgeGroup, { scale: number; speed: number; regen: number; jump: number; label: string }> = {
-  kid: { scale: 0.66, speed: 5.6, regen: 0.9, jump: 7.4, label: "Kid — small & nimble" },
-  teen: { scale: 0.86, speed: 6.8, regen: 1, jump: 8.6, label: "Teen — fastest runner" },
-  young: { scale: 1, speed: 6.3, regen: 1, jump: 7.8, label: "Young — all-rounder" },
-  old: { scale: 0.94, speed: 5.2, regen: 1.8, jump: 6.6, label: "Elder — wise & tough" },
+  // pace bump (+~7%): the town's default walk read sluggish — brisk strides now
+  kid: { scale: 0.66, speed: 6.0, regen: 0.9, jump: 7.4, label: "Kid — small & nimble" },
+  teen: { scale: 0.86, speed: 7.2, regen: 1, jump: 8.6, label: "Teen — fastest runner" },
+  young: { scale: 1, speed: 6.7, regen: 1, jump: 7.8, label: "Young — all-rounder" },
+  old: { scale: 0.94, speed: 5.5, regen: 1.8, jump: 6.6, label: "Elder — wise & tough" },
 };
 
 export const SPRINT_MULT = 1.65;
@@ -441,29 +442,65 @@ export const ZOMBIE_TOUCH_CD = 1.2;
 export const GRAVEYARD_CENTER = GRAVEYARD;
 
 /* ---------- Animals ---------- */
-export type AnimalKind = "cow" | "chicken" | "deer" | "monkey" | "dog"
+export type AnimalKind = "cow" | "chicken" | "deer" | "frog" | "dog"
   /* 🌲 polyfork GLB wildlife — the jungle is ALIVE now (see public/models/CREDITS.md) */
   | "wolf" | "bear" | "fox" | "owl" | "crow" | "rabbit"
   /* 👻 night-only spirit of the deep jungle */
   | "stag"
   /* 🏔️ alpine & snow kit — the mountain band past the deep jungle gains its own wildlife */
   | "ibex" | "hare"
-  /* 🚜 cozy farm kit — the barnyard menagerie grows */
-  | "pig" | "sheep" | "goat" | "duck"
+  /* 🚜 cozy farm kit — the barnyard menagerie grows (horse joins the herd) */
+  | "pig" | "sheep" | "goat" | "duck" | "horse"
   /* 🎃 halloween night kit — a black cat prowls the town, a giant spider haunts the graveyard */
-  | "cat" | "spider";
-export const ANIMAL_SET: { kind: AnimalKind; count: number; zone: "farm" | "jungle" | "city" | "mountain" | "grave" }[] = [
+  | "cat" | "spider"
+  /* 🐜 insect world — the biting crawlers & flyers of the grass fields */
+  | "ant" | "wasp" | "bee" | "mantis" | "beetle" | "ladybird" | "grasshopper" | "centipede" | "tarantula" | "orbweaver";
+
+/** 🐝 the biting creepy-crawlies — wander their patch, and if YOU stray close
+ *  they sting. dmg = hp per bite, cd = seconds between bites, sense = how far
+ *  they smell you, r = bite range. They bite by day AND night (but the night
+ *  ones hit harder — see BUG_NIGHT_MULT). */
+export const BUGS: Record<string, { dmg: number; cd: number; sense: number; r: number }> = {
+  ant: { dmg: 3, cd: 1.4, sense: 7.5, r: 1.5 },
+  wasp: { dmg: 5, cd: 1.6, sense: 10, r: 1.9 },
+  bee: { dmg: 4, cd: 1.8, sense: 8.5, r: 1.7 },
+  mantis: { dmg: 6, cd: 2.0, sense: 8, r: 1.8 },
+  beetle: { dmg: 4, cd: 1.6, sense: 6.5, r: 1.5 },
+  ladybird: { dmg: 2, cd: 1.5, sense: 6, r: 1.3 },
+  grasshopper: { dmg: 3, cd: 1.7, sense: 7, r: 1.4 },
+  centipede: { dmg: 6, cd: 2.0, sense: 7, r: 1.6 },
+  tarantula: { dmg: 7, cd: 2.2, sense: 9, r: 2.0 },
+  orbweaver: { dmg: 5, cd: 2.0, sense: 8, r: 1.8 },
+  spider: { dmg: 7, cd: 2.2, sense: 16, r: 2.2 }, // 🕷️ the giant yard spider bites too now
+};
+export const BUG_NIGHT_MULT = 1.5; // after dark the whole hive turns meaner
+export const BUG_TOAST_CD = 9;    // seconds between "something stung you" toasts
+/** 🐜 readable names for the sting toasts */
+export const BUG_LABEL: Record<string, string> = {
+  ant: "wood ant", wasp: "wasp", bee: "honeybee", mantis: "praying mantis",
+  beetle: "stag beetle", ladybird: "ladybird", grasshopper: "grasshopper",
+  centipede: "stone centipede", tarantula: "tarantula", orbweaver: "orb-weaver spider",
+  spider: "giant yard spider",
+};
+
+/** 🐜 flyers hover above the ground (renderer bobs them; bites land from the air) */
+export const BUG_FLYERS = new Set(["wasp", "bee"]);
+
+export const ANIMAL_SET: { kind: AnimalKind; count: number; zone: "farm" | "jungle" | "city" | "mountain" | "grave" | "grass" | "random" }[] = [
   { kind: "dog", count: 9, zone: "city" },
-  { kind: "cow", count: 5, zone: "farm" },
-  { kind: "chicken", count: 7, zone: "farm" },
-  // 🚜 cozy farm kit additions — pigs rootle by the barn, sheep & goats graze the field, ducks paddle the trough
+  { kind: "cat", count: 2, zone: "city" },
+  // 🚜 DOMESTIC HERDS — inside the city streets and the near-city pastures
+  // (the old spawn ring pushed every cow to the farm belt, far from town)
+  { kind: "cow", count: 6, zone: "farm" },
+  { kind: "chicken", count: 8, zone: "farm" },
   { kind: "pig", count: 4, zone: "farm" },
   { kind: "sheep", count: 5, zone: "farm" },
   { kind: "goat", count: 3, zone: "farm" },
   { kind: "duck", count: 4, zone: "farm" },
+  { kind: "horse", count: 3, zone: "farm" },
+  // 🌲 WILD wildlife keeps to the jungle — deer, frogs, predators & birds
   { kind: "deer", count: 4, zone: "jungle" },
-  { kind: "monkey", count: 4, zone: "jungle" },
-  // 🌲 the new wildlife — polyfork low-poly models, loaded from /public/models
+  { kind: "frog", count: 4, zone: "jungle" },
   { kind: "wolf", count: 3, zone: "jungle" },
   { kind: "fox", count: 4, zone: "jungle" },
   { kind: "bear", count: 2, zone: "jungle" },
@@ -471,21 +508,33 @@ export const ANIMAL_SET: { kind: AnimalKind; count: number; zone: "farm" | "jung
   { kind: "crow", count: 4, zone: "jungle" },
   { kind: "rabbit", count: 5, zone: "jungle" },
   { kind: "stag", count: 1, zone: "jungle" },   // 👻 the spectral stag — night only
-  // 🏔️ alpine & snow kit — ibex herds the scree beyond the deep jungle, hares bound through the snow patches
+  { kind: "tarantula", count: 2, zone: "jungle" }, // 🕷️ hairy jungle biter
+  // 🏔️ alpine: ibex herds the scree beyond the deep jungle, hares bound through the snow patches
   { kind: "ibex", count: 5, zone: "mountain" },
   { kind: "hare", count: 5, zone: "mountain" },
-  // 🎃 halloween night kit — the town's black cat slinks between houses, the giant yard spider lurks in the graveyard
-  { kind: "cat", count: 2, zone: "city" },
+  // 🎃 halloween: the giant yard spider lurks in the graveyard
   { kind: "spider", count: 3, zone: "grave" },
+  // 🐜 INSECT WORLD — grass fields, near the farm, and random mystery spots
+  { kind: "ant", count: 5, zone: "grass" },
+  { kind: "grasshopper", count: 4, zone: "grass" },
+  { kind: "ladybird", count: 4, zone: "grass" },
+  { kind: "orbweaver", count: 3, zone: "grass" },
+  { kind: "beetle", count: 3, zone: "farm" },
+  { kind: "mantis", count: 3, zone: "farm" },
+  { kind: "wasp", count: 4, zone: "random" },
+  { kind: "bee", count: 5, zone: "random" },
+  { kind: "centipede", count: 3, zone: "random" },
 ];
 
 /** Per-kind wildlife motion table (u/s). Flee = panic dash away from you,
- *  walk = graze-wander speed. `spookR` = how close you may get before panicking. */
+ *  walk = graze-wander speed. `spookR` = how close you may get before panicking.
+ *  🐜 biters NEVER flee — they hold their ground and sting. */
 export const WILDLIFE: Record<string, { flee: number; walk: number; spookR: number }> = {
   cow: { flee: 2.4, walk: 1.1, spookR: 4.5 },
   chicken: { flee: 4.6, walk: 1.6, spookR: 6 },
   deer: { flee: 6.2, walk: 1.8, spookR: 6 },
-  monkey: { flee: 5, walk: 1.8, spookR: 6 },
+  frog: { flee: 4.2, walk: 1.2, spookR: 5 },   // 🐸 hops off in short panics
+  horse: { flee: 3.4, walk: 1.3, spookR: 5 },  // 🐎 the proud stallion trots off
   wolf: { flee: 6.2, walk: 1.7, spookR: 7 },    // bold by day — watches you before trotting off
   fox: { flee: 6.8, walk: 1.9, spookR: 7.5 },   // quick, curious
   bear: { flee: 4.4, walk: 1.2, spookR: 8 },    // huge, unhurried — do not test it
@@ -504,6 +553,17 @@ export const WILDLIFE: Record<string, { flee: number; walk: number; spookR: numb
   // 🎃 halloween: the cat is aloof — watching, never caught; the spider skitters
   cat: { flee: 7.2, walk: 1.3, spookR: 7 },
   spider: { flee: 5.5, walk: 1.0, spookR: 7 },
+  // 🐜 insect world — the crawlers graze their patch; wasps & bees cruise wide
+  ant: { flee: 0, walk: 0.9, spookR: 0 },
+  wasp: { flee: 0, walk: 1.6, spookR: 0 },
+  bee: { flee: 0, walk: 1.3, spookR: 0 },
+  mantis: { flee: 0, walk: 0.8, spookR: 0 },
+  beetle: { flee: 0, walk: 1.0, spookR: 0 },
+  ladybird: { flee: 0, walk: 0.9, spookR: 0 },
+  grasshopper: { flee: 0, walk: 1.2, spookR: 0 },
+  centipede: { flee: 0, walk: 1.0, spookR: 0 },
+  tarantula: { flee: 0, walk: 1.0, spookR: 0 },
+  orbweaver: { flee: 0, walk: 0.8, spookR: 0 },
 };
 
 /* ---------- 🐕 street dogs & 🧟 zombie hounds ----------
@@ -585,7 +645,7 @@ export const BLINK_DIST = 15;        // teleport distance
 export const BLINK_CD = 0.9;         // seconds between blinks
 export const MAGNET_RADIUS = 14;     // food pull radius
 export const MAGNET_PULL = 12;       // units/second snacks fly toward you
-export const MORPH_ANIMALS: readonly AnimalKind[] = ["cow", "chicken", "deer", "monkey"];
+export const MORPH_ANIMALS: readonly AnimalKind[] = ["cow", "chicken", "deer", "frog"];
 
 /* ---------- GTA-style driving — license cards unlock every parked car ---------- */
 export const LICENSE_COUNT = 8;        // glowing 🪪 cards hidden around town & farmland

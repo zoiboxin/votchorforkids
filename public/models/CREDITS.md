@@ -22,6 +22,37 @@ Licensed **CC BY 4.0**.
 | `duck-357dc6.glb` | Duck (Cozy Farm kit) | — |
 | `arched-black-cat-407cf6.glb` | Arched Black Cat (Halloween Night kit) | — |
 | `giant-yard-spider-70ddce.glb` | Giant Yard Spider (Halloween Night kit) | — |
+| `cow-base.glb` | Cow | 3,058 |
+| `chicken-base.glb` | Chicken | 2,244 |
+| `dog-base.glb` | Dog | 2,776 |
+| `horse-base.glb` | Horse | 3,120 |
+| `frog-base.glb` | Frog | 1,912 |
+| `wood-ant-base.glb` | Wood Ant (Insect World kit) | — |
+| `common-wasp-base.glb` | Common Wasp (Insect World kit) | — |
+| `honeybee-base.glb` | Honeybee (Insect World kit) | — |
+| `praying-mantis-base.glb` | Praying Mantis (Insect World kit) | — |
+| `stag-beetle-base.glb` | Stag Beetle (Insect World kit) | — |
+| `seven-spot-ladybird-base.glb` | Seven-Spot Ladybird (Insect World kit) | — |
+| `meadow-grasshopper-base.glb` | Meadow Grasshopper (Insect World kit) | — |
+| `stone-centipede-base.glb` | Stone Centipede (Insect World kit) | — |
+| `tarantula-base.glb` | Tarantula | — |
+| `garden-orb-weaver-b32844.glb` | Garden Orb-Weaver (Insect World kit) | — |
+
+## Insect World kit (`models/insect-world/` — the meadow's micro landmarks)
+
+From the [polyfork Insect World kit](https://polyfork.dev/kit/insect-world-e44b9f) —
+ant nest entrance mound, ant nest chamber, ant pupa cocoon, insect hotel,
+wasp paper nest, potter wasp pot, wild honeycomb panel, orb web, glowing
+bonnet & puffball mushrooms, meadow grass plant, common daisy, dandelion
+(+ seed), white clover plant, moss cushion, sprouting seedling, fallen oak
+leaf / twig / rose petal / blackberry / bird feather, pine cone, acorn cup,
+dewdrop, quartz pebble & slate flake path stones — and the kit's shrunk
+human-scale treasures (bottle cap, glass marble, lost button, matchbox house,
+matchstick, sugar cube, sunflower seed, eggshell half, swallowtail chrysalis,
+upturned clay flowerpot).
+
+Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
+(https://creativecommons.org/licenses/by/4.0/)
 
 ## Airport kit (`models/airport/` — 7Nights International Airport)
 

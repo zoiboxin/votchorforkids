@@ -599,12 +599,14 @@ const sstep01 = (a: number, b: number, x: number) => {
 };
 
 /** Continuous locomotion blend: Idle ⇄ Walk ⇄ JOG (Walk+Run mixed) ⇄ Run,
- *  all as simultaneous clip weights — no more hard speed thresholds, so
- *  walking no longer plays the Run clip and mid-speeds jog for real. The
- *  stride timeScale also follows ground speed so feet don't skate. */
+ *  all as simultaneous clip weights — no hard speed thresholds, mid-speeds
+ *  jog for real. The stride timeScale follows ground speed so feet don't
+ *  skate. The jog band starts ABOVE normal walk (5.2–7.2 u/s after the pace
+ *  bump) — the old 4.2-onset blended 25–65% Run into every casual walk while
+ *  its clamped-low timeScale crawled, making normal walking read slow. */
 export function setGlbLocomotion(st: GlbInstance, speed: number): void {
   const wIn = sstep01(0.25, 0.7, speed);    // 0 = standing · 1 = moving
-  const jogK = sstep01(4.2, 8.2, speed);    // 0 = walk · 1 = full run
+  const jogK = sstep01(6.0, 9.4, speed);    // 0 = walk · 1 = full run
   const iw = 1 - wIn;
   const ww = wIn * (1 - jogK);
   const rw = wIn * jogK;
@@ -614,11 +616,12 @@ export function setGlbLocomotion(st: GlbInstance, speed: number): void {
   };
   set("Idle", iw); set("Walk", ww); set("Run", rw);
   // stride cadence tracks ground speed (clamped — a frantic blur reads worse
-  // than a little foot-slide on the cartoon proportions)
+  // than a little foot-slide on the cartoon proportions). Walk plays ~35%
+  // faster than the old mapping: a brisk, purposeful survivor stride.
   const walk = st.actions.Walk;
-  if (walk && ww > 0.01) walk.setEffectiveTimeScale(clamp(speed / 4.6, 0.6, 1.5));
+  if (walk && ww > 0.01) walk.setEffectiveTimeScale(clamp(speed / 3.6, 0.65, 1.65));
   const run = st.actions.Run;
-  if (run && rw > 0.01) run.setEffectiveTimeScale(clamp(speed / 9.6, 0.7, 1.4));
+  if (run && rw > 0.01) run.setEffectiveTimeScale(clamp(speed / 9.0, 0.8, 1.5));
   st.cur = rw > ww ? "Run" : ww > 0.01 ? "Walk" : "Idle";
 }
 
@@ -689,6 +692,34 @@ export function crossToGlb(st: GlbInstance, name: string): void {
     if (other !== name) st.actions[other]?.setEffectiveWeight(0);
   }
   st.cur = name;
+}
+
+/* ---------------- 🧟 the TURNED — rotting GLB zombies ---------------- */
+
+const _zRot = new THREE.Color();
+const _zTmp = new THREE.Color();
+/** three sickly graveyard tints — the same family the cartoon zombies wear */
+const ZOMBIE_TINTS = ["#8fbf6f", "#a8c98a", "#7da860"];
+
+/** Rot a GLB instance in place — a sickly green graveyard wash over every
+ *  material, plus a faint undead emissive so the TURNED read in the dark.
+ *  Clones materials first: SkeletonUtils instances SHARE the template's
+ *  materials, so tinting in place would rot every twin of this cast member.
+ *  `seed` picks one of the three rot tints (pass the zombie's owner id). */
+export function tintGlbZombie(st: GlbInstance, seed = 0): void {
+  const rot = _zRot.set(ZOMBIE_TINTS[Math.abs(Math.floor(seed)) % ZOMBIE_TINTS.length]);
+  st.body.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    const mats = Array.isArray(m.material) ? m.material : [m.material];
+    m.material = mats.map((src) => {
+      const c = (src as THREE.MeshStandardMaterial).clone() as THREE.MeshStandardMaterial;
+      _zTmp.copy(c.color).lerp(rot, 0.62);
+      c.color.copy(_zTmp);
+      if (c.emissive) c.emissive.set(rot).multiplyScalar(0.07);
+      return c;
+    });
+  });
 }
 
 /* ---------------- creator thumbnails (real portraits of the cast) ---------------- */

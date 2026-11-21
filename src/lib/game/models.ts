@@ -1,13 +1,16 @@
 /**
- * 🌲 polyfork GLB wildlife loader — the jungle's new animals.
+ * 🌲 polyfork GLB wildlife loader — every animal in the world.
  *
  * Models from the polyfork catalog (https://polyfork.dev, CC BY 4.0 — see
  * public/models/CREDITS.md): Wolf · Black Bear · Red Fox · Owl · Crow ·
- * Forest Rabbit · Crystal-Antlered Spectral Stag.
+ * Forest Rabbit · Crystal-Antlered Spectral Stag · plus the farm & meadow
+ * menagerie (cow, chicken, dog, horse, frog) and the biting creepy-crawlies
+ * (wood ant, common wasp, honeybee, praying mantis, stag beetle, ladybird,
+ * meadow grasshopper, stone centipede, tarantula, garden orb-weaver).
  *
- * Every model ships with baked skeletal clips (Idle / Walk / Run — the birds
- * add Fly), so the Animals renderer drives a real AnimationMixer per beast
- * instead of fake bobbing. Files preload in the background; clones are
+ * Every model ships with baked skeletal clips (Idle / Walk / Run — the bee
+ * & wasp add Fly), so the Animals renderer drives a real AnimationMixer per
+ * beast instead of fake bobbing. Files preload in the background; clones are
  * SkeletonUtils-cloned (they're skinned meshes) and cached per instance.
  */
 import * as THREE from "three";
@@ -35,29 +38,55 @@ const FILES = {
   // 🎃 halloween night kit — a black cat prowls the town, a giant spider haunts the graveyard
   cat: "/models/arched-black-cat-407cf6.glb",
   spider: "/models/giant-yard-spider-70ddce.glb",
+  // 🚜 the last procedural beasts go GLB — the farm & city menagerie is fully rigged now
+  cow: "/models/cow-base.glb",
+  chicken: "/models/chicken-base.glb",
+  dog: "/models/dog-base.glb",
+  horse: "/models/horse-base.glb",
+  // 🐸 the jungle monkey swaps its cartoon body for a real rigged frog
+  frog: "/models/frog-base.glb",
+  // 🐜 insect world — the biting crawlers & flyers of the grass fields
+  ant: "/models/wood-ant-base.glb",
+  wasp: "/models/common-wasp-base.glb",
+  bee: "/models/honeybee-base.glb",
+  mantis: "/models/praying-mantis-base.glb",
+  beetle: "/models/stag-beetle-base.glb",
+  ladybird: "/models/seven-spot-ladybird-base.glb",
+  grasshopper: "/models/meadow-grasshopper-base.glb",
+  centipede: "/models/stone-centipede-base.glb",
+  tarantula: "/models/tarantula-base.glb",
+  orbweaver: "/models/garden-orb-weaver-b32844.glb",
 } as const;
 
 export type ModelKind = keyof typeof FILES;
 
 /** Height-normalize then per-kind artistic scale (world units).
- *  📏 sized to READ next to ~2.24u survivors — the tiny critters were
- *  ankle-height specks players couldn't even spot, so every small species
- *  got a visibility bump (game readability over strict realism).
+ *  📏 NORMAL-SIZE pass — the zoo now sits at believable real-world heights
+ *  next to the ~2.24u survivors: a cow towers to your chest, a dog reaches
+ *  your thigh, a chicken is knee-high. Nothing renders as an ankle-height
+ *  speck (0.3u floor on the tiniest crawlers), but the giant-inflated old
+ *  targets are gone — animals read as ANIMALS, not monsters.
  *  ⚠️ normalization divides by the model's FULL bounding-box height, so for
  *  horned/antlered species (goat · ibex · deer · stag) the horns inflate that
- *  height and silently shrink the BODY — every GLB is authored at real-world
- *  scale (see polyfork SPECS: goat 1.65 m, deer 2.12 m, ibex 1.45 m, stag
- *  2.16 m tall incl. headgear), so their targets sit AT/ABOVE real height to
- *  keep the body mass true (goat was rendering at 0.67×, its body half a
- *  sheep's length; the deer's body came out shorter than the wolf's).
- *  📏⬆️ SECOND VISIBILITY PASS — small species (fox/owl/crow/rabbit/hare/
- *  duck/cat) were still easy to lose against the tall cartoon cast; every
- *  under-1u species now sits ≥1u, mid species +0.2-0.3u. */
+ *  height and silently shrink the BODY — their targets sit above shoulder
+ *  height to keep the body mass true (see polyfork SPECS: goat 1.65 m,
+ *  deer 2.12 m, ibex 1.45 m, stag 2.16 m incl. headgear). */
 const TARGET_H: Record<ModelKind, number> = {
-  wolf: 1.5, bear: 2.0, fox: 1.18, owl: 1.0, crow: 0.95, rabbit: 1.05, stag: 2.6,
-  deer: 2.5,
-  ibex: 1.85, hare: 1.05, pig: 1.4, sheep: 1.3, goat: 1.8, duck: 1.0,
-  cat: 1.05, spider: 1.75,
+  // 🌲 jungle wildlife — real sizes
+  wolf: 1.0, bear: 1.55, fox: 0.68, owl: 0.5, crow: 0.4, rabbit: 0.4, stag: 2.2,
+  deer: 1.7,
+  // 🏔️ alpine
+  ibex: 1.5, hare: 0.42,
+  // 🚜 farmyard — the big domestic breeds
+  pig: 0.95, sheep: 0.95, goat: 0.9, duck: 0.45,
+  cow: 1.5, chicken: 0.55, dog: 0.72, horse: 1.8,
+  // 🐸 jungle floor
+  frog: 0.32,
+  // 🎃 town & graveyard
+  cat: 0.42, spider: 1.6,
+  // 🐜 insect world — small but never invisible; the biters stay readable
+  ant: 0.34, wasp: 0.42, bee: 0.4, mantis: 0.62, beetle: 0.42, ladybird: 0.3,
+  grasshopper: 0.42, centipede: 0.45, tarantula: 0.55, orbweaver: 0.6,
 };
 
 /** Clip name fallbacks — every model has Idle+Walk+Run, birds add Fly. */
@@ -145,4 +174,30 @@ export function onModelsReady(cb: () => void): () => void {
     const i = readyCbs.indexOf(cb);
     if (i >= 0) readyCbs.splice(i, 1);
   };
+}
+
+const _rotCol = new THREE.Color();
+const _rotTmp = new THREE.Color();
+
+/** 🧟 Rot a cloned animal body — a sickly graveyard wash over every material.
+ *  Used for the zombie hounds: same rig, rotten flesh. `mix` 0..1 controls
+ *  how far the fur leans toward the rot colour. Returns the SAME root (fluent).
+ *  Must run on a skeletonClone (own materials) — never on the shared template. */
+export function tintRot(root: THREE.Group, color: string, mix: number, emissive = 0): THREE.Group {
+  const rot = _rotCol.set(color);
+  root.traverse((o) => {
+    const m = o as THREE.Mesh;
+    if (!m.isMesh) return;
+    const mats = Array.isArray(m.material) ? m.material : [m.material];
+    m.material = mats.map((src) => {
+      const c = (src as THREE.MeshStandardMaterial).clone() as THREE.MeshStandardMaterial;
+      _rotTmp.copy(c.color).lerp(rot, mix);
+      c.color.copy(_rotTmp);
+      if (emissive > 0 && "emissive" in c && c.emissive) {
+        c.emissive.set(color).multiplyScalar(emissive);
+      }
+      return c;
+    });
+  });
+  return root;
 }
