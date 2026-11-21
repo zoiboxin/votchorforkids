@@ -17,7 +17,7 @@ import {
   POINTS_BUILD, POINTS_HARVEST, POINTS_KILL_BEAST, POINTS_KILL_ZOMBIE, POINTS_NIGHT, POINTS_RIGHT_ACCUSE,
   POINTS_WRONG_ACCUSE, ROCK_HITS, ROCK_PER_BOULDER, TOOL_PICKUP_R, TOOL_SPAWN, TOOLS,
   TREE_HITS, WOOD_PER_TREE, WIN_BONUS, PLAYERS_TOTAL, ZOMBIE_CREW_DMG, ZOMBIE_HP,
-  ZONE_DRAIN_BASE, ZONE_DRAIN_STEP, ZONE_GRACE_S, ZONE_RADII, DAWN_ALIVE_CAP,
+  ZONE_DRAIN_BASE, ZONE_DRAIN_STEP, ZONE_GRACE_S, ZONE_RADII, DAWN_ALIVE_CAP, DAWN_WARN_S,
   MONEY_PER_PILE, CASH_RESPAWN_S, CREW_PURSE, CIV_PURSE, ZOMBIE_PURSE, POINTS_LOOT, POLICE_CREW,
   POLICE_OUTFITS,
   CIV_PANIC_R, CREW_PANIC_R, ZOMBIE_HUNT_R, ZOMBIE_SNIFF, ZOMBIE_SWARM_CAP,
@@ -438,6 +438,12 @@ export interface HudData {
   zoneR: number;
   /** true while YOU stand outside the safe zone — HUD drain warning */
   outsideWall: boolean;
+  /** 🌅 seconds left of the pre-dawn warning window (0 = night not about to end) */
+  dawnLeft: number;
+  /** 🌅 true while that window is live AND you stand beyond the SUNRISE wall */
+  dawnOutside: boolean;
+  /** 🌅 radius the wall will hold after the coming dawn shrink */
+  dawnR: number;
   /** 🌐 living real players (other than you) — bots freed a seat for each */
   remotesAlive: number;
   /** the roster — names, colors & who's still alive (accuse board + map) */
@@ -780,6 +786,15 @@ export class GameEngine {
   outsideWall = false;
   /** throttle for the "you're outside the wall" toast */
   private zoneToastCd = 0;
+  /* --- 🌅 pre-dawn safe-zone warning — the final stretch of every night --- */
+  /** seconds left of the warning window (0 = night not about to end) — HUD chips
+   *  & the sunrise banner read this; bots sprint home while it's live */
+  dawnLeft = 0;
+  /** true while the window is live AND the player stands beyond the SUNRISE
+   *  circle (the tighter wall dawn slams down) — drive the 🌅 warnings */
+  dawnOutside = false;
+  /** throttle for the 🌅 pre-dawn toast (resets the moment you're back inside) */
+  private dawnWarnCd = 0;
   /** 🏕️ jungle camps you've walked up to — one discovery toast each */
   discCamps = new Set<number>();
   /** original static-circle radii — reset() un-fells trees & un-smashes rocks with this */
@@ -1651,6 +1666,7 @@ export class GameEngine {
     this.nightNo = 1; this.phase = "day"; this.phaseT = PHASE_DAY_S;
     this.possessed = []; this.youPossessed = false; this.lastPossessed = []; this.lastClue = null;
     this.zoneLevel = 0; this.zoneGraceT = 0; this.outsideWall = false; this.zoneToastCd = 0; // 🧱 the wall rewinds too
+    this.dawnLeft = 0; this.dawnOutside = false; this.dawnWarnCd = 0; // 🌅 the pre-dawn warning rewinds too
     this.tools = []; this.held = -1; this.res = { wood: 0, rock: 0 };
     this.attackCd = 0; this.accuseCd = 0; this.heartT = 0;
     this.kills = 0; this.accusesRight = 0; this.accusesWrong = 0; this.buildsMade = 0; this.nightsSurvived = 0;
@@ -3347,6 +3363,20 @@ export class GameEngine {
     return ZONE_RADII[Math.min(this.zoneLevel, ZONE_RADII.length - 1)];
   }
 
+  /** 🌅 radius the wall will hold AFTER the coming dawn shrink (equals the
+   *  current radius once the wall is at its tightest — night 7 — when dawn
+   *  no longer moves it). Dusk shelter picks & the pre-dawn march aim here so
+   *  a night spent hiding is a morning still alive. */
+  dawnWallRadius(): number {
+    return ZONE_RADII[Math.min(this.zoneLevel + 1, ZONE_RADII.length - 1)];
+  }
+
+  /** 🌅 true during the last DAWN_WARN_S of the night — the warning window
+   *  where everyone the sunrise wall would catch gets told to run for home. */
+  dawnWarnActive(): boolean {
+    return this.phase === "night" && this.phaseT > 0 && this.phaseT <= DAWN_WARN_S && !this.won && !this.lost;
+  }
+
   /** 🧱 drain rate outside the wall right now (hp/s, grace ramp included). */
   private zoneDrain(): number {
     const lvl = Math.max(0, this.zoneLevel - 1);
@@ -3377,7 +3407,7 @@ export class GameEngine {
   private stepZone(dt: number) {
     this.zoneGraceT = Math.max(0, this.zoneGraceT - dt);
     this.zoneToastCd = Math.max(0, this.zoneToastCd - dt);
-    if (this.lost) { this.outsideWall = false; return; }
+    if (this.lost) { this.outsideWall = false; this.dawnLeft = 0; this.dawnOutside = false; return; }
     const R = this.zoneRadius();
     const d = Math.hypot(this.player.x, this.player.z);
     this.outsideWall = d > R;
@@ -3395,6 +3425,24 @@ export class GameEngine {
         }
       }
     }
+    // 🌅 PRE-DAWN SAFE-ZONE WARNING — the wall slams one ring tighter the second
+    // the sun rises, so the final DAWN_WARN_S of every night warns anyone the
+    // NEW circle would catch: run inside now, or your morning starts with your
+    // health boiling away. Night 7's wall is already at its tightest — nothing
+    // changes at that sunrise, so nobody gets a phantom warning there.
+    this.dawnLeft = this.dawnWarnActive() ? Math.max(0, this.phaseT) : 0;
+    const dawnR = this.dawnWallRadius();
+    this.dawnOutside = this.dawnLeft > 0 && d > dawnR - 2;
+    if (this.dawnOutside && !this.outsideWall && this.detainedT <= 0 && !this.playerInVan) {
+      // only toasts when the red drain warning ISN'T already screaming (the OUT
+      // banner carries the shrink countdown itself — no double drama in the feed)
+      this.dawnWarnCd -= dt;
+      if (this.dawnWarnCd <= 0) {
+        this.dawnWarnCd = 11;
+        sfx.howl(); // a far-off howl — the night itself telling you to go home
+        this.toast(`🌅 The night ends in ${Math.ceil(this.phaseT)}s — the wall SHRINKS to ${dawnR}u at sunrise and you're OUTSIDE it! ${Math.round(d - dawnR)}u back — get inside the safe zone NOW!`, "bad");
+      }
+    } else this.dawnWarnCd = 0;
   }
 
   /** Advance the 7-Nights story clock. The visual day/night `clock` is SYNTHESIZED
@@ -3970,7 +4018,11 @@ export class GameEngine {
       if (c.mode !== "hide") { c.mode = "hide"; c.timer = 0; }
       const h = this.hideTargetFor(c, shelterCrowd, shelterAssigned);
       if (dist2(c.x, c.z, h.x, h.z) > 2.4 * 2.4) {
-        stepNpc(c, h.x, h.z, CREW_SPEED * 1.3 * ((c.boostT ?? 0) > 0 ? CREW_BOOST_MULT : 1), dt, this.world);
+        // 🌅 the final stretch of the night — anyone still beyond the SUNRISE
+        // circle sprints for shelter so morning doesn't catch them in the
+        // death ground (the wall tightens the second the sun rises)
+        const dawnRush = this.dawnLeft > 0 && Math.hypot(c.x, c.z) > this.dawnWallRadius() - 10;
+        stepNpc(c, h.x, h.z, CREW_SPEED * (dawnRush ? 1.7 : 1.3) * ((c.boostT ?? 0) > 0 ? CREW_BOOST_MULT : 1), dt, this.world);
       } else {
         c.vx *= 0.8; c.vz *= 0.8;
       }
@@ -5221,9 +5273,11 @@ export class GameEngine {
    *  gets a golden-angle ring slot around its shelter so the crowd forms a
    *  circle, not a pile. */
   private hideTargetFor(c: Crew, crowd: number[], assigned: number[]): { x: number; z: number } {
-    // 🧱 shelters beyond the wall are DEAD ground — only aim at hideouts the
-    // shrinking circle still covers (fallback: dig in where you stand)
-    const zR = this.zoneRadius() - 10;
+    // 🧱🌅 shelters beyond the SUNRISE wall are dead ground — the pick aims at
+    // the circle dawn will hold (one ring tighter), so a night spent hiding is
+    // a morning still alive: nobody wakes up outside the new wall and withers
+    // on the doorstep. (Fallback: dig in where you stand, also inside that ring.)
+    const zR = this.dawnWallRadius() - 10;
     const ringSpot = (hi: number) => {
       const pick = this.hideSpots[hi];
       const a = (c.id % 97) * 2.399;              // golden angle — even ring spacing
@@ -5998,8 +6052,9 @@ export class GameEngine {
             // protest marchers stick to the main road strip and keep the line moving;
             // everyone else mostly strolls their own neighbourhood (spotNear), with
             // the occasional long cross-town trip — no more downtown beeline crowds.
-            // 🧱 wander targets stay INSIDE the shrinking safe circle.
-            const zMax = Math.max(20, Math.min(CITY_RADIUS - 8, this.zoneRadius() - 12));
+            // 🧱🌅 wander targets stay INSIDE the circle dawn will hold — the
+            // town drifts home before the wall tightens, not after.
+            const zMax = Math.max(20, Math.min(CITY_RADIUS - 8, this.dawnWallRadius() - 12));
             const t = c.protest
               ? { x: range(this.rnd, -9, 9), z: range(this.rnd, -120, 260) }
               : (this.rnd() < 0.7
@@ -6916,6 +6971,10 @@ export class GameEngine {
       zoneLevel: this.zoneLevel,
       zoneR: this.zoneRadius(),
       outsideWall: this.outsideWall,
+      /* --- 🌅 pre-dawn warning --- */
+      dawnLeft: this.dawnLeft,
+      dawnOutside: this.dawnOutside,
+      dawnR: this.dawnWallRadius(),
       wood: this.res.wood,
       rock: this.res.rock,
       tools: this.tools.map((s) => ({ kind: s.kind, count: s.count })),

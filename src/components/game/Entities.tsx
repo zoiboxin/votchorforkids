@@ -1725,43 +1725,67 @@ const SLOT_TAG_COLORS = ["#f472b6", "#fbbf24", "#4ade80", "#2dd4bf", "#f87171", 
 /* ------------------------------------------------------------------ */
 const ZONE_SAFE = "#38e0c8";
 const ZONE_BURN = "#ff5a4d";
+const ZONE_DAWN = "#fbbf24"; // 🌅 the sunrise preview ring — where the wall will land
 
 export function ZoneWall({ engine }: { engine: GameEngine }) {
   const group = useRef<THREE.Group>(null);
   const wall = useRef<THREE.Mesh>(null);
   const ring = useRef<THREE.Mesh>(null);
   const top = useRef<THREE.Mesh>(null);
+  const dawnRing = useRef<THREE.Mesh>(null);
+  const dawnMat = useRef<THREE.MeshBasicMaterial>(null);
   const wallMat = useRef<THREE.MeshBasicMaterial>(null);
   const ringMat = useRef<THREE.MeshBasicMaterial>(null);
   const topMat = useRef<THREE.MeshBasicMaterial>(null);
   useFrame((s) => {
     const g = group.current;
     if (!g) return;
+    // 🌅 PRE-DAWN PREVIEW RING — during the warning window the tighter circle
+    // dawn will slam down glows amber on the ground: "run inside THIS" has a
+    // target you can see in the world, not just read in the feed.
+    const dawnOn = engine.dawnLeft > 0 && engine.dawnOutside && !engine.won && !engine.lost;
     // 🧱 the wall STAYS after an early solo win — the safe circle must keep
-    // shrinking every dawn through night 7 (fixes "circle disappears at day 4-5")
-    const on = engine.zoneLevel > 0;
+    // shrinking every dawn through night 7 (fixes "circle disappears at day 4-5").
+    // The group also wakes for the dawn preview alone: night 1 has no wall yet,
+    // but the sunrise ring must still warn where the FIRST wall will land.
+    const wallOn = engine.zoneLevel > 0;
+    const on = wallOn || dawnOn;
     g.visible = on;
     if (!on) return;
-    const R = engine.zoneRadius();
-    wall.current?.scale.set(R, 1, R);
-    ring.current?.scale.set(R, R, 1);
-    top.current?.scale.set(R, R, 1);
-    // the player's own stance decides the mood: safe teal vs. burning red
-    const outside = Math.hypot(engine.player.x, engine.player.z) > R;
-    const t = s.clock.elapsedTime;
-    const pulse = 0.72 + Math.sin(t * 2.1) * 0.28;
-    const col = outside ? ZONE_BURN : ZONE_SAFE;
-    if (wallMat.current) {
-      wallMat.current.color.set(col);
-      wallMat.current.opacity = (outside ? 0.34 : 0.24) * pulse + (outside ? 0.1 : 0);
+    if (wall.current) wall.current.visible = wallOn;
+    if (ring.current) ring.current.visible = wallOn;
+    if (top.current) top.current.visible = wallOn;
+    if (wallOn) {
+      const R = engine.zoneRadius();
+      wall.current?.scale.set(R, 1, R);
+      ring.current?.scale.set(R, R, 1);
+      top.current?.scale.set(R, R, 1);
+      // the player's own stance decides the mood: safe teal vs. burning red
+      const outside = Math.hypot(engine.player.x, engine.player.z) > R;
+      const t = s.clock.elapsedTime;
+      const pulse = 0.72 + Math.sin(t * 2.1) * 0.28;
+      const col = outside ? ZONE_BURN : ZONE_SAFE;
+      if (wallMat.current) {
+        wallMat.current.color.set(col);
+        wallMat.current.opacity = (outside ? 0.34 : 0.24) * pulse + (outside ? 0.1 : 0);
+      }
+      if (ringMat.current) {
+        ringMat.current.color.set(col);
+        ringMat.current.opacity = (outside ? 0.95 : 0.7) * (0.8 + Math.sin(t * 2.7) * 0.2);
+      }
+      if (topMat.current) {
+        topMat.current.color.set(col);
+        topMat.current.opacity = (outside ? 0.9 : 0.6) * (0.75 + Math.sin(t * 2.4) * 0.25);
+      }
     }
-    if (ringMat.current) {
-      ringMat.current.color.set(col);
-      ringMat.current.opacity = (outside ? 0.95 : 0.7) * (0.8 + Math.sin(t * 2.7) * 0.2);
-    }
-    if (topMat.current) {
-      topMat.current.color.set(col);
-      topMat.current.opacity = (outside ? 0.9 : 0.6) * (0.75 + Math.sin(t * 2.4) * 0.25);
+    if (dawnRing.current) {
+      dawnRing.current.visible = dawnOn;
+      if (dawnOn) {
+        const dR = engine.dawnWallRadius();
+        dawnRing.current.scale.set(dR, dR, 1);
+        const t2 = s.clock.elapsedTime;
+        if (dawnMat.current) dawnMat.current.opacity = 0.55 + Math.sin(t2 * 3.2) * 0.3;
+      }
     }
   });
   return (
@@ -1779,6 +1803,16 @@ export function ZoneWall({ engine }: { engine: GameEngine }) {
         <ringGeometry args={[0.985, 1, 96]} />
         <meshBasicMaterial
           ref={ringMat} color={ZONE_SAFE} transparent opacity={0.7}
+          side={THREE.DoubleSide} depthWrite={false}
+        />
+      </mesh>
+      {/* 🌅 sunrise preview — the dashed-feeling amber ring at the radius dawn
+          will hold; pulses while the warning window is live. NOT gated by
+          zoneLevel: night 1 warns where the FIRST wall will land. */}
+      <mesh ref={dawnRing} rotation={[-Math.PI / 2, 0, 0]} position={[0, 0.3, 0]} visible={false}>
+        <ringGeometry args={[0.94, 1, 96]} />
+        <meshBasicMaterial
+          ref={dawnMat} color={ZONE_DAWN} transparent opacity={0.6}
           side={THREE.DoubleSide} depthWrite={false}
         />
       </mesh>

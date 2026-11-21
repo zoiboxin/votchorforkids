@@ -215,13 +215,15 @@ export const emptyHud: HudData = {
   gain: { hp: 0, stamina: 0, at: 0 },
   power: null, pockets: [], money: 0, morphKind: null, blinkReady: true,
   side: "protester", busted: 0, runnerDelivered: 0, lost: false, outfitLabel: "",
-  hasLicense: false, driving: false, speed: 0,
+  hasLicense: false, driving: false, riding: false, speed: 0,
   /* --- 7 Nights --- */
   nightNo: 1, phase: "day", phaseLeft: 0, wood: 0, rock: 0,
   tools: [], held: -1, youPossessed: false, beastCount: 0, crewAlive: 99, crew: [],
   attackReady: true, clue: null,
+  /* --- 🧱 THE WALL + 🌅 pre-dawn warning --- */
+  zoneLevel: 0, zoneR: 712, outsideWall: false, dawnLeft: 0, dawnOutside: false, dawnR: 430,
   spec: { on: false, name: "" },
-  mp: false, mpCode: "", mpHost: false, mpPing: 0, netPlayers: [],
+  mp: false, mpCode: "", mpHost: false, mpPing: 0, netPlayers: [], remotesAlive: 0,
 };
 
 let toastId = 1;

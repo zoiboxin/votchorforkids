@@ -688,6 +688,9 @@ export const ZONE_DRAIN_BASE = 4;    // hp/s outside the wall at level 1
 export const ZONE_DRAIN_STEP = 1.8;  // extra hp/s per extra level (late walls bite harder)
 export const ZONE_GRACE_S = 14;      // seconds after a shrink before the drain hits full strength
 export const ZONE_WALL_H = 26;       // visual height of the transparent wall (u)
+export const DAWN_WARN_S = 30;       // 🌅 pre-dawn warning — the last 30s of every night warn
+                                     // everyone the SUNRISE wall would catch: bots sprint home, the
+                                     // HUD screams, an amber preview ring marks where dawn will land
 
 /* ---------- 📉 the endgame must COLLAPSE ----------
  *  Hard ceiling on how many AI contestants may still breathe at each dawn

@@ -128,6 +128,18 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     c.strokeStyle = outside ? "#ff5a4d" : "#38e0c8";
     c.lineWidth = Math.max(1.4, 1.6 * U);
     c.stroke();
+    // 🌅 the SUNRISE ring — while dawn approaches, the map also draws the
+    // tighter circle the wall will slam down at sunrise (amber dashed): the
+    // "run THAT way" target is visible on the map, not just in the feed
+    if (engine.dawnLeft > 0 && engine.dawnOutside) {
+      c.setLineDash([5, 4]);
+      c.beginPath();
+      c.arc(S / 2, S / 2, engine.dawnWallRadius() * K, 0, 6.3);
+      c.strokeStyle = "#fbbf24";
+      c.lineWidth = Math.max(1.2, 1.5 * U);
+      c.stroke();
+      c.setLineDash([]);
+    }
   }
   // city museum
   c.fillStyle = "#c9a45c";
@@ -483,6 +495,9 @@ function NightStrip() {
   const zoneLevel = useGame((s) => s.hud.zoneLevel);
   const zoneR = useGame((s) => s.hud.zoneR);
   const outsideWall = useGame((s) => s.hud.outsideWall);
+  const dawnLeft = useGame((s) => s.hud.dawnLeft);
+  const dawnOutside = useGame((s) => s.hud.dawnOutside);
+  const dawnR = useGame((s) => s.hud.dawnR);
   const souls = crewAlive + remotesAlive; // crew bots (minus freed seats) + other real players
   const youPossessed = useGame((s) => s.hud.youPossessed);
   const beastCount = useGame((s) => s.hud.beastCount);
@@ -491,20 +506,26 @@ function NightStrip() {
   const mm = String(Math.floor(secs / 60)).padStart(2, "0");
   const ss = String(secs % 60).padStart(2, "0");
   const survived = Math.max(0, Math.min(NIGHTS_TOTAL, nightNo - 1));
+  // 🌅 pre-dawn safe-zone warning — sunrise is seconds away and this body is
+  // beyond the circle the wall will SHRINK to: the strip itself starts yelling
+  const dawnSoon = dawnLeft > 0 && dawnOutside;
   const label = beast
     ? "🔪 YOU ARE A BEAST — F to claw"
+    : dawnSoon ? `🌅 SUNRISE IN ${Math.ceil(dawnLeft)}s — WALL SHRINKS TO ${dawnR}u`
     : phase === "dusk" ? `⚠️ NIGHT FALLS IN ${secs}s`
     : phase === "night" ? `🌑 NIGHT ${nightNo} — ${beastCount > 0 ? `${beastCount} ZOMBIES HUNT YOU` : "THE HUNTED WALK"}`
     : phase === "dawn" ? "🌅 DAWN — you made it"
     : `☀️ DAY ${nightNo} — gather & build`;
-  const hot = phase === "dusk" || phase === "night";
+  const hot = phase === "dusk" || phase === "night" || dawnSoon;
   return (
     <div className="flex items-center gap-1.5">
       <motion.div
         role="status"
-        aria-label={`Night ${nightNo} of ${NIGHTS_TOTAL}, ${phase} phase, ${mm}:${ss} left, ${souls + 1} of ${aliveTotal} souls alive`}
-        animate={phase === "dusk" ? { opacity: [1, 0.62, 1], scale: [1, 1.03, 1] } : { opacity: 1, scale: 1 }}
-        transition={phase === "dusk" ? { repeat: Infinity, duration: 1.05 } : { duration: 0.2 }}
+        aria-label={dawnSoon
+          ? `Night ${nightNo} of ${NIGHTS_TOTAL}, sunrise in ${Math.ceil(dawnLeft)} seconds, wall shrinks to ${dawnR} units, get inside the safe zone`
+          : `Night ${nightNo} of ${NIGHTS_TOTAL}, ${phase} phase, ${mm}:${ss} left, ${souls + 1} of ${aliveTotal} souls alive`}
+        animate={phase === "dusk" || dawnSoon ? { opacity: [1, 0.62, 1], scale: [1, 1.03, 1] } : { opacity: 1, scale: 1 }}
+        transition={phase === "dusk" || dawnSoon ? { repeat: Infinity, duration: 1.05 } : { duration: 0.2 }}
         className={`flex items-center gap-2 rounded-full border px-3 py-1 backdrop-blur-md ${
           beast ? "border-rose-400/70 bg-rose-950/70 shadow-[0_0_16px_rgba(244,63,94,0.5)]"
             : hot ? "border-rose-400/50 bg-black/60 shadow-[0_0_14px_rgba(190,18,60,0.35)]"
@@ -535,6 +556,17 @@ function NightStrip() {
       >
         🧍 {souls + 1}/{aliveTotal}
       </span>
+      {/* 🌅 SUNRISE chip — during the pre-dawn window the tighter circle dawn
+          slams down gets its own amber chip (even before the first wall exists) */}
+      {dawnSoon && (
+        <span
+          title={`Sunrise in ${Math.ceil(dawnLeft)}s — the wall shrinks to a ${dawnR}u circle. Get inside it!`}
+          aria-label={`Sunrise in ${Math.ceil(dawnLeft)} seconds, wall shrinks to ${dawnR} units, get inside`}
+          className="animate-pulse rounded-full border border-amber-300/70 bg-amber-950/60 px-2 py-1 text-[10px] font-black tabular-nums text-amber-200 shadow-[0_0_14px_rgba(251,191,36,0.45)] backdrop-blur-md"
+        >
+          🌅 {dawnR}u
+        </span>
+      )}
       {/* 🧱 THE WALL — live safe-zone chip (hidden before the first dawn) */}
       {zoneLevel > 0 && (
         <span
@@ -1255,6 +1287,10 @@ function PauseMenu({ engine, onQuit }: { engine: GameEngine; onQuit: () => void 
       wallOut
         ? { t: "☢️ OUTSIDE the wall", c: "text-rose-300" }
         : { t: `🧱 inside the wall · ${engine.zoneRadius()}u`, c: "text-teal-200" },
+      // 🌅 the sunrise verdict — dawn is close and the coming wall would catch you
+      ...(engine.dawnLeft > 0 && engine.dawnOutside
+        ? [{ t: `🌅 sunrise shrinks the wall to ${engine.dawnWallRadius()}u — you'd be OUTSIDE`, c: "text-amber-300" }]
+        : []),
     ];
     return (
       <motion.div
@@ -2144,9 +2180,31 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
           >
             <span className="text-xs font-black uppercase tracking-wider text-rose-100 sm:text-sm">
               ☢️ OUTSIDE THE WALL — HEALTH DRAINING! RUN TO THE SAFE ZONE ({hud.zoneR}u)
+              {/* 🌅 dawn is about to tighten the wall — say so while you run */}
+              {hud.dawnLeft > 0 && hud.dawnOutside && (
+                <span className="text-amber-200"> — SHRINKS TO {hud.dawnR}u IN {Math.ceil(hud.dawnLeft)}s!</span>
+              )}
             </span>
           </motion.div>
         </>
+      )}
+
+      {/* 🌅 PRE-DAWN SAFE-ZONE WARNING — the night is seconds from over and THIS
+          body stands beyond the circle the wall will shrink to at sunrise. The
+          red banner above handles the already-draining case; this amber one
+          catches the "safe right now, doomed at sunrise" case before it bites. */}
+      {hud.dawnOutside && hud.dawnLeft > 0 && !hud.outsideWall && !hud.spec.on && (
+        <motion.div
+          role="alert"
+          initial={{ opacity: 0, y: -14 }}
+          animate={{ opacity: [1, 0.78, 1], y: 0 }}
+          transition={{ opacity: { repeat: Infinity, duration: 1.1 } }}
+          className="absolute left-1/2 top-16 z-20 -translate-x-1/2 rounded-xl border border-amber-300/70 bg-amber-950/85 px-4 py-1.5 text-center shadow-lg shadow-amber-900/50 backdrop-blur-md"
+        >
+          <span className="text-xs font-black uppercase tracking-wider text-amber-100 sm:text-sm">
+            🌅 SUNRISE IN {Math.ceil(hud.dawnLeft)}s — THE WALL SHRINKS TO {hud.dawnR}u — GET INSIDE THE SAFE ZONE!
+          </span>
+        </motion.div>
       )}
 
       {/* win flag hint */}
@@ -2185,6 +2243,11 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
           <div className="text-[10px] font-bold leading-4 text-white/70">
             💀 {hud.aliveTotal - hud.crewAlive - hud.remotesAlive - 1} fallen · {hud.phase === "night" ? "🌙 Night" : "☀️ Day"} {hud.nightNo}/{NIGHTS_TOTAL}
           </div>
+          {hud.dawnLeft > 0 && hud.dawnOutside && (
+            <div className="animate-pulse text-[10px] font-black leading-4 text-amber-300">
+              🌅 Dawn in {Math.ceil(hud.dawnLeft)}s — wall shrinks to {hud.dawnR}u!
+            </div>
+          )}
           {hud.outsideWall ? (
             <div className="animate-pulse text-[10px] font-black leading-4 text-rose-300">☢️ OUTSIDE THE WALL — HP DRAINING!</div>
           ) : hud.zoneLevel > 0 ? (
