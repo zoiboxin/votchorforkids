@@ -1,4 +1,4 @@
-import { AIRPORT, BUILD_POOL, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, ROCK_COUNT, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_POOL, WALL_RADIUS, WORLD_SEED, pickVehicle, stationCage, stationGate } from "./constants";
+import { AIRPORT, BUILD_POOL, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, ROCK_COUNT, TAXI_TYPE, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_POOL, WALL_RADIUS, WORLD_SEED, pickVehicle, stationCage, stationGate } from "./constants";
 import { mulberry32, range } from "./rng";
 
 export interface BoxCollider { x: number; z: number; w: number; d: number; /** building height (top y) — lets the chase camera ignore roofs above it */ h?: number } // half extents
@@ -988,6 +988,9 @@ export function generateWorld(seed = WORLD_SEED): World {
   for (let i = 0; i < 4; i++) for (const zr of [-6, 5]) {
     cars.push({ x: MALL.x - 15 + i * 10, z: MALL.z - 26 + zr, rot: Math.PI / 2, c: (i + (zr > 0 ? 2 : 0)) % CAR_COLS.length, t: pickVehicle(rnd) });
   }
+  // 🚕 the TAXI RANK — a row of real polyfork yellow cabs waits by the mall
+  // (rendered from yellow-cab-8df4a0.glb by GlbCars; hail one, it's drivable)
+  for (let i = 0; i < 3; i++) cars.push({ x: MALL.x - 15 + i * 10, z: MALL.z - 40, rot: Math.PI / 2, c: 0, t: TAXI_TYPE });
   for (let i = 0; i < 3; i++) cars.push({ x: HOSPITAL.x - 10 + i * 10, z: HOSPITAL.z - 15, rot: Math.PI / 2, c: (i + 4) % CAR_COLS.length, t: pickVehicle(rnd) });
   for (const [lx, lz] of [
     [MALL.x - 21, MALL.z - 27], [MALL.x + 21, MALL.z - 27],
@@ -1025,9 +1028,11 @@ export function generateWorld(seed = WORLD_SEED): World {
         if (!vertical && k === 270 && d > 171) continue;
         if (inAirportPlot(spot.x, spot.z)) continue; // never park on the runway / apron / taxi paths
         const off = main ? 9.5 : 5.2;
+        // 🚕 every 9th street-parked car is a yellow cab — random taxis all over town
+        const taxi = cars.length % 9 === 4;
         cars.push(vertical
-          ? { x: k + side * off, z: d + range(rnd, -4, 4), rot: side > 0 ? 0 : Math.PI, c: Math.floor(rnd() * CAR_COLS.length), t: pickVehicle(rnd) }
-          : { x: d + range(rnd, -4, 4), z: k + side * 5.2, rot: side > 0 ? Math.PI / 2 : -Math.PI / 2, c: Math.floor(rnd() * CAR_COLS.length), t: pickVehicle(rnd) });
+          ? { x: k + side * off, z: d + range(rnd, -4, 4), rot: side > 0 ? 0 : Math.PI, c: 0, t: taxi ? TAXI_TYPE : pickVehicle(rnd) }
+          : { x: d + range(rnd, -4, 4), z: k + side * 5.2, rot: side > 0 ? Math.PI / 2 : -Math.PI / 2, c: 0, t: taxi ? TAXI_TYPE : pickVehicle(rnd) });
       }
     }
   }

@@ -74,11 +74,16 @@ export type ModelKind = keyof typeof FILES;
 const TARGET_H: Record<ModelKind, number> = {
   // 🌲 jungle wildlife — real sizes
   wolf: 1.0, bear: 1.55, fox: 0.68, owl: 0.5, crow: 0.4, rabbit: 0.4, stag: 2.2,
-  deer: 1.7,
+  deer: 1.9, // antlers inflate the 2.12u bbox — target ≈ spec so the body lands ≈1.35u
   // 🏔️ alpine
   ibex: 1.5, hare: 0.42,
-  // 🚜 farmyard — the big domestic breeds
-  pig: 0.95, sheep: 0.95, goat: 0.9, duck: 0.45,
+  // 🚜 farmyard — the big domestic breeds. Sheep & goat read NEXT to the 2.24u
+  // cast, so they scale with the town's inflated humans (a 2.24u survivor ≈ a
+  // 1.8m man, ×1.24): the sheep model is exactly 1.0u tall (no headgear) so it
+  // gets a chunky 1.2u ram; the goat's bbox is 1.65u of mostly HORNS — its
+  // target sits at the polyfork spec height (1.65m incl. headgear) so the BODY
+  // lands ≈0.85u and stops rendering as a knee-high speck.
+  pig: 0.95, sheep: 1.2, goat: 1.55, duck: 0.45,
   cow: 1.5, chicken: 0.55, dog: 0.72, horse: 1.8,
   // 🐸 jungle floor
   frog: 0.32,

@@ -61,10 +61,12 @@ export const GLB_CHARACTERS: readonly GlbCharacterDef[] = [
   { slug: "cocktail-server-eb211b", name: "Cocktail Server", emoji: "🍸", url: cdn("cocktail-server-eb211b"), area: "casino" },
 ];
 
-/** Police crew + officers wear the security officer — instantly recognizable. */
-export const POLICE_CHAR = "airport-security-officer-8fd38a";
+/** Police crew + officers wear the true blue — the Polyfork Police Officer
+ *  (nyc kit): peaked cap, badge & duty belt, rigged with the shared
+ *  Idle/Walk/Run trio so the whole force animates like everyone else. */
+export const POLICE_CHAR = "police-officer-1cc379";
 export const POLICE_CHAR_DEF: GlbCharacterDef = {
-  slug: POLICE_CHAR, name: "Security Officer", emoji: "👮", url: cdn(POLICE_CHAR), area: "airport",
+  slug: POLICE_CHAR, name: "Police Officer", emoji: "👮", url: cdn(POLICE_CHAR), area: "nyc",
 };
 
 /* ================== area catalog (generated from the Polyfork

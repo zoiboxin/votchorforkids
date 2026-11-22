@@ -1102,7 +1102,7 @@ const ANIMAL_SCALES: Record<string, number> = {
   cow: 1.7, chicken: 0.95, deer: 1.65, monkey: 1.1, dog: 1.05,
   wolf: 1.5, bear: 1.95, fox: 1.15, owl: 0.95, crow: 0.9, rabbit: 1.0, stag: 2.1,
   // 🏔️ alpine · 🚜 farmyard · 🎃 halloween newcomers (bodies were bumped up — shadows follow)
-  ibex: 1.6, hare: 1.0, pig: 1.35, sheep: 1.25, goat: 1.35, duck: 0.95,
+  ibex: 1.6, hare: 1.0, pig: 1.35, sheep: 1.55, goat: 1.85, duck: 0.95,
   cat: 1.0, spider: 1.7,
 };
 

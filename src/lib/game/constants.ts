@@ -585,6 +585,12 @@ export const VAN_UNLOAD_S = 1.2;   // seconds to unload at the station
 export const VAN_AXLE = 1.7;       // front/rear axle offset for the solid footprint
 export const VAN_RADIUS = 1.25;    // axle-circle radius for collisions
 export const CONFISCATE_FINE = 40; // support points the police fine you on lock-up
+/* 🚓 quadrant beats — every station's van covers ITS corner of the city: it
+ * cruises the grid intersections of its home quadrant while idle, so whatever
+ * happens nearby is handled (and jailed) by the SAME precinct — response times
+ * drop because the cruiser is already in the neighbourhood. */
+export const VAN_PATROL_GATE_S = 22; // parked at the gate this long before the next beat
+export const VAN_PATROL_WAIT_S = 9;  // sits on a beat this long before cruising on
 
 /* ---------- Ring-road traffic & the cartoon car bonk (old-game hurt() homage) ---------- */
 export const TRAFFIC_COUNT = 12; // cars cruising the ring highway, two lanes, both directions
@@ -663,8 +669,11 @@ export const CAR_STEER = 1.75;         // rad/s at full lock
  * (types 4 & 5 keep the classic procedural bodies — the kit ships no bus/jeep) */
 export const VEHICLE_LABELS = [
   "🚗 Car", "🚗 Hatchback", "🚐 Van", "🛻 Pickup truck", "🚌 City bus", "🚙 Jeep",
-  "🏁 Muscle car", "🚙 Convertible", "🚗 Station wagon", "🏎️ Sports coupe",
+  "🏁 Muscle car", "🚙 Convertible", "🚗 Station wagon", "🏎️ Sports coupe", "🚕 Yellow cab",
 ];
+/** 🚕 the GLB yellow cab (polyfork yellow-cab-8df4a0) — a taxi rank by the mall
+ *  plus a few cruising the ring: rendered by GlbCars from the real model. */
+export const TAXI_TYPE = 10;
 /** Weighted body-style pool — sedans/hatches/vans fill the streets, buses stay rare,
  *  and the four retro-kit specials cruise in as mid-rarity finds. */
 export const VEHICLE_POOL: readonly number[] = [0, 0, 1, 1, 2, 2, 2, 3, 3, 4, 5, 6, 6, 7, 7, 8, 8, 9, 9, 0, 1];
@@ -673,13 +682,13 @@ export const pickVehicle = (r: () => number): number => VEHICLE_POOL[Math.floor(
  *  the SAME offset/radius pair the parked cars use as colliders, so a moving vehicle
  *  can never overlap a building deeper than a parked one. Longer bodies (bus, pickup)
  *  spread their axles further apart so the nose & tail stay protected. */
-export const VEHICLE_AXLE: readonly number[] = [1.25, 1.02, 1.5, 1.78, 2.35, 1.12, 1.45, 1.35, 1.42, 1.28];
-export const VEHICLE_AXLE_R: readonly number[] = [1.16, 1.12, 1.26, 1.3, 1.42, 1.2, 1.18, 1.12, 1.18, 1.08];
+export const VEHICLE_AXLE: readonly number[] = [1.25, 1.02, 1.5, 1.78, 2.35, 1.12, 1.45, 1.35, 1.42, 1.28, 1.28];
+export const VEHICLE_AXLE_R: readonly number[] = [1.16, 1.12, 1.26, 1.3, 1.42, 1.2, 1.18, 1.12, 1.18, 1.08, 1.14];
 /** Per body-style driving feel: top speed (u/s) and steering grip multiplier —
  *  a loaded bus shouldn't corner like a go-kart. The muscle car & coupe are the
  *  fastest rides in town; the convertible & wagon cruise like the sedans. */
-export const VEHICLE_TOP: readonly number[] = [26, 24, 24, 23, 19, 25, 28, 24, 24, 29];
-export const VEHICLE_STEER: readonly number[] = [1, 1, 0.92, 0.85, 0.7, 1, 0.94, 1, 0.95, 1.04];
+export const VEHICLE_TOP: readonly number[] = [26, 24, 24, 23, 19, 25, 28, 24, 24, 29, 26];
+export const VEHICLE_STEER: readonly number[] = [1, 1, 0.92, 0.85, 0.7, 1, 0.94, 1, 0.95, 1.04, 1];
 /* ---------- Car-meets-car physics — momentum transfer & driverless coasting ----------
  * When a driven car rams another car, the struck car is shoved ALONG the contact
  * normal (rear-end → lurches forward, head-on → knocked backward, T-bone → skids

@@ -6,7 +6,7 @@ import {
   DEEP_JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER,
   ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
-  RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SCAVENGER_COUNT, SCAVENGER_SENSE_R, SPAWN, SONIC_MULT, STAR_DECAY_S, TOTAL_VOTES, TRAFFIC_COUNT, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_LABELS, VEHICLE_POOL, VEHICLE_STEER, VEHICLE_TOP, VAN_AXLE, VAN_LOAD_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
+  RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SCAVENGER_COUNT, SCAVENGER_SENSE_R, SPAWN, SONIC_MULT, STAR_DECAY_S, TAXI_TYPE, TOTAL_VOTES, TRAFFIC_COUNT, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_LABELS, VEHICLE_POOL, VEHICLE_STEER, VEHICLE_TOP, VAN_AXLE, VAN_LOAD_S, VAN_PATROL_GATE_S, VAN_PATROL_WAIT_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
   AIRPORT, PLANE_COUNT, POWER_CARRY,
   WALL_RADIUS, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
   ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, DOG_SPEED, ZOMDOG_DMG, ZOMDOG_HP, ZOMDOG_SENSE, ZOMDOG_SPEED, ZOMDOG_TOUCH_CD, POINTS_KILL_ZOMDOG, BOT_SPAWN_GAP, policeOutfitOf, randomAppearance, stationCage, stationGate,
@@ -31,6 +31,7 @@ import { addDynamicCircle, freeSpot, lineClear, refreshCarCircle, resolve, ringT
 import { nightFactor, newBody, stepBody, stepNpc, type Body, type SteerMemory } from "./sim";
 import { sfx, startDrone, stopDrone, setInsects, stopInsects } from "./audio";
 import { preloadModels } from "./models";
+import { preloadVehicles } from "./glbVehicles";
 import { preloadAirportModels } from "./airportModels";
 import { preloadGraveyardModels } from "./graveyardModels";
 import { GLB_CHARACTERS, preloadGlbCharacters } from "./glbCharacters";
@@ -360,8 +361,11 @@ export interface TrafficCar {
   x: number; z: number; rot: number;               // derived each step — solid for collision
 }
 
-export type VanState = "idle" | "dispatch" | "load" | "toStation" | "unload" | "return";
-/** Police van — drives captured players & civilians from the arrest spot to the nearest station. */
+export type VanState = "idle" | "patrol" | "dispatch" | "load" | "toStation" | "unload" | "return";
+/** Police cruiser — drives captured players & civilians to its HOME precinct.
+ *  Every station's van covers its own quadrant: it patrols the grid corners of
+ *  its beat while idle, so whatever happens in that area is handled (and jailed)
+ *  by the SAME precinct — the cruiser is already in the neighbourhood. */
 export interface PoliceVan {
   id: number; station: number;                     // home station index
   x: number; z: number; rot: number;
@@ -852,6 +856,9 @@ export class GameEngine {
     // 🌲 start fetching the polyfork wildlife GLBs right away — by the time you
     // reach the jungle they should be parsed and ready to spawn
     preloadModels();
+    // 🚓 the police cruiser & 🚕 yellow cab GLBs — the precinct fleet & the
+    // taxis stream in while you play
+    preloadVehicles();
     // ✈️ and the airport kit GLBs — the planes & props stream in while you walk
     preloadAirportModels();
     // 🪦 and the cemetery kit GLBs — tombstones & the estate stream in alongside
@@ -1006,6 +1013,48 @@ export class GameEngine {
       if (d < bd) { bd = d; best = i; }
     }
     return best;
+  }
+
+  /** 🚓 Quadrant-first van picker: the precinct whose station is nearest to the
+   *  incident OWNS that area — dispatch its cruiser when free so the suspect is
+   *  booked at the same station (no cross-town haul, faster cell time). If the
+   *  home cruiser is busy, fall back to the physically nearest free one so the
+   *  arrested never wait for a cell that already rolled past them. */
+  private pickVanFor(x: number, z: number): PoliceVan | null {
+    const home = this.nearestStationIdx(x, z);
+    for (const v of this.vans) {
+      if (v.station === home && (v.state === "idle" || v.state === "patrol")) return v;
+    }
+    let best: PoliceVan | null = null, bd = Infinity;
+    for (const v of this.vans) {
+      if (v.state !== "idle" && v.state !== "patrol") continue;
+      const d = (v.x - x) * (v.x - x) + (v.z - z) * (v.z - z);
+      if (d < bd) { bd = d; best = v; }
+    }
+    return best;
+  }
+
+  /** Point a cruiser at a new job — waypoint path, fresh stall watchdog. */
+  private dispatchVan(v: PoliceVan, prisoner: PoliceVan["prisoner"], x: number, z: number) {
+    v.state = "dispatch"; v.prisoner = prisoner;
+    v.goal = { x, z };
+    v.path = roadPath(v.x, v.z, x, z);
+    v.rebuilds = 0; v.stallT = 0;
+  }
+
+  /** 🚓 A random grid intersection INSIDE this van's home quadrant — its patrol
+   *  beat. The cruiser never leaves its precinct's corner of the city, so it's
+   *  always nearby when its streets need it. */
+  private quadrantBeat(v: PoliceVan): { x: number; z: number } {
+    const st = POLICE_STATIONS[v.station];
+    const xs = ROADS.filter((r) => r >= Math.min(0, st.x) && r <= Math.max(0, st.x));
+    const zs = ROADS.filter((r) => r >= Math.min(0, st.z) && r <= Math.max(0, st.z));
+    for (let tries = 0; tries < 8; tries++) {
+      const x = xs[Math.floor(this.rnd() * xs.length)];
+      const z = zs[Math.floor(this.rnd() * zs.length)];
+      if (Math.hypot(x - v.x, z - v.z) > 18) return { x, z };
+    }
+    return { x: xs[0], z: zs[0] };
   }
 
   private civById(id: number): Npc | undefined { return this.civs.find((c) => c.id === id); }
@@ -1182,7 +1231,7 @@ export class GameEngine {
         a: (i / TRAFFIC_COUNT) * Math.PI * 2,
         sp: 0.034 + (i % 3) * 0.011, // ≈7–12 u/s — quicker than a walking kid, dodgeable when sprinting
         c: (i * 3 + 1) % 8,
-        t: VEHICLE_POOL[i % VEHICLE_POOL.length],
+        t: i % 4 === 3 ? TAXI_TYPE : VEHICLE_POOL[i % VEHICLE_POOL.length], // 🚕 every 4th ride is a yellow cab
         x: 0, z: 0, rot: 0,
       });
       const t = this.traffic[this.traffic.length - 1];
@@ -3043,19 +3092,12 @@ export class GameEngine {
   /** Run the whole van fleet: dispatch → pickup → transport → jail → return home. */
   private updateVans(dt: number) {
     const p = this.player;
-    /* --- dispatching: player van first, then vans for detained civilians --- */
+    /* --- dispatching: player van first, then vans for detained civilians ---
+     * 🚓 quadrant rule — the precinct nearest the incident sends ITS cruiser */
     if (this.vanNeeded) {
-      let best: PoliceVan | null = null, bd = Infinity;
-      for (const v of this.vans) {
-        if (v.state !== "idle") continue;
-        const d = (v.x - p.x) * (v.x - p.x) + (v.z - p.z) * (v.z - p.z);
-        if (d < bd) { bd = d; best = v; }
-      }
+      const best = this.pickVanFor(p.x, p.z);
       if (best) {
-        best.state = "dispatch"; best.prisoner = { kind: "player" };
-        best.goal = { x: p.x, z: p.z };
-        best.path = roadPath(best.x, best.z, p.x, p.z);
-        best.rebuilds = 0; best.stallT = 0;
+        this.dispatchVan(best, { kind: "player" }, p.x, p.z);
         this.vanNeeded = false;
         sfx.siren();
       }
@@ -3063,17 +3105,9 @@ export class GameEngine {
     for (const c of this.civs) {
       if (c.mode !== "detained") { c.vanId = undefined; continue; } // lazy cleanup — never trust a stale claim
       if (this.vanAssigned(c)) continue; // a van is genuinely handling this civ
-      let best: PoliceVan | null = null, bd = Infinity;
-      for (const v of this.vans) {
-        if (v.state !== "idle") continue;
-        const d = (v.x - c.x) * (v.x - c.x) + (v.z - c.z) * (v.z - c.z);
-        if (d < bd) { bd = d; best = v; }
-      }
+      const best = this.pickVanFor(c.x, c.z);
       if (!best) break; // fleet busy — retry next frame
-      best.state = "dispatch"; best.prisoner = { kind: "civ", id: c.id };
-      best.goal = { x: c.x, z: c.z };
-      best.path = roadPath(best.x, best.z, c.x, c.z);
-      best.rebuilds = 0; best.stallT = 0;
+      this.dispatchVan(best, { kind: "civ", id: c.id }, c.x, c.z);
       c.vanId = best.id;
     }
 
@@ -3081,8 +3115,23 @@ export class GameEngine {
     for (const van of this.vans) {
       const pr = van.prisoner;
       switch (van.state) {
-        case "idle":
+        case "idle": {
+          // 🚓 beat duty: after a breather, cruise a random grid corner INSIDE
+          // our quadrant — the precinct stays present in its own streets
+          van.timer -= dt;
+          if (van.timer <= 0) {
+            const beat = this.quadrantBeat(van);
+            van.goal = beat;
+            van.path = roadPath(van.x, van.z, beat.x, beat.z);
+            van.rebuilds = 0; van.stallT = 0;
+            van.state = "patrol";
+          }
           break;
+        }
+        case "patrol": {
+          if (this.stepVan(van, dt)) { van.state = "idle"; van.timer = VAN_PATROL_WAIT_S; }
+          break;
+        }
         case "dispatch": {
           if (pr?.kind === "civ") {
             const c = this.civById(pr.id);
@@ -3162,7 +3211,7 @@ export class GameEngine {
           break;
         }
         case "return": {
-          if (this.stepVan(van, dt)) van.state = "idle";
+          if (this.stepVan(van, dt)) { van.state = "idle"; van.timer = VAN_PATROL_GATE_S; } // rest at the gate, then back on the beat
           break;
         }
       }

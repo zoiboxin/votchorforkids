@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  AIRPORT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, TREE_FALL_S, TREE_WOBBLE_S, WALL_RADIUS, stationCage, stationGate,
+  AIRPORT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, TAXI_TYPE, TREE_FALL_S, TREE_WOBBLE_S, WALL_RADIUS, stationCage, stationGate,
 } from "@/lib/game/constants";
 import {
   AVENUE, BARN_BASE, FARMKIT, FIELDS_BASE, GATE, generateWorld, GRAVEKIT, HOSPITAL, inAirportPlot, MALL, MAIN_ROAD, NYC, PARK, RAILWAY, RAILWAY_crossCottage, RAILWAY_signalBox, RAILWAY_stationHouse, RAILWAY_waterTower, railPoint, RING_GAP, RING_R, RING_W, ROAD_W, ROADS, SCHOOL, TOWN_SQUARE, terrainHeight,
@@ -16,6 +16,7 @@ import { loadInsectKit, spawnInsectKit, type InsectKitKind } from "@/lib/game/in
 import { mulberry32, range } from "@/lib/game/rng";
 import { nightFactor } from "@/lib/game/sim";
 import { isKitType, kitWheelR, makeKitCar } from "@/lib/game/cars/kit";
+import { preloadVehicles, spawnVehicle, useVehicles, vehicleReady } from "@/lib/game/glbVehicles";
 import { createAsset as createTruck } from "@/lib/game/cars/kit/ranger-pickup-truck-97057d.mjs";
 import type { GameEngine } from "@/lib/game/engine";
 import {
@@ -26,6 +27,9 @@ import {
 import { GraveyardEstate } from "@/components/game/GraveyardKit";
 
 export const WORLD: World = generateWorld();
+/** 🚕🚓 body types that render from a real polyfork GLB (yellow cab) — skipped
+ *  by the boxy instanced part set exactly like the retro-kit cars. */
+const skipProceduralCar = (t: number) => isKitType(t) || t === TAXI_TYPE;
 const tmp = new THREE.Object3D();
 tmp.rotation.order = "YXZ"; // lets placeCar rake the windshield around the car's own side axis
 const col = new THREE.Color();
@@ -1184,7 +1188,7 @@ function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutabl
     // y follows the ground so a car left parked on the ⛰️ band sits ON the hill.
     // 🏁 kit-modelled types skip the part set — their slots stay zero-scaled.
     WORLD.cars.forEach((c, i) => {
-      if (isKitType(c.t)) hideCar(P, i);
+      if (skipProceduralCar(c.t)) hideCar(P, i);
       else placeCar(P, i, c.x, terrainHeight(c.x, c.z), c.z, c.rot, c.c, c.t, false);
     });
     for (let i = 0; i < WORLD.cars.length; i++) setLampGlow(P, i, 0);
@@ -1209,7 +1213,7 @@ function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutabl
       for (const ci of engine.botDriven) {
         const c = WORLD.cars[ci];
         if (!c) continue;
-        if (isKitType(c.t)) hideCar(P, ci); // 🏁 the kit renderer in KitCars drives this one
+        if (skipProceduralCar(c.t)) hideCar(P, ci); // 🏁🚕 the kit & GLB renderers drive this one
         else placeCar(P, ci, c.x, terrainHeight(c.x, c.z), c.z, c.rot, c.c, c.t, false);
       }
       dirty = true;
@@ -1222,7 +1226,7 @@ function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutabl
       for (const [ci, st] of engine.remoteDriven) {
         const c = WORLD.cars[ci];
         if (!c) continue;
-        if (isKitType(c.t)) hideCar(P, ci); // 🏁 the kit renderer drives this one
+        if (skipProceduralCar(c.t)) hideCar(P, ci); // 🏁🚕 the kit & GLB renderers drive this one
         else placeCar(P, ci, c.x, terrainHeight(c.x, c.z), c.z, c.rot, c.c, c.t, true, st.spin, 0);
         setLampGlow(P, ci, st.lights ? nf : 0);
       }
@@ -1235,7 +1239,7 @@ function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutabl
       for (const [ci] of engine.carCoast) {
         const c = WORLD.cars[ci];
         if (!c) continue;
-        if (isKitType(c.t)) hideCar(P, ci); // 🏁 the kit renderer follows world.cars itself
+        if (skipProceduralCar(c.t)) hideCar(P, ci); // 🏁🚕 the kit & GLB renderers follow world.cars themselves
         else placeCar(P, ci, c.x, terrainHeight(c.x, c.z), c.z, c.rot, c.c, c.t, false);
       }
       dirty = true;
@@ -1247,7 +1251,7 @@ function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutabl
       // tracked tighter (14/s, was 9): a lazy ease lagged below fast climbs over
       // the rolling valley bumps and the car visibly sank into the mud/rock
       drvY.current += (gy - drvY.current) * Math.min(1, dt * 14); // eased — bumpy ground never jitters the body
-      if (isKitType(c.t)) hideCar(P, d.ci); // 🏁 kit body renders in KitCars from the same smoothed pose
+      if (skipProceduralCar(c.t)) hideCar(P, d.ci); // 🏁🚕 kit/GLB body renders from the same smoothed pose
       else placeCar(P, d.ci, d.vx, drvY.current, d.vz, d.vrot, c.c, c.t, true, d.spin, d.steerVis);
       setLampGlow(P, d.ci, (d.lights ?? true) ? nightFactor(clockRef.current) : 0);
       dirty = true;
@@ -1255,7 +1259,7 @@ function Cars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mutabl
     if ((d ? d.ci : -1) !== lit.current) {
       if (lit.current >= 0) { // the previous ride is parked again — engine off
         const c = WORLD.cars[lit.current];
-        if (isKitType(c.t)) hideCar(P, lit.current);
+        if (skipProceduralCar(c.t)) hideCar(P, lit.current);
         else placeCar(P, lit.current, c.x, terrainHeight(c.x, c.z), c.z, c.rot, c.c, c.t, false);
         setLampGlow(P, lit.current, 0);
       }
@@ -1279,7 +1283,7 @@ function RingTraffic({ engine, clockRef }: { engine: GameEngine; clockRef: React
     engine.traffic.forEach((t, i) => {
       const T = CAR_TYPES[t.t % CAR_TYPES.length];
       spins.current[i] -= (t.sp * t.r * dt) / T.wheelR; // angular speed × ring radius = u/s
-      if (isKitType(t.t)) hideCar(P, i); // 🏁 kit bodies cruise in KitCars
+      if (skipProceduralCar(t.t)) hideCar(P, i); // 🏁🚕 kit & GLB bodies cruise in KitCars/GlbCars
       else placeCar(P, i, t.x, 0.07, t.z, t.rot, t.c, t.t, true, spins.current[i]);
     });
     stampDone(P);
@@ -2426,11 +2430,26 @@ function PoliceStations() {
   );
 }
 
-/* ------------------------- police van fleet (engine-driven) ------------------------- */
-interface VanRig { group: THREE.Group; lightA: THREE.MeshBasicMaterial; lightB: THREE.MeshBasicMaterial; tag: THREE.Sprite }
+/* ------------------------- police van fleet (engine-driven) -------------------------
+ * 🚓 every precinct's cruiser renders from the real polyfork Police Cruiser GLB
+ * (police-cruiser-a2d25e — light bar & livery included); the boxy procedural
+ * stand-in shows only while the file streams in, and the flashing red/amber
+ * lamps ride on top of either body so a dispatching cruiser reads at night. */
+interface VanRig {
+  group: THREE.Group;
+  lightA: THREE.MeshBasicMaterial;
+  lightB: THREE.MeshBasicMaterial;
+  tag: THREE.Sprite;
+  /** the boxy stand-in — hidden the moment the GLB cruiser lands */
+  legacy: THREE.Group;
+  /** the flashing lamp pair + their base — re-seated onto the GLB roof */
+  lampA: THREE.Mesh; lampB: THREE.Mesh; bar: THREE.Mesh;
+  cruiser: THREE.Group | null;
+}
 
 function buildPoliceVan(): VanRig {
   const group = new THREE.Group();
+  const legacy = new THREE.Group();
   const white = new THREE.MeshLambertMaterial({ color: "#f2f4f0" });
   const navy = new THREE.MeshLambertMaterial({ color: "#1d2a4a" });
   const glass = new THREE.MeshLambertMaterial({ color: "#a8d8ea" });
@@ -2452,7 +2471,8 @@ function buildPoliceVan(): VanRig {
   lampB.position.set(0.32, 2.66, 1.4);
   const barBase = new THREE.Mesh(new THREE.BoxGeometry(1.3, 0.1, 0.4), dark);
   barBase.position.set(0, 2.58, 1.4);
-  group.add(body, stripe, cab, bumpF, bumpR, lampA, lampB, barBase);
+  legacy.add(body, stripe, cab, bumpF, bumpR);
+  group.add(legacy, lampA, lampB, barBase);
   for (const [sx, sz] of [[-1, 1], [1, 1], [-1, -1], [1, -1]] as const) {
     const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.34, 10), new THREE.MeshLambertMaterial({ color: "#171a1f" }));
     wheel.rotation.z = Math.PI / 2;
@@ -2460,7 +2480,7 @@ function buildPoliceVan(): VanRig {
     const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 0.44, 8), new THREE.MeshLambertMaterial({ color: "#c9ced8" }));
     hub.rotation.z = Math.PI / 2;
     hub.position.set(sx * 1.1, 0.5, sz * 1.7);
-    group.add(wheel, hub);
+    legacy.add(wheel, hub);
   }
   const headA = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.16, 0.1), new THREE.MeshBasicMaterial({ color: "#ffe08a" }));
   headA.position.set(-0.72, 1.3, 2.62);
@@ -2468,15 +2488,36 @@ function buildPoliceVan(): VanRig {
   const tailA = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.16, 0.1), new THREE.MeshBasicMaterial({ color: "#ff5f4a" }));
   tailA.position.set(-0.72, 1.3, -2.62);
   const tailB = tailA.clone(); tailB.position.x = 0.72;
-  group.add(headA, headB, tailA, tailB);
+  legacy.add(headA, headB, tailA, tailB);
   const tag = nameTag("POLICE VAN", "rgba(29,42,74,0.88)");
   tag.position.y = 3.5;
   group.add(tag);
-  return { group, lightA, lightB, tag };
+  return { group, lightA, lightB, tag, legacy, lampA, lampB, bar: barBase, cruiser: null };
+}
+
+/** Seat the flashing lamps + name tag onto the real cruiser's roofline. */
+function dressCruiser(rig: VanRig) {
+  rig.legacy.visible = false;
+  rig.lampA.position.set(-0.34, 1.79, 1.42);
+  rig.lampB.position.set(0.34, 1.79, 1.42);
+  rig.bar.position.set(0, 1.71, 1.42);
+  rig.tag.position.y = 2.55;
 }
 
 function PoliceVans({ engine }: { engine: GameEngine }) {
+  const vVer = useVehicles(); // re-render when the cruiser GLB lands
   const rigs = useMemo(() => engine.vans.map(() => buildPoliceVan()), [engine]);
+  useEffect(() => {
+    if (!vehicleReady("cruiser")) return;
+    for (const rig of rigs) {
+      if (rig.cruiser) continue;
+      const c = spawnVehicle("cruiser");
+      if (!c) return;
+      rig.group.add(c.root);
+      rig.cruiser = c.root;
+      dressCruiser(rig);
+    }
+  }, [vVer, rigs]);
   useFrame(() => {
     const t = performance.now() / 1000;
     const active = t % 0.5 < 0.25;
@@ -2491,6 +2532,99 @@ function PoliceVans({ engine }: { engine: GameEngine }) {
     });
   });
   return <>{rigs.map((r, i) => <primitive object={r.group} key={i} />)}</>;
+}
+
+/* ---------------- 🚕 the polyfork yellow cab — GLB taxi fleet ----------------
+ * Parked rank cars & ring-traffic taxis render from the real model (static
+ * prop, wheels identified by the loader and spun by the distance covered).
+ * Driver cases mirror KitCars: ours follows the smoothed drive pose, bot &
+ * remote rides follow their world entries, coasting taxis keep rolling. */
+interface GlbCarRig {
+  src: "park" | "traffic";
+  i: number;
+  obj: THREE.Group;
+  wheels: THREE.Object3D[];
+  wheelR: number;
+  beams: THREE.Mesh[];
+  spin: number;
+  lastX: number;
+  lastZ: number;
+}
+
+function GlbCars({ engine, clockRef }: { engine: GameEngine; clockRef: React.MutableRefObject<number> }) {
+  const vVer = useVehicles();
+  const rigs = useMemo<GlbCarRig[]>(() => {
+    if (!vehicleReady("cab")) return [];
+    const out: GlbCarRig[] = [];
+    const build = (src: "park" | "traffic", i: number, x: number, z: number) => {
+      const r = spawnVehicle("cab");
+      if (!r) return;
+      // 🔆 two headlight cones poking from the nose — shared kit-fleet material
+      const box = new THREE.Box3().setFromObject(r.root);
+      const beams: THREE.Mesh[] = [];
+      const geo = new THREE.ConeGeometry(0.95, KIT_BEAM_LEN, 10, 1, true);
+      for (const s of [-1, 1]) {
+        const cone = new THREE.Mesh(geo, kitBeamMat);
+        cone.rotation.x = -Math.PI / 2;
+        cone.position.set(s * box.max.x * 0.6, 0.72, box.max.z + KIT_BEAM_LEN / 2 - 0.05);
+        cone.visible = false;
+        r.root.add(cone);
+        beams.push(cone);
+      }
+      out.push({ src, i, obj: r.root, wheels: r.wheels, wheelR: r.wheelR, beams, spin: 0, lastX: x, lastZ: z });
+    };
+    WORLD.cars.forEach((c, i) => { if (c.t === TAXI_TYPE) build("park", i, c.x, c.z); });
+    engine.traffic.forEach((t, i) => { if (t.t === TAXI_TYPE) build("traffic", i, t.x, t.z); });
+    return out;
+  }, [engine, vVer]);
+
+  useFrame((_, dtRaw) => {
+    if (!rigs.length) return;
+    const dt = Math.min(0.05, Math.max(0.001, dtRaw));
+    const d = engine.drive;
+    const nf = nightFactor(clockRef.current);
+    kitBeamMat.opacity = Math.max(0, nf - 0.14) * 0.42;
+    for (const k of rigs) {
+      let x: number, z: number, rot: number, lit = false;
+      if (k.src === "park") {
+        const c = WORLD.cars[k.i];
+        if (!c) continue;
+        const mine = d && d.ci === k.i;
+        if (mine && d) {
+          x = d.vx; z = d.vz; rot = d.vrot;
+          k.spin = -d.spin;
+          lit = nf > 0.14 && (d.lights ?? true);
+        } else if (engine.botDriven.has(k.i)) {
+          x = c.x; z = c.z; rot = c.rot;
+          k.spin += Math.hypot(c.x - k.lastX, c.z - k.lastZ) / k.wheelR;
+          lit = nf > 0.14;
+        } else if (engine.remoteDriven.has(k.i)) {
+          x = c.x; z = c.z; rot = c.rot;
+          k.spin += Math.hypot(c.x - k.lastX, c.z - k.lastZ) / k.wheelR;
+          lit = engine.remoteDriven.get(k.i)!.lights && nf > 0.14;
+        } else {
+          x = c.x; z = c.z; rot = c.rot;
+        }
+      } else {
+        const t = engine.traffic[k.i];
+        if (!t) continue;
+        x = t.x; z = t.z; rot = t.rot;
+        k.spin += (t.sp * t.r * dt) / k.wheelR;
+        lit = nf > 0.14;
+      }
+      k.lastX = x; k.lastZ = z;
+      k.obj.position.set(x, terrainHeight(x, z), z);
+      k.obj.rotation.y = rot;
+      for (const w of k.wheels) w.rotation.x = k.spin;
+      if (k.beams[0].visible !== lit) for (const b of k.beams) b.visible = lit;
+    }
+  });
+
+  return (
+    <group>
+      {rigs.map((k, i) => <primitive object={k.obj} key={i} />)}
+    </group>
+  );
 }
 
 /* ------------------------- sky life ------------------------- */
@@ -4962,6 +5096,7 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
       <Windows clockRef={clockRef} />
       <Cars engine={engine} clockRef={clockRef} />
       <KitCars engine={engine} clockRef={clockRef} />
+      <GlbCars engine={engine} clockRef={clockRef} />
       <RingTraffic engine={engine} clockRef={clockRef} />
       <DriveLight engine={engine} clockRef={clockRef} />
       <RemoteDriveLights engine={engine} clockRef={clockRef} />
