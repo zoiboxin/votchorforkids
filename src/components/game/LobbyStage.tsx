@@ -256,7 +256,7 @@ export function LobbyStage({ look }: { look: Appearance }) {
       <Canvas
         className="absolute inset-0"
         camera={{ fov: 38, position: [0, 1.55, 4.9] }}
-        onCreated={({ camera }) => camera.lookAt(0, 1.28, 0)}
+        onCreated={({ camera }) => camera.lookAt(0, 1.34, 0)}
         dpr={[1, 1.75]}
         gl={{ alpha: true, antialias: true }}
       >

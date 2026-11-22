@@ -11,8 +11,9 @@
  *   • center: the rigged GLB survivor LIVE on the lobby floor (drag to spin,
  *     glowing center circle — no cartoon bodies) with the name plate + READY
  *     status above and the rank boost pill below
- *   • bottom: Global chat bar (Enter to chat) and the big yellow SOLO PLAYER
- *     button plus the MULTIPLAYER squads button — customization lives in the
+ *   • bottom: Global chat docked as a right-side icon with a count badge (opens
+ *     a challenge-card-style chat panel) and the big yellow SOLO PLAYER button
+ *     plus the MULTIPLAYER squads button — customization lives in the
  *     LOCKER, never blocking the way into a night
  *
  * Wiring is unchanged: SOLO PLAYER queues through the PUBG-style match lobby
@@ -26,7 +27,7 @@ import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
   BarChart3, Check, ChevronRight, Crown, Flame, History as HistoryIcon, Info,
-  Lock, Newspaper, Pencil, Play, Send, Settings, ShoppingBag, Star, Trophy, User, Users, Zap,
+  Lock, MessageSquare, Newspaper, Pencil, Play, Send, Settings, ShoppingBag, Star, Trophy, User, Users, X, Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -81,11 +82,12 @@ const TABS: { id: Tab; label: string; key?: string }[] = [
 
 /* ---------------- tiny building blocks ---------------- */
 
-/** Fortnite-style section strip — amber bar over a dark translucent panel */
+/** Fortnite-style section strip — crimson gradient bar over a dark translucent
+ *  panel (blood-moon red — matches the horror backdrop, leaves yellow to the CTA) */
 function Strip({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-2 bg-yellow-400/90 px-3 py-1">
-      <span className="text-[10px] font-black uppercase tracking-[0.18em] text-slate-950">{children}</span>
+    <div className="flex items-center justify-between gap-2 bg-gradient-to-r from-red-600 via-rose-600 to-red-600 px-3 py-1 ring-1 ring-inset ring-white/25">
+      <span className="text-[10px] font-black uppercase tracking-[0.18em] text-white drop-shadow-sm">{children}</span>
       {right}
     </div>
   );
@@ -112,7 +114,7 @@ function XpBar({ pct, bar = "from-amber-400 to-yellow-300", h = "h-2" }: { pct: 
   );
 }
 
-/* ---------------- global chat (bottom-left, like the lobby chat rail) ---------------- */
+/* ---------------- global chat (right-side dock — icon with count badge) ---------------- */
 
 interface ChatMsg { name: string; msg: string }
 
@@ -121,44 +123,82 @@ const CHAT_SEED: ChatMsg[] = [
   { name: "NightLine", msg: "🌐 MULTIPLAYER hosts a room — share the 4-letter code, friends Quick join." },
 ];
 
-function GlobalChat({ name }: { name: string }) {
+function GlobalChatDock({ name }: { name: string }) {
   const [chat, setChat] = useState<ChatMsg[]>(CHAT_SEED);
   const [draft, setDraft] = useState("");
+  const [open, setOpen] = useState(false);
 
   const send = () => {
     const msg = draft.trim().slice(0, 120);
     if (!msg) return;
-    setChat((c) => [...c.slice(-8), { name: name || "Guest", msg }]);
+    setChat((c) => [...c.slice(-30), { name: name || "Guest", msg }]);
     setDraft("");
     sfx.click();
   };
 
   return (
-    <div className="w-full lg:max-w-md">
-      <div aria-live="polite" className="mb-1 space-y-0.5 px-1">
-        {chat.slice(-3).map((m, i) => (
-          <div key={`${m.at}-${i}`} className="truncate text-[11px] font-bold text-white/65">
-            <span className={m.name === "NightLine" ? "text-teal-300/90" : "text-yellow-300/90"}>{m.name}:</span> {m.msg}
-          </div>
-        ))}
-      </div>
-      <form
-        onSubmit={(e) => { e.preventDefault(); send(); }}
-        className="flex items-center gap-2 rounded-md border border-white/15 bg-slate-950/85 px-3 py-2 backdrop-blur"
+    <div className="relative">
+      {/* dock icon with message-count badge */}
+      <button
+        onClick={() => { sfx.click(); setOpen((o) => !o); }}
+        aria-label={`Global chat — ${chat.length} messages`}
+        aria-expanded={open}
+        className="relative flex h-10 w-10 items-center justify-center rounded-md border border-white/15 bg-slate-950/85 text-white/80 shadow-lg backdrop-blur transition-colors hover:bg-slate-800/90 hover:text-white"
       >
-        <span className="shrink-0 text-xs font-black uppercase tracking-wide text-white/80">Global</span>
-        <Input
-          value={draft}
-          onChange={(e) => setDraft(e.target.value.slice(0, 120))}
-          placeholder="Press Enter to chat…"
-          aria-label="Global chat"
-          maxLength={120}
-          className="h-7 flex-1 border-0 bg-transparent px-1 text-xs text-white shadow-none placeholder:text-white/35 focus-visible:ring-0"
-        />
-        <Button type="submit" size="icon" variant="ghost" aria-label="Send chat" className="h-7 w-7 shrink-0 text-white/60 hover:bg-white/10 hover:text-white">
-          <Send size={14} />
-        </Button>
-      </form>
+        <MessageSquare size={18} />
+        <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-black text-white ring-2 ring-slate-950">
+          {chat.length > 99 ? "99+" : chat.length}
+        </span>
+      </button>
+
+      {/* the chat panel — same card style as the challenges board, docked right */}
+      {open && (
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.15 }}
+          className="absolute bottom-[calc(100%+10px)] right-0 z-40 w-[min(20rem,calc(100vw-2.5rem))]"
+        >
+          <Panel>
+            <Strip
+              right={
+                <button
+                  onClick={() => { sfx.click(); setOpen(false); }}
+                  aria-label="Close global chat"
+                  className="rounded p-0.5 text-white/85 transition-colors hover:bg-black/25 hover:text-white"
+                >
+                  <X size={13} />
+                </button>
+              }
+            >
+              Global chat
+            </Strip>
+            <div aria-live="polite" className="lobby-scroll max-h-52 space-y-1.5 overflow-y-auto p-2.5">
+              {chat.map((m, i) => (
+                <div key={`${m.name}-${i}`} className="rounded border border-white/10 bg-white/5 px-2.5 py-1.5 text-[11px] font-bold leading-snug text-white/80">
+                  <span className={m.name === "NightLine" ? "text-teal-300/90" : "text-yellow-300/90"}>{m.name}:</span> {m.msg}
+                </div>
+              ))}
+            </div>
+            <form
+              onSubmit={(e) => { e.preventDefault(); send(); }}
+              className="flex items-center gap-2 border-t border-white/10 bg-black/30 px-2.5 py-2"
+            >
+              <Input
+                value={draft}
+                onChange={(e) => setDraft(e.target.value.slice(0, 120))}
+                placeholder="Press Enter to chat…"
+                aria-label="Global chat message"
+                maxLength={120}
+                className="h-7 flex-1 border-0 bg-transparent px-1 text-xs text-white shadow-none placeholder:text-white/35 focus-visible:ring-0"
+              />
+              <Button type="submit" size="icon" variant="ghost" aria-label="Send chat" className="h-7 w-7 shrink-0 text-white/60 hover:bg-white/10 hover:text-white">
+                <Send size={14} />
+              </Button>
+            </form>
+          </Panel>
+        </motion.div>
+      )}
     </div>
   );
 }
@@ -345,7 +385,7 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
           >
             {/* ---------- SEASON card (always visible — the lobby identity) ---------- */}
             <Panel>
-              <Strip right={<span className="text-[10px] font-black uppercase text-slate-800">Survive the 7 nights</span>}>
+              <Strip right={<span className="text-[10px] font-black uppercase text-white/85">Survive the 7 nights</span>}>
                 Season {season}
               </Strip>
               <div className="p-3">
@@ -421,7 +461,7 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
                 </Panel>
 
                 <Panel>
-                  <Strip right={<span className="text-[10px] font-black text-slate-800">{doneCount}/{daily.tasks.length} done</span>}>
+                  <Strip right={<span className="text-[10px] font-black text-white/85">{doneCount}/{daily.tasks.length} done</span>}>
                     Daily challenges
                   </Strip>
                   <div className="space-y-1.5 p-2.5">
@@ -506,7 +546,7 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
             {/* ---------- CHALLENGES tab: the full daily board ---------- */}
             {tab === "challenges" && (
               <Panel>
-                <Strip right={<span className="flex items-center gap-1 text-[10px] font-black text-slate-800"><Flame size={11} /> {daily.streak}-day streak</span>}>
+                <Strip right={<span className="flex items-center gap-1 text-[10px] font-black text-white/85"><Flame size={11} /> {daily.streak}-day streak</span>}>
                   Daily challenges
                 </Strip>
                 <div className="space-y-1.5 p-2.5">
@@ -683,8 +723,8 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
             <LobbyStage look={look} />
           </div>
 
-          {/* rank boost pill under the stage glow */}
-          <div className="pointer-events-none absolute bottom-1 left-1/2 z-20 -translate-x-1/2">
+          {/* rank boost pill — mobile keeps it under the stage glow */}
+          <div className="pointer-events-none absolute bottom-1 left-1/2 z-20 -translate-x-1/2 lg:hidden">
             <div className="flex items-center gap-2 whitespace-nowrap rounded-full bg-black/55 px-3 py-1.5 text-[11px] font-black text-yellow-200 ring-1 ring-yellow-300/40 backdrop-blur sm:px-4">
               <Zap size={13} className="shrink-0 text-yellow-300" />
               {rank.emoji} {rank.name} · {careerXp.toLocaleString()} XP
@@ -693,17 +733,26 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
         </section>
       </main>
 
-      {/* ================= bottom bar: chat + play buttons ================= */}
-      <footer className="relative z-30 flex flex-col gap-2 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-3 lg:flex-row lg:items-end lg:justify-between">
-        <GlobalChat name={playerName} />
+      {/* ================= bottom bar: play buttons + chat dock ================= */}
+      <footer className="relative z-30 flex flex-col gap-2 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-3 lg:flex-row lg:items-end lg:justify-end">
+        {/* desktop: rank pill hangs just below the stage's glowing circle */}
+        <div className="absolute -top-2 left-1/2 z-20 hidden -translate-x-1/2 lg:block">
+          <div className="flex items-center gap-2 whitespace-nowrap rounded-full bg-black/55 px-4 py-1.5 text-[11px] font-black text-yellow-200 ring-1 ring-yellow-300/40 backdrop-blur">
+            <Zap size={13} className="shrink-0 text-yellow-300" />
+            {rank.emoji} {rank.name} · {careerXp.toLocaleString()} XP
+          </div>
+        </div>
 
-        <div className="flex flex-col gap-2 lg:w-80">
-          {/* controller-style hints (desktop) */}
-          <div className="hidden items-center justify-end gap-3 text-[10px] font-bold text-white/45 lg:flex">
-            <span><kbd className="rounded bg-white/10 px-1">H</kbd> help</span>
-            <span><kbd className="rounded bg-white/10 px-1">P</kbd> profile</span>
-            <span><kbd className="rounded bg-white/10 px-1">L</kbd> locker</span>
-            <span><kbd className="rounded bg-white/10 px-1">C</kbd> challenges</span>
+        <div className="relative flex flex-col gap-2 lg:w-80">
+          {/* dock row: global chat icon + controller-style hints (desktop) */}
+          <div className="flex items-center justify-end gap-3">
+            <div className="hidden items-center gap-3 text-[10px] font-bold text-white/45 lg:flex">
+              <span><kbd className="rounded bg-white/10 px-1">H</kbd> help</span>
+              <span><kbd className="rounded bg-white/10 px-1">P</kbd> profile</span>
+              <span><kbd className="rounded bg-white/10 px-1">L</kbd> locker</span>
+              <span><kbd className="rounded bg-white/10 px-1">C</kbd> challenges</span>
+            </div>
+            <GlobalChatDock name={playerName} />
           </div>
 
           {/* squads fill — multiplayer lobby */}
