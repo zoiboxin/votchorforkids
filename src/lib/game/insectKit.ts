@@ -13,6 +13,7 @@
  */
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { enableGlbCulling } from "@/lib/game/glbCull";
 
 export const INSECT_KIT_FILES = {
   acorn: "/models/insect-world/acorn-cup-0ed13c.glb",
@@ -79,7 +80,8 @@ export function loadInsectKit(kind: InsectKitKind): Promise<THREE.Group> {
           if (m.isMesh) {
             m.castShadow = false;
             m.receiveShadow = false;
-            m.frustumCulled = false;
+            // 🎯 culled rendering — static props, tiny margin (wind sway is GPU-side)
+            enableGlbCulling(o, 1.15, 0.3);
           }
         });
         const box = new THREE.Box3().setFromObject(scene);
@@ -112,7 +114,7 @@ export function spawnInsectKit(kind: InsectKitKind): THREE.Group | null {
   const root = tpl.clone(true);
   root.traverse((o) => {
     const m = o as THREE.Mesh;
-    if (m.isMesh) m.frustumCulled = false;
+    if (m.isMesh) enableGlbCulling(o, 1.15, 0.3); // clones share the inflated sphere
   });
   return root;
 }

@@ -16,6 +16,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
+import { enableGlbCulling } from "@/lib/game/glbCull";
 
 const FILES = {
   wolf: "/models/wolf-base.glb",
@@ -135,7 +136,8 @@ export function preloadModels(): void {
           if (mesh.isMesh) {
             mesh.castShadow = false;
             mesh.receiveShadow = false;
-            mesh.frustumCulled = false;
+            // 🎯 culled rendering — the inflate margin covers run/jump/fly sway
+            enableGlbCulling(o, 1.2, 0.5);
           }
         });
         // normalize: ground the feet, center x/z, scale to the target height
@@ -168,7 +170,7 @@ export function spawnModel(kind: string): { root: THREE.Group; mixer: THREE.Anim
   const root = skeletonClone(rig.template);
   root.traverse((o) => {
     const mesh = o as THREE.Mesh;
-    if (mesh.isMesh) mesh.frustumCulled = false;
+    if (mesh.isMesh) enableGlbCulling(o, 1.2, 0.5); // clones share the inflated sphere
   });
   const mixer = new THREE.AnimationMixer(root);
   return { root, mixer, clips: rig.clips };
@@ -188,23 +190,34 @@ export function onModelsReady(cb: () => void): () => void {
 const _rotCol = new THREE.Color();
 const _rotTmp = new THREE.Color();
 
+/** 🧟 tinted-material cache — shared with the zombie-body tint in
+ *  glbCharacters.ts: one tinted clone per (source material, tint, mix,
+ *  emissive) instead of one per hound instance. */
+const rotCache = new Map<string, THREE.MeshStandardMaterial>();
+
 /** 🧟 Rot a cloned animal body — a sickly graveyard wash over every material.
- *  Used for the zombie hounds: same rig, rotten flesh. `mix` 0..1 controls
+ *  Used for the zombie hounds: same rig, rotten fur. `mix` 0..1 controls
  *  how far the fur leans toward the rot colour. Returns the SAME root (fluent).
- *  Must run on a skeletonClone (own materials) — never on the shared template. */
+ *  Must run on a skeletonClone (never the shared template — the cache keeps
+ *  the template's own materials untouched). */
 export function tintRot(root: THREE.Group, color: string, mix: number, emissive = 0): THREE.Group {
   const rot = _rotCol.set(color);
   root.traverse((o) => {
     const m = o as THREE.Mesh;
     if (!m.isMesh) return;
     const wasArray = Array.isArray(m.material);
-    const src = wasArray ? m.material : [m.material];
+    const src = (wasArray ? m.material : [m.material]) as THREE.Material[];
     const mats = src.map((s) => {
-      const c = (s as THREE.MeshStandardMaterial).clone() as THREE.MeshStandardMaterial;
-      _rotTmp.copy(c.color).lerp(rot, mix);
-      c.color.copy(_rotTmp);
-      if (emissive > 0 && "emissive" in c && c.emissive) {
-        c.emissive.set(color).multiplyScalar(emissive);
+      const key = `${s.uuid}|${rot.getHexString()}|${mix.toFixed(3)}|${emissive}`;
+      let c = rotCache.get(key);
+      if (!c) {
+        c = (s as THREE.MeshStandardMaterial).clone() as THREE.MeshStandardMaterial;
+        _rotTmp.copy(c.color).lerp(rot, mix);
+        c.color.copy(_rotTmp);
+        if (emissive > 0 && "emissive" in c && c.emissive) {
+          c.emissive.set(color).multiplyScalar(emissive);
+        }
+        rotCache.set(key, c);
       }
       return c;
     });

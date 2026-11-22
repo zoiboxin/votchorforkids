@@ -15,6 +15,7 @@
 import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { useSyncExternalStore } from "react";
+import { enableGlbCulling } from "@/lib/game/glbCull";
 
 /** Game vehicle type ids that render from these GLB bodies live in constants.ts
  *  (TAXI_TYPE = 10 — the yellow cab). This module only owns the model loading. */
@@ -59,7 +60,8 @@ function register(kind: VehicleKind, gltf: { scene: THREE.Object3D }): VehicleTe
     if (m.isMesh) {
       m.castShadow = false;
       m.receiveShadow = false;
-      m.frustumCulled = false;
+      // 🎯 culled rendering — static bodies, a small margin for the wheel spin
+      enableGlbCulling(o, 1.1, 0.25);
     }
   });
   // ground + center: bbox min.y sits on 0, x/z centered on the origin
@@ -117,7 +119,7 @@ export function spawnVehicle(kind: VehicleKind): { root: THREE.Group; wheels: TH
   const root = tpl.scene.clone(true);
   root.traverse((o) => {
     const m = o as THREE.Mesh;
-    if (m.isMesh) m.frustumCulled = false;
+    if (m.isMesh) enableGlbCulling(o, 1.1, 0.25); // clones share the inflated sphere
   });
   // re-collect the wheel meshes by position (clones keep names — mesh_1..4)
   const wheels = tpl.wheels.map((w) => {

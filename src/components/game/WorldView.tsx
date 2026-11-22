@@ -25,6 +25,7 @@ import {
   KitVor, KitWindsock,
 } from "@/components/game/AirportKit";
 import { GraveyardEstate } from "@/components/game/GraveyardKit";
+import { registerCullRoot, resetCullRoots, tickStaticCull } from "@/lib/game/staticCull";
 
 export const WORLD: World = generateWorld();
 /** 🚕🚓 body types that render from a real polyfork GLB (yellow cab) — skipped
@@ -5076,7 +5077,35 @@ function InsectWorld() {
   );
 }
 
+/* ------------------------------------------------------------------
+ * 🏙️ StaticCuller — distance-culls the hand-built decor the fog already
+ * hides. The 1,200u town used to render EVERY camp, cabin, kiosk, prop and
+ * parked car from everywhere (measured ~3.8k draw calls / 2.4M tris, 76%
+ * of them beyond 300u) and each new kit made the drag worse. Clusters of
+ * local structures now fold away past ~250u and tall silhouettes linger
+ * farther (see staticCull.ts). Ground discs, the mountain ring & terrain,
+ * instanced pools (trees, buildings, windows, lamps) and the sky stay out
+ * — single draws or per-frame logic of their own. Rocks stay out too: the
+ * chop system toggles per-rock visibility and must win every frame.
+ * ------------------------------------------------------------------ */
+function StaticCuller({ staticRef, fleetRef }: {
+  staticRef: React.RefObject<THREE.Group | null>;
+  fleetRef: React.RefObject<THREE.Group | null>;
+}) {
+  useEffect(() => {
+    registerCullRoot(staticRef.current, false); // decor — clusters never move
+    registerCullRoot(fleetRef.current, true);   // parked & cruising cars move
+    return () => resetCullRoots();
+  }, [staticRef, fleetRef]);
+  useFrame((s, dtRaw) => {
+    tickStaticCull(s.camera, Math.min(0.1, dtRaw));
+  });
+  return null;
+}
+
 export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObject<number>; engine: GameEngine }) {
+  const staticRoot = useRef<THREE.Group>(null);
+  const fleetRoot = useRef<THREE.Group>(null);
   return (
     <>
       <Env clockRef={clockRef} />
@@ -5089,47 +5118,55 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
       <MountainTerrain />
       <Rocks engine={engine} />
       <Disc r={GRAVEYARD.r} color="#3a3a46" y={0.06} x={GRAVEYARD.x} z={GRAVEYARD.z} />
-      <Roads />
-      <Airport />
-      <Buildings />
-      <PoliceStations />
-      <Windows clockRef={clockRef} />
-      <Cars engine={engine} clockRef={clockRef} />
-      <KitCars engine={engine} clockRef={clockRef} />
-      <GlbCars engine={engine} clockRef={clockRef} />
-      <RingTraffic engine={engine} clockRef={clockRef} />
+      <Mountains />
+      {/* 🏙️ the cullable world — every locally-clustered structure folds away
+          past the fog line instead of rendering from across the map */}
+      <group ref={staticRoot}>
+        <Roads />
+        <Airport />
+        <Buildings />
+        <PoliceStations />
+        <Windows clockRef={clockRef} />
+        <Lamps clockRef={clockRef} />
+        <Park />
+        <Benches />
+        <Umbrellas />
+        <Farm />
+        <FarmKit />
+        <Railway />
+        <NycDistrict />
+        <Landmarks />
+        <Forest engine={engine} />
+        <Camps engine={engine} clockRef={clockRef} />
+        <Graves clockRef={clockRef} />
+        <AlpineDecor />
+        <Trails />
+        <ForestFloor />
+        <InsectWorld />
+        <JunglePonds />
+        <JungleLandmarks engine={engine} />
+        <NatureExtras />
+        <Flowers />
+        <Museum />
+        <VistaGate />
+        <TownSigns />
+        <TownBanner />
+      </group>
+      {/* 🚗 the fleets — dynamic clusters (re-centered every cull pass) */}
+      <group ref={fleetRoot}>
+        <Cars engine={engine} clockRef={clockRef} />
+        <KitCars engine={engine} clockRef={clockRef} />
+        <GlbCars engine={engine} clockRef={clockRef} />
+        <RingTraffic engine={engine} clockRef={clockRef} />
+        <PoliceVans engine={engine} />
+      </group>
       <DriveLight engine={engine} clockRef={clockRef} />
       <RemoteDriveLights engine={engine} clockRef={clockRef} />
-      <PoliceVans engine={engine} />
       <Planes engine={engine} />
-      <Lamps clockRef={clockRef} />
-      <Park />
-      <Benches />
-      <Umbrellas />
-      <Farm />
-      <FarmKit />
-      <Railway />
-      <NycDistrict />
-      <Landmarks />
-      <Forest engine={engine} />
-      <Camps engine={engine} clockRef={clockRef} />
-      <Graves clockRef={clockRef} />
-      <AlpineDecor />
-      <Trails />
-      <ForestFloor />
-      <InsectWorld />
-      <JunglePonds />
-      <JungleLandmarks engine={engine} />
-      <NatureExtras />
-      <Flowers />
-      <Mountains />
-      <Museum />
-      <VistaGate />
-      <TownSigns />
-      <TownBanner />
       <Clouds />
       <Sky clockRef={clockRef} />
       <Fireflies clockRef={clockRef} />
+      <StaticCuller staticRef={staticRoot} fleetRef={fleetRoot} />
     </>
   );
 }

@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { useSyncExternalStore } from "react";
+import { enableGlbCulling } from "@/lib/game/glbCull";
 
 /* ------------------------------------------------------------------ */
 /* 🧍 Polyfork character cast — real rigged, animated low-poly humans  */
@@ -463,7 +464,9 @@ function registerTemplate(
     if (m.isMesh) {
       m.castShadow = false;
       m.receiveShadow = false;
-      m.frustumCulled = false;
+      // 🎯 culled rendering with an animation-inflated bind-pose sphere —
+      // clip sway rides inside the margin, off-screen bodies cost nothing
+      enableGlbCulling(o, 1.2, 0.6);
     }
   });
   const clips = gltf.animations ?? [];
@@ -538,7 +541,7 @@ export function makeGlbInstance(slug: string, ageScale: number): GlbInstance | n
     if (m.isMesh) {
       m.castShadow = false;
       m.receiveShadow = false;
-      m.frustumCulled = false;
+      enableGlbCulling(o, 1.2, 0.6); // clones share the inflated sphere
     }
   });
   const body = new THREE.Group();
@@ -703,6 +706,24 @@ const _zTmp = new THREE.Color();
 /** three sickly graveyard tints — the same family the cartoon zombies wear */
 const ZOMBIE_TINTS = ["#8fbf6f", "#a8c98a", "#7da860"];
 
+/** 🧟 tinted-material cache — one tinted clone per (source material, tint,
+ *  mix) instead of one per zombie instance. The night pack used to clone a
+ *  fresh material for EVERY risen body (~50 clones × several mats each),
+ *  multiplying renderer state changes; with the cache the whole pack shares
+ *  a handful of tinted materials. Bounded: #cast templates × #tints. */
+const tintCache = new Map<string, THREE.MeshStandardMaterial>();
+function tinted(src: THREE.Material, rot: THREE.Color, mix: number, emissiveMul: number): THREE.MeshStandardMaterial {
+  const key = `${src.uuid}|${rot.getHexString()}|${mix.toFixed(3)}|${emissiveMul}`;
+  const hit = tintCache.get(key);
+  if (hit) return hit;
+  const c = (src as THREE.MeshStandardMaterial).clone() as THREE.MeshStandardMaterial;
+  _zTmp.copy(c.color).lerp(rot, mix);
+  c.color.copy(_zTmp);
+  if (c.emissive) c.emissive.set(rot).multiplyScalar(emissiveMul);
+  tintCache.set(key, c);
+  return c;
+}
+
 /** Rot a GLB instance in place — a sickly green graveyard wash over every
  *  material, plus a faint undead emissive so the TURNED read in the dark.
  *  Clones materials first: SkeletonUtils instances SHARE the template's
@@ -717,14 +738,8 @@ export function tintGlbZombie(st: GlbInstance, seed = 0, mix = 0.62): void {
     const m = o as THREE.Mesh;
     if (!m.isMesh) return;
     const wasArray = Array.isArray(m.material);
-    const src = wasArray ? m.material : [m.material];
-    const mats = src.map((s) => {
-      const c = (s as THREE.MeshStandardMaterial).clone() as THREE.MeshStandardMaterial;
-      _zTmp.copy(c.color).lerp(rot, mix);
-      c.color.copy(_zTmp);
-      if (c.emissive) c.emissive.set(rot).multiplyScalar(0.06);
-      return c;
-    });
+    const src = (wasArray ? m.material : [m.material]) as THREE.Material[];
+    const mats = src.map((s) => tinted(s, rot, mix, 0.06));
     // ⚠️ keep the material SHAPE — assigning an array to a group-less mesh
     // makes the renderer walk geometry.groups (zero of them) and draw NOTHING;
     // this was the invisible-zombie bug (tinted GLB bodies never rendered).
