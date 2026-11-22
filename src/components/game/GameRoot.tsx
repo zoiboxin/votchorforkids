@@ -426,7 +426,9 @@ export function GameRoot() {
 
   return (
     <div className="fixed inset-0 overflow-hidden bg-slate-950">
-      {screen === "landing" && <Landing />}
+      {/* 🎮 Fortnite-style lobby dashboard — PLAY queues the match lobby (solo,
+          AI fills the 100-soul night); MULTIPLAYER opens the rooms panel */}
+      {screen === "landing" && <Landing onQuickPlay={startMatchLobby} />}
 
       {/* 👤 full-page profile hub (rank, daily tasks, hall of fame, account, features) */}
       {screen === "profile" && <Profile />}
