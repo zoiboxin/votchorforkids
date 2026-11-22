@@ -486,6 +486,15 @@ export const BUG_LABEL: Record<string, string> = {
 /** 🐜 flyers hover above the ground (renderer bobs them; bites land from the air) */
 export const BUG_FLYERS = new Set(["wasp", "bee"]);
 
+/** 🚫 WILDLIFE DROPPED — animals & insects pulled from the world for
+ *  performance. The 123 rigged GLB beasts (each a skinned mesh + per-frame
+ *  AnimationMixer) plus the insect-kit props were the heaviest thing left in
+ *  the scene. Flipping this back to true restores the whole zoo: spawns,
+ *  GLB streaming, the night hounds, spider bites — every system stays wired
+ *  and simply goes dormant while the flag is false (the spawn loop still
+ *  burns its RNG draws so the rest of the town generates byte-identical). */
+export const WILDLIFE_ENABLED = false;
+
 export const ANIMAL_SET: { kind: AnimalKind; count: number; zone: "farm" | "jungle" | "city" | "mountain" | "grave" | "grass" | "random" }[] = [
   { kind: "dog", count: 9, zone: "city" },
   { kind: "cat", count: 2, zone: "city" },

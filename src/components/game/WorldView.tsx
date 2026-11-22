@@ -6,6 +6,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
   AIRPORT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, TAXI_TYPE, TREE_FALL_S, TREE_WOBBLE_S, WALL_RADIUS, stationCage, stationGate,
+  WILDLIFE_ENABLED,
 } from "@/lib/game/constants";
 import {
   AVENUE, BARN_BASE, FARMKIT, FIELDS_BASE, GATE, generateWorld, GRAVEKIT, HOSPITAL, inAirportPlot, MALL, MAIN_ROAD, NYC, PARK, RAILWAY, RAILWAY_crossCottage, RAILWAY_signalBox, RAILWAY_stationHouse, RAILWAY_waterTower, railPoint, RING_GAP, RING_R, RING_W, ROAD_W, ROADS, SCHOOL, TOWN_SQUARE, terrainHeight,
@@ -5142,7 +5143,9 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
         <AlpineDecor />
         <Trails />
         <ForestFloor />
-        <InsectWorld />
+        {/* 🐜 INSECT WORLD — 🚫 dropped with the wildlife (WILDLIFE_ENABLED in
+          * constants.ts): unmounting it means no insect-kit GLB ever streams. */}
+        {WILDLIFE_ENABLED && <InsectWorld />}
         <JunglePonds />
         <JungleLandmarks engine={engine} />
         <NatureExtras />

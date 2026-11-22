@@ -24,6 +24,7 @@ import {
   TREE_FALL_S, TREE_WOBBLE_S, ROCK_BREAK_S,
   CREW_SEEK_R, CREW_EAT_R, CREW_BOOST_S, CREW_BOOST_MULT,
   CRIME_SEE_R, CRIME_CIV_SEE_R, CRIME_REPORT_RANGE, CRIME_REPORT_T, WARRANT_DETECT, CRIME_STAR_MURDER, CRIME_STAR_MINOR,
+  WILDLIFE_ENABLED,
   type AnimalKind, type Appearance, type Phase, type PolicePerk, type PowerKind, type Side, type ToolKind, type Zone, zoneOf, ZONE_TOAST,
 } from "./constants";
 import { clamp, mulberry32, range } from "./rng";
@@ -853,8 +854,8 @@ export class GameEngine {
     // and YOUR drop spot = the deterministic per-seat spot).
     if (rngSeed !== undefined) { this.rngSeed = rngSeed; this.rnd = mulberry32(2024 + (rngSeed % 1000000)); }
     if (seat !== undefined && seat >= 0) { this.mp = true; this.mpSlot = seat; }
-    // 🌲 start fetching the polyfork wildlife GLBs right away — by the time you
-    // reach the jungle they should be parsed and ready to spawn
+    // 🌲 wildlife GLBs — 🚫 DROPPED with the animals & insects (WILDLIFE_ENABLED
+    // in constants.ts); the call stays as the single switch to restore the zoo
     preloadModels();
     // 🚓 the police cruiser & 🚕 yellow cab GLBs — the precinct fleet & the
     // taxis stream in while you play
@@ -1141,7 +1142,13 @@ export class GameEngine {
       }
       this.toolEnts.push({ id: this.nid(), kind, x: p.x, z: p.z, active: true, respawn: 0 });
     });
-    // animals
+    // animals — 🚫 DROPPED for performance (WILDLIFE_ENABLED=false): the pool
+    // below is a throwaway array instead of this.animals, so NO beast is born
+    // and no rig ever streams — but the loop still runs and still draws from
+    // the SAME RNG stream in the SAME order, so every item, tool, license and
+    // loot pile lands byte-identical to the old world. Flip the flag and the
+    // zoo walks back in, nothing else having moved.
+    const animalPool: Animal[] = WILDLIFE_ENABLED ? this.animals : [];
     let ai = 0;
     const BUG_NO_BABY = new Set(["wolf", "bear", "stag", "owl", "crow", "cat", "spider",
       "ant", "wasp", "bee", "mantis", "beetle", "ladybird", "grasshopper", "centipede", "tarantula", "orbweaver"]);
@@ -1177,7 +1184,7 @@ export class GameEngine {
         } else {
           p = freeSpot(r, this.world, FARM_RADIUS + 10, JUNGLE_RADIUS - 30);
         }
-        this.animals.push({
+        animalPool.push({
           id: this.nid(), kind: set.kind, x: p.x, z: p.z, vx: 0, vz: 0, face: 0, tx: p.x, tz: p.z,
           timer: range(r, 0, 5), phase: Math.random() * 6, resting: false,
           variant: Math.floor(r() * 4), // 🎨 each creature picks its own coat

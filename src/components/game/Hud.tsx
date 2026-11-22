@@ -8,7 +8,7 @@ import {
   ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon, Mouse, Eye, ScrollText,
 } from "lucide-react";
 import type { GameEngine } from "@/lib/game/engine";
-import { AIRPORT, DETAIN_SECONDS, GRAVEYARD, ITEMS, INV_SLOTS, NIGHTS_TOTAL, POLICE_STATIONS, POWERS, TOOLS } from "@/lib/game/constants";
+import { AIRPORT, DETAIN_SECONDS, GRAVEYARD, ITEMS, INV_SLOTS, NIGHTS_TOTAL, POLICE_STATIONS, POWERS, TOOLS, WILDLIFE_ENABLED } from "@/lib/game/constants";
 import { HOSPITAL, RAILWAY, RAILWAY_stationHouse } from "@/lib/game/worldgen";
 import { useGame } from "./store";
 import { requestGameLock } from "./Scene";
@@ -202,11 +202,13 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
         dot(cv.x, cv.z, (cv.voteId ? 2.7 : 1.9) * U, cv.voteId ? "#ffb020" : "#f0b455", cv.voteId ? 1 : 0.85);
       }
     }
-    // farm & jungle animals — brown specks; 🧟 turned strays blaze red so the
-    // hounds of the night can never sneak up on you
-    for (const an of engine.animals) {
-      if (an.dead) continue;
-      dot(an.x, an.z, 1.3 * U, an.zombie ? "#ff5a3a" : "#a97b4f", 0.8);
+    // farm & jungle animals — 🚫 dropped with the wildlife (WILDLIFE_ENABLED
+    // in constants.ts): no beasts roam the town, so no specks to draw
+    if (WILDLIFE_ENABLED) {
+      for (const an of engine.animals) {
+        if (an.dead) continue;
+        dot(an.x, an.z, 1.3 * U, an.zombie ? "#ff5a3a" : "#a97b4f", 0.8);
+      }
     }
   }
   // night danger: the risen horde — the ONE thing the mini must never hide
@@ -352,7 +354,7 @@ function Minimap({ engine, onOpen, pin }: { engine: GameEngine; onOpen: () => vo
 const BIG_MAP_S = 560; // 🗺️ the M-map went full-screen-ish — more room to read the world
 const MAP_LEGEND: [string, string][] = [
   ["#ffffff", "You (arrow = facing)"], ["#f7c948", "💰 Cash piles"], ["#ffd166", "Food"], ["#c084fc", "Power gems (rare!)"],
-  ["#38bdf8", "Driving license 🪪"], ["#6aa0ff", "Police"], ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ["#a97b4f", "Animals"], ["#c084fc", "Zombies · night"], ["#1d2a4a", "Police stn"],
+  ["#38bdf8", "Driving license 🪪"], ["#6aa0ff", "Police"], ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ...(WILDLIFE_ENABLED ? [["#a97b4f", "Animals"]] : []), ["#c084fc", "Zombies · night"], ["#1d2a4a", "Police stn"],
   ["#ffb020", "Loot runner (bright = carrying)"],
   ["#e2e8f0", "Crew survivors (each their color)"], ["#7f1d1d", "Fallen crew ✕"],
   ["#facc15", "Dropped arms"], ["#ffd447", "💰 Loot drops"], ["#92400e", "Barricade"], ["#fb923c", "Campfire"],

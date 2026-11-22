@@ -6,6 +6,7 @@ import { GameLoop, Npcs, Zombies, Animals, JungleInsects, Pickups, Powers, Licen
 import { WorldView, WORLD } from "./WorldView";
 import { GameEngine } from "@/lib/game/engine";
 import type { Appearance } from "@/lib/game/constants";
+import { WILDLIFE_ENABLED } from "@/lib/game/constants";
 import { useGame } from "./store";
 import { sfx } from "@/lib/game/audio";
 
@@ -325,8 +326,11 @@ export function Scene({ engine }: { engine: GameEngine }) {
       <CrewRig engine={engine} />
       <RemotesView engine={engine} />
       <Zombies engine={engine} />
-      <Animals engine={engine} />
-      <JungleInsects engine={engine} />
+      {/* 🚫 Animals & JungleInsects mount only while wildlife is enabled —
+        * with the zoo dropped they stay unmounted: no rigs, no mixers, no
+        * fly-swarm points, nothing (WILDLIFE_ENABLED in constants.ts). */}
+      {WILDLIFE_ENABLED && <Animals engine={engine} />}
+      {WILDLIFE_ENABLED && <JungleInsects engine={engine} />}
       <Pickups engine={engine} />
       <Powers engine={engine} />
       <Licenses engine={engine} />

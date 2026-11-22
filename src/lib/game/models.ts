@@ -17,6 +17,7 @@ import * as THREE from "three";
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { clone as skeletonClone } from "three/examples/jsm/utils/SkeletonUtils.js";
 import { enableGlbCulling } from "@/lib/game/glbCull";
+import { WILDLIFE_ENABLED } from "./constants";
 
 const FILES = {
   wolf: "/models/wolf-base.glb",
@@ -119,9 +120,12 @@ function notify() {
   }
 }
 
-/** Begin the background preload (safe to call repeatedly; no-op on the server). */
+/** Begin the background preload (safe to call repeatedly; no-op on the server).
+ *  🚫 WILDLIFE_ENABLED=false → never downloads a single wildlife GLB — every
+ *  caller (engine constructor, the Animals renderer's safety net) no-ops here,
+ *  so this module is the single point of control for the zoo's streaming. */
 export function preloadModels(): void {
-  if (typeof window === "undefined" || started) return;
+  if (typeof window === "undefined" || started || !WILDLIFE_ENABLED) return;
   started = true;
   const loader = new GLTFLoader();
   for (const kind of Object.keys(FILES) as ModelKind[]) {
