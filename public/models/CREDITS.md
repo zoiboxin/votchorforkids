@@ -94,3 +94,20 @@ ward nurse, surgeon and patient-in-gown characters.
 
 Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
 (https://creativecommons.org/licenses/by/4.0/)
+
+## Prehistoric Valley kit (`models/prehistoric/` — the mountain-band dinosaur valley)
+
+From the [polyfork Prehistoric Valley kit](https://polyfork.dev/kit/prehistoric-valley-8638dc) —
+tyrannosaurus rex, triceratops, stegosaurus, parasaurolophus, velociraptor and
+compsognathus (all skinned with Idle/Walk/Run clips); araucaria monkey puzzle,
+dawn redwood, ginkgo, flowering magnolia, scorched tree, dead snag, tree fern,
+cycad, giant horsetail, fern clump, williamsonia & williamsoniella shrubs,
+club-moss mat and giant mushroom cluster; basalt column outcrop, volcanic
+boulder cluster, lava rock pile, obsidian shard & mineral geode clusters,
+fern-covered boulder, petrified log, hollow log, moss-covered stump and river
+stone cluster; geyser cone, fumarole vent, bubbling mud pool, tar pit, hot
+spring pool, termite mound and amber lump; dinosaur bone pile, skull, fossil
+ribcage, trackway, nest, sauropod nest mound, loose egg clutch and hatching egg.
+
+Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
+(https://creativecommons.org/licenses/by/4.0/)

@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  AIRPORT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, TAXI_TYPE, TREE_FALL_S, TREE_WOBBLE_S, WALL_RADIUS, stationCage, stationGate,
+  AIRPORT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, TAXI_TYPE, TREE_FALL_S, TREE_WOBBLE_S, WALL_RADIUS, inPrehistoricValley, stationCage, stationGate,
   WILDLIFE_ENABLED,
 } from "@/lib/game/constants";
 import {
@@ -27,6 +27,7 @@ import {
 } from "@/components/game/AirportKit";
 import { GraveyardEstate } from "@/components/game/GraveyardKit";
 import { HospitalCampus } from "@/components/game/HospitalKit";
+import { PrehistoricValley } from "@/components/game/PrehistoricValley";
 import { registerCullRoot, resetCullRoots, tickStaticCull } from "@/lib/game/staticCull";
 
 export const WORLD: World = generateWorld();
@@ -4358,6 +4359,7 @@ function AlpineDecor() {
       const x = Math.cos(a) * d, z = Math.sin(a) * d;
       const h = terrainHeight(x, z);
       if (h < 1.2 || h > 13) continue; // on the slopes, off the summits
+      if (inPrehistoricValley(x, z)) continue; // 🦕 the valley floor keeps its own kit ground
       snows.push({ x, z, y: h, s: range(r, 2.2, 5.4) });
     }
     return snows;
@@ -4382,6 +4384,7 @@ function AlpineDecor() {
       const x = Math.cos(a) * d, z = Math.sin(a) * d;
       const h = terrainHeight(x, z);
       if (h < 1 || h > 11) continue;
+      if (inPrehistoricValley(x, z)) continue; // 🦕 cairns stay off the valley floor
       out.push({ x, z, y: h, s: range(r, 0.7, 1.3) });
     }
     return out;
@@ -4406,6 +4409,7 @@ function AlpineDecor() {
       const x = Math.cos(a) * d, z = Math.sin(a) * d;
       const h = terrainHeight(x, z);
       if (h < 1.2 || h > 10) continue;
+      if (inPrehistoricValley(x, z)) continue; // 🦕 spruces stay off the valley floor
       out.push({ x, z, y: h, s: range(r, 1, 1.9) });
     }
     return out;
@@ -5133,7 +5137,8 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
         <Railway />
         <NycDistrict />
         <Landmarks />
-        <HospitalCampus />
+        <HospitalCampus engine={engine} />
+        <PrehistoricValley engine={engine} />
         <Forest engine={engine} />
         <Camps engine={engine} clockRef={clockRef} />
         <Graves clockRef={clockRef} />

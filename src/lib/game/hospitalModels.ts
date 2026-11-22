@@ -119,8 +119,10 @@ export const isHospitalModelReady = (kind: string): boolean =>
   kind in FILES && cache.has(kind as HospitalKind);
 
 /** A fresh independent clone of the kit model, or null while loading.
- *  Skinned characters get a SkeletonUtils clone + a playing Idle mixer. */
-export function spawnHospitalModel(kind: string): { root: THREE.Group; mixer: THREE.AnimationMixer | null } | null {
+ *  Skinned characters get a SkeletonUtils clone + a playing Idle mixer; the
+ *  full clip table rides along so callers (the staff bots) can also play
+ *  Walk/Run and crossfade between them. */
+export function spawnHospitalModel(kind: string): { root: THREE.Group; mixer: THREE.AnimationMixer | null; clips: Record<string, THREE.AnimationClip> } | null {
   const rig = cache.get(kind as HospitalKind);
   if (!rig) return null;
   const root = rig.skinned ? skeletonClone(rig.template) : rig.template.clone(true);
@@ -130,7 +132,7 @@ export function spawnHospitalModel(kind: string): { root: THREE.Group; mixer: TH
     const idle = rig.clips["idle"];
     if (idle) mixer.clipAction(idle).play();
   }
-  return { root, mixer };
+  return { root, mixer, clips: rig.clips };
 }
 
 /** Authored model size in metres (0,0,0 while loading). */

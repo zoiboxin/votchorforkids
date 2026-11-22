@@ -12,6 +12,31 @@ export const DEEP_JUNGLE_RADIUS = 545;
 /** Playable ⛰️ mountain band — rough, scary, and CLIMBABLE (see worldgen.terrainHeight). */
 export const MOUNTAIN_INNER = 610;
 export const MOUNTAIN_OUTER = 700;
+/* ---------- 🦕 Prehistoric Valley (south-west sector of the mountain band) ----------
+ * Past the deep jungle and the mud-valley floor the band opens into a wide
+ * prehistoric valley (polyfork prehistoric-valley-8638dc kit): geysers, fumarole
+ * vents, bubbling mud pools and tar pits, hot spring, volcanic boulders, basalt
+ * outcrops, petrified logs, cycads & tree ferns, fossil bone fields, nests &
+ * trackways — and the dinosaurs still live here. The sector's peaks are carved
+ * away in worldgen (MT_PEAKS skips this arc) so the valley floor stays open and
+ * walkable; every kit placement is generated in prehistoric.ts and the big
+ * dinosaurs get collision circles pushed in worldgen.                       */
+export const PREHISTORIC = {
+  a0: 2.2, a1: 2.8,            // sector angles (radians, atan2(z, x) — SSW → W)
+  rIn: MOUNTAIN_INNER + 2,     // 612 — inside the rim ramp
+  rOut: MOUNTAIN_OUTER - 2,    // 698
+  /** mid-sector anchor point (scatter + landmarks derive from this) */
+  get cx() { return Math.cos((this.a0 + this.a1) / 2) * ((this.rIn + this.rOut) / 2); },
+  get cz() { return Math.sin((this.a0 + this.a1) / 2) * ((this.rIn + this.rOut) / 2); },
+} as const;
+/** true while (x,z) stands inside the prehistoric valley sector (radians unwrapped). */
+export function inPrehistoricValley(x: number, z: number): boolean {
+  const r = Math.hypot(x, z);
+  if (r < PREHISTORIC.rIn || r > PREHISTORIC.rOut) return false;
+  let a = Math.atan2(z, x);
+  while (a < PREHISTORIC.a0) a += Math.PI * 2;
+  return a >= PREHISTORIC.a0 && a <= PREHISTORIC.a1;
+}
 /** 🪦 the cemetery moved OUT of town — deep in the north-west jungle beyond the
  *  ring highway and the railway loop (r≈545). No city road crosses the grounds:
  *  the x=-270 street ends 87u short of the gate and a dirt cemetery lane runs
@@ -716,7 +741,7 @@ export const POINTS_PICKUP = 10;
 export const POINTS_RESCUE = 60;
 export const WIN_BONUS = 500;
 
-export type Zone = "City" | "Farmland" | "Jungle" | "Deep Jungle" | "Graveyard" | "Mountains" | "Mountain Wall";
+export type Zone = "City" | "Farmland" | "Jungle" | "Deep Jungle" | "Graveyard" | "Prehistoric Valley" | "Mountains" | "Mountain Wall";
 export function zoneOf(x: number, z: number): Zone {
   if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < 45) return "Graveyard";
   const r = Math.hypot(x, z);
@@ -724,7 +749,8 @@ export function zoneOf(x: number, z: number): Zone {
     : r < FARM_RADIUS ? "Farmland"
     : r < DEEP_JUNGLE_RADIUS ? "Jungle"
     : r < JUNGLE_RADIUS ? "Deep Jungle"
-    : r < MOUNTAIN_OUTER ? "Mountains"
+    : r < MOUNTAIN_OUTER
+      ? (inPrehistoricValley(x, z) ? "Prehistoric Valley" : "Mountains")
     : "Mountain Wall";
 }
 
@@ -734,6 +760,7 @@ export const ZONE_TOAST: Record<Zone, string> = {
   Jungle: "The big jungle… something in here is WATCHING.",
   "Deep Jungle": "DEEP jungle — dark, dense… and it WATCHES BACK.",
   Graveyard: "Graveyard! At night the zombies wake up…",
+  "Prehistoric Valley": "🦕 The Prehistoric Valley — the dinosaurs never left…",
   Mountains: "⛰️ The SCARY Mountains — high ground hides you from the beast… mostly.",
   "Mountain Wall": "The world ends here. Turn back!",
 };

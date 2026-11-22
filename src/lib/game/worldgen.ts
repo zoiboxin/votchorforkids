@@ -1,4 +1,5 @@
-import { AIRPORT, BUILD_POOL, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, ROCK_COUNT, TAXI_TYPE, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_POOL, WALL_RADIUS, WORLD_SEED, pickVehicle, stationCage, stationGate } from "./constants";
+import { AIRPORT, BUILD_POOL, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, PREHISTORIC, ROCK_COUNT, TAXI_TYPE, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_POOL, WALL_RADIUS, WORLD_SEED, inPrehistoricValley, pickVehicle, stationCage, stationGate } from "./constants";
+import { PREHISTORIC_LAYOUT, prehistoricColliders } from "./prehistoric";
 import { mulberry32, range } from "./rng";
 
 export interface BoxCollider { x: number; z: number; w: number; d: number; /** building height (top y) — lets the chase camera ignore roofs above it */ h?: number } // half extents
@@ -250,9 +251,14 @@ const MT_PEAKS: MTPeak[] = (() => {
   const rnd = mulberry32(WORLD_SEED + 777);
   const list: MTPeak[] = [];
   // major summits — clustered by sector so some directions are huge dark ranges
+  // 🦕 the PREHISTORIC sector arc is SKIPPED entirely — its band stays open
+  // rolling valley floor (the mud-valley bumps only) so the dinosaurs get a
+  // proper valley instead of a summit fence. Skipped peaks shift nothing:
+  // this IIFE has its own dedicated RNG stream.
   const N = 15;
   for (let i = 0; i < N; i++) {
     const a = (i / N) * Math.PI * 2 + range(rnd, -0.1, 0.1);
+    if (a > PREHISTORIC.a0 - 0.18 && a < PREHISTORIC.a1 + 0.18) continue;
     const cl = 0.5 + 0.5 * Math.sin(2 * a + 2.3) * Math.sin(3 * a + 0.9);
     const d = MOUNTAIN_INNER + 30 + cl * 34 + range(rnd, -12, 12);
     list.push({
@@ -263,8 +269,10 @@ const MT_PEAKS: MTPeak[] = (() => {
     });
   }
   // shoulder bumps — fill the valleys so the band reads as one rough massif
+  // (the prehistoric arc keeps its own exclusion — no bumps in the valley)
   for (let i = 0; i < 12; i++) {
     const a = range(rnd, 0, Math.PI * 2), d = range(rnd, MOUNTAIN_INNER + 16, MOUNTAIN_OUTER - 8);
+    if (a > PREHISTORIC.a0 - 0.12 && a < PREHISTORIC.a1 + 0.12) continue;
     list.push({ x: Math.cos(a) * d, z: Math.sin(a) * d, R: range(rnd, 15, 23), h: range(rnd, 6, 13), k: 1.5, r1: 3, r2: 5, p1: range(rnd, 0, 6.283), p2: range(rnd, 0, 6.283) });
   }
   return list;
@@ -1830,6 +1838,20 @@ export function generateWorld(seed = WORLD_SEED): World {
     for (const cr of cp.crates) circles.push({ x: cp.x + cr.dx, z: cp.z + cr.dz, r: 0.55 });
     if (cp.pole) circles.push({ x: cp.x + cp.pole.dx, z: cp.z + cp.pole.dz, r: 0.3 });
   }
+  /* ---- 🦕 prehistoric valley carve-out — the shared RNG stream never feels
+   *  this: items already landed wherever the stream put them, and anything
+   *  that drew a spot INSIDE the valley sector rotates +0.42 rad around the
+   *  origin (same radius, same look) so the kit grounds stay unobstructed.
+   *  Applied BEFORE any collider/render consumer reads these arrays.      */
+  const unwrapOut = (x: number, z: number): { x: number; z: number } => {
+    if (!inPrehistoricValley(x, z)) return { x, z };
+    const a = Math.atan2(z, x) + 0.42, r = Math.hypot(x, z);
+    return { x: Math.cos(a) * r, z: Math.sin(a) * r };
+  };
+  for (let i = 0; i < rocks.length; i++) { const p = unwrapOut(rocks[i].x, rocks[i].z); rocks[i].x = p.x; rocks[i].z = p.z; }
+  for (const sp of spires) { const p = unwrapOut(sp.x, sp.z); sp.x = p.x; sp.z = p.z; }
+  if (lookout) { const p = unwrapOut(lookout.x, lookout.z); lookout.x = p.x; lookout.z = p.z; }
+
   // 🔨 breakable boulders — each rock owns one solid collider tagged with its
   // index (rock:i); its slot is ALSO recorded in rockCi so the hammer can
   // shrink it to rubble when it finally cracks.
@@ -1889,6 +1911,11 @@ export function generateWorld(seed = WORLD_SEED): World {
   for (const wc of HOSPKIT.wheelchairs) circles.push({ x: wc.x, z: wc.z, r: 0.4 });        // parked wheelchairs
   for (const gc of HOSPKIT.gasCylinders) circles.push({ x: gc.x, z: gc.z, r: 0.25 });      // medical gas cylinders
   for (const bn of HOSPKIT.bins) circles.push({ x: bn.x, z: bn.z, r: 0.4 });               // clinical waste bins
+  /* ---- 🦕 prehistoric valley — thermal features, big bones & the BIG locals
+   *  are solid (layout + colliders generated together in prehistoric.ts so
+   *  the render and the grid can never disagree). Little raptors & compys
+   *  wander collider-free — they're knee-high.                            ---- */
+  for (const pc of prehistoricColliders()) circles.push({ x: pc.x, z: pc.z, r: pc.r });
   /* ---- 🗽 NYC district — solid street furniture (subway rails, kiosks, cabs…) ---- */
   for (const sb of NYC.solidBoxes) boxes.push(sb);
   for (const sc of NYC.solidCircles) circles.push(sc);

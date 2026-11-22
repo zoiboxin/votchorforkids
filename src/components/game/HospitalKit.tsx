@@ -14,7 +14,7 @@
  * Placement data (HOSPKIT) is derived from the HOSPITAL const in worldgen —
  * colliders and rendering always agree. Orientation tweaks live in MODEL_YAW.
  */
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { HOSPKIT } from "@/lib/game/worldgen";
@@ -22,6 +22,7 @@ import {
   bakeHospitalModel, onHospitalModelsReady, spawnHospitalModel,
   type HospitalKind, type HospitalPlacement,
 } from "@/lib/game/hospitalModels";
+import type { GameEngine } from "@/lib/game/engine";
 
 /** authored forward fixes — tune if a catalog update turns a model around */
 const MODEL_YAW: Partial<Record<HospitalKind, number>> = {};
@@ -34,6 +35,17 @@ function useKitModel(kind: HospitalKind) {
     return onHospitalModelsReady(() => setSpawn(spawnHospitalModel(kind)));
   }, [kind, spawn]);
   useFrame((_, dt) => { if (spawn?.mixer) spawn.mixer.update(dt); });
+  return spawn;
+}
+
+/** like useKitModel but WITHOUT the automatic mixer tick — the staff bots
+ *  drive their own mixers (Walk↔Idle crossfade, distance-gated) */
+function useStaffModel(kind: HospitalKind) {
+  const [spawn, setSpawn] = useState(() => spawnHospitalModel(kind));
+  useEffect(() => {
+    if (spawn) return;
+    return onHospitalModelsReady(() => setSpawn(spawnHospitalModel(kind)));
+  }, [kind, spawn]);
   return spawn;
 }
 
@@ -186,20 +198,137 @@ function CampusYard() {
   );
 }
 
-/* ---------------- the kit crew (skinned, idling) ---------------- */
+/* ---------------- the kit crew — WORKING staff bots, not statues ----------------
+ * The five kit characters used to idle forever at their spawn spots. Now each
+ * one walks a real shift loop on the campus grounds: the doctor does the
+ * rounds (canopy → plaza → clinic annexe → back), the nurse tends the parked
+ * wheelchairs and checks the benches, the paramedic walks the ambulance bay
+ * checking each vehicle at the ER doors, the surgeon holds the ER forecourt,
+ * and the patient shuffles slowly between the annexe and the plaza benches
+ * for fresh air. Walk clip while moving, Idle clip while pausing — both play
+ * permanently and crossfade by weight, and the whole mixer gates on player
+ * distance so far-away staff cost nothing.                                   */
 
-function CampusStaff() {
+/** one shift loop: waypoints + idle seconds at each + walk speed (u/s) */
+interface StaffShift { pts: [number, number][]; stops: number[]; walkS: number }
+
+const STAFF_SHIFTS: StaffShift[] = [
+  // doctor — ward rounds from the canopy to the clinic annexe and back
+  {
+    pts: [[100, 104.6], [98.6, 99.5], [89.5, 100.05], [86.9, 100.1], [89.5, 100.05], [98.6, 99.5]],
+    stops: [2.4, 1.8, 1.0, 3.2, 1.0, 1.4],
+    walkS: 1.6,
+  },
+  // nurse — wheelchair check under the canopy, then the plaza benches
+  {
+    pts: [[103.4, 99.8], [102.9, 105.7], [102.6, 104.6], [99.2, 101.8], [94.3, 97.3], [98.8, 99.6]],
+    stops: [1.0, 3.0, 1.4, 0, 2.6, 0.8],
+    walkS: 1.5,
+  },
+  // paramedic — ambulance bay checklist, bay 1 → bay 2 → ER doors
+  {
+    pts: [[108.6, 91.6], [111.6, 89.5], [108.6, 91.6], [111.6, 93.5], [114.3, 92.2]],
+    stops: [1.2, 2.6, 0, 2.6, 2.2],
+    walkS: 1.7,
+  },
+  // patient — a slow shuffle from the annexe to the benches and back
+  {
+    pts: [[89.6, 99.2], [92.2, 96.4], [93.4, 92.6], [96.8, 98.3], [93.6, 99.8]],
+    stops: [2.0, 0, 4.2, 2.0, 1.6],
+    walkS: 0.95,
+  },
+  // surgeon — holds the ER forecourt, checks the bay then the wet-sign corner
+  {
+    pts: [[110.8, 95.8], [113.2, 92.0], [114.5, 92.6], [110.6, 91.7], [108.7, 94.9]],
+    stops: [1.0, 1.8, 2.4, 1.4, 2.0],
+    walkS: 1.6,
+  },
+];
+
+const STAFF_SEE = 120; // mixer distance gate (u)
+
+function StaffBot({ kind, shift, engine }: { kind: HospitalKind; shift: StaffShift; engine: GameEngine }) {
+  const spawn = useStaffModel(kind);
+  const st = useRef({
+    pos: { x: shift.pts[0][0], z: shift.pts[0][1] },
+    wp: 1,
+    idleT: shift.stops[0] ?? 0,
+    face: 0,
+    primed: false,
+    walk: null as THREE.AnimationAction | null,
+    idle: null as THREE.AnimationAction | null,
+  });
+  // face the first leg when the clone lands (KitProp-style transform below)
+  useEffect(() => {
+    if (!spawn || st.current.primed) return;
+    st.current.primed = true;
+    const s = st.current;
+    const t = shift.pts[1 % shift.pts.length];
+    s.face = Math.atan2(t[0] - s.pos.x, t[1] - s.pos.z);
+    if (spawn.mixer) {
+      const w = spawn.clips["walk"], id = spawn.clips["idle"];
+      if (w) { const a = spawn.mixer.clipAction(w); a.play(); s.walk = a; s.walk.setEffectiveWeight(0); }
+      if (id) { const a = spawn.mixer.clipAction(id); a.play(); s.idle = a; }
+    }
+  }, [spawn, shift]);
+  useFrame((_, dt) => {
+    const s = st.current;
+    const root = spawn?.root, mixer = spawn?.mixer;
+    if (!root || !mixer) return;
+    // distance gate — the campus sits at the city's edge; far away, they sleep
+    const p = engine.player;
+    if (p && Math.hypot(p.x - s.pos.x, p.z - s.pos.z) > STAFF_SEE) return;
+    const n = shift.pts.length;
+    if (s.idleT > 0) {
+      s.idleT -= dt;
+    } else {
+      const t = shift.pts[s.wp % n];
+      const dx = t[0] - s.pos.x, dz = t[1] - s.pos.z;
+      const dist = Math.hypot(dx, dz);
+      if (dist < 0.22) {
+        s.wp = (s.wp + 1) % n;
+        s.idleT = Math.max(0, shift.stops[(s.wp + n - 1) % n]);
+      } else {
+        const step = Math.min(dist, shift.walkS * dt);
+        s.pos.x += (dx / dist) * step;
+        s.pos.z += (dz / dist) * step;
+        const want = Math.atan2(dx, dz);
+        let da = want - s.face;
+        while (da > Math.PI) da -= Math.PI * 2;
+        while (da < -Math.PI) da += Math.PI * 2;
+        s.face += da * Math.min(1, 9 * dt);
+      }
+    }
+    // Walk↔Idle crossfade — both actions play, weights ease toward the state
+    const moving = s.idleT <= 0;
+    if (s.walk) s.walk.setEffectiveWeight(s.walk.weight + ((moving ? 1 : 0) - s.walk.weight) * Math.min(1, dt * 6));
+    if (s.idle) s.idle.setEffectiveWeight(s.idle.weight + ((moving ? 0 : 1) - s.idle.weight) * Math.min(1, dt * 6));
+    root.position.set(s.pos.x, 0.062, s.pos.z); // ride the paving slabs
+    root.rotation.y = s.face;
+    mixer.update(dt);
+  });
+  if (!spawn) return null;
+  return (
+    <primitive
+      object={spawn.root}
+      position={[shift.pts[0][0], 0.062, shift.pts[0][1]]}
+      rotation-y={0}
+    />
+  );
+}
+
+function CampusStaff({ engine }: { engine: GameEngine }) {
   return (
     <group>
       {HOSPKIT.staff.map((st, i) => (
-        <KitProp key={i} kind={st.kind} x={st.x} z={st.z} rot={st.rot} />
+        <StaffBot key={i} kind={st.kind as HospitalKind} shift={STAFF_SHIFTS[i % STAFF_SHIFTS.length]} engine={engine} />
       ))}
     </group>
   );
 }
 
 /** the whole campus — mount inside WorldView's static cull root */
-export function HospitalCampus() {
+export function HospitalCampus({ engine }: { engine: GameEngine }) {
   return (
     <group>
       <CampusGrounds />
@@ -208,7 +337,7 @@ export function HospitalCampus() {
       <CampusFence />
       <CampusPlaza />
       <CampusYard />
-      <CampusStaff />
+      <CampusStaff engine={engine} />
     </group>
   );
 }

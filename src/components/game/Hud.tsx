@@ -8,7 +8,7 @@ import {
   ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon, Mouse, Eye, ScrollText,
 } from "lucide-react";
 import type { GameEngine } from "@/lib/game/engine";
-import { AIRPORT, DETAIN_SECONDS, GRAVEYARD, ITEMS, INV_SLOTS, MUSEUM, NIGHTS_TOTAL, POLICE_STATIONS, POWERS, TOOLS, WILDLIFE_ENABLED } from "@/lib/game/constants";
+import { AIRPORT, DETAIN_SECONDS, GRAVEYARD, ITEMS, INV_SLOTS, MUSEUM, NIGHTS_TOTAL, POLICE_STATIONS, POWERS, PREHISTORIC, TOOLS, WILDLIFE_ENABLED } from "@/lib/game/constants";
 import { BARN_BASE, HOSPITAL, MALL, RAILWAY, RAILWAY_stationHouse, SCHOOL } from "@/lib/game/worldgen";
 import { useGame } from "./store";
 import { requestGameLock } from "./Scene";
@@ -36,6 +36,8 @@ const MAP_POIS: { x: number; z: number; disc: string; ring: string; glyph: strin
   { x: MALL.x, z: MALL.z, disc: "#0d9488", ring: "#134e4a", glyph: "M", label: "MALL", ly: 26 },
   { x: SCHOOL.x, z: SCHOOL.z, disc: "#fbbf24", ring: "#78350f", glyph: "S", gc: "#3b2f10", label: "SCHOOL", ly: -18 },
   { x: MUSEUM.x, z: MUSEUM.z, disc: "#c9a45c", ring: "#713f12", glyph: "V", gc: "#3b2f10", label: "MUSEUM", ly: 26 },
+  // 🦕 the prehistoric valley — badge sits on the sector's mid anchor
+  { x: PREHISTORIC.cx, z: PREHISTORIC.cz, disc: "#a98d5f", ring: "#5c452a", glyph: "🦕", label: "DINO VALLEY", ly: 30 },
   // 🚜 the three barns — every farm plots its own badge
   ...BARN_BASE.map(([x, z]) => ({ x, z, disc: "#92400e", ring: "#451a03", glyph: "F", label: "FARM", ly: 26 })),
 ];
@@ -56,6 +58,13 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
   };
   c.clearRect(0, 0, S, S);
   dot(0, 0, 712 * K, "#4a4038");     // ⛰️ rough mountain band hugging the wall
+  // 🦕 prehistoric valley — a sandy sector wedge on the mountain band (SW arc)
+  c.fillStyle = "rgba(169,141,95,0.6)";
+  c.beginPath();
+  c.arc(S / 2, S / 2, PREHISTORIC.rOut * K, PREHISTORIC.a0, PREHISTORIC.a1);
+  c.arc(S / 2, S / 2, PREHISTORIC.rIn * K, PREHISTORIC.a1, PREHISTORIC.a0, true);
+  c.closePath();
+  c.fill();
   dot(0, 0, 610 * K, "#1c3f24");     // deep jungle — darker outer band hugging the mountains
   dot(0, 0, 545 * K, "#2d5a2e");
   dot(0, 0, 465 * K, "#7a8f3f");
