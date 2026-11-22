@@ -6,8 +6,9 @@
  * A dense desktop lobby, exactly the pattern from the big battle-royale games:
  *   • angled logo band + tab rail on top (Lobby · Battle Pass · Challenges ·
  *     Locker · Item Shop · Career · News) with XP / crew chips and the avatar
- *   • left column: SEASON card (LEVEL + XP bar + battle-pass tier strip),
- *     SUGGESTED CHALLENGES and the DAILY CHALLENGES board with progress bars
+ *   • left rail: SEASON, SUGGESTED CHALLENGES and the DAILY CHALLENGES board
+ *     collapse into icon buttons — click one to pop open just that card
+ *     (one at a time, click again to close)
  *   • center: the rigged GLB survivor LIVE on the lobby floor (drag to spin,
  *     glowing center circle — no cartoon bodies) with the name plate + READY
  *     status above and the rank boost pill below
@@ -26,8 +27,9 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import {
-  BarChart3, Check, ChevronRight, Crown, Flame, History as HistoryIcon, Info,
-  Lock, MessageSquare, Newspaper, Pencil, Play, Send, Settings, ShoppingBag, Star, Trophy, User, Users, X, Zap,
+  BarChart3, CalendarDays, Check, ChevronRight, Crown, Flame, History as HistoryIcon, Info,
+  Lock, MessageSquare, Newspaper, Pencil, Play, Send, Settings, ShoppingBag, Sparkles, Star, Trophy, User, Users, X, Zap,
+  type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -79,6 +81,9 @@ const TABS: { id: Tab; label: string; key?: string }[] = [
   { id: "career", label: "Career" },
   { id: "news", label: "News", key: "N" },
 ];
+
+/** the ONE lobby card popped open from the left icon rail (or none) */
+type LobbyCard = "season" | "suggested" | "daily";
 
 /* ---------------- tiny building blocks ---------------- */
 
@@ -226,6 +231,7 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
   const [statsOpen, setStatsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [countdown, setCountdown] = useState("");
+  const [lobbyCard, setLobbyCard] = useState<LobbyCard | null>(null);
 
   const hasProfile = playerName.trim().length > 0;
   const { rank, next, progress, toNext } = rankFor(careerXp);
@@ -284,7 +290,22 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
 
   const openTab = (id: Tab) => { sfx.click(); setTab(id); };
 
+  /** left-rail icons — open exactly ONE lobby card (Season / Suggested / Daily);
+   *  clicking the active icon closes it, clicking another swaps the panel */
+  const toggleLobbyCard = (id: LobbyCard) => {
+    sfx.click();
+    setTab("lobby");
+    setLobbyCard((cur) => (cur === id ? null : id));
+  };
+
   const doneCount = daily.tasks.filter((t) => t.done).length;
+
+  /* the left rail — three lobby cards collapsed to icons (badges live on them) */
+  const lobbyCards: { id: LobbyCard; label: string; icon: LucideIcon; badge?: string }[] = [
+    { id: "season", label: "Season", icon: Crown, badge: `S${season}` },
+    { id: "suggested", label: "Suggested", icon: Sparkles },
+    { id: "daily", label: "Daily", icon: CalendarDays, badge: `${doneCount}/${daily.tasks.length}` },
+  ];
 
   return (
     <div className="fixed inset-0 flex flex-col overflow-hidden bg-slate-950 text-white">
@@ -375,16 +396,53 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
 
       {/* ================= main: left panels + center stage ================= */}
       <main className="lobby-scroll relative z-10 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-2 py-3 pb-2 sm:px-3 lg:flex-row lg:overflow-hidden">
-        {/* -------- left column (panels per tab) -------- */}
-        <aside className="lobby-scroll order-2 w-full shrink-0 space-y-2.5 lg:order-1 lg:w-[330px] lg:overflow-y-auto lg:pr-1.5">
-          <motion.div
-            key={tab}
-            initial={{ opacity: 0, y: 10 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.18 }}
-            className="space-y-2.5"
-          >
-            {/* ---------- SEASON card (always visible — the lobby identity) ---------- */}
+        {/* -------- left rail: Season / Suggested / Daily collapse to icons -------- */}
+        <aside className="lobby-scroll order-2 w-full shrink-0 lg:order-1 lg:w-[330px] lg:overflow-y-auto lg:pr-1.5">
+          <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start lg:gap-2">
+            {/* icon rail — click an icon to pop open just that card (one at a time) */}
+            <div role="tablist" aria-label="Lobby cards" className="flex shrink-0 flex-row gap-1.5 lg:flex-col">
+              {lobbyCards.map((c) => {
+                const open = tab === "lobby" && lobbyCard === c.id;
+                const RailIcon = c.icon;
+                return (
+                  <button
+                    key={c.id}
+                    role="tab"
+                    aria-selected={open}
+                    aria-label={`Open ${c.label} card`}
+                    title={`${c.label}${c.badge ? ` — ${c.badge}` : ""}`}
+                    onClick={() => toggleLobbyCard(c.id)}
+                    className={`relative flex h-14 w-14 shrink-0 flex-col items-center justify-center gap-0.5 rounded-md border transition-all ${
+                      open
+                        ? "border-orange-400/80 bg-orange-600/25 text-orange-200 shadow-[0_0_14px_rgba(234,88,12,0.4)]"
+                        : "border-white/15 bg-slate-950/85 text-white/70 backdrop-blur hover:bg-slate-800/90 hover:text-white"
+                    }`}
+                  >
+                    <RailIcon size={18} />
+                    <span className="text-[8px] font-black uppercase tracking-wider">{c.label}</span>
+                    {c.badge && (
+                      <span
+                        className={`absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-black text-white ring-2 ring-slate-950 ${
+                          c.id === "daily" && doneCount === daily.tasks.length ? "bg-emerald-500" : "bg-orange-600"
+                        }`}
+                      >
+                        {c.badge}
+                      </span>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            <motion.div
+              key={`${tab}-${lobbyCard ?? "none"}`}
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.18 }}
+              className="min-w-0 flex-1 space-y-2.5"
+            >
+            {/* ---------- SEASON card (pops open from its rail icon) ---------- */}
+            {tab === "lobby" && lobbyCard === "season" && (
             <Panel>
               <Strip right={<span className="text-[10px] font-black uppercase text-white/85">Survive the 7 nights</span>}>
                 Season {season}
@@ -427,10 +485,10 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
                 </button>
               </div>
             </Panel>
+            )}
 
-            {/* ---------- LOBBY tab: suggested + daily challenges ---------- */}
-            {tab === "lobby" && (
-              <>
+            {/* ---------- SUGGESTED challenges card (pops open from its rail icon) ---------- */}
+            {tab === "lobby" && lobbyCard === "suggested" && (
                 <Panel>
                   <Strip>Suggested challenges</Strip>
                   <div className="space-y-1.5 p-2.5">
@@ -460,7 +518,10 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
                     </button>
                   </div>
                 </Panel>
+            )}
 
+            {/* ---------- DAILY challenges card (pops open from its rail icon) ---------- */}
+            {tab === "lobby" && lobbyCard === "daily" && (
                 <Panel>
                   <Strip right={<span className="text-[10px] font-black text-white/85">{doneCount}/{daily.tasks.length} done</span>}>
                     Daily challenges
@@ -495,7 +556,6 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
                     </div>
                   </div>
                 </Panel>
-              </>
             )}
 
             {/* ---------- BATTLE PASS tab: the rank ladder ---------- */}
@@ -687,7 +747,8 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
                 </div>
               </Panel>
             )}
-          </motion.div>
+            </motion.div>
+          </div>
         </aside>
 
         {/* -------- center: the survivor stage -------- */}
