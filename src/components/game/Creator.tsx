@@ -1,28 +1,50 @@
 "use client";
 
+/**
+ * Creator — the LOCKER: a rigged-GLB survivor workshop.
+ *
+ * Every setting here is driven by the Polyfork GLB character files — the same
+ * rigged, clip-animated humans the lobby stage and the town render:
+ *
+ *   • HERO — browse the whole catalog by kit area and WEAR any citizen. The
+ *     portraits, streaming state and the worn-hero info strip (name, kit
+ *     area, the animation clips embedded in the file) all read straight from
+ *     the GLB files. The old paint-a-cartoon "Classic" option is gone.
+ *   • BODY — the age/size pick rescales the worn GLB (makeGlbInstance's
+ *     ageScale) and retunes run speed / jump / recovery.
+ *
+ * The old outfit & style tabs (skin / shirt / pants / shoe swatches, outfit
+ * presets, hair, caps, glasses, girl/boy) are REMOVED — they only painted the
+ * cartoon stand-in body, which the rigged GLB covers up the moment it lands
+ * (lobby stage is GLB-only, and in town the rig swaps over the cartoon). The
+ * preview streams the actual worn GLB — a loader chip until the file lands,
+ * then the rigged body plays every showcase move through the same
+ * poseCharacter router the game uses.
+ */
+
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Canvas, useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { motion } from "framer-motion";
 import {
-  Play, Sparkles, ArrowLeft, Dices, HelpCircle, Check, Hand, Moon,
-  Gauge, ChevronsUp, HeartPulse, Shirt, Palette, Baby, UserRound, Loader2,
+  Play, Sparkles, ArrowLeft, Dices, HelpCircle, Hand, Moon,
+  Gauge, ChevronsUp, HeartPulse, Baby, UserRound, Loader2,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Switch } from "@/components/ui/switch";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Tabs, TabsList, TabsTrigger, TabsContent } from "@/components/ui/tabs";
 import {
-  AGE_STATS, CAP_COLORS, HAIR_COLORS, HAIR_STYLES, NAME_SUGGESTIONS, OUTFIT_PRESETS, PANTS_COLORS, SHIRT_COLORS, SHOE_COLORS, SKIN_TONES,
-  randomAppearance,
-  type AgeGroup, type Appearance, type HairStyle, type OutfitPreset,
+  AGE_STATS, DEFAULT_HERO_SLUG, NAME_SUGGESTIONS, randomAppearance,
+  type AgeGroup, type Appearance,
 } from "@/lib/game/constants";
-import { buildCharacter, poseCharacter } from "@/lib/game/character";
+import { poseCharacter } from "@/lib/game/character";
 import {
   ALL_GLB_CHARS, GLB_AREAS, GLB_CHAR_COUNT, TOWN_AREA_ID, ensureGlbArea,
-  glbAreaStatus, glbCharDef, glbCharFailed, glbThumb, preloadGlbCharacters,
+  glbAreaStatus, glbCharDef, glbCharFailed, glbTemplate, glbThumb,
+  loadGlbTemplate, makeGlbInstance, preloadGlbCharacters,
   useGlbAreaState, useGlbThumbs,
+  type GlbInstance,
 } from "@/lib/game/glbCharacters";
 import { sfx } from "@/lib/game/audio";
 import { useGame } from "./store";
@@ -51,11 +73,61 @@ const ANIM_BUTTONS: { id: PoseAnimName; label: string }[] = [
   { id: "getup", label: "Get up" },
 ];
 
+/** Soft shadow pool under the preview boots — module-level canvas singleton
+ *  (same pattern as LobbyStage's ground/shadow textures). */
+let podiumShadowTex: THREE.CanvasTexture | null = null;
+function getPodiumShadow(): THREE.CanvasTexture {
+  if (podiumShadowTex) return podiumShadowTex;
+  const c = document.createElement("canvas");
+  c.width = c.height = 128;
+  const ctx = c.getContext("2d")!;
+  const g = ctx.createRadialGradient(64, 64, 6, 64, 64, 62);
+  g.addColorStop(0, "rgba(2,8,6,0.55)");
+  g.addColorStop(0.5, "rgba(2,8,6,0.22)");
+  g.addColorStop(1, "rgba(2,8,6,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 128, 128);
+  podiumShadowTex = new THREE.CanvasTexture(c);
+  return podiumShadowTex;
+}
+
 export function Preview({ look, anim = "idle" }: { look: Appearance; anim?: PoseAnimName }) {
-  const mesh = useMemo(
-    () => buildCharacter(look, { shadow: true }),
-    [look],
-  );
+  const slug = look.char || DEFAULT_HERO_SLUG;
+  const ageScale = AGE_STATS[look.age]?.scale ?? 1;
+
+  // persistent THREE root — the worn GlbInstance rides userData.glb so
+  // poseCharacter routes every showcase move to the rigged body's clip mixer
+  const root = useMemo(() => new THREE.Group(), []);
+  const [loaded, setLoaded] = useState<{ slug: string; ok: boolean } | null>(null);
+
+  // stream the worn hero's GLB file (cache-shared with the lobby stage),
+  // then swap the rigged instance into the root — no cartoon stand-in here,
+  // the locker previews exactly the file the game will wear. State is only
+  // touched in the promise callbacks; until they land, the stale `loaded`
+  // tag simply doesn't match the new slug and the chip shows "streaming".
+  useEffect(() => {
+    let live = true;
+    loadGlbTemplate(slug)
+      .then(() => {
+        if (!live) return;
+        const prev = root.userData.glb as GlbInstance | undefined;
+        if (prev) { prev.mixer.stopAllAction(); root.remove(prev.body); }
+        const inst = makeGlbInstance(slug, ageScale);
+        if (inst) {
+          root.userData.glb = inst;
+          root.add(inst.body);
+        }
+        setLoaded({ slug, ok: !!inst });
+      })
+      .catch(() => { if (live) setLoaded({ slug, ok: false }); });
+    return () => { live = false; };
+  }, [slug, ageScale, root]);
+
+  // unmount — silence the mixer (template geometry is shared, never disposed)
+  useEffect(() => () => {
+    (root.userData.glb as GlbInstance | undefined)?.mixer.stopAllAction();
+  }, [root]);
+
   const g = useRef<THREE.Group>(null!);
   const spin = useRef(0);
   const drag = useRef({ on: false, lastX: 0, idle: 99 });
@@ -75,6 +147,8 @@ export function Preview({ look, anim = "idle" }: { look: Appearance; anim?: Pose
   };
   const endDrag = () => { drag.current.on = false; };
 
+  const stage = loaded && loaded.slug === slug ? loaded : null;
+
   return (
     <div
       className="relative h-full w-full cursor-grab active:cursor-grabbing"
@@ -85,7 +159,7 @@ export function Preview({ look, anim = "idle" }: { look: Appearance; anim?: Pose
       onPointerCancel={endDrag}
       onPointerLeave={endDrag}
       role="img"
-      aria-label={`3D preview of your survivor: ${look.char ? (glbCharDef(look.char)?.name ?? "rigged character") : look.girl ? "girl" : "boy"}, ${look.age}, ${look.hairStyle} hair`}
+      aria-label={`3D preview of your survivor: ${glbCharDef(slug)?.name ?? "rigged hero"} (${look.age})`}
     >
       <Canvas
         className="absolute inset-0"
@@ -106,19 +180,43 @@ export function Preview({ look, anim = "idle" }: { look: Appearance; anim?: Pose
           <ringGeometry args={[1.55, 1.7, 48]} />
           <meshBasicMaterial color="#fde047" transparent opacity={0.6} />
         </mesh>
+        {/* contact shadow pool right under the boots */}
+        <mesh rotation-x={-Math.PI / 2} position-y={0.045}>
+          <planeGeometry args={[1.5, 1.5]} />
+          <meshBasicMaterial map={getPodiumShadow()} transparent depthWrite={false} />
+        </mesh>
         <group ref={g}>
-          <primitive object={mesh} />
+          <primitive object={root} />
         </group>
-        <PreviewAnim mesh={mesh} g={g} spin={spin} drag={drag} anim={anim} />
+        <PreviewAnim root={root} g={g} spin={spin} drag={drag} anim={anim} />
       </Canvas>
+
+      {/* streaming chip — the locker wears real GLB files or nothing */}
+      {(!stage || !stage.ok) && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-4 z-10 flex justify-center">
+          <div className="flex items-center gap-2 rounded-full bg-slate-950/80 px-3.5 py-1.5 text-[11px] font-black uppercase tracking-[0.14em] text-white/80 ring-1 ring-white/20 backdrop-blur">
+            {stage && !stage.ok ? (
+              <>
+                <span className="text-red-300">hero stream failed</span>
+                <span className="text-white/45">— pick another hero</span>
+              </>
+            ) : (
+              <>
+                <Loader2 size={13} className="animate-spin text-yellow-300" />
+                streaming your hero…
+              </>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
 function PreviewAnim({
-  mesh, g, spin, drag, anim,
+  root, g, spin, drag, anim,
 }: {
-  mesh: THREE.Object3D;
+  root: THREE.Object3D;
   g: React.RefObject<THREE.Group | null>;
   spin: { current: number };
   drag: { current: { on: boolean; lastX: number; idle: number } };
@@ -138,72 +236,44 @@ function PreviewAnim({
     if (g.current) {
       const sway = !d.on && d.idle > 1.0 ? Math.sin(t * 0.42) * 0.5 : 0;
       g.current.rotation.y = spin.current + sway;
-      // scripted air arcs: idle keeps the old periodic hop · jump draws a real leap
-      let y = 0;
-      if (anim === "idle") {
-        const hopPhase = t % 4.2;
-        y = hopPhase > 3.4 ? Math.sin(((hopPhase - 3.4) / 0.8) * Math.PI) * 0.55 : 0;
-      } else if (anim === "jump") {
-        const p = (t % 1.4) / 1.4;
-        y = Math.sin(p * Math.PI) * 1.05;
-      }
-      g.current.position.y = y;
+      // planted like the lobby stage — the Idle clip carries the motion;
+      // the only scripted root arc is the jump showcase's leap
+      g.current.position.y = anim === "jump" ? Math.sin(((t % 1.4) / 1.4) * Math.PI) * 1.05 : 0;
     }
-    // 🎬 the chosen move — routed through the same poseCharacter the town uses,
-    // so the stage previews EXACTLY what the game will play
-    if (anim === "walk") poseCharacter(mesh, 4.6, t, {});
-    else if (anim === "run") poseCharacter(mesh, 9.6, t, {});
+    // the death tip owns the root — every other move stands upright
+    if (anim !== "death") root.rotation.x = 0;
+    // 🎬 the chosen move — routed through the same poseCharacter the town
+    // uses; with a rigged body attached it plays the GLB clip mixer + the
+    // Mixamo bone overlays, so the stage previews EXACTLY what the game plays
+    if (anim === "walk") poseCharacter(root, 4.6, t, {});
+    else if (anim === "run") poseCharacter(root, 9.6, t, {});
     else if (anim === "jump") {
       const p = (t % 1.4) / 1.4;
-      poseCharacter(mesh, 0, t, { airborne: p < 0.85, vy: Math.cos(p * Math.PI) * 4.6 });
-    } else if (anim === "fight") poseCharacter(mesh, 0, t, { swing: (t % 0.9) / 0.9 });
-    else if (anim === "dance") poseCharacter(mesh, 0, t, { dance: true });
-    else if (anim === "wave") poseCharacter(mesh, 0, t, { wave: true });
-    else if (anim === "cheer") poseCharacter(mesh, 0, t, { cheer: true });
-    else if (anim === "drive") poseCharacter(mesh, 0, t, { drive: true });
+      poseCharacter(root, 0, t, { airborne: p < 0.85, vy: Math.cos(p * Math.PI) * 4.6 });
+    } else if (anim === "fight") poseCharacter(root, 0, t, { swing: (t % 0.9) / 0.9 });
+    else if (anim === "dance") poseCharacter(root, 0, t, { dance: true });
+    else if (anim === "wave") poseCharacter(root, 0, t, { wave: true });
+    else if (anim === "cheer") poseCharacter(root, 0, t, { cheer: true });
+    else if (anim === "drive") poseCharacter(root, 0, t, { drive: true });
     else if (anim === "death") {
       // fall → rest a beat → restart (the root tips over like the real corpse fall)
       const p = (t % 4.6) / 4.6;
       const ez = Math.min(1, p / 0.28);
-      mesh.rotation.x = -(ez * ez * (3 - 2 * ez)) * Math.PI / 2.1;
-      poseCharacter(mesh, 0, t, { death: ez });
+      root.rotation.x = -(ez * ez * (3 - 2 * ez)) * Math.PI / 2.1;
+      poseCharacter(root, 0, t, { death: ez });
     } else if (anim === "getup") {
       // down → push-off → stand → a beat of idle → loop
       const p = t % 3.6;
       const g8 = Math.max(0, 1 - p / 1.35);
-      mesh.rotation.x = 0;
-      poseCharacter(mesh, 0, t, { getup: g8 });
+      poseCharacter(root, 0, t, { getup: g8 });
     } else {
-      mesh.rotation.x = 0;
-      poseCharacter(mesh, 0, t, { airborne: t % 4.2 > 3.45 });
+      poseCharacter(root, 0, t, {});
     }
   });
   return null;
 }
 
-/* ============================ swatch helpers ============================ */
-
-function Swatches({ colors, value, onChange, label }: { colors: string[]; value: string; onChange: (c: string) => void; label: string }) {
-  return (
-    <div className="flex items-center gap-3">
-      <div className="w-14 shrink-0 text-[11px] font-black uppercase tracking-wide text-white/70">{label}</div>
-      <div className="flex flex-1 flex-wrap gap-1.5">
-        {colors.map((c) => (
-          <button
-            key={c}
-            aria-label={`${label} ${c}`}
-            aria-pressed={value === c}
-            onClick={() => { sfx.click(); onChange(c); }}
-            className={`h-7 w-7 rounded-full border-2 transition-transform hover:scale-110 ${
-              value === c ? "scale-110 border-white shadow-[0_0_10px_rgba(253,224,71,0.45)] ring-2 ring-yellow-300" : "border-white/25"
-            }`}
-            style={{ background: c }}
-          />
-        ))}
-      </div>
-    </div>
-  );
-}
+/* ============================ hero picker (GLB only) ============================ */
 
 function AgeCards({ value, onChange }: { value: AgeGroup; onChange: (a: AgeGroup) => void }) {
   const ages: { id: AgeGroup; emoji: string }[] = [
@@ -218,7 +288,7 @@ function AgeCards({ value, onChange }: { value: AgeGroup; onChange: (a: AgeGroup
   ];
   return (
     <div>
-      <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-white/70">Age & size</div>
+      <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-white/70">Age &amp; size</div>
       <div className="grid grid-cols-4 gap-2">
         {ages.map((a) => (
           <button
@@ -255,46 +325,20 @@ function AgeCards({ value, onChange }: { value: AgeGroup; onChange: (a: AgeGroup
   );
 }
 
-function StylePicker({ value, onChange }: { value: HairStyle; onChange: (h: HairStyle) => void }) {
-  return (
-    <div className="flex items-start gap-3">
-      <div className="w-14 shrink-0 pt-1.5 text-[11px] font-black uppercase tracking-wide text-white/70">Hair</div>
-      <div className="grid flex-1 grid-cols-5 gap-1.5">
-        {HAIR_STYLES.map((h) => (
-          <button
-            key={h.id}
-            aria-pressed={value === h.id}
-            onClick={() => { sfx.click(); onChange(h.id); }}
-            className={`truncate rounded-full border-2 px-1 py-1 text-[11px] font-bold transition-all hover:scale-105 ${
-              value === h.id ? "border-yellow-300 bg-yellow-300/20 text-white shadow-[0_0_10px_rgba(253,224,71,0.3)]" : "border-white/20 bg-white/5 text-white/75"
-            }`}
-            title={h.label}
-          >
-            {h.label}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function matchesPreset(look: Appearance, p: OutfitPreset) {
-  return (Object.entries(p.look) as [keyof Appearance, unknown][]).every(([k, v]) => look[k] === v);
-}
-
-/* 🧍 Hero picker — browse the whole Polyfork catalog by AREA. A dropdown
- * lists every kit area from the catalog (Airport, Hotel & Casino, Halloween
- * Night, Dragon's Lair …) plus the preloaded Town Cast; picking an area
- * streams that area's rigged citizens in — real rendered portraits captured
- * once each GLB lands. "Classic" keeps the paintable cartoon. */
-function HeroPicker({ value, onChange }: { value: string | undefined; onChange: (slug: string | undefined) => void }) {
+/* 🧍 Hero picker — browse the whole Polyfork catalog by AREA, GLB-only. A
+ * dropdown lists every kit area from the catalog (Airport, Hospital, Graveyard,
+ * Prehistoric Valley …) plus the preloaded Town Cast; picking an area streams
+ * that area's rigged citizens in — real rendered portraits captured once each
+ * GLB lands. The worn-hero strip reads the FILE itself: name, kit area and
+ * the animation clips embedded inside the GLB. */
+function HeroPicker({ value, onChange }: { value: string; onChange: (slug: string) => void }) {
   useGlbThumbs();    // re-renders as portraits finish
   useGlbAreaState(); // re-renders when the chosen area starts/finishes streaming
   // Browsed area as DERIVED state: a manual pick is remembered "for" the
   // hero currently worn; when the worn hero changes from elsewhere (Random,
   // restore), the dropdown snaps back to that hero's own area — no effects.
-  const areaOfValue = (v: string | undefined) => (v ? glbCharDef(v)?.area : undefined) ?? TOWN_AREA_ID;
-  const [pick, setPick] = useState<{ for: string | undefined; area: string }>(() => ({
+  const areaOfValue = (v: string) => glbCharDef(v)?.area ?? TOWN_AREA_ID;
+  const [pick, setPick] = useState<{ for: string; area: string }>(() => ({
     for: value, area: areaOfValue(value),
   }));
   const areaId = value === pick.for ? pick.area : areaOfValue(value);
@@ -304,10 +348,11 @@ function HeroPicker({ value, onChange }: { value: string | undefined; onChange: 
 
   const area = GLB_AREAS.find((a) => a.id === areaId) ?? GLB_AREAS[0];
   const streaming = glbAreaStatus(areaId) === "loading";
-  const heroes: { slug: string | undefined; name: string; emoji: string }[] = [
-    { slug: undefined, name: "Classic", emoji: "🎨" },
-    ...area.chars,
-  ];
+  const worn = glbCharDef(value);
+  const wornArea = worn ? GLB_AREAS.find((a) => a.id === worn.area) : undefined;
+  const wornTpl = glbTemplate(value);
+  const clipNames = wornTpl?.clips.map((c) => c.name) ?? [];
+
   return (
     <div>
       <div className="mb-1.5 flex items-center justify-between">
@@ -339,13 +384,13 @@ function HeroPicker({ value, onChange }: { value: string | undefined; onChange: 
       {/* the area's cast — scrollable so big kits (Hotel & Casino = 20) fit */}
       <div className="mt-2 max-h-64 overflow-y-auto rounded-xl bg-black/20 p-1.5 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/25 [&::-webkit-scrollbar-track]:bg-transparent">
         <div className="grid grid-cols-4 gap-1.5 sm:grid-cols-5">
-          {heroes.map((h) => {
+          {area.chars.map((h) => {
             const on = value === h.slug;
-            const thumb = h.slug ? glbThumb(h.slug) : undefined;
-            const dead = h.slug ? glbCharFailed(h.slug) : false;
+            const thumb = glbThumb(h.slug);
+            const dead = glbCharFailed(h.slug);
             return (
               <button
-                key={h.slug ?? "classic"}
+                key={h.slug}
                 aria-pressed={on}
                 title={dead ? `${h.name} — unavailable` : h.name}
                 disabled={dead}
@@ -369,7 +414,7 @@ function HeroPicker({ value, onChange }: { value: string | undefined; onChange: 
                     className="mx-auto h-12 w-full object-contain drop-shadow-[0_2px_3px_rgba(0,0,0,0.45)]"
                   />
                 ) : (
-                  <div className={`flex h-12 items-center justify-center text-xl leading-none ${!dead && h.slug && streaming ? "animate-pulse" : ""}`}>
+                  <div className={`flex h-12 items-center justify-center text-xl leading-none ${!dead ? "animate-pulse" : ""}`}>
                     {h.emoji}
                   </div>
                 )}
@@ -384,57 +429,31 @@ function HeroPicker({ value, onChange }: { value: string | undefined; onChange: 
           <Loader2 size={11} className="animate-spin" /> streaming {area.name} portraits…
         </div>
       )}
+      {/* 👑 worn-hero strip — read straight from the GLB file itself */}
+      {worn && (
+        <div
+          role="status"
+          aria-label={`Wearing ${worn.name} from ${wornArea?.name ?? "the catalog"}`}
+          className="mt-2 flex flex-wrap items-center gap-x-1.5 gap-y-1 rounded-xl bg-white/5 px-2.5 py-2 text-[11px] font-bold text-white/70"
+        >
+          <span aria-hidden className="text-sm leading-none">{worn.emoji}</span>
+          <span>wearing <b className="text-white">{worn.name}</b></span>
+          <span className="text-white/25">·</span>
+          <span>{wornArea?.emoji} {wornArea?.name ?? "catalog"}</span>
+          {clipNames.length > 0 && (
+            <>
+              <span className="text-white/25">·</span>
+              <span className="text-emerald-300">
+                clips: {clipNames.slice(0, 4).join(" · ")}{clipNames.length > 4 ? ` +${clipNames.length - 4}` : ""}
+              </span>
+            </>
+          )}
+        </div>
+      )}
       <div className="mt-2 rounded-xl bg-white/5 p-2.5 text-xs leading-relaxed text-white/70">
         <b className="text-white">Pick an area, pick a hero:</b> {GLB_CHAR_COUNT} rigged citizens across{" "}
-        {GLB_AREAS.length} areas — everyone walks, runs &amp; idles like a person. <b className="text-white">Classic</b> keeps
-        the cartoon body that the color &amp; style tabs style.
-      </div>
-    </div>
-  );
-}
-
-/* Quick outfits — professional one-row swipe strip with outfit color dots */
-function PresetStrip({ look, onPick }: { look: Appearance; onPick: (p: Partial<Appearance>) => void }) {
-  return (
-    <div>
-      <div className="mb-1.5 flex items-center justify-between">
-        <span className="text-[11px] font-black uppercase tracking-wide text-white/70">Quick outfits</span>
-        <span className="text-[10px] font-bold text-white/40">scroll →</span>
-      </div>
-      <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        {OUTFIT_PRESETS.map((p) => {
-          const on = matchesPreset(look, p);
-          const dots: { k: string; c?: string }[] = [
-            { k: "shirt", c: p.look.shirt },
-            { k: "pants", c: p.look.pants },
-            { k: "shoe", c: p.look.shoe },
-          ];
-          return (
-            <button
-              key={p.id}
-              onClick={() => { sfx.click(); onPick(p.look); }}
-              aria-pressed={on}
-              className={`relative w-[86px] shrink-0 rounded-xl border-2 p-1.5 text-center transition-all hover:scale-105 ${
-                on
-                  ? "border-yellow-300 bg-yellow-300/15 shadow-[0_0_12px_rgba(253,224,71,0.35)]"
-                  : "border-white/15 bg-white/5 hover:border-yellow-300/50"
-              }`}
-            >
-              {on && (
-                <span className="absolute -right-1.5 -top-1.5 flex h-4.5 w-4.5 items-center justify-center rounded-full bg-yellow-300 text-amber-950 shadow">
-                  <Check size={11} strokeWidth={3.5} />
-                </span>
-              )}
-              <div className="text-xl leading-none transition-transform group-hover:scale-110">{p.emoji}</div>
-              <div className="mt-1 truncate text-[10px] font-bold leading-tight text-white/85">{p.label}</div>
-              <div className="mt-1 flex items-center justify-center gap-1">
-                {dots.map(({ k, c }) => (
-                  c ? <span key={k} aria-hidden className="h-2 w-2 rounded-full border border-black/40 ring-1 ring-white/20" style={{ background: c }} /> : null
-                ))}
-              </div>
-            </button>
-          );
-        })}
+        {GLB_AREAS.length} areas — every GLB file ships animated (Idle · Walk · Run embedded) and plays every
+        showcase move in-game. Your hero is saved on this device.
       </div>
     </div>
   );
@@ -451,7 +470,7 @@ export function Creator({ onStart }: { onStart: () => void }) {
   const runsPlayed = useGame((s) => s.runsPlayed);
   const [starting, setStarting] = useState(false);
   const [help, setHelp] = useState(false);
-  const [tab, setTab] = useState("outfit");
+  const [tab, setTab] = useState("hero");
   const [anim, setAnim] = useState<PoseAnimName>("idle");
 
   useEffect(() => {
@@ -464,26 +483,24 @@ export function Creator({ onStart }: { onStart: () => void }) {
   // joins, the characters are parsed and the town spawns already rigged
   useEffect(() => { preloadGlbCharacters(); }, []);
 
-  // the old side-selection flow is gone — normalize any stale saved "police" look,
-  // and drop a hero pick that's no longer part of the cast (e.g. a slug the
-  // catalog rejected) back to the paintable Classic
+  // normalize stale saves: legacy police-side looks are gone, and the locker
+  // is GLB-only — a missing / dropped hero slug falls back to the default
+  // rigged traveller so EVERY profile wears a real GLB file
   useEffect(() => {
     const s = useGame.getState();
     if (s.look.fac === "police" || s.look.outfit) s.setLook({ fac: "protester", outfit: "" });
-    if (s.look.char && !glbCharDef(s.look.char)) s.setLook({ char: undefined });
+    const cur = s.look.char;
+    if ((!cur || !glbCharDef(cur)) && cur !== DEFAULT_HERO_SLUG) s.setLook({ char: DEFAULT_HERO_SLUG });
   }, []);
 
   const update = (p: Partial<Appearance>) => setLook(p);
   const ready = playerName.trim().length > 0;
 
+  const wornDef = glbCharDef(look.char || DEFAULT_HERO_SLUG);
   const lookChips = [
-    look.char ? (glbCharDef(look.char)?.name ?? "Rigged") : "🏕️ Survivor",
-    look.girl ? "👧 Girl" : "👦 Boy",
+    wornDef ? `${wornDef.emoji} ${wornDef.name}` : "rigged survivor",
     `${look.age.charAt(0).toUpperCase()}${look.age.slice(1)}`,
-    HAIR_STYLES.find((h) => h.id === look.hairStyle)?.label ?? "",
-    look.cap ? "🧢 Cap" : "",
-    look.glasses ? "👓 Glasses" : "",
-  ].filter(Boolean);
+  ];
 
   return (
     <div className="relative h-screen w-full overflow-y-auto overflow-x-hidden">
@@ -508,8 +525,8 @@ export function Creator({ onStart }: { onStart: () => void }) {
             <h1 className="truncate text-2xl font-black tracking-tight text-white drop-shadow-[0_3px_0_rgba(0,0,0,0.45)] sm:text-3xl">
               Join the 7 Nights <span aria-hidden>🌙</span>
             </h1>
-            <p className="hidden text-xs font-bold text-red-300 sm:block">
-              Pick a name, style your survivor — drag the stage to spin!
+            <p className="hidden text-xs font-bold text-orange-300 sm:block">
+              Pick a name, wear a rigged hero — drag the stage to spin!
             </p>
           </div>
         </header>
@@ -581,19 +598,20 @@ export function Creator({ onStart }: { onStart: () => void }) {
             <div className="rounded-2xl border border-white/15 bg-black/40 p-4 backdrop-blur-md">
               <div className="mb-3 flex items-center justify-between">
                 <div className="flex items-center gap-2 font-black text-white">
-                  <Sparkles size={16} className="text-red-300" /> Create your survivor
+                  <Sparkles size={16} className="text-red-300" /> Wear a rigged hero
                 </div>
                 <div className="flex gap-1.5">
                   <Button
-                    size="sm" variant="outline" aria-label="Randomize appearance"
+                    size="sm" variant="outline" aria-label="Randomize hero"
                     onClick={() => {
                       sfx.click();
-                      // any of the 206 catalog citizens (minus known-broken
-                      // downloads) — or back to the paintable Classic
+                      // any of the catalog's rigged citizens (minus known-broken
+                      // downloads) + a random size — the whole look is GLB-driven
                       const ok = ALL_GLB_CHARS.filter((c) => !glbCharFailed(c.slug));
-                      const pool: (string | undefined)[] = [undefined, ...ok.map((c) => c.slug)];
-                      const hero = pool[Math.floor(Math.random() * pool.length)];
-                      applyLook({ ...randomAppearance(), char: hero });
+                      const hero = ok[Math.floor(Math.random() * ok.length)].slug;
+                      const ages = Object.keys(AGE_STATS) as AgeGroup[];
+                      const age = ages[Math.floor(Math.random() * ages.length)];
+                      applyLook({ ...randomAppearance(), age, char: hero });
                     }}
                     className="h-8 rounded-full border-white/25 bg-white/10 px-3 text-xs font-black text-white hover:bg-white/20"
                   >
@@ -636,26 +654,14 @@ export function Creator({ onStart }: { onStart: () => void }) {
                 />
               </div>
 
-              {/* tabbed customization */}
+              {/* tabbed customization — GLB hero + body size, nothing else */}
               <Tabs value={tab} onValueChange={setTab}>
-                <TabsList className="grid h-auto w-full grid-cols-4 gap-1 rounded-xl bg-white/10 p-1">
-                  <TabsTrigger
-                    value="outfit"
-                    className="rounded-lg border-0 py-1.5 text-xs font-black text-white/70 data-[state=active]:bg-yellow-300/90 data-[state=active]:text-amber-950 data-[state=active]:shadow-none"
-                  >
-                    <Shirt size={13} className="mr-1" /> Outfit
-                  </TabsTrigger>
+                <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl bg-white/10 p-1">
                   <TabsTrigger
                     value="hero"
                     className="rounded-lg border-0 py-1.5 text-xs font-black text-white/70 data-[state=active]:bg-yellow-300/90 data-[state=active]:text-amber-950 data-[state=active]:shadow-none"
                   >
                     <UserRound size={13} className="mr-1" /> Hero
-                  </TabsTrigger>
-                  <TabsTrigger
-                    value="style"
-                    className="rounded-lg border-0 py-1.5 text-xs font-black text-white/70 data-[state=active]:bg-yellow-300/90 data-[state=active]:text-amber-950 data-[state=active]:shadow-none"
-                  >
-                    <Palette size={13} className="mr-1" /> Style
                   </TabsTrigger>
                   <TabsTrigger
                     value="body"
@@ -665,73 +671,17 @@ export function Creator({ onStart }: { onStart: () => void }) {
                   </TabsTrigger>
                 </TabsList>
 
-                {/* OUTFIT */}
-                <TabsContent value="outfit" className="mt-3 outline-none">
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}
-                    className="space-y-3.5"
-                  >
-                    {/* quick outfits — one-row swipe strip, then fine-tune below */}
-                    <PresetStrip look={look} onPick={update} />
-                    <Swatches label="Skin" colors={SKIN_TONES} value={look.skin} onChange={(skin) => update({ skin })} />
-                    <Swatches label="Shirt" colors={SHIRT_COLORS} value={look.shirt} onChange={(shirt) => update({ shirt })} />
-                    <Swatches label="Pants" colors={PANTS_COLORS} value={look.pants} onChange={(pants) => update({ pants })} />
-                    <Swatches label="Shoes" colors={SHOE_COLORS} value={look.shoe} onChange={(shoe) => update({ shoe })} />
-                    {/* character — game-style segmented control */}
-                    <div className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-2">
-                      <span className="text-sm font-bold text-white/85">Character</span>
-                      <div className="flex rounded-full bg-black/40 p-0.5 ring-1 ring-white/15">
-                        {([false, true] as const).map((g) => (
-                          <button
-                            key={String(g)}
-                            aria-pressed={look.girl === g}
-                            aria-label={g ? "Girl character" : "Boy character"}
-                            onClick={() => { sfx.click(); update({ girl: g, hairStyle: g && look.hairStyle === "bald" ? "ponytail" : look.hairStyle }); }}
-                            className={`rounded-full px-3.5 py-1 text-xs font-black transition-all ${
-                              look.girl === g ? "bg-yellow-300 text-amber-950 shadow" : "text-white/70 hover:text-white"
-                            }`}
-                          >
-                            {g ? "👧 Girl" : "👦 Boy"}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                  </motion.div>
-                </TabsContent>
-
-                {/* HERO — the rigged Polyfork cast */}
+                {/* HERO — the rigged GLB cast, worn as-is */}
                 <TabsContent value="hero" className="mt-3 outline-none">
                   <motion.div
                     initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}
                     className="space-y-3"
                   >
-                    <HeroPicker value={look.char} onChange={(char) => update({ char })} />
+                    <HeroPicker value={look.char || DEFAULT_HERO_SLUG} onChange={(char) => update({ char })} />
                   </motion.div>
                 </TabsContent>
 
-                {/* STYLE */}
-                <TabsContent value="style" className="mt-3 outline-none">
-                  <motion.div
-                    initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}
-                    className="space-y-3.5"
-                  >
-                    <Swatches label="Hair color" colors={HAIR_COLORS} value={look.hair} onChange={(hair) => update({ hair })} />
-                    <StylePicker value={look.hairStyle} onChange={(hairStyle) => update({ hairStyle })} />
-                    <div className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-2">
-                      <span className="text-sm font-bold text-white/85">🧢 Wear a cap</span>
-                      <Switch checked={look.cap} onCheckedChange={(cap) => { sfx.click(); update({ cap }); }} />
-                    </div>
-                    {look.cap && (
-                      <Swatches label="Cap color" colors={CAP_COLORS} value={look.capColor} onChange={(capColor) => update({ capColor })} />
-                    )}
-                    <div className="flex items-center justify-between rounded-xl bg-white/5 px-3 py-2">
-                      <span className="text-sm font-bold text-white/85">👓 Glasses</span>
-                      <Switch checked={look.glasses} onCheckedChange={(glasses) => { sfx.click(); update({ glasses }); }} />
-                    </div>
-                  </motion.div>
-                </TabsContent>
-
-                {/* BODY */}
+                {/* BODY — rescales the worn GLB + gameplay stats */}
                 <TabsContent value="body" className="mt-3 outline-none">
                   <motion.div
                     initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}
@@ -739,8 +689,9 @@ export function Creator({ onStart }: { onStart: () => void }) {
                   >
                     <AgeCards value={look.age} onChange={(age) => update({ age })} />
                     <div className="rounded-xl bg-white/5 p-3 text-xs leading-relaxed text-white/70">
-                      <b className="text-white">Every age plays differently:</b> Kids are tiny and hard to spot, Teens are
-                      the fastest sprinters, Young adults are balanced, and Elders heal the quickest. Pick your style!
+                      <b className="text-white">Size is gameplay:</b> the pick rescales your rigged hero on this
+                      stage and in the town — Kids are tiny and hard to spot, Teens are the fastest sprinters,
+                      Young adults are balanced, and Elders heal the quickest.
                     </div>
                   </motion.div>
                 </TabsContent>
