@@ -1,18 +1,20 @@
 "use client";
 
 /**
- * LobbyStage — the Fortnite/PUBG lobby hero stage, GLB-only.
+ * LobbyStage — the PUBG lobby hero stage, GLB-only.
  *
- * The center of the landing dashboard: your survivor stands on a raised
- * circular podium with a glowing center ring, lit like a reveal stage over
- * the photoreal night-city backdrop — no cartoon bodies here. The rig is the
- * SAME rigged Polyfork GLB the game plays (look.char, or the default hero),
- * so the lobby previews exactly who drops into the night.
+ * The center of the landing dashboard: your survivor stands directly ON the
+ * floor of the photoreal night backdrop — no raised podium, no floating pad.
+ * A wet-asphalt ground patch fades out at its rim so the 3D floor melts into
+ * the backdrop's road, a tight contact shadow sells the footing, and one
+ * small glowing circle marks the stand point. The rig is the SAME rigged
+ * Polyfork GLB the game plays (look.char, or the default hero), so the lobby
+ * previews exactly who drops into the night.
  *
  *   • drag to spin — the turntable eases back to face the camera
  *   • Idle clip runs on the shared mixer (pure standing sway, no hops —
  *     the hero plants on the floor like the big-game lobbies)
- *   • podium: metal disc + glowing center circle + amber/teal accent rings
+ *   • floor: fading asphalt patch + soft shadow pool + small amber/teal ring
  *   • streams in on demand (no cartoon stand-in): a loader chip until the
  *     file lands, a retry hint if the CDN is unreachable
  */
@@ -28,64 +30,119 @@ import {
   type GlbInstance,
 } from "@/lib/game/glbCharacters";
 
-/* ---------------- podium (built once) ---------------- */
+/* ---------------- ground floor (built once) ---------------- */
 
-/** Soft radial shadow pool — a canvas gradient (no hard ellipse edge) so the
- *  stage melts into the photoreal backdrop like a spotlight on wet asphalt. */
-function useFloorFadeTexture(): THREE.CanvasTexture | null {
-  const [tex, setTex] = useState<THREE.CanvasTexture | null>(null);
-  useEffect(() => {
-    const c = document.createElement("canvas");
-    c.width = c.height = 256;
-    const ctx = c.getContext("2d");
-    if (!ctx) return;
-    const g = ctx.createRadialGradient(128, 128, 18, 128, 128, 126);
-    g.addColorStop(0, "rgba(4,7,14,0.95)");
-    g.addColorStop(0.5, "rgba(4,7,14,0.72)");
-    g.addColorStop(0.82, "rgba(4,7,14,0.35)");
-    g.addColorStop(1, "rgba(4,7,14,0)");
-    ctx.fillStyle = g;
-    ctx.fillRect(0, 0, 256, 256);
-    setTex(new THREE.CanvasTexture(c));
-  }, []);
-  return tex;
+/** Wet-asphalt ground patch — canvas noise + faint cracks, then a radial
+ *  alpha punch so the rim melts into the backdrop's real road. Tinted to the
+ *  hero backdrop's asphalt (dark blue-grey) so no seam is ever visible.
+ *  Module-level singleton (same pattern as character.ts) — built lazily on
+ *  the client the first time the lobby floor renders. */
+let groundTex: THREE.CanvasTexture | null = null;
+function getGroundTex(): THREE.CanvasTexture {
+  if (groundTex) return groundTex;
+  const c = document.createElement("canvas");
+  c.width = c.height = 256;
+  const ctx = c.getContext("2d")!;
+  // asphalt base
+  ctx.fillStyle = "#232933";
+  ctx.fillRect(0, 0, 256, 256);
+  // grain speckle — coarse asphalt aggregate
+  for (let i = 0; i < 1500; i++) {
+    const x = Math.random() * 256;
+    const y = Math.random() * 256;
+    const r = Math.random() * 1.4 + 0.3;
+    const l = Math.random();
+    ctx.fillStyle = l < 0.45 ? "rgba(8,11,17,0.5)" : l < 0.85 ? "rgba(46,55,70,0.35)" : "rgba(64,74,92,0.22)";
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // faint cracks — thin dark polylines
+  ctx.strokeStyle = "rgba(6,9,14,0.4)";
+  ctx.lineWidth = 1;
+  for (let i = 0; i < 7; i++) {
+    let x = 40 + Math.random() * 176;
+    let y = 40 + Math.random() * 176;
+    ctx.beginPath();
+    ctx.moveTo(x, y);
+    for (let s = 0; s < 5; s++) {
+      x += (Math.random() - 0.5) * 42;
+      y += (Math.random() - 0.5) * 42;
+      ctx.lineTo(x, y);
+    }
+    ctx.stroke();
+  }
+  // wet sheen — two soft puddle glints
+  for (const [px, py, pr] of [[96, 118, 34], [170, 150, 26]] as const) {
+    const wg = ctx.createRadialGradient(px, py, 2, px, py, pr);
+    wg.addColorStop(0, "rgba(120,140,170,0.16)");
+    wg.addColorStop(1, "rgba(120,140,170,0)");
+    ctx.fillStyle = wg;
+    ctx.beginPath();
+    ctx.arc(px, py, pr, 0, Math.PI * 2);
+    ctx.fill();
+  }
+  // punch the alpha rim — opaque center, fully transparent edge
+  const cut = ctx.createRadialGradient(128, 128, 40, 128, 128, 128);
+  cut.addColorStop(0, "rgba(0,0,0,1)");
+  cut.addColorStop(0.62, "rgba(0,0,0,0.85)");
+  cut.addColorStop(0.88, "rgba(0,0,0,0.32)");
+  cut.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.globalCompositeOperation = "destination-in";
+  ctx.fillStyle = cut;
+  ctx.fillRect(0, 0, 256, 256);
+  ctx.globalCompositeOperation = "source-over";
+  groundTex = new THREE.CanvasTexture(c);
+  return groundTex;
 }
 
-function Podium() {
-  const fade = useFloorFadeTexture();
+/** Tight contact shadow — a small dark pool right under the boots. */
+let bootShadowTex: THREE.CanvasTexture | null = null;
+function getBootShadowTex(): THREE.CanvasTexture {
+  if (bootShadowTex) return bootShadowTex;
+  const c = document.createElement("canvas");
+  c.width = c.height = 256;
+  const ctx = c.getContext("2d")!;
+  const g = ctx.createRadialGradient(128, 128, 8, 128, 128, 126);
+  g.addColorStop(0, "rgba(3,6,11,0.7)");
+  g.addColorStop(0.35, "rgba(3,6,11,0.4)");
+  g.addColorStop(0.7, "rgba(3,6,11,0.15)");
+  g.addColorStop(1, "rgba(3,6,11,0)");
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 256, 256);
+  bootShadowTex = new THREE.CanvasTexture(c);
+  return bootShadowTex;
+}
+
+function GroundFloor() {
+  const ground = getGroundTex();
+  const shadow = getBootShadowTex();
   return (
     <group>
-      {/* soft shadow pool — sells "standing on the ground" over the backdrop */}
-      {fade && (
-        <mesh rotation-x={-Math.PI / 2} position-y={-0.004}>
-          <planeGeometry args={[21, 21]} />
-          <meshBasicMaterial map={fade} transparent depthWrite={false} />
-        </mesh>
-      )}
-
-      {/* raised metal podium — the top face sits exactly at y = 0 */}
-      <mesh position-y={-0.085}>
-        <cylinderGeometry args={[1.86, 2.05, 0.17, 56]} />
-        <meshStandardMaterial color="#141c2b" roughness={0.55} metalness={0.65} />
-      </mesh>
-      {/* podium rim highlight */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.001}>
-        <ringGeometry args={[1.78, 1.86, 56]} />
-        <meshBasicMaterial color="#3d4c66" transparent opacity={0.9} />
+      {/* wet-asphalt floor patch — melts into the backdrop's road */}
+      <mesh rotation-x={-Math.PI / 2} position-y={-0.002}>
+        <circleGeometry args={[2.2, 48]} />
+        <meshBasicMaterial map={ground} transparent depthWrite={false} opacity={0.9} />
       </mesh>
 
-      {/* glowing center circle the hero stands on */}
+      {/* soft shadow pool under the boots — sells "standing on the ground" */}
+      <mesh rotation-x={-Math.PI / 2} position-y={0.002}>
+        <planeGeometry args={[2.3, 2.3]} />
+        <meshBasicMaterial map={shadow} transparent depthWrite={false} />
+      </mesh>
+
+      {/* small glowing center circle the hero stands in */}
       <mesh rotation-x={-Math.PI / 2} position-y={0.004}>
-        <circleGeometry args={[1.5, 56]} />
-        <meshBasicMaterial color="#7c4a08" transparent opacity={0.5} />
+        <circleGeometry args={[0.8, 48]} />
+        <meshBasicMaterial color="#8a5a18" transparent opacity={0.12} />
       </mesh>
       <mesh rotation-x={-Math.PI / 2} position-y={0.006}>
-        <ringGeometry args={[1.32, 1.52, 56]} />
-        <meshBasicMaterial color="#fde047" transparent opacity={0.85} />
+        <ringGeometry args={[0.72, 0.84, 48]} />
+        <meshBasicMaterial color="#fde047" transparent opacity={0.72} />
       </mesh>
       <mesh rotation-x={-Math.PI / 2} position-y={0.006}>
-        <ringGeometry args={[1.66, 1.71, 56]} />
-        <meshBasicMaterial color="#5eead4" transparent opacity={0.4} />
+        <ringGeometry args={[1.04, 1.08, 48]} />
+        <meshBasicMaterial color="#5eead4" transparent opacity={0.32} />
       </mesh>
     </group>
   );
@@ -199,7 +256,7 @@ export function LobbyStage({ look }: { look: Appearance }) {
       <Canvas
         className="absolute inset-0"
         camera={{ fov: 38, position: [0, 1.55, 4.9] }}
-        onCreated={({ camera }) => camera.lookAt(0, 1.0, 0)}
+        onCreated={({ camera }) => camera.lookAt(0, 1.16, 0)}
         dpr={[1, 1.75]}
         gl={{ alpha: true, antialias: true }}
       >
@@ -208,7 +265,7 @@ export function LobbyStage({ look }: { look: Appearance }) {
         <directionalLight position={[4, 7, 5]} intensity={1.35} color="#ffe3b8" />
         <directionalLight position={[-6, 4, -6]} intensity={0.95} color="#7fd8e8" />
         <pointLight position={[0, 5.4, 2.6]} intensity={1.1} color="#ffd27a" distance={14} />
-        <Podium />
+        <GroundFloor />
         {inst && <HeroBody inst={inst} spin={spin} drag={drag} />}
       </Canvas>
 

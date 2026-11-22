@@ -8,7 +8,7 @@
  *     Locker · Item Shop · Career · News) with XP / crew chips and the avatar
  *   • left column: SEASON card (LEVEL + XP bar + battle-pass tier strip),
  *     SUGGESTED CHALLENGES and the DAILY CHALLENGES board with progress bars
- *   • center: the rigged GLB survivor LIVE on a glowing podium (drag to spin,
+ *   • center: the rigged GLB survivor LIVE on the lobby floor (drag to spin,
  *     glowing center circle — no cartoon bodies) with the name plate + READY
  *     status above and the rank boost pill below
  *   • bottom: Global chat bar (Enter to chat) and the big yellow SOLO PLAYER
@@ -253,10 +253,10 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
         .lobby-scroll::-webkit-scrollbar-track { background: transparent; }
       `}</style>
 
-      {/* photoreal night-city backdrop — the lobby matches the rigged GLB cast */}
+      {/* photoreal horror night backdrop — the lobby matches the rigged GLB cast */}
       <div aria-hidden className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: "url(/hero-lobby-night.png)" }} />
-      <div aria-hidden className="absolute inset-0 bg-gradient-to-b from-slate-950/82 via-slate-950/45 to-slate-950/92" />
-      <div aria-hidden className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_38%,rgba(2,6,23,0.55)_100%)]" />
+      <div aria-hidden className="absolute inset-0 bg-gradient-to-b from-slate-950/72 via-slate-950/32 to-slate-950/88" />
+      <div aria-hidden className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_42%,rgba(2,6,23,0.48)_100%)]" />
 
       {/* ================= top bar: logo band + tabs + chips ================= */}
       <header className="relative z-30 flex items-center gap-2 px-2 pt-2 sm:gap-3 sm:px-3">
@@ -678,7 +678,7 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
             </div>
           </div>
 
-          {/* the rigged GLB survivor on the podium (drag to spin) */}
+          {/* the rigged GLB survivor standing on the lobby floor (drag to spin) */}
           <div className="absolute inset-0">
             <LobbyStage look={look} />
           </div>
