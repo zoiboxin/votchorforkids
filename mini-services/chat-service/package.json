@@ -1,0 +1,11 @@
+{
+  "name": "7nights-chat-service",
+  "version": "1.0.0",
+  "description": "7Nights global chat relay — live lobby messaging with shared history & presence",
+  "scripts": {
+    "dev": "bun --hot index.ts"
+  },
+  "dependencies": {
+    "socket.io": "^4.8.3"
+  }
+}

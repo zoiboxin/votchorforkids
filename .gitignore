@@ -59,3 +59,4 @@ db/*.db
 tool-results/
 dev.log
 server.log
+chat-service.log

@@ -12,10 +12,11 @@
  *   • center: the rigged GLB survivor LIVE on the lobby floor (drag to spin,
  *     glowing center circle — no cartoon bodies) with the name plate + READY
  *     status above and the rank boost pill below
- *   • bottom: Global chat docked as a right-side icon with a count badge (opens
- *     a challenge-card-style chat panel) and the big yellow SOLO PLAYER button
- *     plus the MULTIPLAYER squads button — customization lives in the
- *     LOCKER, never blocking the way into a night
+ *   • bottom: Global chat docked as a right-side icon — a LIVE socket.io relay
+ *     (mini-services/chat-service) where every soul sees every message; the icon
+ *     carries an UNSEEN badge that clears the moment the panel is opened, and
+ *     the big yellow SOLO PLAYER button plus the MULTIPLAYER squads button —
+ *     customization lives in the LOCKER, never blocking the way into a night
  *
  * Wiring is unchanged: SOLO PLAYER queues through the PUBG-style match lobby
  * (bots fill the 100-soul night; a name is rolled automatically the first
@@ -24,8 +25,9 @@
  * [B] battle pass · [N] news.
  */
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
+import { io, type Socket } from "socket.io-client";
 import {
   BarChart3, CalendarDays, Check, ChevronRight, Crown, Flame, History as HistoryIcon, Info,
   Lock, MessageSquare, Newspaper, Pencil, Play, Send, Settings, ShoppingBag, Sparkles, Star, Trophy, User, Users, X, Zap,
@@ -120,41 +122,107 @@ function XpBar({ pct, bar = "from-amber-400 to-yellow-300", h = "h-2" }: { pct: 
   );
 }
 
-/* ---------------- global chat (right-side dock — icon with count badge) ---------------- */
+/* ------------- global chat (right-side dock — LIVE socket.io relay) -------------
+ * mini-services/chat-service keeps the shared history and broadcasts every
+ * message to every connected soul. The dock badge counts UNSEEN messages that
+ * arrived while the panel was closed — opening the panel marks them seen and
+ * the badge clears. History catch-up never pings the badge. */
 
-interface ChatMsg { name: string; msg: string }
+interface ChatMsg { id: string; name: string; msg: string; ts: number }
 
-const CHAT_SEED: ChatMsg[] = [
-  { name: "NightLine", msg: "📡 Welcome to the lobby — PLAY queues you into a 100-soul night (AI fills the rest)." },
-  { name: "NightLine", msg: "🌐 MULTIPLAYER hosts a room — share the 4-letter code, friends Quick join." },
-];
+const CHAT_PORT = 3003;
 
 function GlobalChatDock({ name }: { name: string }) {
-  const [chat, setChat] = useState<ChatMsg[]>(CHAT_SEED);
+  const [chat, setChat] = useState<ChatMsg[]>([]);
   const [draft, setDraft] = useState("");
   const [open, setOpen] = useState(false);
+  const [unread, setUnread] = useState(0);
+  const [connected, setConnected] = useState(false);
+  const [online, setOnline] = useState(1);
+  const socketRef = useRef<Socket | null>(null);
+  const openRef = useRef(false);
+  const scrollRef = useRef<HTMLDivElement | null>(null);
+  const meRef = useRef(name);
+
+  /* keep the sender identity fresh for the unseen-badge check */
+  useEffect(() => { meRef.current = name || "Guest"; }, [name]);
+
+  /* one socket per lobby session — server keeps history + relays everything */
+  useEffect(() => {
+    const socket = io(`/?XTransformPort=${CHAT_PORT}`, {
+      transports: ["websocket", "polling"],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      timeout: 10000,
+    });
+    socketRef.current = socket;
+
+    socket.on("connect", () => setConnected(true));
+    socket.on("disconnect", () => setConnected(false));
+
+    /* late joiner catch-up — history arrives pre-seen, no badge ping */
+    socket.on("chat:history", (msgs: ChatMsg[]) => {
+      setChat(msgs.slice(-50));
+      setUnread(0);
+    });
+
+    socket.on("chat:message", (m: ChatMsg) => {
+      setChat((c) => [...c.slice(-50), m]);
+      /* unseen only while the panel is closed and it's not our own echo */
+      if (!openRef.current && m.name !== meRef.current) {
+        setUnread((u) => Math.min(99, u + 1));
+      }
+    });
+
+    socket.on("chat:presence", (p: { online: number }) => setOnline(Math.max(1, p.online)));
+
+    return () => { socket.disconnect(); };
+  }, []);
+
+  /* newest message stays in view while the panel is open */
+  useEffect(() => {
+    if (open && scrollRef.current) scrollRef.current.scrollTop = scrollRef.current.scrollHeight;
+  }, [chat, open]);
+
+  const toggle = () => {
+    sfx.click();
+    const next = !open;
+    openRef.current = next;
+    setOpen(next);
+    if (next) setUnread(0); // seen — the badge clears
+  };
 
   const send = () => {
     const msg = draft.trim().slice(0, 120);
-    if (!msg) return;
-    setChat((c) => [...c.slice(-30), { name: name || "Guest", msg }]);
+    const socket = socketRef.current;
+    if (!msg || !socket?.connected) return;
+    socket.emit("chat:send", { name: meRef.current, msg });
     setDraft("");
     sfx.click();
   };
 
   return (
     <div className="relative">
-      {/* dock icon with message-count badge */}
+      {/* dock icon — unread badge appears only while messages are unseen */}
       <button
-        onClick={() => { sfx.click(); setOpen((o) => !o); }}
-        aria-label={`Global chat — ${chat.length} messages`}
+        onClick={toggle}
+        aria-label={`Global chat${unread > 0 ? ` — ${unread} unread` : ""}`}
         aria-expanded={open}
         className="relative flex h-10 w-10 items-center justify-center rounded-md border border-white/15 bg-slate-950/85 text-white/80 shadow-lg backdrop-blur transition-colors hover:bg-slate-800/90 hover:text-white"
       >
         <MessageSquare size={18} />
-        <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-black text-white ring-2 ring-slate-950">
-          {chat.length > 99 ? "99+" : chat.length}
-        </span>
+        {unread > 0 && (
+          <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-black text-white ring-2 ring-slate-950">
+            {unread > 99 ? "99+" : unread}
+          </span>
+        )}
+        <span
+          aria-hidden
+          className={`absolute -bottom-0.5 -left-0.5 h-2 w-2 rounded-full ring-2 ring-slate-950 ${
+            connected ? "bg-emerald-400" : "animate-pulse bg-rose-500"
+          }`}
+        />
       </button>
 
       {/* the chat panel — same card style as the challenges board, docked right */}
@@ -168,23 +236,49 @@ function GlobalChatDock({ name }: { name: string }) {
           <Panel>
             <Strip
               right={
-                <button
-                  onClick={() => { sfx.click(); setOpen(false); }}
-                  aria-label="Close global chat"
-                  className="rounded p-0.5 text-white/85 transition-colors hover:bg-black/25 hover:text-white"
-                >
-                  <X size={13} />
-                </button>
+                <span className="flex items-center gap-2">
+                  <span
+                    className="flex items-center gap-1 text-[10px] font-black text-white/85"
+                    title={connected ? `${online} souls in the lobby` : "Connecting to the nightline…"}
+                  >
+                    <span
+                      aria-hidden
+                      className={`h-1.5 w-1.5 rounded-full ${
+                        connected ? "bg-emerald-300 shadow-[0_0_6px_rgba(52,211,153,0.9)]" : "animate-pulse bg-rose-300"
+                      }`}
+                    />
+                    {connected ? online : "…"}
+                  </span>
+                  <button
+                    onClick={toggle}
+                    aria-label="Close global chat"
+                    className="rounded p-0.5 text-white/85 transition-colors hover:bg-black/25 hover:text-white"
+                  >
+                    <X size={13} />
+                  </button>
+                </span>
               }
             >
               Global chat
             </Strip>
-            <div aria-live="polite" className="lobby-scroll max-h-52 space-y-1.5 overflow-y-auto p-2.5">
-              {chat.map((m, i) => (
-                <div key={`${m.name}-${i}`} className="rounded border border-white/10 bg-white/5 px-2.5 py-1.5 text-[11px] font-bold leading-snug text-white/80">
-                  <span className={m.name === "NightLine" ? "text-teal-300/90" : "text-yellow-300/90"}>{m.name}:</span> {m.msg}
-                </div>
-              ))}
+            <div ref={scrollRef} aria-live="polite" className="lobby-scroll max-h-52 min-h-[3.5rem] space-y-1.5 overflow-y-auto p-2.5">
+              {chat.length === 0 ? (
+                <p className="px-1 py-2 text-center text-[11px] font-bold text-white/40">
+                  {connected ? "Say hello to the night…" : "Lighting the relay…"}
+                </p>
+              ) : (
+                chat.map((m) => {
+                  const mine = m.name === (name || "Guest");
+                  return (
+                    <div key={m.id} className="rounded border border-white/10 bg-white/5 px-2.5 py-1.5 text-[11px] font-bold leading-snug text-white/80">
+                      <span className={m.name === "NightLine" ? "text-teal-300/90" : mine ? "text-yellow-300/90" : "text-orange-200/90"}>
+                        {m.name}:
+                      </span>{" "}
+                      {m.msg}
+                    </div>
+                  );
+                })
+              )}
             </div>
             <form
               onSubmit={(e) => { e.preventDefault(); send(); }}
@@ -192,13 +286,21 @@ function GlobalChatDock({ name }: { name: string }) {
             >
               <Input
                 value={draft}
+                disabled={!connected}
                 onChange={(e) => setDraft(e.target.value.slice(0, 120))}
-                placeholder="Press Enter to chat…"
+                placeholder={connected ? "Press Enter to chat…" : "Lighting the relay…"}
                 aria-label="Global chat message"
                 maxLength={120}
                 className="h-7 flex-1 border-0 bg-transparent px-1 text-xs text-white shadow-none placeholder:text-white/35 focus-visible:ring-0"
               />
-              <Button type="submit" size="icon" variant="ghost" aria-label="Send chat" className="h-7 w-7 shrink-0 text-white/60 hover:bg-white/10 hover:text-white">
+              <Button
+                type="submit"
+                size="icon"
+                variant="ghost"
+                disabled={!connected || !draft.trim()}
+                aria-label="Send chat"
+                className="h-7 w-7 shrink-0 text-white/60 hover:bg-white/10 hover:text-white"
+              >
                 <Send size={14} />
               </Button>
             </form>
@@ -400,7 +502,7 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
         <aside className="lobby-scroll order-2 w-full shrink-0 lg:order-1 lg:w-[330px] lg:overflow-y-auto lg:pr-1.5">
           <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start lg:gap-2">
             {/* icon rail — click an icon to pop open just that card (one at a time) */}
-            <div role="tablist" aria-label="Lobby cards" className="flex shrink-0 flex-row gap-1.5 lg:flex-col">
+            <div role="tablist" aria-label="Lobby cards" className="flex shrink-0 flex-row gap-1.5 lg:mt-8 lg:flex-col">
               {lobbyCards.map((c) => {
                 const open = tab === "lobby" && lobbyCard === c.id;
                 const RailIcon = c.icon;
