@@ -652,7 +652,7 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
         {/* -------- center: the survivor stage -------- */}
         <section
           aria-label="Your survivor — drag to spin"
-          className="relative order-1 h-[44vh] min-h-[300px] w-full lg:order-2 lg:h-auto lg:min-h-0 lg:flex-1"
+          className="relative order-1 h-[44vh] min-h-[300px] w-full lg:order-2 lg:mr-[330px] lg:h-auto lg:min-h-0 lg:flex-1"
         >
           {/* name plate + ready status (Fortnite center-stage) */}
           <div className="pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 text-center">
