@@ -80,3 +80,17 @@ hanging cheesecloth ghosts and mossy stone steps.
 
 Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
 (https://creativecommons.org/licenses/by/4.0/)
+
+## Hospital kit (`models/hospital/` — St. Cross Medical Campus)
+
+From the [polyfork Hospital kit](https://polyfork.dev/kit/hospital-kit-2ebfcb) —
+multi-storey ward block, clinic annexe, emergency entrance block, stair & lift
+core, entrance canopy, rooftop helipad deck, air-ambulance helicopter,
+ambulance van, mesh fence panel, clipped hedge section, illuminated bollard,
+wayfinding totem sign, ambulance-bay hatching decal, precast paving tile,
+wayfinding stripe decal, standby generator enclosure, clinical waste bin,
+medical gas cylinder, wheelchair, wet floor sign — plus the doctor, paramedic,
+ward nurse, surgeon and patient-in-gown characters.
+
+Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
+(https://creativecommons.org/licenses/by/4.0/)

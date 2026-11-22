@@ -715,6 +715,133 @@ function seededDerive(n: number): () => number {
   };
 }
 
+/* ---------------- 🏥 St. Cross Medical Campus — polyfork Hospital Kit ----------------
+ * The hospital block (grid roads x=67.5/135 & z=67.5/135) grew from one white
+ * box into a REAL hospital campus built from the hospital-kit-2ebfcb GLB set
+ * (see hospitalModels.ts / <HospitalCampus>): the 3-storey ward block with a
+ * rooftop helipad + air-ambulance helicopter, an emergency-entrance block with
+ * an ambulance bay, a clinic annexe, entrance canopy, wayfinding totem, paved
+ * plaza, mesh-fence perimeter with a gated drive, hedges, bollards, generator,
+ * gas cylinders, waste bins, wheelchairs — plus kit staff idling out front.
+ * Every position derives from HOSPITAL so colliders + rendering stay in
+ * lock-step. Kit convention: models face +z at rot 0 (rot = atan2(dx, dz)
+ * points the authored front toward (dx, dz)).                                  */
+export const HOSPKIT = (() => {
+  const { x: hx } = HOSPITAL;
+  // the campus fills the block interior; the fence ring + its gate span
+  const FENCE = { x0: 79, x1: 123.5, z0: 79, z1: 124.5 };
+  const GATE = { x0: hx - 4.05, x1: hx + 4.05 };                 // gate span on the north edge (drive side)
+  // the asphalt drive: south road edge (z≈74.4) up to the plaza
+  const drive = { x: hx, z0: 74, z1: 88.8, w: 6.2 };
+  // buildings — ward block fronts the plaza (rot π → authored +z front faces north)
+  const ward = { x: hx, z: 112, rot: Math.PI, w: 6, d: 4, h: 9.85 };
+  const core = { x: 109.3, z: ward.z, rot: Math.PI, w: 2, d: 2, h: 10.35 };  // stair & lift core hugs the ward's east wall
+  const annexe = { x: 85, z: 100, rot: Math.PI / 2, w: 3, d: 4, h: 3 };      // clinic annexe, doors east toward the plaza
+  const er = { x: 117, z: 92, rot: -Math.PI / 2, w: 3, d: 6, h: 3.45 };      // emergency block, garage doors face the forecourt (west)
+  const canopy = { x: hx, z: 105.2, rot: Math.PI };                          // entrance canopy over the ward doors
+  // rooftop helipad — deck on the ward roof, air ambulance parked on top
+  const DECK_S = 0.62, HELI_S = 0.45;
+  const deckY = ward.h;                                      // deck legs stand on the roof slab
+  const padTop = ward.h + 3.0 * DECK_S;                      // platform surface (authored deck h = 3)
+  const deck = { x: hx, z: ward.z, y: deckY, rot: Math.PI / 2, s: DECK_S };
+  const heli = { x: hx, z: ward.z, y: padTop, rot: 0, s: HELI_S };
+  // ambulances BACKED into the ER bay doors (rear toward the garage, nose west)
+  const ambulances = [
+    { x: 111, z: 89.5, rot: -Math.PI / 2 },
+    { x: 111, z: 93.5, rot: -Math.PI / 2 },
+  ];
+  // plaza + ER bay apron paving (2×2 kit tiles, baked into one mesh). The bay
+  // apron strip runs from the plaza's east edge to the ER doors so the
+  // ambulances park ON tiles; hatching decals ride 5mm above the tile tops.
+  // Tiles bake 12mm above the lawn plane (y=0.05) so the slab never sinks
+  // under it; stripes ride on the drive asphalt (y=0.061).
+  const PAVING_Y = 0.062, STRIPE_Y = 0.07;
+  const paving: { x: number; z: number; y: number }[] = [];
+  for (let cx = 93.5; cx <= 105.5; cx += 2) for (let cz = 89.5; cz <= 99.5; cz += 2) paving.push({ x: cx, z: cz, y: PAVING_Y });
+  for (let cx = 108.5; cx <= 112.5; cx += 2) for (let cz = 87.5; cz <= 95.5; cz += 2) paving.push({ x: cx, z: cz, y: PAVING_Y });
+  // lane stripes down the drive centre
+  const stripes: { x: number; z: number; y: number }[] = [];
+  for (let sz = 75.2; sz <= 85.2; sz += 2) stripes.push({ x: hx, z: sz, y: STRIPE_Y });
+  // ambulance-bay hatching: two bays + apron wings, over the bay tiles
+  const BAY_DECAL_Y = 0.115;
+  const bayDecals = [
+    { x: 112.8, z: 89.5, y: BAY_DECAL_Y }, { x: 112.8, z: 93.5, y: BAY_DECAL_Y },
+    { x: 112.8, z: 86.9, y: BAY_DECAL_Y }, { x: 112.8, z: 96.1, y: BAY_DECAL_Y },
+  ];
+  // mesh-fence panels tile the ring; the north edge breaks for the gate
+  const fencePanels: { x: number; z: number; rot: number }[] = [];
+  const pushEdge = (fixed: "x0" | "x1" | "z0" | "z1", along: "x" | "z") => {
+    const a0 = along === "x" ? FENCE.x0 : FENCE.z0;
+    const a1 = along === "x" ? FENCE.x1 : FENCE.z1;
+    for (let a = a0 + 1; a <= a1 - 1; a += 2) {
+      const isNorthGate = fixed === "z0" && a > GATE.x0 - 1 && a < GATE.x1 + 1;
+      if (isNorthGate) continue;
+      fencePanels.push(along === "x"
+        ? { x: a, z: FENCE[fixed], rot: 0 }
+        : { x: FENCE[fixed], z: a, rot: Math.PI / 2 });
+    }
+  };
+  pushEdge("x0", "z"); pushEdge("x1", "z"); pushEdge("z0", "x"); pushEdge("z1", "x");
+  // solid fence collision ring (2u spacing, gate span stays open)
+  const fenceCols: { x: number; z: number }[] = [];
+  for (let a = FENCE.x0; a <= FENCE.x1; a += 2) {
+    if (!(a > GATE.x0 && a < GATE.x1)) fenceCols.push({ x: a, z: FENCE.z0 });
+    fenceCols.push({ x: a, z: FENCE.z1 });
+  }
+  for (let a = FENCE.z0 + 2; a <= FENCE.z1 - 2; a += 2) {
+    fenceCols.push({ x: FENCE.x0, z: a });
+    fenceCols.push({ x: FENCE.x1, z: a });
+  }
+  // gate-marker bollards flank the drive opening
+  const gateBollards = [{ x: GATE.x0 + 0.3, z: FENCE.z0 }, { x: GATE.x1 - 0.3, z: FENCE.z0 }];
+  // drive-edge bollards light the way in
+  const bollards: { x: number; z: number }[] = [...gateBollards];
+  for (const bx of [hx - 3.35, hx + 3.35]) for (let bz = 75.4; bz <= 83.8; bz += 2.8) bollards.push({ x: bx, z: bz });
+  // clipped hedges dress the north lawn (gate span stays open)
+  const hedges: { x: number; z: number; rot: number }[] = [];
+  for (let a = FENCE.x0 + 2.4; a <= FENCE.x1 - 2.4; a += 2.2) {
+    if (a > GATE.x0 - 1.6 && a < GATE.x1 + 1.6) continue;
+    hedges.push({ x: a, z: FENCE.z0 + 1.3, rot: 0 });
+  }
+  hedges.push({ x: hx - 5.4, z: 82.4, rot: 0 }, { x: hx + 5.4, z: 82.4, rot: 0 }); // flanking the drive inside the gate
+  // back-of-house: standby generator + medical gas cylinders + waste bins
+  const generator = { x: 99, z: 120.6, rot: Math.PI / 2 };
+  const gasCylinders = [{ x: 104.2, z: 120.2, rot: 0.4 }, { x: 105.1, z: 121.1, rot: 1.6 }, { x: 104.5, z: 119.3, rot: 2.6 }];
+  const bins = [{ x: 110.6, z: 118.4, rot: 0.3 }, { x: 111.4, z: 119.2, rot: -0.2 }, { x: 81.4, z: 103, rot: 1.1 }];
+  // wayfinding totem by the gate, wheelchairs parked at the doors, wet sign at the ER
+  const totem = { x: 96.6, z: 81.2, rot: 0.35 };
+  const wheelchairs = [{ x: 99.6, z: 106, rot: 0.5 }, { x: 102.9, z: 105.7, rot: -0.8 }, { x: 89.4, z: 95.4, rot: 1.2 }];
+  const wetSign = { x: 113.2, z: 91.5, rot: -Math.PI / 2 };
+  // the kit crew idles where staff idles — doors, bays and the forecourt
+  const staff = [
+    { kind: "doctor", x: 100, z: 104.6, rot: Math.PI },          // under the canopy, greeting the plaza
+    { kind: "nurse", x: 103.4, z: 99.8, rot: -Math.PI / 2 },     // plaza, facing the doors
+    { kind: "paramedic", x: 108.6, z: 91.6, rot: Math.PI / 2 },  // by the ambulances
+    { kind: "patient", x: 89.6, z: 99.2, rot: Math.PI / 2 },     // outside the annexe
+    { kind: "surgeon", x: 110.8, z: 95.8, rot: Math.PI / 2 },    // ER forecourt
+  ] as const;
+  // visitor parking along the west fence — cars nose-in perpendicular to the
+  // fence (t: vehicle pool index resolved in worldgen)
+  const visitorParking = [84.6, 88.8, 93, 97.2].map((z, i) => ({ x: 83.4, z, rot: i % 2 ? Math.PI : 0 }));
+  // plaza lawn lamps (pushLamp refuses road positions; these are deep in-block)
+  const lamps = [{ x: 91.8, z: 85.4 }, { x: 111.2, z: 85.4 }, { x: 96.2, z: 77.6 }, { x: 106.3, z: 77.6 }];
+  // benches on the plaza lawn edge
+  const benches = [{ x: 94.3, z: 92, rot: Math.PI / 2 }, { x: 94.3, z: 96, rot: Math.PI / 2 }];
+  // the whole grounds (lawn + drive stub outside the fence) for scatter guards
+  const rect = { x0: FENCE.x0 - 0.9, x1: FENCE.x1 + 0.9, z0: FENCE.z0 - 0.9, z1: FENCE.z1 + 0.9 };
+  return { FENCE, GATE, drive, ward, core, annexe, er, canopy, deck, heli, padTop, DECK_S, HELI_S, ambulances, paving, stripes, bayDecals, fencePanels, fenceCols, gateBollards, bollards, hedges, generator, gasCylinders, bins, totem, wheelchairs, wetSign, staff, visitorParking, lamps, benches, rect };
+})();
+
+/** 🏥 true while (x,z) stands on the medical campus (fence ring + drive stub).
+ *  Wild scatter, fringe cottages and wildflower patches all keep off the plot. */
+export function inHospitalCampus(x: number, z: number, pad = 0): boolean {
+  const r = HOSPKIT.rect;
+  if (x > r.x0 - pad && x < r.x1 + pad && z > r.z0 - pad && z < r.z1 + pad) return true;
+  // the drive stub south of the fence down to the road kerb
+  const d = HOSPKIT.drive;
+  return Math.abs(x - d.x) < d.w / 2 + pad && z > 71 && z < d.z1 + pad;
+}
+
 /** 🪦 distance from (x,z) to the cemetery access corridor — the dirt lane
  *  (road end → arched gate) plus the visitor path (gate → grounds centre).
  *  Every wild scatter (trees, boulders, rocks, ferns, camps, ponds, trails…)
@@ -821,7 +948,10 @@ export function generateWorld(seed = WORLD_SEED): World {
   for (const [bx, bz] of HOME_BLOCKS) {
     for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) {
       const fz: 1 | -1 = bz < 0 ? 1 : -1;
-      push(bx + (i - 1) * 17.5, bz + (j - 0.5) * 17.5, 4.2, 3.6, range(rnd, 5.2, 6.6), 2,
+      const hx2 = bx + (i - 1) * 17.5, hz2 = bz + (j - 0.5) * 17.5;
+      // 🏥 the [101.25, 101.25] block belongs to St. Cross Medical Campus now
+      if (inHospitalCampus(hx2, hz2, 3)) continue;
+      push(hx2, hz2, 4.2, 3.6, range(rnd, 5.2, 6.6), 2,
         HOME_COLS[buildings.length % HOME_COLS.length],
         HOME_ROOFS[buildings.length % HOME_ROOFS.length], 0, fz);
     }
@@ -959,7 +1089,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     if (buildings.some((b) => Math.abs(x - b.x) < b.w + 6 && Math.abs(z - b.z) < b.d + 6)) continue;
     if (POLICE_STATIONS.some((st) => Math.hypot(x - st.x, z - st.z) < 32)) continue;
     if (Math.hypot(x - MALL.x, z - MALL.z) < 30 || Math.hypot(x - SCHOOL.x, z - SCHOOL.z) < 26) continue;
-    if (Math.hypot(x - HOSPITAL.x, z - HOSPITAL.z) < 26) continue;
+    if (inHospitalCampus(x, z, 6)) continue;                                 // 🏥 the medical campus took this whole block
     push(x, z, 4.4, 3.8, range(rnd, 5, 6.2), 2,
       HOME_COLS[buildings.length % HOME_COLS.length],
       HOME_ROOFS[buildings.length % HOME_ROOFS.length], 0, z > 0 ? -1 : 1);
@@ -983,21 +1113,28 @@ export function generateWorld(seed = WORLD_SEED): World {
   /* ---- landmarks ---- */
   push(MALL.x, MALL.z, 20, 11, 15, 3, 0xe8e4da, 0x9aa5b1);                 // MEGA MALL
   push(SCHOOL.x, SCHOOL.z, 16, 5.5, 9, 4, 0xf2d59b, 0xb0553a);             // school
-  push(HOSPITAL.x, HOSPITAL.z, 13, 6.5, 17, 5, 0xf4f6f8, 0xc7ccd4);        // hospital
-  // mall + hospital parking cars — the full fleet: sedans, vans, pickups, buses & jeeps
+  // 🏥 the hospital box is GONE — the whole block is now the St. Cross Medical
+  // Campus built from the polyfork hospital-kit GLBs (HOSPKIT above +
+  // <HospitalCampus>): ward block, ER wing, annexe, helipad, fence, plaza…
+  // Its colliders + staff cars are laid out in the campus section below.
+  // mall parking cars — the full fleet: sedans, vans, pickups, buses & jeeps
   for (let i = 0; i < 4; i++) for (const zr of [-6, 5]) {
     cars.push({ x: MALL.x - 15 + i * 10, z: MALL.z - 26 + zr, rot: Math.PI / 2, c: (i + (zr > 0 ? 2 : 0)) % CAR_COLS.length, t: pickVehicle(rnd) });
   }
   // 🚕 the TAXI RANK — a row of real polyfork yellow cabs waits by the mall
   // (rendered from yellow-cab-8df4a0.glb by GlbCars; hail one, it's drivable)
   for (let i = 0; i < 3; i++) cars.push({ x: MALL.x - 15 + i * 10, z: MALL.z - 40, rot: Math.PI / 2, c: 0, t: TAXI_TYPE });
-  for (let i = 0; i < 3; i++) cars.push({ x: HOSPITAL.x - 10 + i * 10, z: HOSPITAL.z - 15, rot: Math.PI / 2, c: (i + 4) % CAR_COLS.length, t: pickVehicle(rnd) });
+  // 🏥 campus visitor parking along the west fence (was: 3 cars north of the box)
+  for (const vp of HOSPKIT.visitorParking) {
+    cars.push({ x: vp.x, z: vp.z, rot: vp.rot, c: cars.length % CAR_COLS.length, t: pickVehicle(rnd) });
+  }
   for (const [lx, lz] of [
     [MALL.x - 21, MALL.z - 27], [MALL.x + 21, MALL.z - 27],
     [MALL.x - 21, MALL.z - 5], [MALL.x + 21, MALL.z - 5],
-    [HOSPITAL.x - 16, HOSPITAL.z - 16], [HOSPITAL.x + 16, HOSPITAL.z - 16],
     [SCHOOL.x - 18, SCHOOL.z - 20], [SCHOOL.x + 18, SCHOOL.z - 20],
   ] as const) pushLamp(lx, lz);
+  // 🏥 campus lawn lamps (was: two lamps by the old hospital box)
+  for (const lp of HOSPKIT.lamps) pushLamp(lp.x, lp.z);
   // park benches around the fountain + school yard + mall front
   for (let i = 0; i < 4; i++) {
     const a = (i / 4) * Math.PI * 2 + Math.PI / 4;
@@ -1005,6 +1142,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   }
   benches.push({ x: SCHOOL.x - 8, z: SCHOOL.z - 17, rot: Math.PI }, { x: SCHOOL.x + 2, z: SCHOOL.z - 17, rot: Math.PI }, { x: SCHOOL.x + 10, z: SCHOOL.z - 17, rot: Math.PI });
   benches.push({ x: MALL.x - 8, z: MALL.z - 32.5, rot: 0 }, { x: MALL.x + 8, z: MALL.z - 32.5, rot: 0 });
+  for (const bn of HOSPKIT.benches) benches.push(bn);                                      // 🏥 campus plaza benches
 
   /* ---- parked cars along road edges ----
    * Airport plot (runway, apron, taxi paths) stays CAR-FREE — the old loop let
@@ -1027,6 +1165,7 @@ export function generateWorld(seed = WORLD_SEED): World {
         // the grass stub east of its dead-end
         if (!vertical && k === 270 && d > 171) continue;
         if (inAirportPlot(spot.x, spot.z)) continue; // never park on the runway / apron / taxi paths
+        if (inHospitalCampus(spot.x, spot.z, 1.5)) continue; // 🏥 keep the campus drive mouth car-free
         const off = main ? 9.5 : 5.2;
         // 🚕 every 9th street-parked car is a yellow cab — random taxis all over town
         const taxi = cars.length % 9 === 4;
@@ -1368,6 +1507,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + pad) return false;
     if (graveyardLaneDist(x, z) < pad) return false;
     if (inFlightZone(x, z)) return false; // ✈️ plot + climb-out corridor stay prop-free
+    if (inHospitalCampus(x, z, pad)) return false; // 🏥 the medical campus grounds stay prop-free
     if (nearRailway(x, z, 5 + pad)) return false; // 🚂 no tufts/bushes/ferns sprouting on the rails
     if (buildings.some((b) => Math.abs(x - b.x) < b.w + pad && Math.abs(z - b.z) < b.d + pad)) return false;
     if (fields.some((f) => Math.abs(x - f.x) < f.w + pad && Math.abs(z - f.z) < f.d + pad)) return false;
@@ -1423,6 +1563,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     if (ROADS.some((o) => Math.abs(x - o) < 7.5 || Math.abs(z - o) < 7.5)) continue;
     if (Math.abs(x) < 13 && z > MAIN_ROAD.z0 - 3 && z < MAIN_ROAD.z1 + 3) continue;
     if (Math.abs(rr - RING_R) < 9) continue;
+    if (inHospitalCampus(x, z, 1.8)) continue;                                              // 🏥 no wildflowers in the hospital lawn
     if (buildings.some((b) => Math.abs(x - b.x) < b.w + 1.8 && Math.abs(z - b.z) < b.d + 1.8)) continue;
     wilds.push({ x, z, rot: range(rnd, 0, 6.283), s: range(rnd, 0.7, 1.2), c: Math.floor(rnd() * 3) });
     n++;
@@ -1731,6 +1872,23 @@ export function generateWorld(seed = WORLD_SEED): World {
   circles.push({ x: GRAVEKIT.gate.x - GRAVEKIT.v.x * 1.9, z: GRAVEKIT.gate.z - GRAVEKIT.v.z * 1.9, r: 0.35 });
   for (const bu of GRAVEKIT.bushes) circles.push({ x: bu.x, z: bu.z, r: 0.5 });           // bare thorn bushes
   for (const an of GRAVEKIT.angels) circles.push({ x: an.x, z: an.z, r: 0.5 });           // weeping stone angels
+  /* ---- 🏥 St. Cross Medical Campus — kit buildings & yard furniture are solid ---- */
+  boxes.push({ x: HOSPKIT.ward.x, z: HOSPKIT.ward.z, w: HOSPKIT.ward.w, d: HOSPKIT.ward.d, h: HOSPKIT.ward.h });       // ward block (kit, 12×8 footprint)
+  boxes.push({ x: HOSPKIT.core.x, z: HOSPKIT.core.z, w: HOSPKIT.core.w, d: HOSPKIT.core.d, h: HOSPKIT.core.h });       // stair & lift core
+  boxes.push({ x: HOSPKIT.annexe.x, z: HOSPKIT.annexe.z, w: HOSPKIT.annexe.w, d: HOSPKIT.annexe.d, h: HOSPKIT.annexe.h }); // clinic annexe
+  boxes.push({ x: HOSPKIT.er.x, z: HOSPKIT.er.z, w: HOSPKIT.er.w, d: HOSPKIT.er.d, h: HOSPKIT.er.h });                 // emergency block
+  boxes.push({ x: HOSPKIT.generator.x, z: HOSPKIT.generator.z, w: 1.9, d: 0.9, h: 3.55 }); // standby generator enclosure
+  for (const fc of HOSPKIT.fenceCols) circles.push({ x: fc.x, z: fc.z, r: 0.35 });         // mesh-fence ring (gate span open)
+  for (const am of HOSPKIT.ambulances) {                                                   // ambulances — two axle circles each
+    const fx = Math.sin(am.rot), fz2 = Math.cos(am.rot);
+    circles.push({ x: am.x - fx * 1.6, z: am.z - fz2 * 1.6, r: 1.3 });
+    circles.push({ x: am.x + fx * 1.6, z: am.z + fz2 * 1.6, r: 1.3 });
+  }
+  for (const bo of HOSPKIT.bollards) circles.push({ x: bo.x, z: bo.z, r: 0.28 });          // illuminated bollards
+  circles.push({ x: HOSPKIT.totem.x, z: HOSPKIT.totem.z, r: 0.45 });                       // wayfinding totem
+  for (const wc of HOSPKIT.wheelchairs) circles.push({ x: wc.x, z: wc.z, r: 0.4 });        // parked wheelchairs
+  for (const gc of HOSPKIT.gasCylinders) circles.push({ x: gc.x, z: gc.z, r: 0.25 });      // medical gas cylinders
+  for (const bn of HOSPKIT.bins) circles.push({ x: bn.x, z: bn.z, r: 0.4 });               // clinical waste bins
   /* ---- 🗽 NYC district — solid street furniture (subway rails, kiosks, cabs…) ---- */
   for (const sb of NYC.solidBoxes) boxes.push(sb);
   for (const sc of NYC.solidCircles) circles.push(sc);

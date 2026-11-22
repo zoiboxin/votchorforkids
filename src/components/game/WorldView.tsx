@@ -9,7 +9,7 @@ import {
   WILDLIFE_ENABLED,
 } from "@/lib/game/constants";
 import {
-  AVENUE, BARN_BASE, FARMKIT, FIELDS_BASE, GATE, generateWorld, GRAVEKIT, HOSPITAL, inAirportPlot, MALL, MAIN_ROAD, NYC, PARK, RAILWAY, RAILWAY_crossCottage, RAILWAY_signalBox, RAILWAY_stationHouse, RAILWAY_waterTower, railPoint, RING_GAP, RING_R, RING_W, ROAD_W, ROADS, SCHOOL, TOWN_SQUARE, terrainHeight,
+  AVENUE, BARN_BASE, FARMKIT, FIELDS_BASE, GATE, generateWorld, GRAVEKIT, inAirportPlot, MALL, MAIN_ROAD, NYC, PARK, RAILWAY, RAILWAY_crossCottage, RAILWAY_signalBox, RAILWAY_stationHouse, RAILWAY_waterTower, railPoint, RING_GAP, RING_R, RING_W, ROAD_W, ROADS, SCHOOL, TOWN_SQUARE, terrainHeight,
   type World,
 } from "@/lib/game/worldgen";
 import { nameTag } from "@/lib/game/character";
@@ -26,6 +26,7 @@ import {
   KitVor, KitWindsock,
 } from "@/components/game/AirportKit";
 import { GraveyardEstate } from "@/components/game/GraveyardKit";
+import { HospitalCampus } from "@/components/game/HospitalKit";
 import { registerCullRoot, resetCullRoots, tickStaticCull } from "@/lib/game/staticCull";
 
 export const WORLD: World = generateWorld();
@@ -1769,15 +1770,10 @@ function Landmarks() {
         <mesh position={[12, 4.7, -10.35]}><boxGeometry args={[2.6, 1.7, 0.16]} /><meshLambertMaterial color="#f4f6f8" /></mesh>
         <mesh position={[12, 3.95, -10.7]} rotation-x={Math.PI / 2}><torusGeometry args={[0.55, 0.08, 6, 14]} /><meshLambertMaterial color="#ff6b35" /></mesh>
       </group>
-      {/* Hospital — big red cross + entrance canopy */}
-      <group position={[HOSPITAL.x, 0, HOSPITAL.z]}>
-        <mesh position={[0, 12.4, -6.62]}><boxGeometry args={[1.7, 5.2, 0.22]} /><meshBasicMaterial color="#d62828" /></mesh>
-        <mesh position={[0, 12.4, -6.62]}><boxGeometry args={[5.2, 1.7, 0.22]} /><meshBasicMaterial color="#d62828" /></mesh>
-        <mesh position={[0, 3.5, -8.2]}><boxGeometry args={[7, 0.5, 3.2]} /><meshLambertMaterial color="#c7ccd4" /></mesh>
-        {[-3, 3].map((x) => (
-          <mesh key={x} position={[x, 1.7, -9.4]}><cylinderGeometry args={[0.14, 0.14, 3.4, 6]} /><meshLambertMaterial color="#9aa0a8" /></mesh>
-        ))}
-      </group>
+      {/* Hospital campus — 🏥 the whole block is now the REAL polyfork
+          hospital-kit GLB campus (<HospitalCampus> in HospitalKit.tsx): ward
+          block with rooftop helipad + air ambulance, ER wing with ambulance
+          bay, clinic annexe, canopy, totem, fence, plaza and the kit staff. */}
     </>
   );
 }
@@ -5137,6 +5133,7 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
         <Railway />
         <NycDistrict />
         <Landmarks />
+        <HospitalCampus />
         <Forest engine={engine} />
         <Camps engine={engine} clockRef={clockRef} />
         <Graves clockRef={clockRef} />

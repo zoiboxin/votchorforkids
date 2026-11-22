@@ -35,6 +35,7 @@ import { preloadModels } from "./models";
 import { preloadVehicles } from "./glbVehicles";
 import { preloadAirportModels } from "./airportModels";
 import { preloadGraveyardModels } from "./graveyardModels";
+import { preloadHospitalModels } from "./hospitalModels";
 import { GLB_CHARACTERS, preloadGlbCharacters } from "./glbCharacters";
 import type { MpEvent } from "@/lib/game/net/client";
 import { AIKIND_HOUND, AIKIND_HUNTER, AIKIND_ZOMBIE, type AiEntry } from "./net/protocol";
@@ -864,6 +865,8 @@ export class GameEngine {
     preloadAirportModels();
     // 🪦 and the cemetery kit GLBs — tombstones & the estate stream in alongside
     preloadGraveyardModels();
+    // 🏥 and the hospital kit GLBs — St. Cross Medical Campus streams in too
+    preloadHospitalModels();
     // 🧍 and the Polyfork cast — 13 rigged character GLBs stream in while you
     // play, so every soul (you, the 99 contestants, police, townsfolk) wears a
     // real animated body instead of the cartoon stand-in
