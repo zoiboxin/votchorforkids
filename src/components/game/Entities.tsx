@@ -18,7 +18,7 @@ import {
   type HeldToolKind,
 } from "@/lib/game/character";
 import { camBlocked, terrainHeight } from "@/lib/game/worldgen";
-import { GLB_CHARACTERS, glbTemplate, makeGlbInstance, tintGlbZombie, loadGlbTemplate } from "@/lib/game/glbCharacters";
+import { GLB_CHARACTERS, glbTemplate, makeGlbInstance, tintGlbZombie, loadGlbTemplate, grimlightPick } from "@/lib/game/glbCharacters";
 import { tintRot } from "@/lib/game/models";
 import { WORLD } from "./WorldView";
 import { useGame } from "./store";
@@ -63,11 +63,16 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     }
     return map;
   }, [modelsRev]);
-  // 🩸 7Nights — the possessed YOU: same face, rotten green skin, dead black eyes
-  const beastMesh = useMemo(
-    () => buildCharacter({ ...look, shirt: "#7a8a5a" }, { zombie: true }),
-    [look],
-  );
+  // 🩸 7Nights — the possessed YOU: the spirit dresses its host in a random
+  // Grimlight denizen too, re-dealt every night (dawn returns your own
+  // selected body); the green cartoon beast stands in until the file lands
+  const nightNo = engine.nightNo;
+  const beastMesh = useMemo(() => {
+    const g = buildCharacter({ ...look, shirt: "#7a8a5a" }, { zombie: true });
+    attachGlbBody(g, grimlightPick(7 + nightNo * 13), { zombieSeed: 7, tintMix: 0.22 });
+    return g;
+  }, [look, nightNo]);
+  useEffect(() => () => disposeCartoonOnly(beastMesh), [beastMesh]);
   const lantern = useRef<THREE.PointLight>(null!);
   const introT = useRef(0);
   const hudT = useRef(0);
@@ -526,18 +531,26 @@ function disposeCartoonOnly(root: THREE.Object3D) {
 }
 
 export function Zombies({ engine }: { engine: GameEngine }) {
-  // 🧟 contest zombies WEAR THEIR FORMER SELVES — each body starts as the
-  // cartoon zombie stand-in, then the contestant's OWN rigged Polyfork GLB
-  // streams in, rots sickly green and takes over. Cached once per contestant
-  // for the whole run so nightly risings never rebuild old bodies.
-  const cacheRef = useRef(new Map<number, THREE.Group>());
+  // 🧟 contest zombies rise in a GRIMLIGHT DENIZEN skin — the Polyfork
+  // grimlight kit's drowned sailors, ghouls & skeleton warriors. The spirit
+  // deals a DIFFERENT random denizen every night (deterministic per
+  // owner+night so every client tells the same nightmare); dawn takes the
+  // skins back and the survivors walk in their own selected bodies again.
+  // Each body starts as the cartoon zombie stand-in, then the denizen GLB
+  // streams in, takes a light graveyard wash and takes over.
+  const cacheRef = useRef(new Map<string, THREE.Group>());
   const [rev, setRev] = useState(engine.zRev);
   const revRef = useRef(engine.zRev);
+  const nightNo = engine.nightNo;
   const views = useMemo(() => {
     const map = new Map<number, THREE.Group>();
+    const wanted = new Set<string>();
     for (const z of engine.zombies) {
       if (z.owner == null) continue;
-      let g = cacheRef.current.get(z.owner);
+      // the cache is keyed per (owner, night) — a new night re-deals skins
+      const key = `${z.owner}:${nightNo}`;
+      wanted.add(key);
+      let g = cacheRef.current.get(key);
       if (!g) {
         const owner = engine.crew.find((c) => c.id === z.owner);
         const v = ZOMBIE_VARIANTS[Math.abs(z.owner) % ZOMBIE_VARIANTS.length];
@@ -545,17 +558,22 @@ export function Zombies({ engine }: { engine: GameEngine }) {
           owner?.look ?? { fac: "protester", outfit: "", skin: v.skin, shirt: v.shirt, pants: v.pants, shoe: "#3a3a2a", hair: v.hair, hairStyle: v.hairStyle, cap: false, capColor: "#3a4a2a", glasses: false, age: v.age, girl: false },
           { zombie: true, keepShirt: true },
         );
-        // 🧍 the real rotting body — the contestant's own cast GLB, tinted
-        // green with the same three-sickly-tints family as the cartoon pack
-        const slug = owner?.look.char || GLB_CHARACTERS[Math.abs(z.owner) % GLB_CHARACTERS.length].slug;
-        attachGlbBody(g, slug, { zombieSeed: z.owner });
+        // 🧟 the risen body — a random GRIMLIGHT DENIZEN (seed = owner+night,
+        // identical on every client), with a light rot wash so the kit's own
+        // graveyard palette keeps its identity under the night lights
+        attachGlbBody(g, grimlightPick(z.owner * 31 + nightNo * 101), { zombieSeed: z.owner, tintMix: 0.22 });
         g.scale.setScalar(0.92 + (Math.abs(z.owner) % 5) * 0.035); // deterministic per-contestant jitter
-        cacheRef.current.set(z.owner, g);
+        cacheRef.current.set(key, g);
       }
       map.set(z.id, g);
     }
+    // 🌅 dawn housekeeping — release the stale skins' cartoon stand-ins
+    // (the attached denizen GLBs share template geometry — never disposed)
+    for (const [k, g] of [...cacheRef.current]) {
+      if (!wanted.has(k)) { disposeCartoonOnly(g); cacheRef.current.delete(k); }
+    }
     return map;
-  }, [engine, rev]);
+  }, [engine, rev, nightNo]);
   // run over → release the cartoon stand-ins (never the shared GLB buffers)
   useEffect(() => () => {
     for (const g of cacheRef.current.values()) disposeCartoonOnly(g);
@@ -1750,10 +1768,11 @@ export function RemotesView({ engine }: { engine: GameEngine }) {
   const [slotKey, setSlotKey] = useState("");
   const slots = engine.remotes.map((r) => r.slot).join(",");
   if (slots !== slotKey) setSlotKey(slots); // React-sanctioned render-phase derived state
+  const nightNo = engine.nightNo; // 🧟 beast skins re-deal each night with the rigs
   const rigs = useMemo(
-    () => engine.remotes.map((r, i) => ({ slot: r.slot, ...buildRemoteRig(r.look, r.name, i) })),
+    () => engine.remotes.map((r, i) => ({ slot: r.slot, ...buildRemoteRig(r.look, r.name, i, nightNo) })),
     // engine.remotes is mutated in place; slotKey is the real identity of the roster
-    [slotKey, engine.remotes],
+    [slotKey, engine.remotes, nightNo],
   );
 
   // 🎬 renderer-side fall clocks for remote corpses (slot → seconds since death)
@@ -1851,7 +1870,7 @@ export function RemotesView({ engine }: { engine: GameEngine }) {
 }
 
 /** One remote soul's rig: their look + name tag + possessed variant + a live ring. */
-function buildRemoteRig(look: Appearance, name: string, colorIdx: number) {
+function buildRemoteRig(look: Appearance, name: string, colorIdx: number, nightNo: number) {
   const mesh = buildCharacter(look);
   const tag = nameTag(name, hexToTagBg(SLOT_TAG_COLORS[colorIdx % SLOT_TAG_COLORS.length]));
   tag.position.y = 2.95;
@@ -1861,8 +1880,11 @@ function buildRemoteRig(look: Appearance, name: string, colorIdx: number) {
   ptag.position.y = 2.95;
   ptag.visible = false;
   mesh.add(ptag);
-  // possessed body — swapped in while their beast flag is up
+  // possessed body — swapped in while their beast flag is up; the spirit
+  // dresses them in a random Grimlight denizen (seeded per soul, identical
+  // on every client that renders the same roster)
   const beast = buildCharacter({ ...CREW_ZOMBIE_LOOK, girl: look.girl }, { zombie: true });
+  attachGlbBody(beast, grimlightPick(101 + colorIdx * 37 + nightNo * 53), { zombieSeed: colorIdx + 1, tintMix: 0.22 });
   const btag = nameTag(`${name}?!`, "rgba(120,10,10,0.9)");
   btag.position.y = 2.95;
   beast.add(btag);

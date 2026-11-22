@@ -585,8 +585,9 @@ export function setHeldTool(character: THREE.Object3D, kind: HeldToolKind | null
  *  while the cast streams in), then hides and the rig takes over. The pose
  *  entry point (poseCharacter) reroutes to the clip mixer automatically.
  *  🧟 zombieSeed — rot the GLB sickly green (the TURNED wear their former
- *  selves, just… dead). */
-export function attachGlbBody(root: THREE.Object3D, slug: string, opts: { zombieSeed?: number } = {}): void {
+ *  selves, just… dead). tintMix — wash strength override (the Grimlight
+ *  denizen skins take a light 0.22 wash so their kit identity survives). */
+export function attachGlbBody(root: THREE.Object3D, slug: string, opts: { zombieSeed?: number; tintMix?: number } = {}): void {
   if (!slug) return;
   void (async () => {
     let inst: GlbInstance | null = null;
@@ -602,7 +603,7 @@ export function attachGlbBody(root: THREE.Object3D, slug: string, opts: { zombie
       await new Promise((r) => requestAnimationFrame(r));
     }
     if (!root.parent || root.userData.glb) return;
-    if (opts.zombieSeed != null) tintGlbZombie(inst, opts.zombieSeed);
+    if (opts.zombieSeed != null) tintGlbZombie(inst, opts.zombieSeed, opts.tintMix);
     const rig = root.userData.rig as { body: THREE.Object3D } | undefined;
     if (rig) rig.body.visible = false; // cartoon stand-in steps aside
     root.add(inst.body);

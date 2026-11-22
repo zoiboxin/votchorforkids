@@ -707,21 +707,93 @@ const ZOMBIE_TINTS = ["#8fbf6f", "#a8c98a", "#7da860"];
  *  material, plus a faint undead emissive so the TURNED read in the dark.
  *  Clones materials first: SkeletonUtils instances SHARE the template's
  *  materials, so tinting in place would rot every twin of this cast member.
- *  `seed` picks one of the three rot tints (pass the zombie's owner id). */
-export function tintGlbZombie(st: GlbInstance, seed = 0): void {
+ *  `seed` picks one of the three rot tints (pass the zombie's owner id).
+ *  `mix` 0..1 controls the wash strength — 0.62 for the townsfolk skins,
+ *  a light 0.22 for the Grimlight denizens whose own palettes already live
+ *  in the graveyard (their kit identity survives the rot). */
+export function tintGlbZombie(st: GlbInstance, seed = 0, mix = 0.62): void {
   const rot = _zRot.set(ZOMBIE_TINTS[Math.abs(Math.floor(seed)) % ZOMBIE_TINTS.length]);
   st.body.traverse((o) => {
     const m = o as THREE.Mesh;
     if (!m.isMesh) return;
-    const mats = Array.isArray(m.material) ? m.material : [m.material];
-    m.material = mats.map((src) => {
-      const c = (src as THREE.MeshStandardMaterial).clone() as THREE.MeshStandardMaterial;
-      _zTmp.copy(c.color).lerp(rot, 0.62);
+    const wasArray = Array.isArray(m.material);
+    const src = wasArray ? m.material : [m.material];
+    const mats = src.map((s) => {
+      const c = (s as THREE.MeshStandardMaterial).clone() as THREE.MeshStandardMaterial;
+      _zTmp.copy(c.color).lerp(rot, mix);
       c.color.copy(_zTmp);
-      if (c.emissive) c.emissive.set(rot).multiplyScalar(0.07);
+      if (c.emissive) c.emissive.set(rot).multiplyScalar(0.06);
       return c;
     });
+    // ⚠️ keep the material SHAPE — assigning an array to a group-less mesh
+    // makes the renderer walk geometry.groups (zero of them) and draw NOTHING;
+    // this was the invisible-zombie bug (tinted GLB bodies never rendered).
+    m.material = wasArray ? mats : mats[0];
   });
+}
+
+/* ---------------- 🧟 the Grimlight Denizens — skins for the TURNED ---------------- */
+
+/** The Polyfork GRIMLIGHT DENIZENS kit (polyfork.dev/kit/grimlight-denizens-kit-a6dc02,
+ *  CC BY 4.0 — 63 dark-fantasy parts on one palette & scale). These 30 are its
+ *  rigged, character-scale HUMANOIDS — drowned sailors, ghouls, skeleton
+ *  warriors, plague nurses, swamp butchers, cultists & crypt priests — the
+ *  shapes a TURNED contestant wears at night. The colossi, golems, beasts &
+ *  props stay out: a zombie must read as a wrong-shaped PERSON, not a building.
+ *  Every file carries the shared skeleton + Idle/Walk/Run trio, so the whole
+ *  zombie animation family (shamble hunch, attack lunge) just works on them;
+ *  registerTemplate still rejects any clipless oddball into `failed`. */
+export const GRIMLIGHT_DENIZENS: readonly GlbCharacterDef[] = [
+  { slug: "undead-pirate-608c9b", name: "Barnacled Ghost Captain", emoji: "☠️", url: cdn("undead-pirate-608c9b"), area: "grimlight" },
+  { slug: "undead-seaman-5286bf", name: "Bloated Drowned Seaman", emoji: "🌊", url: cdn("undead-seaman-5286bf"), area: "grimlight" },
+  { slug: "sunken-diver-6e1193", name: "Brass-Helmed Drowned Diver", emoji: "🤿", url: cdn("sunken-diver-6e1193"), area: "grimlight" },
+  { slug: "flesh-eater-8401c3", name: "Wide-Jawed Ghoul", emoji: "🧟", url: cdn("flesh-eater-8401c3"), area: "grimlight" },
+  { slug: "skeleton-warrior-8d22eb", name: "Wire-Bound Skeleton Warrior", emoji: "💀", url: cdn("skeleton-warrior-8d22eb"), area: "grimlight" },
+  { slug: "bone-warrior-3a0f95", name: "Skull-Helmed Bone Warrior", emoji: "☠️", url: cdn("bone-warrior-3a0f95"), area: "grimlight" },
+  { slug: "dark-knight-f2fe62", name: "Rotting Revenant Knight", emoji: "⚔️", url: cdn("dark-knight-f2fe62"), area: "grimlight" },
+  { slug: "ashen-assassin-1ab976", name: "Soot-Wraith Assassin", emoji: "🌫️", url: cdn("ashen-assassin-1ab976"), area: "grimlight" },
+  { slug: "wendigo-hunter-241d5c", name: "Stag-Skull Wendigo Hunter", emoji: "🦌", url: cdn("wendigo-hunter-241d5c"), area: "grimlight" },
+  { slug: "swamp-butcher-dd66d1", name: "Hook-Handed Swamp Butcher", emoji: "🪝", url: cdn("swamp-butcher-dd66d1"), area: "grimlight" },
+  { slug: "mourning-widow-ab6c34", name: "Hollow-Faced Widow", emoji: "🕸️", url: cdn("mourning-widow-ab6c34"), area: "grimlight" },
+  { slug: "hospital-nurse-4099d6", name: "Masked Plague Nurse", emoji: "🏥", url: cdn("hospital-nurse-4099d6"), area: "grimlight" },
+  { slug: "beak-priest-688cf0", name: "Crow-Skull Priest", emoji: "🐦‍⬛", url: cdn("beak-priest-688cf0"), area: "grimlight" },
+  { slug: "sack-arsonist-47cc5f", name: "Sack-Hooded Arsonist", emoji: "🔥", url: cdn("sack-arsonist-47cc5f"), area: "grimlight" },
+  { slug: "choir-singer-0989af", name: "Sewn-Eyed Choir Boy", emoji: "🎶", url: cdn("choir-singer-0989af"), area: "grimlight" },
+  { slug: "bog-fiend-cfd54c", name: "Toad-Headed Bog Fiend", emoji: "🐸", url: cdn("bog-fiend-cfd54c"), area: "grimlight" },
+  { slug: "deep-dweller-1aedaf", name: "Fish-Eyed Deep Dweller", emoji: "🐟", url: cdn("deep-dweller-1aedaf"), area: "grimlight" },
+  { slug: "undersea-priest-167ff5", name: "Fish-Headed Marsh Deacon", emoji: "🎣", url: cdn("undersea-priest-167ff5"), area: "grimlight" },
+  { slug: "sea-occultist-36c1b7", name: "Tentacle-Faced Occultist", emoji: "🐙", url: cdn("sea-occultist-36c1b7"), area: "grimlight" },
+  { slug: "whisperer-f69bce", name: "The Whisperer", emoji: "🤫", url: cdn("whisperer-f69bce"), area: "grimlight" },
+  { slug: "angler-one-e18fde", name: "Lure-Headed Angler", emoji: "🔦", url: cdn("angler-one-e18fde"), area: "grimlight" },
+  { slug: "magma-goblin-edd711", name: "Magma-Cracked Goblin", emoji: "🌋", url: cdn("magma-goblin-edd711"), area: "grimlight" },
+  { slug: "rat-kobold-d2974f", name: "Rat-Snouted Kobold", emoji: "🐀", url: cdn("rat-kobold-d2974f"), area: "grimlight" },
+  { slug: "fire-cultist-05e52e", name: "Charcoal-Skinned Fire Cultist", emoji: "🕯️", url: cdn("fire-cultist-05e52e"), area: "grimlight" },
+  { slug: "forest-witch-63e5f9", name: "Leaf-Shawled Forest Witch", emoji: "🌿", url: cdn("forest-witch-63e5f9"), area: "grimlight" },
+  { slug: "swamp-child-150d0e", name: "Five-Scaled Swamp Child", emoji: "🧪", url: cdn("swamp-child-150d0e"), area: "grimlight" },
+  { slug: "cathedral-statue-36eaad", name: "Living Cathedral Statue", emoji: "🗿", url: cdn("cathedral-statue-36eaad"), area: "grimlight" },
+  { slug: "sea-ghost-f9d362", name: "Mist-Bound Sea Ghost", emoji: "👻", url: cdn("sea-ghost-f9d362"), area: "grimlight" },
+  { slug: "shrouded-martyr-5bff35", name: "Nail-Haloed Martyr", emoji: "🪦", url: cdn("shrouded-martyr-5bff35"), area: "grimlight" },
+  { slug: "fungus-host-22004a", name: "Pit-Eyed Fungus Host", emoji: "🍄", url: cdn("fungus-host-22004a"), area: "grimlight" },
+];
+
+let grimStarted = false;
+/** Stream the whole denizen pool in (idempotent — kicked off behind the town
+ *  cast so dusk finds its skins dressed). Any file that fails to download or
+ *  parse lands in `failed` and grimlightPick simply stops dealing it. */
+export function ensureGrimlightDenizens(): void {
+  if (grimStarted) return;
+  grimStarted = true;
+  void loadBatch(GRIMLIGHT_DENIZENS);
+}
+
+/** Deterministic denizen deal for one risen zombie — same seed, same skin, on
+ *  every client (the roster only carries numbers across the wire). Failed
+ *  files are skipped; a fully-offline pool still deals (attachGlbBody then
+ *  quietly keeps the cartoon stand-in standing in). */
+export function grimlightPick(seed: number): string {
+  const pool = GRIMLIGHT_DENIZENS.filter((d) => !failed.has(d.slug));
+  const src = pool.length ? pool : GRIMLIGHT_DENIZENS;
+  return src[Math.abs(Math.floor(seed)) % src.length].slug;
 }
 
 /* ---------------- creator thumbnails (real portraits of the cast) ---------------- */
@@ -891,9 +963,12 @@ export function ensureGlbArea(areaId: string): void {
 
 let preloadStarted = false;
 /** Streams the town cast in: bots, the living city & police all wear these.
- *  Catalog areas beyond it load on demand from the creator dropdown. */
+ *  Catalog areas beyond it load on demand from the creator dropdown.
+ *  🧟 the Grimlight denizen pool trails in behind the cast (6s) — dusk needs
+ *  its zombie skins dressed before the first sunset. */
 export function preloadGlbCharacters(): void {
   if (preloadStarted) return;
   preloadStarted = true;
   ensureGlbArea(TOWN_AREA_ID);
+  if (typeof window !== "undefined") setTimeout(ensureGrimlightDenizens, 6000);
 }

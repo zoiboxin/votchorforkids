@@ -197,9 +197,10 @@ export function tintRot(root: THREE.Group, color: string, mix: number, emissive 
   root.traverse((o) => {
     const m = o as THREE.Mesh;
     if (!m.isMesh) return;
-    const mats = Array.isArray(m.material) ? m.material : [m.material];
-    m.material = mats.map((src) => {
-      const c = (src as THREE.MeshStandardMaterial).clone() as THREE.MeshStandardMaterial;
+    const wasArray = Array.isArray(m.material);
+    const src = wasArray ? m.material : [m.material];
+    const mats = src.map((s) => {
+      const c = (s as THREE.MeshStandardMaterial).clone() as THREE.MeshStandardMaterial;
       _rotTmp.copy(c.color).lerp(rot, mix);
       c.color.copy(_rotTmp);
       if (emissive > 0 && "emissive" in c && c.emissive) {
@@ -207,6 +208,9 @@ export function tintRot(root: THREE.Group, color: string, mix: number, emissive 
       }
       return c;
     });
+    // ⚠️ keep the material SHAPE — an array on a group-less mesh renders
+    // NOTHING (the renderer walks geometry.groups); same bug as tintGlbZombie
+    m.material = wasArray ? mats : mats[0];
   });
   return root;
 }
