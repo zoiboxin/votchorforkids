@@ -82,11 +82,12 @@ const TABS: { id: Tab; label: string; key?: string }[] = [
 
 /* ---------------- tiny building blocks ---------------- */
 
-/** Fortnite-style section strip — crimson gradient bar over a dark translucent
- *  panel (blood-moon red — matches the horror backdrop, leaves yellow to the CTA) */
+/** Fortnite-style section strip — 7NIGHTS dark-orange brand bar over a dark
+ *  translucent panel (ember gradient with a hot center sheen — leaves yellow to
+ *  the CTA and reads against the horror backdrop) */
 function Strip({ children, right }: { children: React.ReactNode; right?: React.ReactNode }) {
   return (
-    <div className="flex items-center justify-between gap-2 bg-gradient-to-r from-red-600 via-rose-600 to-red-600 px-3 py-1 ring-1 ring-inset ring-white/25">
+    <div className="flex items-center justify-between gap-2 bg-gradient-to-r from-orange-800 via-orange-600 to-orange-800 px-3 py-1 ring-1 ring-inset ring-white/25 shadow-[0_0_12px_rgba(234,88,12,0.25)]">
       <span className="text-[10px] font-black uppercase tracking-[0.18em] text-white drop-shadow-sm">{children}</span>
       {right}
     </div>
@@ -303,7 +304,7 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
         {/* angled logo band */}
         <div className="shrink-0 select-none -skew-x-[10deg] rounded-[3px] border border-white/15 bg-slate-950/95 px-3.5 py-1.5 shadow-xl backdrop-blur sm:px-5">
           <span className="block skew-x-[10deg] text-xl font-black italic leading-none tracking-tight text-white sm:text-2xl">
-            7<span className="text-red-400 drop-shadow-[0_0_14px_rgba(248,113,113,0.55)]">NIGHTS</span>
+            7<span className="text-orange-500 drop-shadow-[0_0_14px_rgba(249,115,22,0.55)]">NIGHTS</span>
           </span>
         </div>
 
