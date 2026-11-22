@@ -61,30 +61,34 @@ const FILES = {
 export type ModelKind = keyof typeof FILES;
 
 /** Height-normalize then per-kind artistic scale (world units).
- *  📏 NORMAL-SIZE pass — the zoo now sits at believable real-world heights
- *  next to the ~2.24u survivors: a cow towers to your chest, a dog reaches
- *  your thigh, a chicken is knee-high. Nothing renders as an ankle-height
- *  speck (0.3u floor on the tiniest crawlers), but the giant-inflated old
- *  targets are gone — animals read as ANIMALS, not monsters.
- *  ⚠️ normalization divides by the model's FULL bounding-box height, so for
- *  horned/antlered species (goat · ibex · deer · stag) the horns inflate that
- *  height and silently shrink the BODY — their targets sit above shoulder
- *  height to keep the body mass true (see polyfork SPECS: goat 1.65 m,
- *  deer 2.12 m, ibex 1.45 m, stag 2.16 m incl. headgear). */
+ *  📏 TRUE-SCALE pass — every target was audited one-by-one against the
+ *  model's MEASURED bind-pose bbox (scripts/animal-bbox.ts parses each GLB's
+ *  POSITION accessors) ×1.24 — the inflation factor of the ~2.24u cast
+ *  (a 2.24u survivor ≈ a 1.8m man) — so every animal reads TRUE beside the
+ *  humans: the horse's head clears yours, a cow's back reaches your chest,
+ *  a dog's head bumps your knee, a chicken stays knee-high. Horned/antlered
+ *  species (goat · ibex · deer · stag) get targets above shoulder height so
+ *  the HORNS don't silently shrink the BODY (goat bbox 1.65m is mostly horns
+ *  → body ≈0.9u at 1.8; deer 2.12m incl. antlers → body ≈1.32u at 2.1;
+ *  ibex 1.45m incl. horns → body ≈1.15u at 1.7; stag 2.17m → body ≈1.55u
+ *  at 2.5 — the night spirit towers). The tiniest critters (frog 0.09m
+ *  natural, the insects) keep deliberate readability floors instead. */
 const TARGET_H: Record<ModelKind, number> = {
-  // 🌲 jungle wildlife — real sizes
-  wolf: 1.0, bear: 1.55, fox: 0.68, owl: 0.5, crow: 0.4, rabbit: 0.4, stag: 2.2,
-  deer: 1.9, // antlers inflate the 2.12u bbox — target ≈ spec so the body lands ≈1.35u
-  // 🏔️ alpine
-  ibex: 1.5, hare: 0.42,
-  // 🚜 farmyard — the big domestic breeds. Sheep & goat read NEXT to the 2.24u
-  // cast, so they scale with the town's inflated humans (a 2.24u survivor ≈ a
-  // 1.8m man, ×1.24): the sheep model is exactly 1.0u tall (no headgear) so it
-  // gets a chunky 1.2u ram; the goat's bbox is 1.65u of mostly HORNS — its
-  // target sits at the polyfork spec height (1.65m incl. headgear) so the BODY
-  // lands ≈0.85u and stops rendering as a knee-high speck.
-  pig: 0.95, sheep: 1.2, goat: 1.55, duck: 0.45,
-  cow: 1.5, chicken: 0.55, dog: 0.72, horse: 1.8,
+  // 🌲 jungle wildlife — measured bbox ×1.24 (wolf 1.07 · bear 1.42 · fox 0.95
+  // alert-head · owl 0.34 · crow 0.32 · rabbit 0.37 · deer 2.12 antlers ·
+  // stag 2.17 antlers) — the pack, the bear and the deer all read TRUE now
+  wolf: 1.2, bear: 1.7, fox: 0.72, owl: 0.55, crow: 0.42, rabbit: 0.42, stag: 2.5,
+  deer: 2.1, // antlers inflate the 2.12u bbox — the body lands ≈1.32u at chest height
+  // 🏔️ alpine — ibex bbox 1.45 incl. horns (body ≈1.15u at 1.7), hare 0.53 with ears
+  ibex: 1.7, hare: 0.48,
+  // 🚜 farmyard — full-grown breeds beside the 2.24u cast (measured bboxes:
+  // pig 1.10 alert-head · sheep 1.00 · goat 1.65 mostly HORNS · duck 0.61
+  // raised-neck · cow 1.46 · chicken 0.65 · dog 0.79 · horse 1.87): the
+  // horse is the headline fix — at 1.8 its head sat BELOW the cast's head
+  // (a pony!); at 2.5 the head clears yours and the withers land ≈2.1u at
+  // human shoulder height. A stallion at last.
+  pig: 1.15, sheep: 1.25, goat: 1.8, duck: 0.5,
+  cow: 1.85, chicken: 0.62, dog: 0.9, horse: 2.5,
   // 🐸 jungle floor
   frog: 0.32,
   // 🎃 town & graveyard

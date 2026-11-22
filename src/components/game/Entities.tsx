@@ -718,6 +718,7 @@ export function Animals({ engine }: { engine: GameEngine }) {
       // 🐕 strays carry BOTH bodies — the friendly stray by day, the rotted
       // green-eyed hound at night; useFrame swaps visibility + lights the halo
       const wrap = new THREE.Group();
+      wrap.userData.animalKind = "dog"; // 🏷️ debug/audit handle — species tag on every rig root
       const glb = spawnModel("dog");
       if (glb) {
         const zspawn = spawnModel("dog")!;
@@ -750,6 +751,7 @@ export function Animals({ engine }: { engine: GameEngine }) {
     } else if (GLB_KINDS.has(a.kind)) {
       const spawned = spawnModel(a.kind);
       if (!spawned) continue; // still loading — the poll retries
+      spawned.root.userData.animalKind = a.kind; // 🏷️ species tag for the live height audit
       const rig: AnimalRig = { obj: spawned.root, kind: a.kind, mixer: spawned.mixer, clips: spawned.clips };
       if (a.kind === "stag") {
         // 👻 the spirit stag breathes cold cyan mist
@@ -785,7 +787,9 @@ export function Animals({ engine }: { engine: GameEngine }) {
       rigs.current.set(a.id, rig);
     } else {
       const vi = engine.animals.filter((o) => o.kind === a.kind).findIndex((o) => o.id === a.id);
-      rigs.current.set(a.id, { obj: buildAnimal(a.kind as "cow", a.variant ?? Math.max(0, vi)), kind: a.kind, proc: true });
+      const procObj = buildAnimal(a.kind as "cow", a.variant ?? Math.max(0, vi));
+      procObj.userData.animalKind = a.kind; // 🏷️ species tag
+      rigs.current.set(a.id, { obj: procObj, kind: a.kind, proc: true });
     }
   }
 
@@ -1096,14 +1100,18 @@ export function Licenses({ engine }: { engine: GameEngine }) {
 /* ------------------------------------------------------------------ */
 const dummy = new THREE.Object3D();
 const camV1 = new THREE.Vector3(); // scratch for the driving chase-cam glide
-/** Shadow-blob radius multiplier per animal kind — procedural conf.s and the
- *  polyfork GLB wildlife heights (see public/models/CREDITS.md). */
+/** Shadow-blob radius multiplier per animal kind — tracks the TRUE-SCALE
+ *  heights in models.ts TARGET_H (horse 2.5u stallion → a 2.2 blob, the
+ *  0.3u insects → dots instead of the old oversized default blob). */
 const ANIMAL_SCALES: Record<string, number> = {
-  cow: 1.7, chicken: 0.95, deer: 1.65, monkey: 1.1, dog: 1.05,
-  wolf: 1.5, bear: 1.95, fox: 1.15, owl: 0.95, crow: 0.9, rabbit: 1.0, stag: 2.1,
-  // 🏔️ alpine · 🚜 farmyard · 🎃 halloween newcomers (bodies were bumped up — shadows follow)
-  ibex: 1.6, hare: 1.0, pig: 1.35, sheep: 1.55, goat: 1.85, duck: 0.95,
-  cat: 1.0, spider: 1.7,
+  cow: 1.9, chicken: 1.0, deer: 1.9, dog: 1.15,
+  wolf: 1.65, bear: 2.1, fox: 1.2, owl: 1.0, crow: 0.9, rabbit: 1.0, stag: 2.4,
+  // 🏔️ alpine · 🚜 farmyard · 🐸 frog · 🎃 halloween
+  ibex: 1.8, hare: 1.05, pig: 1.5, sheep: 1.6, goat: 2.0, duck: 1.0,
+  horse: 2.2, frog: 0.8, cat: 1.0, spider: 1.7,
+  // 🐜 insect world — the crawlers & flyers cast little dots, not saucers
+  ant: 0.55, wasp: 0.6, bee: 0.55, mantis: 0.7, beetle: 0.6, ladybird: 0.5,
+  grasshopper: 0.6, centipede: 0.65, tarantula: 0.75, orbweaver: 0.8,
 };
 
 export function Pickups({ engine }: { engine: GameEngine }) {
