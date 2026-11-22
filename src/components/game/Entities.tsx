@@ -5,7 +5,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
   ANIMAL_SET, ATTACK_CD, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, ROCK_BREAK_S, SHIRT_COLORS, SKIN_TONES,
-  TOTAL_VOTES, TREE_FALL_S, ZONE_WALL_H, FARM_RADIUS, JUNGLE_RADIUS, WILDLIFE, type AnimalKind, type Appearance,
+  TOTAL_VOTES, TREE_FALL_S, ZONE_WALL_H, FARM_RADIUS, JUNGLE_RADIUS, WILDLIFE, normalizeAppearance, type AnimalKind, type Appearance,
 } from "@/lib/game/constants";
 import { preloadModels, onModelsReady, spawnModel } from "@/lib/game/models";
 import type { GameEngine } from "@/lib/game/engine";
@@ -145,10 +145,15 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     // ⚔️ swing progress (0→1 through the attack cooldown) drives the arm/tool animation
     const swing = engine.attackCd > 0 ? 1 - engine.attackCd / ATTACK_CD : 0;
     // 🪓 the held arm rides the right hand — swap the tool mesh when the belt changes
-    const heldKind = !beast && !morphing && !engine.drive && engine.held >= 0 && engine.tools[engine.held]
+    // 🚗 hands stay free inside a car (driving OR riding shotgun)
+    const heldKind = !beast && !morphing && !engine.drive && !engine.ride && engine.held >= 0 && engine.tools[engine.held]
       ? engine.tools[engine.held].kind as HeldToolKind : null;
     if (heldRef.current !== heldKind) { setHeldTool(mesh, heldKind); heldRef.current = heldKind; }
-    mesh.visible = (!engine.lost || engine.deathT < 3.4) && !engine.playerInVan && !morphing && !engine.ride && !beast; // 🩸 the dark takes the body too — after one final fall · 🚗 the driver STAYS visible in open-top cars
+    // 🚗 the PASSENGER stays visible in open-top cars too (mirrored seat) —
+    // sealed roofs keep the classic hidden body
+    const rideSeat = engine.ride && engine.world.cars[engine.ride.ci]
+      ? DRIVE_SEAT[engine.world.cars[engine.ride.ci].t % DRIVE_SEAT.length] : null;
+    mesh.visible = (!engine.lost || engine.deathT < 3.4) && !engine.playerInVan && !morphing && (!engine.ride || !!rideSeat) && !beast; // 🩸 the dark takes the body too — after one final fall · 🚗 the driver STAYS visible in open-top cars
     beastMesh.visible = beast && !engine.lost && !engine.playerInVan && !engine.drive && !engine.ride;
     if (beastMesh.visible) {
       beastMesh.position.set(p.x, p.y, p.z);
@@ -178,7 +183,7 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       dance: engine.danceOn,
       wave: engine.waveT > 0,
       cheer: engine.cheerT > 0,
-      drive: !!engine.drive,
+      drive: !!(engine.drive || (engine.ride && rideSeat)),
       getup: engine.getupT > 0 ? engine.getupT : 0,
       death: engine.lost ? Math.min(1, engine.deathT / 0.85) : 0,
     });
@@ -196,6 +201,17 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       } else {
         mesh.visible = false; // sealed body styles keep the classic hidden driver
       }
+    } else if (engine.ride && rideSeat) {
+      // 🚗 the visible PASSENGER — glued to the mirrored seat (driver left,
+      // rider right) of the car they ride in, exactly like remote passengers
+      // are seated on their screen. Riding the terrain bumps? The seat.y is
+      // the cab floor height, same convention the driver uses.
+      const car = engine.world.cars[engine.ride.ci];
+      const sin = Math.sin(car.rot), cos = Math.cos(car.rot);
+      mesh.position.set(car.x + sin * rideSeat.z + cos * -rideSeat.x, rideSeat.y, car.z + cos * rideSeat.z - sin * -rideSeat.x);
+      mesh.rotation.y = car.rot;
+      mesh.rotation.x = 0;
+      mesh.rotation.z = 0;
     }
     // 🩸 DEATH — the body folds to the dirt where it stands, rests a beat, then
     // the dark reclaims it (the recap menu waits for this to play out first)
@@ -1810,12 +1826,33 @@ export function RemotesView({ engine }: { engine: GameEngine }) {
         return;
       }
       deadT.current.delete(r.slot); // back among the living — reset their fall clock
-      // 🚗 they're inside a car (driving it or riding shotgun) — the body hides,
-      // exactly like the local driver's body does; the car mesh carries them
+      // 🚗 they're inside a car (driving it or riding shotgun) — the body GLUES
+      // to the exact vehicle's seat on the open-top styles (van / bus / jeep /
+      // convertible — sealed roofs keep the classic hidden body). The state
+      // packet carries the car index, so a driver AND their passenger ride the
+      // SAME car visible on every screen — nobody in a shared car vanishes
+      // from the other player's world any more.
       if ((r.drive || r.ride) && r.alive) {
-        if (body.visible) body.visible = false;
-        if (v.tag) v.tag.visible = false;
-        if (v.btag) v.btag.visible = false;
+        const car = r.carCi !== undefined ? engine.world.cars[r.carCi] : undefined;
+        const seat = car ? DRIVE_SEAT[car.t % DRIVE_SEAT.length] : null;
+        if (car && seat) {
+          const px = r.drive ? seat.x : -seat.x; // the passenger sits opposite the driver
+          const sin = Math.sin(car.rot), cos = Math.cos(car.rot);
+          body.visible = true;
+          body.position.set(car.x + sin * seat.z + cos * px, seat.y, car.z + cos * seat.z - sin * px);
+          body.rotation.set(0, car.rot, 0);
+          if (body.scale.x !== 1) body.scale.setScalar(1);
+          poseCharacter(body, 0, t, { phase: r.slot * 1.7, drive: true });
+          const closeCar = d2 < DETAIL_SQ;
+          if (v.tag) v.tag.visible = closeCar; // 🌐 real players keep their names — even mid-ride
+          if (v.btag) v.btag.visible = false;
+          if (v.ptag) v.ptag.visible = false;
+        } else {
+          if (body.visible) body.visible = false;
+          if (v.tag) v.tag.visible = false;
+          if (v.btag) v.btag.visible = false;
+          if (v.ptag) v.ptag.visible = false;
+        }
         return;
       }
       if (d2 > CULL_SQ) {
@@ -1869,8 +1906,13 @@ export function RemotesView({ engine }: { engine: GameEngine }) {
   );
 }
 
-/** One remote soul's rig: their look + name tag + possessed variant + a live ring. */
-function buildRemoteRig(look: Appearance, name: string, colorIdx: number, nightNo: number) {
+/** One remote soul's rig: their look + name tag + possessed variant + a live ring.
+ *  👤 the look is normalized over the full default appearance FIRST — a peer
+ *  can send a partial/legacy look, and one undefined field used to detonate
+ *  buildCharacter mid-render, white-screening the whole app for everyone who
+ *  rendered the roster. Never trust the wire. */
+function buildRemoteRig(rawLook: Appearance, name: string, colorIdx: number, nightNo: number) {
+  const look = normalizeAppearance(rawLook);
   const mesh = buildCharacter(look);
   const tag = nameTag(name, hexToTagBg(SLOT_TAG_COLORS[colorIdx % SLOT_TAG_COLORS.length]));
   tag.position.y = 2.95;

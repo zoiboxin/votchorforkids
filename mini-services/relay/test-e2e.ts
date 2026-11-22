@@ -57,7 +57,7 @@ async function main() {
   const gotState = new Promise<{ buf: Buffer; slot: number }>((res) =>
     guest.on("mp:state", (buf: Buffer, slot: number) => res({ buf, slot })),
   );
-  const payload = Buffer.alloc(9);
+  const payload = Buffer.alloc(11);
   payload.writeUInt8(0, 0);           // slot 0
   payload.writeInt16LE(12345, 1);     // x = 123.45
   payload.writeInt16LE(-5432, 3);     // z = -54.32
@@ -65,6 +65,7 @@ async function main() {
   payload.writeUInt8(128, 6);         // yaw ≈ π
   payload.writeUInt8(88, 7);          // hp
   payload.writeUInt8(0b000101, 8);    // sprint + drive
+  payload.writeUInt16LE(7, 9);        // driving car #7
   host.emit("mp:state", payload);
   const st = await Promise.race([gotState, wait(1500).then(() => null)]);
   check("state stream relayed", !!st, st ? `${st.buf.readInt16LE(1) / 100},${st.buf.readInt16LE(3) / 100} slot=${st.slot}` : "timeout");

@@ -11,7 +11,7 @@
 import type { GameEngine } from "../engine";
 import type { Appearance } from "../constants";
 import { mulberry32 } from "../rng";
-import { AIKIND_HOUND, AIKIND_HUNTER, AIKIND_ZOMBIE, packAi, packState, packCar, type AiEntry } from "./protocol";
+import { AIKIND_HOUND, AIKIND_HUNTER, AIKIND_ZOMBIE, AIKIND_CREW, CARIDX_NONE, packAi, packState, packCar, type AiEntry } from "./protocol";
 import { net, sessionSeed, type LobbyPlayer, type MpEvent } from "./client";
 
 export interface AttachNetOpts {
@@ -35,6 +35,7 @@ export interface NetHandle {
 
 const lastRaw = new Map<number, { x: number; z: number; t: number }>(); // slot → last raw sample (velocity estimate)
 const slotCars = new Map<number, { ci: number; at: number }>(); // slot → their last streamed car (staleness bookkeeping)
+const botCars = new Map<number, { at: number }>(); // 🤖 car idx → last bot-car packet (staleness bookkeeping)
 
 export function attachNet(opts: AttachNetOpts): NetHandle {
   const { engine, code, name, look } = opts;
@@ -87,7 +88,16 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
     }
   }));
 
-  /* ---------- publish our own survivor @12 Hz ---------- */
+  /* ---------- publish our own survivor @12 Hz ----------
+   * 😦 THE FACING FIX — the old stream published `engine.input.yaw`, the
+   * CAMERA heading. But a body rendered with rotation.y = θ faces (sin θ,
+   * cos θ), while the camera yaw convention has forward = (−sin yaw, −cos yaw)
+   * — a 180° flip! Every peer's screen showed each soul facing EXACTLY
+   * AWAY from where they looked: stand face-to-face and the other player
+   * appears reversed. We now publish the BODY's real facing (player.face —
+   * the same value the local renderer turns the hero with), so what you see
+   * on your screen is what every peer sees. Driving/riding publishes the
+   * vehicle heading (the body glues to it anyway). */
   net.startPublishing(() =>
     packState({
       slot,
@@ -95,8 +105,8 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       z: engine.drive ? engine.drive.z : engine.player.z,
       y: engine.player.y,
       yaw: engine.drive ? engine.drive.rot
-        : engine.ride ? engine.world.cars[engine.ride.ci]?.rot ?? engine.input.yaw
-        : engine.input.yaw,
+        : engine.ride ? engine.world.cars[engine.ride.ci]?.rot ?? engine.player.face
+        : engine.player.face,
       hp: engine.hp,
       sprint: engine.player.sprinting,
       air: engine.player.y > 0.12,
@@ -109,6 +119,9 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       // swap the name tag for a ⏸ one so the frozen survivor reads as AFK,
       // never as a laggy ghost or a disconnected soul
       paused: engine.personalPause && !engine.lost,
+      // 🚗 WHICH car we occupy — peers seat us on the open-top styles and
+      // glue us to the exact vehicle instead of guessing
+      ci: engine.drive ? engine.drive.ci : engine.ride ? engine.ride.ci : CARIDX_NONE,
     }),
   );
 
@@ -123,6 +136,20 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
     if (!d) return null;
     return packCar({ ci: d.ci, x: d.x, z: d.z, rot: d.rot, lights: d.lights !== false });
   });
+
+  /* ---------- 🤖 publish our BOT joyriders @15 Hz (host only) ----------
+   * The host's crew cars are the shared truth now — every bot behind the
+   * wheel streams the same 8-byte pose packet the real drivers use (on the
+   * dedicated `mp:botcar` channel, keyed by the deterministic car index), so
+   * every peer sees the town's taxis & vans roaming on their own. */
+  const botCarTimer = setInterval(() => {
+    if (!isHost || !engine.running || !net.sockConnected) return;
+    for (const c of engine.crew) {
+      if (!c.alive || !c.drive) continue;
+      const d = c.drive;
+      net.emitBotCar(packCar({ ci: d.ci, x: d.x, z: d.z, rot: d.rot, lights: d.lights !== false }));
+    }
+  }, 66); // ~15 Hz
 
   /* ---------- 🧟 AI replication — host publishes, guests mirror ----------
    * The night's horde is ONE shared drama: the host's simulation is the truth
@@ -156,6 +183,16 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
     });
     const ho = packAi(AIKIND_HOUND, hounds);
     if (ho) net.emitAi(ho);
+    // 🤖 the crew contestants — the host's bot town is the shared truth.
+    // Possessed bots stream as hunters (skip them here); replaced/dead souls
+    // are known via the roster + crewDeath events and never stream.
+    const crew: AiEntry[] = [];
+    engine.crew.forEach((c, idx) => {
+      if (!c.alive || c.mode === "possessed") return;
+      crew.push({ idx, x: c.x, z: c.z, yaw: c.face, dead: false, atk: c.attackAnimT > 0 });
+    });
+    const cr = packAi(AIKIND_CREW, crew);
+    if (cr) net.emitAi(cr);
   }, 84); // ~12 Hz — the horde shambles, this is plenty
 
   /* ---------- remote streams → engine.remotes ---------- */
@@ -179,6 +216,10 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       r.ride = s.ride;
       r.sprint = s.sprint;
       r.air = s.air;
+      // 🚗 WHICH car they occupy — the seat index rides the state packet, so
+      // peers can sit them in the exact vehicle (open-top styles render the
+      // body glued to its seat instead of vanishing)
+      r.carCi = s.ci !== CARIDX_NONE && s.ci !== undefined ? s.ci : undefined;
       r.paused = s.paused && !s.dead; // a dead soul isn't "paused", they're gone
       if (s.attack) r.attackT = 0.35;
       // 🚗 their car stream — mirror pose + headlights so the vehicle MOVES on
@@ -212,6 +253,26 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       if (hu) engine.applyNetAi(AIKIND_HUNTER, hu);
       const ho = net.sampleAi(AIKIND_HOUND);
       if (ho) engine.applyNetAi(AIKIND_HOUND, ho);
+      const cr = net.sampleAi(AIKIND_CREW);
+      if (cr) engine.applyNetAi(AIKIND_CREW, cr);
+      // 🤖 bot joyrider cars — mirror pose + lamps for the host's fleet.
+      // A car the LOCAL player is driving is never mirrored (their own
+      // physics is the truth; a host bot grabbing "their" car on the host's
+      // world must not yank the player out of the driver's seat here).
+      const nowB = performance.now();
+      for (const cs of net.allBotCars()) {
+        if (engine.drive?.ci === cs.ci) { botCars.delete(cs.ci); continue; }
+        if (nowB - cs.t < 2500) {
+          botCars.set(cs.ci, { at: nowB });
+          engine.netRemoteCar(cs.ci, cs.x, cs.z, cs.rot, cs.lights);
+        }
+      }
+      for (const [ci, e] of Array.from(botCars)) {
+        if (nowB - e.at > 3000) {
+          engine.netRemoteCarStop(ci);
+          botCars.delete(ci);
+        }
+      }
     }
   }, 80); // 12.5 Hz matches the stream rate
 
@@ -227,6 +288,10 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
     // migration after a disconnect can move the crown past slot 0)
     const hostSlot = net.lobby?.players.find((p) => p.sid === net.lobby?.host)?.slot ?? 0;
     if (from !== hostSlot) return;
+    // 🕐 stamp the freshest host word — the story clock's hold-at-the-boundary
+    // guard reads this (a stale stamp = the host's tab froze; never cross a
+    // transition on our own)
+    engine.netPhaseAt = performance.now();
     const ph = ev.phase as typeof engine.phase;
     if (engine.phase !== ph) {
       engine.phase = ph;
@@ -391,6 +456,7 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       clearInterval(phaseTimer);
       clearInterval(endWatcher);
       clearInterval(aiTimer);
+      clearInterval(botCarTimer);
       net.stopPublishing();
       net.stopCarPublishing();
       engine.netEmit = null;
@@ -398,8 +464,11 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       engine.mp = false;
       engine.remotes = [];
       engine.remoteDriven.clear();
+      engine.netCrewMirror = false;
+      engine.netPhaseAt = 0;
       lastRaw.clear();
       slotCars.clear();
+      botCars.clear();
     },
   };
 }

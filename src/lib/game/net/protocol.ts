@@ -1,17 +1,24 @@
 /**
  * 7Nights net protocol — compact binary player-state packets.
  *
- * Every client publishes ONLY its own survivor @ ~12 Hz as a 9-byte packet:
+ * Every client publishes ONLY its own survivor @ ~12 Hz as an 11-byte packet:
  *
- *   ┌──────┬────────┬────────┬─────┬───────┬────┬───────┐
- *   │ slot │ x      │ z      │ y   │ yaw   │ hp │ flags │
- *   │ u8   │ i16×10 │ i16×10 │ u8×8│ u8    │ u8 │ u8    │
- *   └──────┴────────┴────────┴─────┴───────┴────┴───────┘
+ *   ┌──────┬────────┬────────┬─────┬───────┬────┬───────┬──────┐
+ *   │ slot │ x      │ z      │ y   │ yaw   │ hp │ flags │ ci   │
+ *   │ u8   │ i16×10 │ i16×10 │ u8×8│ u8    │ u8 │ u8    │ u16  │
+ *   └──────┴────────┴────────┴─────┴───────┴────┴───────┴──────┘
  *
  * flags bits: 0 sprint · 1 airborne · 2 beast · 3 dead · 4 driving · 5 attackAnim
  *                        · 6 riding (passenger — inside a car someone else drives)
  *                        · 7 paused (personal pause / AFK — the town kept living,
  *                          their body stands still; peers show a ⏸ tag)
+ *
+ * `ci` is the car index they occupy — the car they DRIVE or ride shotgun in
+ * (0xffff = on foot). The deterministic world makes the index mean the SAME
+ * vehicle on every client, so peers can seat drivers & passengers on the
+ * open-top car styles (jeep / bus / van / convertible) exactly like the
+ * local driver's body is glued to its seat — nobody inside a shared car
+ * vanishes from the other screens any more.
  *
  * A DRIVER additionally publishes a 8-byte car packet @15 Hz on `mp:car` so
  * every peer sees the vehicle MOVE (and its lamps BLAZE) in real time:
@@ -36,7 +43,10 @@
  * treats it as a native binary attachment) and on the Bun/Node relay.
  */
 
-export const STATE_BYTES = 9;
+export const STATE_BYTES = 11;
+
+/** car index meaning "on foot" (no drive / no ride) in the state packet */
+export const CARIDX_NONE = 0xffff;
 
 export const FLAG_SPRINT = 1 << 0;
 export const FLAG_AIR = 1 << 1;
@@ -73,6 +83,11 @@ export const CARFLAG_LIGHTS = 1 << 0;
 export const AIKIND_ZOMBIE = 0;
 export const AIKIND_HUNTER = 1;
 export const AIKIND_HOUND = 2;
+/** 🤖 crew contestants — the 99 seeded bots. The HOST's bot town is the truth
+ *  (foraging, hiding, joyriding); guests mirror the poses from this stream
+ *  instead of running private RNG divergent brains, so every screen shows the
+ *  SAME bots walking the SAME streets (and the same food still on the ground). */
+export const AIKIND_CREW = 3;
 
 export const AI_ENTRY_BYTES = 7;
 
@@ -155,17 +170,21 @@ export interface NetState {
   ride: boolean;
   /** ⏸ personal pause — their world kept living, their body stands still */
   paused: boolean;
+  /** 🚗 car index they occupy (drive or ride) — CARIDX_NONE when on foot */
+  ci: number;
   /** receive timestamp (ms, performance.now) — interpolation bookkeeping */
   t: number;
 }
 
 const wrap = (yaw: number): number => ((yaw % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
 
-/** Pack one survivor state into a fresh 9-byte ArrayBuffer. */
+/** Pack one survivor state into a fresh 11-byte ArrayBuffer. */
 export function packState(s: {
   slot: number; x: number; z: number; y: number; yaw: number; hp: number;
   sprint?: boolean; air?: boolean; beast?: boolean; dead?: boolean; drive?: boolean; attack?: boolean; ride?: boolean;
   paused?: boolean;
+  /** 🚗 car index they occupy (drive / ride) — CARIDX_NONE on foot */
+  ci?: number;
 }): ArrayBuffer {
   const buf = new ArrayBuffer(STATE_BYTES);
   const v = new DataView(buf);
@@ -185,6 +204,7 @@ export function packState(s: {
   if (s.ride) f |= FLAG_RIDE;
   if (s.paused) f |= FLAG_PAUSE;
   v.setUint8(8, f);
+  v.setUint16(9, Math.max(0, Math.min(0xffff, Math.round(s.ci ?? CARIDX_NONE))), true);
   return buf;
 }
 
@@ -228,10 +248,10 @@ const toDataView = (data: BinSrc): DataView | null => {
   return null;
 };
 
-/** Unpack a received packet. Returns null on malformed input. */
+/** Unpack a received packet (accepts the legacy 9-byte form too). Returns null on malformed input. */
 export function unpackState(data: BinSrc, t = 0): NetState | null {
   const v = toDataView(data);
-  if (!v || v.byteLength < STATE_BYTES) return null;
+  if (!v || v.byteLength < 9) return null;
   const f = v.getUint8(8);
   return {
     slot: v.getUint8(0),
@@ -248,6 +268,8 @@ export function unpackState(data: BinSrc, t = 0): NetState | null {
     attack: !!(f & FLAG_ATTACK),
     ride: !!(f & FLAG_RIDE),
     paused: !!(f & FLAG_PAUSE),
+    // 🚗 seat index (legacy 9-byte peers never carried one → treat as on foot)
+    ci: v.byteLength >= STATE_BYTES ? v.getUint16(9, true) : CARIDX_NONE,
     t,
   };
 }

@@ -24,7 +24,7 @@ import {
   TREE_FALL_S, TREE_WOBBLE_S, ROCK_BREAK_S,
   CREW_SEEK_R, CREW_EAT_R, CREW_BOOST_S, CREW_BOOST_MULT,
   CRIME_SEE_R, CRIME_CIV_SEE_R, CRIME_REPORT_RANGE, CRIME_REPORT_T, WARRANT_DETECT, CRIME_STAR_MURDER, CRIME_STAR_MINOR,
-  WILDLIFE_ENABLED,
+  WILDLIFE_ENABLED, normalizeAppearance,
   type AnimalKind, type Appearance, type Phase, type PolicePerk, type PowerKind, type Side, type ToolKind, type Zone, zoneOf, ZONE_TOAST,
 } from "./constants";
 import { clamp, mulberry32, range } from "./rng";
@@ -38,7 +38,7 @@ import { preloadGraveyardModels } from "./graveyardModels";
 import { preloadHospitalModels } from "./hospitalModels";
 import { GLB_CHARACTERS, preloadGlbCharacters } from "./glbCharacters";
 import type { MpEvent } from "@/lib/game/net/client";
-import { AIKIND_HOUND, AIKIND_HUNTER, AIKIND_ZOMBIE, type AiEntry } from "./net/protocol";
+import { AIKIND_HOUND, AIKIND_HUNTER, AIKIND_ZOMBIE, AIKIND_CREW, type AiEntry } from "./net/protocol";
 
 const TAU = Math.PI * 2; // full circle — used to keep the camera yaw wrapped
 
@@ -263,6 +263,10 @@ export interface RemotePlayer {
   beast: boolean; drive: boolean; sprint: boolean; air: boolean; attackT: number;
   /** 🚗 riding shotgun in someone else's car (their body hides inside it) */
   ride?: boolean;
+  /** 🚗 the car they occupy — the one they DRIVE or ride shotgun in
+   *  (0xffff/CARIDX_NONE-style sentinel → undefined when on foot). Peers seat
+   *  them on the open-top styles exactly like the local driver's body. */
+  carCi?: number;
   /** ⏸ their personal pause is on — the world kept living, their body stands
    *  still; we render a ⏸ tag so nobody mistakes them for a laggy ghost */
   paused?: boolean;
@@ -843,6 +847,16 @@ export class GameEngine {
    *  the ring-traffic clock; guests park their local ATC machine and render the
    *  host-streamed truth so every screen shows the same vehicles in the sky. */
   ambientMirror = false;
+  /** 🤖 crew mirror (guests) — flips ON the first host crew packet; from then on
+   *  the guest's private bot brains park and the host's crew town is the truth
+   *  (same bots, same foraging, same streets on every screen). */
+  netCrewMirror = false;
+  /** 🕐 last accepted HOST phase-event timestamp (performance.now, ms). While
+   *  the stream is fresh the guest runs its own countdown; when the host's tab
+   *  throttles/freezes and the stream goes stale, guests HOLD at the phase
+   *  boundary instead of crossing it — the story waits for the host's word,
+   *  so a backgrounded host can never leave the room's skies fighting. */
+  netPhaseAt = 0;
 
   constructor(world: World, look: Appearance, toast: ToastFn, rngSeed?: number, seat?: number) {
     this.world = world;
@@ -1738,6 +1752,8 @@ export class GameEngine {
     this.ride = null; // 🚗 the passenger seat rewinds too
     this.carCoast.clear(); // 🚗 every abandoned coasting drift freezes where it sits
     this.remoteDriven.clear(); // 🌐 mirrored remote cars re-fill from the live stream
+    this.netCrewMirror = false; // 🤖 crew mirror re-arms from the live host stream
+    this.netPhaseAt = 0; // 🕐 host clock trust re-arms too
     for (const lc of this.licenses) lc.active = true;
     this.detainedT = 0; this.invulnT = 8; this.elapsed = 0; this.won = false; this.lost = false; this.clock = 0.3;
     this.arrest = "free"; this.arrestStation = -1; this.playerInVan = false; this.vanNeeded = false;
@@ -2411,6 +2427,23 @@ export class GameEngine {
         this.aiPrev.set(`d${e.idx}`, { x: e.x, z: e.z, t: now });
         an.x = e.x; an.z = e.z; an.face = e.yaw;
         if (e.dead && !an.dead) { an.dead = true; an.deadT = 0; }
+      }
+    } else if (kind === AIKIND_CREW) {
+      // 🤖 the host's bot town is the truth — every living, non-possessed
+      // contestant mirrors pose + walk anim. Their forage/loot/hide DECISIONS
+      // happen on the host only (its pickup events keep our world's food,
+      // loot & gems identical); we just render the same bodies walking.
+      this.netCrewMirror = true;
+      for (const e of entries) {
+        const c = this.crew[e.idx];
+        if (!c || !c.alive || c.mode === "possessed" || c.replaced) continue;
+        const prev = this.aiPrev.get(`c${e.idx}`);
+        const dtms = prev ? Math.max(16, now - prev.t) : 84;
+        c.vx = prev ? ((e.x - prev.x) / dtms) * 1000 : 0;
+        c.vz = prev ? ((e.z - prev.z) / dtms) * 1000 : 0;
+        this.aiPrev.set(`c${e.idx}`, { x: e.x, z: e.z, t: now });
+        c.x = e.x; c.z = e.z; c.face = e.yaw;
+        if (e.atk) c.attackAnimT = 0.45; // scuffle swing mirrors
       }
     }
   }
@@ -3546,7 +3579,17 @@ export class GameEngine {
    *  from the phase so sky, fog, lamps, windows & fireflies all follow the story. */
   private stepPhase(dt: number) {
     this.phaseT -= dt;
+    // 🕐 HOST-DOWN GUARD (guests): the story never CROSSES a phase transition
+    // on its own while the host's clock stream is stale — a throttled/backgrounded
+    // host tab freezes their phaseT, and a guest that marched on would flip
+    // night→dawn, get snapped BACK by the host's next 2 Hz packet, and flip
+    // again (flickering skies, two different day/night stories). Holding at
+    // the boundary costs ~0.5 s of extra latency when the host is healthy and
+    // buys a rock-solid shared story when they're not.
+    const hostGone = this.mp && !this.mpHost && this.netPhaseAt > 0
+      && performance.now() - this.netPhaseAt > 2500;
     if (this.phaseT <= 0) {
+      if (hostGone) { this.phaseT = 0.12; return; } // hold — wait for the host's word
       switch (this.phase) {
         case "day":
           this.phase = "dusk";
@@ -3876,6 +3919,16 @@ export class GameEngine {
       c.fearT = Math.max(0, (c.fearT ?? 0) - dt);   // 🫨 crime-scene terror decays
       if (c.seekBlock) { c.seekBlock.t -= dt; if (c.seekBlock.t <= 0) c.seekBlock = null; } // 🧱 unreachable-goodie blacklist decays
       c.avoidT = Math.max(0, (c.avoidT ?? 0) - dt);              // 🧱 beast prey-avoid decays
+      // 🤖 THE HOST'S BOT TOWN IS THE TRUTH — once the crew mirror is live the
+      // guest's private forage/hide/joyride brains park for good (a private
+      // brain would fight the mirrored poses and every screen would grow its
+      // own divergent bot town — the "different bots / different food" bug).
+      // Deaths & possessions keep flowing through crewDeath / roster events;
+      // the swipe clock runs so mirrored scuffles still animate.
+      if (this.netCrewMirror && !this.mpHost) {
+        c.attackAnimT = Math.max(0, (c.attackAnimT ?? 0) - dt);
+        continue;
+      }
       const d2p = dist2(c.x, c.z, p.x, p.z);
 
       // 🧱 THE WALL — lingering beyond the safe circle withers the body.
@@ -7325,14 +7378,18 @@ export class GameEngine {
     }
   }
 
-  /** Sync the remote roster from the lobby (adds joiners, removes leavers). */
+  /** Sync the remote roster from the lobby (adds joiners, removes leavers).
+   *  👤 every look is normalized over the full default appearance — a peer
+   *  (or an older build) can send a partial/legacy look, and one undefined
+   *  color field used to detonate buildCharacter → white screen for everyone
+   *  rendering the roster. */
   syncRemotes(players: { sid: string; slot: number; name: string; look: Appearance | null }[], mySid: string) {
     for (const p of players) {
       if (p.sid === mySid || p.slot === this.mpSlot) continue;
       let r = this.remotes.find((x) => x.slot === p.slot);
       if (!r) {
         r = {
-          slot: p.slot, name: p.name, look: p.look ?? this.look,
+          slot: p.slot, name: p.name, look: normalizeAppearance(p.look),
           // 🎲 a joiner materialises at THEIR seat's drop spot (deterministic per
           // slot — the same answer on every client), never stacked at the map centre
           x: 0, z: 0, y: 0, vx: 0, vz: 0, face: 0,
@@ -7346,7 +7403,7 @@ export class GameEngine {
         this.toast(`🌐 ${p.name} joined the 7 nights!`, "good");
       } else {
         r.name = p.name;
-        if (p.look) r.look = p.look;
+        if (p.look) r.look = normalizeAppearance(p.look);
       }
     }
     // drop souls that left the room

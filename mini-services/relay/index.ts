@@ -162,7 +162,10 @@ io.on("connection", (sock) => {
     if (!room) return ack?.({ ok: false, err: "Room not found — check the code" });
     if (room.members.size >= MAX_PLAYERS) return ack?.({ ok: false, err: "Room is full (8 souls max)" });
     seatInRoom(io, sock, room, sanitizeName(p.name), p.look);
-    ack?.({ ok: true, code: room.code, lobby: lobbyPayload(room) });
+    // 🏟️ `started` tells the joiner whether the session's night is ALREADY
+    // running — they route into the match lobby (restart-together) instead of
+    // idling in a room nobody will ever launch again (PUBG-style join-in-progress)
+    ack?.({ ok: true, code: room.code, lobby: lobbyPayload(room), started: room.started });
   });
 
   /* ---------------- 🏟️ match lobby countdown ----------------
@@ -265,8 +268,8 @@ io.on("connection", (sock) => {
     sock.to(room.code).emit("mp:car", buf instanceof Buffer ? buf : Buffer.from(buf as Uint8Array), sock.data.slot);
   });
 
-  // 🧟 AI replication stream (host → guests: zombies/hunters/hounds poses, see
-  // protocol.ts packAi). Only the host's packets matter but the relay stays
+  // 🧟 AI replication stream (host → guests: zombies/hunters/hounds/crew poses,
+  // see protocol.ts packAi). Only the host's packets matter but the relay stays
   // transport-dumb — clients that shouldn't publish simply never do. Fan out
   // verbatim like mp:car; the header carries the kind, no slot stamp needed.
   sock.on("mp:ai", (buf: Buffer | ArrayBuffer | Uint8Array) => {
@@ -274,6 +277,15 @@ io.on("connection", (sock) => {
     const len = buf instanceof Buffer ? buf.length : (buf as Uint8Array)?.byteLength ?? 0;
     if (!room || !buf || len < 2 || len > 1200) return;
     sock.to(room.code).emit("mp:ai", buf instanceof Buffer ? buf : Buffer.from(buf as Uint8Array));
+  });
+
+  // 🤖 bot joyrider cars — the host's crew fleet (8-byte car packets keyed by
+  // the deterministic car index; no slot stamp — the packet carries the ci)
+  sock.on("mp:botcar", (buf: Buffer | ArrayBuffer | Uint8Array) => {
+    const room = roomOf(sock.id);
+    const len = buf instanceof Buffer ? buf.length : (buf as Uint8Array)?.byteLength ?? 0;
+    if (!room || !buf || len === 0 || len > 64) return;
+    sock.to(room.code).emit("mp:botcar", buf instanceof Buffer ? buf : Buffer.from(buf as Uint8Array));
   });
 
   /* reliable gameplay events (phase clock, possession roster, damage, kills…)

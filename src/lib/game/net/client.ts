@@ -13,7 +13,7 @@
  * the host additionally owns the story clock & possession roster.
  */
 import { io, type Socket } from "socket.io-client";
-import { Interp, packState, unpackAi, unpackState, unpackCar, type AiEntry, type NetState, type CarState } from "./protocol";
+import { Interp, packState, unpackAi, unpackState, unpackCar, CARIDX_NONE, type AiEntry, type NetState, type CarState } from "./protocol";
 import type { Appearance } from "../constants";
 
 /** 🎲 derive the shared gameplay RNG seed from the room code — every client in
@@ -80,6 +80,9 @@ export class NetClient {
   private interps = new Map<number, Interp>(); // slot → interpolation buffer
   /** latest mirrored car pose per driving slot (8-byte `mp:car` packets) */
   private carStates = new Map<number, CarState>();
+  /** 🤖 mirrored BOT-driven car poses (host streams its joyriders on `mp:botcar`,
+   *  keyed by the deterministic car index — guests re-render the exact ride) */
+  private botCarStates = new Map<number, CarState>();
   /** 🧟 latest host AI stream per kind (zombies/hunters/hounds) — guests mirror */
   private aiStates = new Map<number, { entries: AiEntry[]; t: number }>();
   private evHandlers = new Map<EventKind, Set<(ev: MpEvent, fromSlot: number) => void>>();
@@ -199,6 +202,16 @@ export class NetClient {
         this.carStates.set(c.slot, c);
       });
 
+      // 🤖 bot joyrider stream — the host's crew cars, keyed by car index (the
+      // relay stays transport-dumb; no slot stamp — the packet carries the ci)
+      sock.on("mp:botcar", (buf: Buffer) => {
+        const c = unpackCar(buf);
+        if (!c || c.ci === CARIDX_NONE) return;
+        c.slot = -1;
+        c.t = performance.now();
+        this.botCarStates.set(c.ci, c);
+      });
+
       // 🧟 host AI stream — the night's horde poses (zombies/hunters/hounds).
       // Only the session host publishes; every guest mirrors. The packet itself
       // carries its kind, so one channel serves all three streams.
@@ -268,6 +281,7 @@ export class NetClient {
     this.sock = null;
     this.interps.clear();
     this.carStates.clear();
+    this.botCarStates.clear();
     this.aiStates.clear();
     this.code = "";
     this.slot = -1;
@@ -299,13 +313,17 @@ export class NetClient {
     await this.connect();
     return new Promise((resolve, reject) => {
       const t = setTimeout(() => reject(new Error("Relay timeout")), 8000);
-      this.sock!.emit("mp:join", { code: code.toUpperCase().trim(), name, look }, (r: { ok: boolean; code?: string; lobby?: LobbySnapshot; err?: string }) => {
+      this.sock!.emit("mp:join", { code: code.toUpperCase().trim(), name, look }, (r: { ok: boolean; code?: string; lobby?: LobbySnapshot; started?: boolean; err?: string }) => {
         clearTimeout(t);
         if (!r.ok) return reject(new Error(r.err ?? "Could not join"));
         this.code = r.code!;
         this.setSlot(r.lobby!.players.find((p) => p.sid === this.mySid)?.slot ?? 0);
         this.lobby = r.lobby!;
         this.isHost = r.lobby!.host === this.mySid;
+        // 🏟️ the relay tells us whether the session's night is ALREADY running —
+        // a code-joiner into a live night must route to the match lobby (the
+        // whole room restarts together) exactly like a quick-joiner does
+        this.sessionStarted = !!r.started;
         this.setState("room");
         resolve(r.lobby!);
       });
@@ -400,6 +418,12 @@ export class NetClient {
     this.sock.emit("mp:ai", buf);
   }
 
+  /** 🤖 host-only — publish one bot-driven car pose (8-byte car packet). */
+  emitBotCar(buf: ArrayBuffer) {
+    if (!this.sock?.connected) return;
+    this.sock.emit("mp:botcar", buf);
+  }
+
   /** 🧟 guests — latest AI entries for a kind (null = no fresh host stream). */
   sampleAi(kind: number): AiEntry[] | null {
     const s = this.aiStates.get(kind);
@@ -423,6 +447,21 @@ export class NetClient {
   /** 🚗 latest mirrored car pose from a driving slot (null = no data yet). */
   sampleCar(slot: number): CarState | null {
     return this.carStates.get(slot) ?? null;
+  }
+
+  /** 🤖 latest mirrored bot-car pose for a car index (null = no fresh stream). */
+  sampleBotCar(ci: number): CarState | null {
+    return this.botCarStates.get(ci) ?? null;
+  }
+
+  /** 🤖 every mirrored bot car (fresh or not — callers stamp staleness). */
+  allBotCars(): CarState[] {
+    return [...this.botCarStates.values()];
+  }
+
+  /** 🤖 prune a bot-car mirror (driver parked / left). */
+  dropBotCar(ci: number) {
+    this.botCarStates.delete(ci);
   }
 
   /** True once we've ever heard from this slot (drives ghost timeouts). */

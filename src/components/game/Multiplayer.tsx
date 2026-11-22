@@ -113,7 +113,16 @@ export function Multiplayer() {
         busy: false, code: lobby.code, isHost: lobby.host === net.mySid, error: "",
         players: lobby.players.map((p) => ({ sid: p.sid, slot: p.slot, name: p.name, ready: p.ready, self: p.sid === net.mySid })),
       });
-      pushToast(net.sessionStarted ? "⚡ Joined a LIVE night — waiting in the match lobby!" : `🌐 Joined room ${lobby.code}!`, "good");
+      // 🏟️ a live night + not the host → straight into the match lobby (the
+      // room regathers and EVERYONE restarts together). Called DIRECTLY — the
+      // roster broadcast racing this patch used to starve the effect-based
+      // route, stranding the joiner in an idle room while the night ran on.
+      if (net.sessionStarted && !net.isHost) {
+        pushToast("⚡ Night already running — you'll wait in the match lobby, then EVERYONE restarts together!", "good");
+        void enterMatchLobby();
+      } else {
+        pushToast(`🌐 Joined room ${lobby.code}!`, "good");
+      }
     } catch (e) {
       patchMp({ busy: false, error: e instanceof Error ? e.message : "Could not join" });
     }
@@ -159,7 +168,12 @@ export function Multiplayer() {
   useEffect(() => {
     if (!inRoom || !net.sessionStarted || net.isHost) return;
     const t = setTimeout(() => {
-      if (useGame.getState().screen === "lobby") {
+      // 🛰️ the room panel lives ON the landing screen (screen stays "landing"
+      // while the overlay is open) — the old check demanded screen === "lobby",
+      // which is a DIFFERENT screen state, so live-night code-joiners never
+      // routed into the match lobby and sat stranded in the room forever
+      const sc = useGame.getState().screen;
+      if (sc === "landing" || sc === "lobby") {
         void enterMatchLobby();
       }
     }, 600);
