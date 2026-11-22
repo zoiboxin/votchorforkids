@@ -8,8 +8,8 @@ import {
   ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon, Mouse, Eye, ScrollText,
 } from "lucide-react";
 import type { GameEngine } from "@/lib/game/engine";
-import { AIRPORT, DETAIN_SECONDS, GRAVEYARD, ITEMS, INV_SLOTS, NIGHTS_TOTAL, POLICE_STATIONS, POWERS, TOOLS, WILDLIFE_ENABLED } from "@/lib/game/constants";
-import { HOSPITAL, RAILWAY, RAILWAY_stationHouse } from "@/lib/game/worldgen";
+import { AIRPORT, DETAIN_SECONDS, GRAVEYARD, ITEMS, INV_SLOTS, MUSEUM, NIGHTS_TOTAL, POLICE_STATIONS, POWERS, TOOLS, WILDLIFE_ENABLED } from "@/lib/game/constants";
+import { BARN_BASE, HOSPITAL, MALL, RAILWAY, RAILWAY_stationHouse, SCHOOL } from "@/lib/game/worldgen";
 import { useGame } from "./store";
 import { requestGameLock } from "./Scene";
 import { setMuted as setAudioMuted, sfx, stopMusic, startMusic } from "@/lib/game/audio";
@@ -23,14 +23,21 @@ const SOUL_COLORS = ["#f472b6", "#fbbf24", "#4ade80", "#2dd4bf", "#f87171", "#c0
 type MapPin = { x: number; z: number } | null;
 
 /** 🗺️ named landmarks — badge-marked on BOTH the minimap & big map so players can
- *  actually FIND the hospital, the railway station, the airport and the graveyard.
+ *  actually FIND the hospital, mall, school, museum, farms, the railway station,
+ *  the airport and the graveyard (each badge wears a white halo so even the dark
+ *  ones read on dark ground — the graveyard blob used to swallow its own badge).
  *  (Police stations draw their own navy-badged squares right below.)
- *  ly = label offset below the badge, world units (big map only). */
-const MAP_POIS: { x: number; z: number; disc: string; ring: string; glyph: string; label: string; ly: number }[] = [
+ *  gc = glyph colour (defaults white); ly = label offset below the badge, world units (big map only). */
+const MAP_POIS: { x: number; z: number; disc: string; ring: string; glyph: string; gc?: string; label: string; ly: number }[] = [
   { x: HOSPITAL.x, z: HOSPITAL.z, disc: "#f8fafc", ring: "#b91c1c", glyph: "+", label: "HOSPITAL", ly: 30 },
   { x: RAILWAY_stationHouse.x, z: RAILWAY_stationHouse.z, disc: "#57534e", ring: "#1c1917", glyph: "T", label: "RAILWAY", ly: 26 },
   { x: AIRPORT.tower.x, z: AIRPORT.tower.z - 8, disc: "#475569", ring: "#0f172a", glyph: "✈", label: "AIRPORT", ly: 42 },
-  { x: GRAVEYARD.x, z: GRAVEYARD.z, disc: "#343440", ring: "#0b0b12", glyph: "☠", label: "GRAVEYARD", ly: 58 },
+  { x: GRAVEYARD.x, z: GRAVEYARD.z, disc: "#6b7280", ring: "#111827", glyph: "☠", label: "GRAVEYARD", ly: 72 },
+  { x: MALL.x, z: MALL.z, disc: "#0d9488", ring: "#134e4a", glyph: "M", label: "MALL", ly: 26 },
+  { x: SCHOOL.x, z: SCHOOL.z, disc: "#fbbf24", ring: "#78350f", glyph: "S", gc: "#3b2f10", label: "SCHOOL", ly: -18 },
+  { x: MUSEUM.x, z: MUSEUM.z, disc: "#c9a45c", ring: "#713f12", glyph: "V", gc: "#3b2f10", label: "MUSEUM", ly: 26 },
+  // 🚜 the three barns — every farm plots its own badge
+  ...BARN_BASE.map(([x, z]) => ({ x, z, disc: "#92400e", ring: "#451a03", glyph: "F", label: "FARM", ly: 26 })),
 ];
 
 /* ------- shared world-map canvas painting (156px minimap + 560px big map).
@@ -65,12 +72,19 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
   c.beginPath();
   c.arc(S / 2, S / 2, RAILWAY.R * K, RAILWAY.a0, RAILWAY.a1);
   c.stroke();
-  // 🗺️ landmark badges — hospital cross, railway station, airport, graveyard
+  // 🗺️ landmark badges — hospital cross, railway station, airport, graveyard,
+  // mall, school, museum & the three farm barns — every one haloed in white
+  // so it pops on ANY ground (dark badges were invisible on the graveyard
+  // blob and at night)
   c.textAlign = "center";
   c.textBaseline = "middle";
   for (const p of MAP_POIS) {
     const px = S / 2 + p.x * K, pz = S / 2 + p.z * K;
-    const r = (mini ? 5 : 5.4) * U;
+    const r = (mini ? 6.2 : 6.6) * U;
+    c.beginPath();
+    c.arc(px, pz, r + Math.max(1.2, 1.3 * U), 0, 6.3);
+    c.fillStyle = "rgba(248,250,252,0.92)";
+    c.fill();
     c.beginPath();
     c.arc(px, pz, r, 0, 6.3);
     c.fillStyle = p.disc;
@@ -85,7 +99,7 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
       c.fillRect(px - a, pz - b, a * 2, b * 2);
       c.fillRect(px - b, pz - a, b * 2, a * 2);
     } else {
-      c.fillStyle = "#f8fafc";
+      c.fillStyle = p.gc ?? "#f8fafc";
       c.font = `900 ${Math.round(r * 1.3)}px ui-sans-serif, system-ui, sans-serif`;
       c.fillText(p.glyph, px, pz + r * 0.06);
     }
@@ -141,9 +155,7 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
       c.setLineDash([]);
     }
   }
-  // city museum
-  c.fillStyle = "#c9a45c";
-  c.fillRect(S / 2 - 4 * U, S / 2 - 196 * K - 3 * U, 8 * U, 6 * U);
+  // (the city museum badge now comes from MAP_POIS — the old bare amber rect is gone)
   // ballot (big map only — the mini stays clean)
   if (!mini) {
     c.fillStyle = "#f7c948";
