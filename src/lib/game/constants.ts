@@ -290,6 +290,11 @@ export const CIVIL_NAMES = [
   "Iris", "Juno", "Kai", "Luna", "Milo", "Nora", "Otis", "Pip",
 ];
 
+/** The default lobby hero — the backpack Traveller from the preloaded Town Cast
+ *  reads "survivor" at a glance, and the whole cast streams in at menu time.
+ *  New profiles wear a rigged GLB human everywhere (landing stage + in game). */
+export const DEFAULT_HERO_SLUG = "traveller-92f20c";
+
 export const defaultAppearance = (): Appearance => ({
   fac: "protester",
   outfit: "",
@@ -304,6 +309,8 @@ export const defaultAppearance = (): Appearance => ({
   glasses: false,
   age: "young",
   girl: false,
+  // 🧍 rigged GLB hero by default — the cast swapped the cartoon bodies
+  char: DEFAULT_HERO_SLUG,
 });
 
 /** Merge saved/legacy appearances that may predate newer fields. */

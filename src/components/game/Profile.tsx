@@ -73,9 +73,9 @@ export function Profile() {
 
   return (
     <div className="relative h-screen w-full overflow-y-auto bg-slate-950">
-      {/* same painted night-town backdrop as the landing page */}
-      <div aria-hidden className="fixed inset-0 bg-cover bg-center" style={{ backgroundImage: "url(/hero-7nights.png)" }} />
-      <div aria-hidden className="fixed inset-0 bg-gradient-to-b from-slate-950/90 via-indigo-950/70 to-slate-950/95" />
+      {/* same photoreal night-city backdrop as the landing page */}
+      <div aria-hidden className="fixed inset-0 bg-cover bg-center" style={{ backgroundImage: "url(/hero-lobby-night.png)" }} />
+      <div aria-hidden className="fixed inset-0 bg-gradient-to-b from-slate-950/90 via-slate-950/70 to-slate-950/95" />
 
       {/* sticky top bar: back to landing + quick dialogs */}
       <div className="sticky top-0 z-40 border-b border-white/10 bg-slate-950/75 backdrop-blur">

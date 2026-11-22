@@ -491,9 +491,9 @@ export function Creator({ onStart }: { onStart: () => void }) {
       <div
         aria-hidden
         className="fixed inset-0 bg-cover bg-center"
-        style={{ backgroundImage: "url(/hero-7nights.png)" }}
+        style={{ backgroundImage: "url(/hero-lobby-night.png)" }}
       />
-      <div aria-hidden className="fixed inset-0 bg-gradient-to-b from-slate-950/85 via-indigo-950/65 to-slate-950/90" />
+      <div aria-hidden className="fixed inset-0 bg-gradient-to-b from-slate-950/85 via-slate-950/65 to-slate-950/90" />
 
       <div className="relative mx-auto flex min-h-screen w-full max-w-6xl flex-col gap-5 px-4 py-5 pb-28 lg:pb-8">
         {/* header */}

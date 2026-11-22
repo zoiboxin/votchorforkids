@@ -8,15 +8,18 @@
  *     Locker · Item Shop · Career · News) with XP / crew chips and the avatar
  *   • left column: SEASON card (LEVEL + XP bar + battle-pass tier strip),
  *     SUGGESTED CHALLENGES and the DAILY CHALLENGES board with progress bars
- *   • center: the survivor LIVE on a glowing 3D stage (drag to spin) with the
- *     name plate + READY status above and the rank boost pill below
- *   • bottom: Global chat bar (Enter to chat) and the big yellow PLAY button
- *     plus the MULTIPLAYER squads button bottom-right
+ *   • center: the rigged GLB survivor LIVE on a glowing podium (drag to spin,
+ *     glowing center circle — no cartoon bodies) with the name plate + READY
+ *     status above and the rank boost pill below
+ *   • bottom: Global chat bar (Enter to chat) and the big yellow SOLO PLAYER
+ *     button plus the MULTIPLAYER squads button — customization lives in the
+ *     LOCKER, never blocking the way into a night
  *
- * Wiring is unchanged: PLAY queues through the PUBG-style match lobby (bots
- * fill the 100-soul night), Locker opens the full survivor creator, Career
- * opens the profile hub. Keyboard: [H] help · [P] profile · [L] locker ·
- * [C] challenges · [B] battle pass · [N] news.
+ * Wiring is unchanged: SOLO PLAYER queues through the PUBG-style match lobby
+ * (bots fill the 100-soul night; a name is rolled automatically the first
+ * time), Locker opens the full survivor creator, Career opens the profile
+ * hub. Keyboard: [H] help · [P] profile · [L] locker · [C] challenges ·
+ * [B] battle pass · [N] news.
  */
 
 import { useEffect, useState } from "react";
@@ -28,13 +31,16 @@ import {
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DAILY_TASK_POOL, ALL_DONE_BONUS } from "@/lib/game/daily";
-import { NIGHT_TICKER, OUTFIT_PRESETS, type Appearance, type OutfitPreset } from "@/lib/game/constants";
+import {
+  NAME_SUGGESTIONS, NIGHT_TICKER, OUTFIT_PRESETS,
+  type Appearance, type OutfitPreset,
+} from "@/lib/game/constants";
 import { RANKS, rankFor } from "@/lib/game/ranks";
 import { primeAudio, sfx, startMusic } from "@/lib/game/audio";
 import { useGame } from "./store";
 import { HowToPlay, SettingsDialog, StatsDialog, HistoryDialog } from "./Panels";
 import { RankBadge } from "./RankCard";
-import { Preview } from "./Creator";
+import { LobbyStage } from "./LobbyStage";
 
 /* ---------------- meta progression ---------------- */
 
@@ -222,11 +228,17 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
     return () => window.removeEventListener("keydown", onKey);
   }, [setScreen]);
 
-  /* PLAY — straight into the PUBG-style match lobby once the survivor exists */
+  /* SOLO PLAYER — straight into the PUBG-style match lobby. Customization
+     lives in the LOCKER, so a first-timer just gets a rolled name and drops
+     in; nothing about playing solo requires a creator detour anymore. */
   const play = () => {
     sfx.click();
-    if (!hasProfile || !onQuickPlay) setScreen("creator");
-    else onQuickPlay();
+    if (!hasProfile) {
+      const pool = NAME_SUGGESTIONS;
+      useGame.getState().setName(pool[Math.floor(Math.random() * pool.length)]);
+    }
+    if (onQuickPlay) onQuickPlay();
+    else setScreen("creator");
   };
 
   const openTab = (id: Tab) => { sfx.click(); setTab(id); };
@@ -236,20 +248,15 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
   return (
     <div className="fixed inset-0 flex flex-col overflow-hidden bg-slate-950 text-white">
       <style>{`
-        @keyframes vc-float { 0%,100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-14px) rotate(3deg); } }
         .lobby-scroll::-webkit-scrollbar { width: 8px; height: 8px; }
         .lobby-scroll::-webkit-scrollbar-thumb { background: rgba(255,255,255,.16); border-radius: 4px; }
         .lobby-scroll::-webkit-scrollbar-track { background: transparent; }
       `}</style>
 
-      {/* painted night-town backdrop */}
-      <div aria-hidden className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: "url(/hero-7nights.png)" }} />
-      <div aria-hidden className="absolute inset-0 bg-gradient-to-b from-slate-950/80 via-indigo-950/55 to-slate-950/90" />
-      <div aria-hidden className="pointer-events-none absolute inset-0 overflow-hidden">
-        <span aria-hidden className="absolute left-[8%] top-[30%] select-none text-2xl opacity-40" style={{ animation: "vc-float 6.5s ease-in-out infinite" }}>🦇</span>
-        <span aria-hidden className="absolute right-[10%] top-[22%] select-none text-2xl opacity-40" style={{ animation: "vc-float 7.5s ease-in-out infinite", animationDelay: "1.2s" }}>🌙</span>
-        <span aria-hidden className="absolute left-[46%] top-[12%] select-none text-xl opacity-30" style={{ animation: "vc-float 8.5s ease-in-out infinite", animationDelay: "2s" }}>✨</span>
-      </div>
+      {/* photoreal night-city backdrop — the lobby matches the rigged GLB cast */}
+      <div aria-hidden className="absolute inset-0 bg-cover bg-center" style={{ backgroundImage: "url(/hero-lobby-night.png)" }} />
+      <div aria-hidden className="absolute inset-0 bg-gradient-to-b from-slate-950/82 via-slate-950/45 to-slate-950/92" />
+      <div aria-hidden className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,transparent_38%,rgba(2,6,23,0.55)_100%)]" />
 
       {/* ================= top bar: logo band + tabs + chips ================= */}
       <header className="relative z-30 flex items-center gap-2 px-2 pt-2 sm:gap-3 sm:px-3">
@@ -671,9 +678,9 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
             </div>
           </div>
 
-          {/* the live 3D survivor (drag to spin — same stage as the locker) */}
+          {/* the rigged GLB survivor on the podium (drag to spin) */}
           <div className="absolute inset-0">
-            <Preview look={look} anim="idle" />
+            <LobbyStage look={look} />
           </div>
 
           {/* rank boost pill under the stage glow */}
@@ -712,15 +719,15 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
             </span>
           </Button>
 
-          {/* the big yellow PLAY */}
+          {/* the big yellow SOLO PLAYER — always ready, no creator detour */}
           <Button
             onClick={play}
-            aria-label={hasProfile ? "Play solo — queue into a night" : "Create your survivor first"}
+            aria-label="Solo player — queue into a night"
             className="h-16 w-full rounded-md bg-yellow-400 text-2xl font-black italic uppercase tracking-wide text-slate-950 shadow-[0_6px_0_rgba(161,98,7,0.55)] transition-all hover:bg-yellow-300 active:translate-y-0.5 active:shadow-[0_3px_0_rgba(161,98,7,0.55)]"
           >
             <span className="flex items-center gap-3">
               <Play size={26} fill="currentColor" />
-              {hasProfile ? "Play" : "Create survivor"}
+              Solo Player
             </span>
           </Button>
         </div>
