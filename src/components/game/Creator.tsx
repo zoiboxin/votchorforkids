@@ -460,6 +460,90 @@ function HeroPicker({ value, onChange }: { value: string; onChange: (slug: strin
   );
 }
 
+/* ============================ locker items ============================ */
+
+/** 🛍️ the Items tab — the player's collection: wallet balance, every PURCHASED
+ *  shop item and where the money comes from (cash scooped while roaming). */
+function LockerItems() {
+  const coins = useGame((s) => s.coins);
+  const owned = useGame((s) => s.owned);
+  const lifeMoney = useGame((s) => s.lifeMoney);
+  const setScreen = useGame((s) => s.setScreen);
+
+  const items = owned.map((id) => shopItem(id)).filter((it): it is ShopItem => !!it);
+
+  return (
+    <div className="space-y-3">
+      {/* 💰 wallet — spendable balance + lifetime bank */}
+      <div className="flex items-center justify-between gap-2 rounded-xl border border-yellow-300/30 bg-yellow-400/10 px-3 py-2.5">
+        <div>
+          <div className="text-[10px] font-black uppercase tracking-wide text-yellow-200">💰 Wallet</div>
+          <div className="text-xl font-black leading-tight text-yellow-300">${coins.toLocaleString()}</div>
+        </div>
+        <div className="text-right text-[10px] font-bold leading-snug text-white/60">
+          <div>${lifeMoney.toLocaleString()} banked lifetime</div>
+          <div className="text-white/40">cash piles · purses · zombie hoards</div>
+        </div>
+      </div>
+
+      {/* 🛍️ purchased collection — grouped by shop section */}
+      <div>
+        <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-white/70">
+          Purchased ({items.length})
+        </div>
+        {items.length === 0 ? (
+          <div className="rounded-xl bg-white/5 p-3.5 text-center text-[11px] font-bold leading-snug text-white/55">
+            Nothing collected yet — roam the town, bank some 💰 and spend it in the{" "}
+            <b className="text-yellow-300">Item Shop</b>!
+          </div>
+        ) : (
+          <div className="space-y-2">
+            {SHOP_KINDS.map((sec) => {
+              const rows = items.filter((it) => it.kind === sec.id);
+              if (rows.length === 0) return null;
+              return (
+                <div key={sec.id}>
+                  <div className="mb-1 flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-white/55">
+                    <span aria-hidden>{sec.emoji}</span> {sec.label}
+                  </div>
+                  <div className="grid grid-cols-3 gap-1.5">
+                    {rows.map((it) => (
+                      <div
+                        key={it.id}
+                        title={it.tip}
+                        className="rounded-xl border border-emerald-300/30 bg-emerald-400/10 p-1.5 text-center"
+                      >
+                        <div className="text-lg leading-none">{it.emoji}</div>
+                        <div className="mt-0.5 truncate text-[9px] font-bold text-white/85">{it.name}</div>
+                        <div className="text-[8px] font-black uppercase text-emerald-300">
+                          {it.kind === "style" ? "outfit" : "every run"}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <Button
+        onClick={() => { sfx.click(); setScreen("landing"); }}
+        className="h-9 w-full rounded-xl bg-orange-600 text-xs font-black text-white hover:bg-orange-500"
+      >
+        <ShoppingBag size={13} className="mr-1.5" /> Open the Item Shop
+      </Button>
+
+      <div className="rounded-xl bg-white/5 p-2.5 text-[11px] leading-relaxed text-white/70">
+        <b className="text-white">How it works:</b> every dollar you scoop while roaming gets banked when the run
+        ends. Spend it in the Item Shop — purchased gear, gems &amp; snacks spawn with you EVERY run; tools &amp;
+        gems ride the 🎒 wheel (<b>G</b> / right-click), snacks fill the 1–8 hotbar.
+      </div>
+    </div>
+  );
+}
+
 /* ============================ creator ============================ */
 export function Creator({ onStart }: { onStart: () => void }) {
   const look = useGame((s) => s.look);
@@ -655,9 +739,9 @@ export function Creator({ onStart }: { onStart: () => void }) {
                 />
               </div>
 
-              {/* tabbed customization — GLB hero + body size, nothing else */}
+              {/* tabbed customization — GLB hero + body size + the item collection */}
               <Tabs value={tab} onValueChange={setTab}>
-                <TabsList className="grid h-auto w-full grid-cols-2 gap-1 rounded-xl bg-white/10 p-1">
+                <TabsList className="grid h-auto w-full grid-cols-3 gap-1 rounded-xl bg-white/10 p-1">
                   <TabsTrigger
                     value="hero"
                     className="rounded-lg border-0 py-1.5 text-xs font-black text-white/70 data-[state=active]:bg-yellow-300/90 data-[state=active]:text-amber-950 data-[state=active]:shadow-none"
@@ -669,6 +753,12 @@ export function Creator({ onStart }: { onStart: () => void }) {
                     className="rounded-lg border-0 py-1.5 text-xs font-black text-white/70 data-[state=active]:bg-yellow-300/90 data-[state=active]:text-amber-950 data-[state=active]:shadow-none"
                   >
                     <Baby size={13} className="mr-1" /> Body
+                  </TabsTrigger>
+                  <TabsTrigger
+                    value="items"
+                    className="rounded-lg border-0 py-1.5 text-xs font-black text-white/70 data-[state=active]:bg-yellow-300/90 data-[state=active]:text-amber-950 data-[state=active]:shadow-none"
+                  >
+                    <ShoppingBag size={13} className="mr-1" /> Items
                   </TabsTrigger>
                 </TabsList>
 
@@ -694,6 +784,16 @@ export function Creator({ onStart }: { onStart: () => void }) {
                       stage and in the town — Kids are tiny and hard to spot, Teens are the fastest sprinters,
                       Young adults are balanced, and Elders heal the quickest.
                     </div>
+                  </motion.div>
+                </TabsContent>
+
+                {/* ITEMS — the collection: wallet + everything purchased from the shop */}
+                <TabsContent value="items" className="mt-3 outline-none">
+                  <motion.div
+                    initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.18 }}
+                    className="space-y-3"
+                  >
+                    <LockerItems />
                   </motion.div>
                 </TabsContent>
               </Tabs>

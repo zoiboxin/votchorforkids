@@ -3,13 +3,13 @@
 import { useState } from "react";
 import {
   ArrowLeft, BarChart3, History as HistoryIcon, Gamepad2, User, Pencil, Shirt, Trash2,
-  Trophy, Moon, MoonStar, Axe, Scale, Flame, Sparkles,
+  Trophy, Moon, MoonStar, Axe, Scale, Flame, Sparkles, Download, Cloud,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { AGE_STATS, HAIR_STYLES } from "@/lib/game/constants";
 import { sfx } from "@/lib/game/audio";
-import { useGame } from "./store";
+import { downloadProfile, useGame } from "./store";
 import { RankCard } from "./RankCard";
 import { DailyCard } from "./DailyCard";
 import { Leaderboard } from "./Leaderboard";
@@ -47,6 +47,10 @@ export function Profile() {
   const runsPlayed = useGame((s) => s.runsPlayed);
   const careerXp = useGame((s) => s.careerXp);
   const dailyStreak = useGame((s) => s.daily.streak);
+  const coins = useGame((s) => s.coins);
+  const ownedCount = useGame((s) => s.owned.length);
+  const consent = useGame((s) => s.consent);
+  const syncStatus = useGame((s) => s.syncStatus);
 
   const [name, setLocalName] = useState(playerName);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -182,6 +186,34 @@ export function Profile() {
               <MiniStat label="Runs" value={String(runsPlayed)} />
               <MiniStat label="Career XP" value={careerXp.toLocaleString()} />
               <MiniStat label="🔥 Streak" value={`${dailyStreak} day${dailyStreak === 1 ? "" : "s"}`} />
+            </div>
+
+            {/* ☁️ player profile — cloud save + local backup */}
+            <div className="rounded-xl bg-white/5 p-3">
+              <div className="mb-2 flex items-center justify-between">
+                <span className="flex items-center gap-1.5 text-xs font-bold uppercase tracking-wide text-white/70">
+                  <Cloud size={13} /> Player profile
+                </span>
+                <span className="text-[10px] font-black uppercase text-white/45">
+                  {consent ? `sync: ${syncStatus}` : "local only"}
+                </span>
+              </div>
+              <div className="mb-2 grid grid-cols-3 gap-2 text-center">
+                <MiniStat label="💰 Wallet" value={`$${coins.toLocaleString()}`} />
+                <MiniStat label="🛒 Items owned" value={String(ownedCount)} />
+                <MiniStat label="🍪 Cloud save" value={consent ? "ON" : "OFF"} />
+              </div>
+              <Button
+                variant="outline"
+                onClick={() => { sfx.click(); downloadProfile(); pushToast("Profile backup downloaded — keep it safe on your PC!", "good"); }}
+                className="w-full rounded-xl border-white/25 bg-white/10 font-black text-white hover:bg-white/20"
+              >
+                <Download size={14} className="mr-1" /> Download profile backup (.json)
+              </Button>
+              <p className="mt-2 text-[11px] font-bold leading-relaxed text-white/55">
+                Your hero, wallet, purchases, stats &amp; history live in your player profile — sign in with the same
+                name on any PC and everything loads with you. Accept cookies in the lobby to enable the cloud save.
+              </p>
             </div>
           </div>
 

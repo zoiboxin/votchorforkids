@@ -29,7 +29,7 @@ import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { io, type Socket } from "socket.io-client";
 import {
-  BarChart3, CalendarDays, Check, ChevronRight, Crown, Flame, History as HistoryIcon, Info,
+  BarChart3, CalendarDays, Check, ChevronRight, Cloud, CloudOff, CloudUpload, Crown, Flame, History as HistoryIcon, Info,
   Lock, MessageSquare, Newspaper, Pencil, Play, Send, Settings, ShoppingBag, Sparkles, Star, Trophy, User, Users, X, Zap,
   type LucideIcon,
 } from "lucide-react";
@@ -317,6 +317,46 @@ function GlobalChatDock({ name }: { name: string }) {
 
 /* ============================ the lobby ============================ */
 
+/** 🍪 cookies & progress bar — the player system is consent-gated: accepting
+ *  turns on the cloud profile sync (device save + server upsert + download
+ *  backup). Local play works regardless. Rendered by GameRoot so it is
+ *  reachable from every screen (lobby, locker, profile…). */
+export function CookieBar() {
+  const consent = useGame((s) => s.consent);
+  const setConsent = useGame((s) => s.setConsent);
+  const [later, setLater] = useState(false);
+  if (consent || later) return null;
+  return (
+    <div
+      role="dialog"
+      aria-label="Cookies and saved progress"
+      className="fixed bottom-3 left-3 z-50 w-[min(21rem,calc(100vw-1.5rem))] rounded-xl border border-white/20 bg-slate-950/92 p-3 shadow-2xl backdrop-blur"
+    >
+      <div className="text-[11px] font-black uppercase tracking-wider text-white/85">🍪 Cookies &amp; your progress</div>
+      <p className="mt-1 text-[11px] font-semibold leading-snug text-white/65">
+        7Nights saves your hero, cash, purchases and stats on this device — and syncs them to your
+        <b className="text-white"> player profile</b> so nothing is ever lost. Accept to turn on the cloud save.
+      </p>
+      <div className="mt-2 flex gap-2">
+        <button
+          onClick={() => { sfx.pickup(); setConsent(true); }}
+          aria-label="Accept cookies and enable profile sync"
+          className="flex-1 rounded-lg bg-orange-600 px-3 py-2 text-[11px] font-black uppercase text-white transition-colors hover:bg-orange-500"
+        >
+          Accept
+        </button>
+        <button
+          onClick={() => { sfx.click(); setLater(true); }}
+          aria-label="Not now"
+          className="rounded-lg border border-white/20 px-3 py-2 text-[11px] font-black text-white/70 transition-colors hover:bg-white/10"
+        >
+          Not now
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
   const setScreen = useGame((s) => s.setScreen);
   const playerName = useGame((s) => s.playerName);
@@ -327,6 +367,10 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
   const owned = useGame((s) => s.owned);
   const buyItem = useGame((s) => s.buyItem);
   const pushToast = useGame((s) => s.pushToast);
+  const consent = useGame((s) => s.consent);
+  const setConsent = useGame((s) => s.setConsent);
+  const syncStatus = useGame((s) => s.syncStatus);
+  const pullProfile = useGame((s) => s.pullProfile);
   const daily = useGame((s) => s.daily);
   const ensureDailyToday = useGame((s) => s.ensureDailyToday);
   const runsPlayed = useGame((s) => s.runsPlayed);
@@ -357,6 +401,12 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
     window.addEventListener("pointerdown", unlock);
     return () => window.removeEventListener("pointerdown", unlock);
   }, []);
+
+  /* ☁️ logged in + cookies accepted → pull this player's cloud profile ONCE so
+     everything they own (hero, cash, purchases, stats) greets them on load */
+  useEffect(() => {
+    if (consent && playerName.trim()) void pullProfile();
+  }, [consent, playerName, pullProfile]);
 
   /* roll the daily board at local midnight + refresh the reset countdown */
   useEffect(() => {
@@ -500,13 +550,38 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
           </button>
         </nav>
 
-        {/* right chips — XP wallet, crew count, dialogs, avatar */}
+        {/* right chips — 💰 collected cash, XP wallet, crew count, dialogs, avatar */}
         <div className="flex shrink-0 items-center gap-1.5">
+          <div
+            title="Collected cash — banked from roaming the town. Spend it in the Item Shop!"
+            className="flex items-center gap-1.5 rounded-[3px] border border-yellow-300/40 bg-yellow-400/15 px-2.5 py-1.5 backdrop-blur"
+          >
+            <span aria-hidden className="text-[13px] leading-none">💰</span>
+            <span className="text-xs font-black tabular-nums text-yellow-300">${coins.toLocaleString()}</span>
+            <span className="hidden text-[9px] font-bold uppercase text-yellow-200/70 sm:inline">CASH</span>
+          </div>
           <div title="Career XP" className="flex items-center gap-1.5 rounded-[3px] border border-white/15 bg-slate-950/85 px-2.5 py-1.5 backdrop-blur">
             <Star size={13} className="text-yellow-300" fill="currentColor" />
             <span className="text-xs font-black tabular-nums text-white">{careerXp.toLocaleString()}</span>
             <span className="hidden text-[9px] font-bold uppercase text-white/45 sm:inline">XP</span>
           </div>
+          {consent && (
+            <div
+              title={`Player profile sync: ${syncStatus}`}
+              aria-label={`Profile sync ${syncStatus}`}
+              className="hidden items-center rounded-[3px] border border-white/15 bg-slate-950/85 px-2 py-1.5 backdrop-blur sm:flex"
+            >
+              {syncStatus === "saving" ? (
+                <CloudUpload size={13} className="animate-pulse text-yellow-300" />
+              ) : syncStatus === "saved" ? (
+                <Cloud size={13} className="text-emerald-300" />
+              ) : syncStatus === "offline" ? (
+                <CloudOff size={13} className="text-rose-300" />
+              ) : (
+                <Cloud size={13} className="text-white/50" />
+              )}
+            </div>
+          )}
           <div title="Friends online" className="hidden items-center gap-1.5 rounded-[3px] border border-white/15 bg-slate-950/85 px-2.5 py-1.5 backdrop-blur md:flex">
             <Users size={13} className="text-teal-300" />
             <span className="text-xs font-black tabular-nums text-white">0</span>
@@ -805,7 +880,7 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
                           </span>
                           <span className="text-white/35">{ownCount}/{rows.length} owned</span>
                         </div>
-                        <div className="grid grid-cols-2 gap-1.5">
+                        <div className="space-y-2">
                           {rows.map((it) => {
                             const has = owned.includes(it.id);
                             const afford = coins >= it.price;
@@ -816,49 +891,54 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
                             return (
                               <div
                                 key={it.id}
-                                className={`rounded border p-2 transition-colors ${
+                                className={`flex items-center gap-3 rounded-lg border p-3 transition-colors ${
                                   has ? "border-emerald-300/40 bg-emerald-400/10" : "border-white/12 bg-white/5"
                                 }`}
                               >
-                                <div className="flex items-center justify-between">
-                                  <span className="text-xl leading-none">{it.emoji}</span>
-                                  {has ? (
-                                    <span className="flex items-center gap-0.5 text-[9px] font-black uppercase text-emerald-300">
-                                      <Check size={10} strokeWidth={3.5} /> owned
-                                    </span>
-                                  ) : (
-                                    <span className={`text-[10px] font-black ${afford ? "text-yellow-300" : "text-rose-300/80"}`}>
-                                      ${it.price}
-                                    </span>
-                                  )}
+                                <span aria-hidden className="w-10 shrink-0 text-center text-3xl leading-none">{it.emoji}</span>
+                                <div className="min-w-0 flex-1">
+                                  <div className="flex items-start justify-between gap-2">
+                                    <span className="min-w-0 flex-1 text-[13px] font-black leading-tight text-white">{it.name}</span>
+                                    {has && it.kind === "style" && (
+                                      <span className="flex shrink-0 items-center gap-0.5 text-[10px] font-black uppercase text-emerald-300">
+                                        <Check size={11} strokeWidth={3.5} /> owned
+                                      </span>
+                                    )}
+                                    {!has && (
+                                      <span className={`shrink-0 text-[13px] font-black ${afford ? "text-yellow-300" : "text-rose-300/80"}`}>
+                                        ${it.price}
+                                      </span>
+                                    )}
+                                  </div>
+                                  <div className="mt-0.5 line-clamp-2 text-[10px] font-semibold leading-snug text-white/55">{it.tip}</div>
                                 </div>
-                                <div className="mt-1 truncate text-[10px] font-bold text-white/85">{it.name}</div>
-                                <div className="mt-0.5 line-clamp-2 text-[9px] font-semibold leading-tight text-white/50">{it.tip}</div>
                                 {it.kind === "style" && has ? (
                                   <button
                                     onClick={() => wearPreset(it)}
                                     aria-pressed={worn}
-                                    className={`mt-1.5 w-full rounded px-2 py-1 text-[9px] font-black uppercase transition-colors ${
+                                    className={`shrink-0 rounded-md px-3 py-2.5 text-[10px] font-black uppercase transition-colors ${
                                       worn ? "bg-yellow-300/25 text-yellow-200" : "bg-yellow-400 text-slate-950 hover:bg-yellow-300"
                                     }`}
                                   >
                                     {worn ? "✓ wearing" : "wear"}
                                   </button>
                                 ) : has ? (
-                                  <div className="mt-1.5 rounded border border-emerald-300/30 px-2 py-1 text-center text-[9px] font-black uppercase text-emerald-200/80">
-                                    in every run
+                                  <div className="shrink-0 rounded-md border border-emerald-300/30 px-2 py-2.5 text-center text-[9px] font-black uppercase leading-tight text-emerald-200/80">
+                                    in every<br />run
                                   </div>
                                 ) : (
                                   <button
                                     onClick={() => buyShopItem(it)}
+                                    disabled={!afford}
                                     aria-label={`Buy ${it.name} for $${it.price}`}
-                                    className={`mt-1.5 w-full rounded px-2 py-1 text-[9px] font-black uppercase transition-colors ${
+                                    title={afford ? `Buy ${it.name} for $${it.price}` : `Not enough cash — ${it.name} costs $${it.price}`}
+                                    className={`shrink-0 rounded-md px-3 py-2.5 text-[10px] font-black uppercase transition-colors ${
                                       afford
                                         ? "bg-orange-600 text-white hover:bg-orange-500"
-                                        : "bg-white/10 text-white/45"
+                                        : "cursor-not-allowed bg-white/10 text-white/45"
                                     }`}
                                   >
-                                    {afford ? `buy $${it.price}` : "need more cash"}
+                                    {afford ? "buy" : "no cash"}
                                   </button>
                                 )}
                               </div>
@@ -949,7 +1029,7 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
         {/* -------- center: the survivor stage -------- */}
         <section
           aria-label="Your survivor — drag to spin"
-          className="relative order-1 h-[44vh] min-h-[300px] w-full lg:order-2 lg:mr-[330px] lg:h-auto lg:min-h-0 lg:flex-1"
+          className="relative order-1 h-[44vh] min-h-[300px] w-full lg:order-2 lg:mr-[72px] lg:h-auto lg:min-h-0 lg:flex-1"
         >
           {/* name plate + ready status (Fortnite center-stage) */}
           <div className="pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 text-center">
@@ -988,9 +1068,15 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
             </div>
           </div>
         </section>
+
+        {/* -------- right rail: the chat icon rides UP opposite the Season icon --------
+             Same rail-icon style, same top offset (mt-8) as the left rail — mirrored. */}
+        <div className="order-3 hidden shrink-0 lg:order-3 lg:mt-8 lg:flex lg:w-14 lg:flex-col lg:items-center">
+          <GlobalChatDock name={playerName} />
+        </div>
       </main>
 
-      {/* ================= bottom bar: play buttons + chat dock ================= */}
+      {/* ================= bottom bar: play buttons + chat dock (mobile) ================= */}
       <footer className="relative z-30 flex flex-col gap-2 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-3 lg:flex-row lg:items-end lg:justify-end">
         {/* desktop: rank pill hangs just below the stage's glowing circle */}
         <div className="absolute -top-2 left-1/2 z-20 hidden -translate-x-1/2 lg:block">
@@ -1001,15 +1087,16 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
         </div>
 
         <div className="relative flex flex-col gap-2 lg:w-80">
-          {/* dock row: global chat icon + controller-style hints (desktop) */}
-          <div className="flex items-center justify-end gap-3">
-            <div className="hidden items-center gap-3 text-[10px] font-bold text-white/45 lg:flex">
-              <span><kbd className="rounded bg-white/10 px-1">H</kbd> help</span>
-              <span><kbd className="rounded bg-white/10 px-1">P</kbd> profile</span>
-              <span><kbd className="rounded bg-white/10 px-1">L</kbd> locker</span>
-              <span><kbd className="rounded bg-white/10 px-1">C</kbd> challenges</span>
-            </div>
+          {/* mobile keeps the chat dock here — desktop moved it to the right rail */}
+          <div className="flex items-center justify-end gap-3 lg:hidden">
             <GlobalChatDock name={playerName} />
+          </div>
+          {/* desktop: controller-style hints */}
+          <div className="hidden items-center justify-end gap-3 text-[10px] font-bold text-white/45 lg:flex">
+            <span><kbd className="rounded bg-white/10 px-1">H</kbd> help</span>
+            <span><kbd className="rounded bg-white/10 px-1">P</kbd> profile</span>
+            <span><kbd className="rounded bg-white/10 px-1">L</kbd> locker</span>
+            <span><kbd className="rounded bg-white/10 px-1">C</kbd> challenges</span>
           </div>
 
           {/* squads fill — multiplayer lobby */}

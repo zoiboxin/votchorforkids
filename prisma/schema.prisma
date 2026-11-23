@@ -20,3 +20,14 @@ model Score {
 
   @@index([points])
 }
+
+/// 🛒 persistent player profile — ONE JSON blob per player name (name = account).
+/// Local-first: clients keep playing from localStorage and sync this blob with a
+/// debounced upsert, so the server never sees per-action load.
+model PlayerProfile {
+  id        String   @id // lowercase player name
+  name      String
+  data      String // full profile JSON (look, stats, history, wallet, owned, daily, savedAt)
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+}

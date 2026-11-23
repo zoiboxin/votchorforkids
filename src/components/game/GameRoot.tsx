@@ -20,6 +20,7 @@ import { Profile } from "./Profile";
 import { VictoryModal } from "./VictoryModal";
 import { Multiplayer } from "./Multiplayer";
 import { MatchLobby } from "./MatchLobby";
+import { CookieBar } from "./Landing";
 
 const Scene = dynamic(() => import("./Scene").then((m) => m.Scene), {
   ssr: false,
@@ -484,6 +485,9 @@ export function GameRoot() {
           </div>
         </div>
       )}
+
+      {/* 🍪 consent is reachable from EVERY screen — accepting arms the cloud profile */}
+      <CookieBar />
     </div>
   );
 }

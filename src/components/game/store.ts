@@ -63,6 +63,84 @@ function saveWallet(coins: number, owned: string[]) {
   try { localStorage.setItem(LS_WALLET, JSON.stringify({ coins: Math.max(0, Math.floor(coins)), owned })); } catch { /* ignore */ }
 }
 
+/* ---------- 🍪 cookie consent — gates the cloud profile sync ---------- */
+const LS_CONSENT = "votechor_consent_v1";
+const consentAccepted = (): boolean =>
+  typeof window !== "undefined" && localStorage.getItem(LS_CONSENT) === "1";
+
+/* ---------- ☁️ cloud profile sync — LOCAL-FIRST, minimal server load ----------
+ * The game NEVER waits on the network: every mutation writes localStorage
+ * instantly, then one DEBOUNCED upsert (4 s after the last change) pushes the
+ * whole profile blob to /api/profile. A sendBeacon covers tab closes and the
+ * profile is PULLED once per session on boot/login. The server stores exactly
+ * one JSON row per player — no per-action chatter, no sync loops. */
+let cloudTimer: ReturnType<typeof setTimeout> | null = null;
+let cloudDirty = false;
+let pullInFlight = false; // pushes yield while a pull is adopting the cloud copy
+
+function profileStatsOf(s: {
+  runsPlayed: number; bestScore: number; lifeVotes: number; lifeRescues: number;
+  wins: number; lifeCaught: number; careerXp: number; bonusXp: number; playtimeMs: number;
+}): PlayerStats {
+  return {
+    runs: s.runsPlayed, best: s.bestScore, votes: s.lifeVotes, rescues: s.lifeRescues,
+    wins: s.wins, caught: s.lifeCaught, totalScore: s.careerXp - s.bonusXp, playtimeMs: s.playtimeMs,
+  };
+}
+
+/** the full profile as ONE JSON blob (also the file the player downloads) */
+function cloudBlob(s: {
+  playerName: string; look: Appearance; history: RunRecord[]; bonusXp: number; daily: DailyState;
+  coins: number; owned: string[]; runsPlayed: number; bestScore: number; lifeVotes: number;
+  lifeRescues: number; wins: number; lifeCaught: number; careerXp: number; bonusXp: number; playtimeMs: number;
+}): string {
+  return JSON.stringify({
+    name: s.playerName,
+    look: s.look,
+    stats: profileStatsOf(s),
+    history: s.history.slice(0, HISTORY_CAP),
+    bonusXp: s.bonusXp,
+    daily: s.daily,
+    coins: s.coins,
+    owned: s.owned,
+    savedAt: Date.now(),
+  });
+}
+
+async function pushCloudNow() {
+  cloudTimer = null;
+  if (pullInFlight) { scheduleCloudSave(3000); return; } // never clobber a pull that is mid-adopt
+  const s = useGame.getState();
+  const name = s.playerName.trim();
+  if (!name) { useGame.setState({ syncStatus: "idle" }); return; }
+  cloudDirty = false;
+  try {
+    const r = await fetch("/api/profile", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ name, data: cloudBlob(s) }),
+    });
+    useGame.setState({ syncStatus: r.ok ? "saved" : "offline" });
+  } catch {
+    useGame.setState({ syncStatus: "offline" });
+    cloudDirty = true; // retry lands on the next mutation
+  }
+  // "saved" glows for a beat, then the chip calms down
+  setTimeout(() => {
+    if (useGame.getState().syncStatus === "saved") useGame.setState({ syncStatus: "idle" });
+  }, 2600);
+}
+
+/** schedule ONE debounced cloud upsert (call after any profile mutation) */
+function scheduleCloudSave(delayMs = 4000) {
+  cloudDirty = true;
+  if (typeof window === "undefined" || !consentAccepted()) return; // consent gates the cloud
+  if (!useGame.getState().playerName.trim()) return; // no account yet — nothing to sync
+  useGame.setState({ syncStatus: "saving" });
+  if (cloudTimer) clearTimeout(cloudTimer);
+  cloudTimer = setTimeout(() => { void pushCloudNow(); }, delayMs);
+}
+
 const freshStats = (): PlayerStats => ({ runs: 0, best: 0, votes: 0, rescues: 0, wins: 0, caught: 0, totalScore: 0, playtimeMs: 0 });
 
 function loadProfile(): {
@@ -127,7 +205,7 @@ function loadSettings(): Settings {
 function saveProfile(name: string, look: Appearance, stats: PlayerStats, history: RunRecord[], bonusXp: number, daily: DailyState) {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(LS_PROFILE, JSON.stringify({ name, look, stats, history: history.slice(0, HISTORY_CAP), bonusXp, daily }));
+    localStorage.setItem(LS_PROFILE, JSON.stringify({ name, look, stats, history: history.slice(0, HISTORY_CAP), bonusXp, daily, savedAt: Date.now() }));
     if (localStorage.getItem(LS_PROFILE_V2)) localStorage.removeItem(LS_PROFILE_V2);
   } catch { /* ignore */ }
 }
@@ -189,6 +267,16 @@ export interface GameStore {
   buyItem: (id: string) => boolean;
   /** 💰 bank run earnings straight into the wallet (also used by tests/debug) */
   bankCoins: (n: number) => void;
+  /** 🍪 true once the player ACCEPTED the cookies/progress banner — gates the
+   *  cloud profile sync (local play works regardless) */
+  consent: boolean;
+  setConsent: (v: boolean) => void;
+  /** ☁️ cloud profile sync status for the lobby chip */
+  syncStatus: "idle" | "saving" | "saved" | "offline";
+  /** ☁️ pull the cloud profile (once on login/boot) — adopts the server copy
+   *  when it is NEWER than this device's save, so nothing is ever lost when a
+   *  player signs in from another PC */
+  pullProfile: () => Promise<void>;
   /** 🌐 multiplayer lobby state — the Multiplayer panel renders from this */
   mp: {
     open: boolean;
@@ -319,19 +407,111 @@ export const useGame = create<GameStore>()((set, get) => ({
     const s = get();
     if (!it) return false;            // unknown item
     if (s.owned.includes(id)) return true; // already ours — no double charge
-    if (s.coins < it.price) return false;  // not enough banked cash
-    const coins = s.coins - it.price;
+    if (s.coins < it.price) return false;  // 💰 not enough banked cash — the buy is refused
+    const coins = s.coins - it.price;      // 💰 the price leaves the wallet right here
     const owned = [...s.owned, id];
     saveWallet(coins, owned);
     set({ coins, owned });
+    scheduleCloudSave();
     return true;
   },
   bankCoins: (n) => set((s) => {
     const coins = s.coins + Math.max(0, Math.floor(n));
     const lifeMoney = s.lifeMoney + Math.max(0, Math.floor(n));
     saveWallet(coins, s.owned);
+    scheduleCloudSave();
     return { coins, lifeMoney };
   }),
+  consent: typeof window !== "undefined" ? consentAccepted() : false,
+  setConsent: (v) => {
+    if (typeof window !== "undefined") localStorage.setItem(LS_CONSENT, v ? "1" : "0");
+    set({ consent: v });
+    if (v) {
+      // 🍪 accepted → the cloud profile comes alive: pull whatever the server
+      // holds for this name, then let the debounced push take over
+      void get().pullProfile();
+      scheduleCloudSave(1500);
+    }
+  },
+  syncStatus: "idle",
+  pullProfile: async () => {
+    if (typeof window === "undefined" || !consentAccepted()) return;
+    const name = get().playerName.trim();
+    if (!name) return;
+    pullInFlight = true;
+    try {
+      const r = await fetch(`/api/profile?name=${encodeURIComponent(name)}`);
+      const d = await r.json().catch(() => null);
+      const p = d && typeof d === "object" ? (d as { profile?: unknown }).profile : null;
+      if (!p || typeof p !== "object") {
+        useGame.setState({ syncStatus: "idle" }); // nothing in the cloud yet — local is the truth
+        return;
+      }
+      const blob = p as {
+        savedAt?: number; look?: Partial<Appearance>; stats?: Partial<PlayerStats>;
+        history?: unknown; bonusXp?: number; daily?: DailyState; coins?: number; owned?: unknown;
+      };
+      const localRaw = JSON.parse(localStorage.getItem(LS_PROFILE) ?? "null") as { savedAt?: number } | null;
+      const localAt = Number(localRaw?.savedAt) || 0;
+      const serverAt = Number(blob.savedAt) || 0;
+      const st = (blob.stats && typeof blob.stats === "object" ? blob.stats : {}) as Partial<PlayerStats>;
+      const hist = Array.isArray(blob.history) ? blob.history : [];
+      const serverOwned = Array.isArray(blob.owned) ? (blob.owned as unknown[]).filter((x): x is string => typeof x === "string" && !!shopItem(x)) : [];
+      // how much LIFE lives on each side — a brand-new device (empty wallet, no
+      // runs, no purchases) must adopt the cloud even if its timestamp is newer
+      const serverProgress = Math.max(0, Number(blob.coins) || 0)
+        + serverOwned.length * 50 + Math.max(0, Number(st.runs) || 0) * 10
+        + Math.max(0, Number(st.totalScore) || 0) + hist.length * 5;
+      const s0 = get();
+      const localProgress = s0.coins + s0.owned.length * 50 + s0.runsPlayed * 10
+        + Math.max(0, s0.careerXp - s0.bonusXp) + s0.history.length * 5;
+      if (serverAt <= localAt && !(serverProgress > 0 && localProgress === 0)) {
+        useGame.setState({ syncStatus: "saved" }); // local is newer — the next push will refresh the cloud
+        return;
+      }
+      // 🌩️ the cloud copy is NEWER (or this device is fresh) — adopt it wholesale
+      // so the player sees everything they own, no matter which device they signed in from
+      const stats: PlayerStats = {
+        runs: Number(st.runs) || 0, best: Number(st.best) || 0, votes: Number(st.votes) || 0,
+        rescues: Number(st.rescues) || 0, wins: Number(st.wins) || 0, caught: Number(st.caught) || 0,
+        totalScore: Number(st.totalScore) || 0, playtimeMs: Number(st.playtimeMs) || 0,
+      };
+      const history: RunRecord[] = hist
+        .filter((h: unknown) => !!h && typeof h === "object")
+        .slice(0, HISTORY_CAP)
+        .map((h: Partial<RunRecord>, i: number) => ({
+          id: typeof h.id === "string" ? h.id : `r${i}-${h.at ?? i}`,
+          at: Number(h.at) || Date.now(),
+          score: Number(h.score) || 0,
+          votes: Number(h.votes) || 0,
+          rescues: Number(h.rescues) || 0,
+          caught: Number(h.caught) || 0,
+          won: h.won === true,
+          timeMs: Number(h.timeMs) || 0,
+        }));
+      const coins = Math.max(0, Math.floor(Number(blob.coins) || 0));
+      const look = normalizeAppearance(blob.look);
+      const bonusXp = Math.max(0, Math.floor(Number(blob.bonusXp) || 0));
+      const daily = ensureDaily(blob.daily);
+      const lifeMoney = stats.votes;
+      // write the adopted copy back to localStorage (local-first, instant)
+      saveProfile(name, look, stats, history, bonusXp, daily);
+      saveWallet(coins, serverOwned);
+      cloudDirty = false; // the adopted copy IS the cloud copy — no urgent push needed
+      set({
+        look, stats, history, bonusXp, daily, owned: serverOwned, coins, lifeMoney,
+        careerXp: stats.totalScore + bonusXp,
+        runsPlayed: stats.runs, bestScore: stats.best, lifeVotes: stats.votes,
+        lifeRescues: stats.rescues, wins: stats.wins, lifeCaught: stats.caught,
+        playtimeMs: stats.playtimeMs,
+        syncStatus: "saved",
+      });
+    } catch {
+      useGame.setState({ syncStatus: "offline" });
+    } finally {
+      pullInFlight = false;
+    }
+  },
   setLook: (p) => {
     set((s) => {
       const look = { ...s.look, ...p };
@@ -341,6 +521,7 @@ export const useGame = create<GameStore>()((set, get) => ({
       }, s.history, s.bonusXp, s.daily);
       return { look };
     });
+    scheduleCloudSave();
   },
   applyLook: (a) => {
     set((s) => {
@@ -350,6 +531,7 @@ export const useGame = create<GameStore>()((set, get) => ({
       }, s.history, s.bonusXp, s.daily);
       return { look: a };
     });
+    scheduleCloudSave();
   },
   setName: (n) => {
     set((s) => {
@@ -359,6 +541,9 @@ export const useGame = create<GameStore>()((set, get) => ({
       }, s.history, s.bonusXp, s.daily);
       return { playerName: n };
     });
+    scheduleCloudSave();
+    // 🌐 the name IS the account — signing in/out pulls that player's cloud life
+    if (consentAccepted()) void get().pullProfile();
   },
   setScreen: (s) => set({ screen: s }),
   setHud: (h) => set({ hud: h }),
@@ -447,6 +632,7 @@ export const useGame = create<GameStore>()((set, get) => ({
       };
     });
     for (const t of toasts) useGame.getState().pushToast(t.msg, t.kind);
+    scheduleCloudSave(); // 💾 the run's earnings/progress reach the cloud in one debounced upsert
     return rec;
   },
   addBonusXp: (n) => set((s) => {
@@ -456,6 +642,7 @@ export const useGame = create<GameStore>()((set, get) => ({
       runs: s.runsPlayed, best: s.bestScore, votes: s.lifeVotes, rescues: s.lifeRescues,
       wins: s.wins, caught: s.lifeCaught, totalScore: careerXp - bonusXp, playtimeMs: s.playtimeMs,
     }, s.history, bonusXp, s.daily);
+    scheduleCloudSave();
     return { bonusXp, careerXp };
   }),
   ensureDailyToday: () => set((s) => {
@@ -465,6 +652,7 @@ export const useGame = create<GameStore>()((set, get) => ({
       runs: s.runsPlayed, best: s.bestScore, votes: s.lifeVotes, rescues: s.lifeRescues,
       wins: s.wins, caught: s.lifeCaught, totalScore: s.careerXp - s.bonusXp, playtimeMs: s.playtimeMs,
     }, s.history, s.bonusXp, daily);
+    scheduleCloudSave();
     return { daily };
   }),
   clearHistory: () => set((s) => {
@@ -472,12 +660,14 @@ export const useGame = create<GameStore>()((set, get) => ({
       runs: s.runsPlayed, best: s.bestScore, votes: s.lifeVotes, rescues: s.lifeRescues,
       wins: s.wins, caught: s.lifeCaught, totalScore: s.careerXp - s.bonusXp, playtimeMs: s.playtimeMs,
     }, [], s.bonusXp, s.daily);
+    scheduleCloudSave();
     return { history: [] };
   }),
   resetStats: () => set((s) => {
     const daily = freshDaily();
     saveProfile(s.playerName, s.look, freshStats(), [], 0, daily);
     saveWallet(0, s.owned); // purchases survive a stat reset — only the cash resets
+    scheduleCloudSave();
     return {
       runsPlayed: 0, bestScore: 0, lifeVotes: 0, lifeRescues: 0,
       careerXp: 0, bonusXp: 0, daily, wins: 0, lifeCaught: 0, playtimeMs: 0, history: [],
@@ -490,4 +680,36 @@ export const useGame = create<GameStore>()((set, get) => ({
 if (typeof window !== "undefined") {
   const st = useGame.getState();
   import("@/lib/game/audio").then(({ setVolumes }) => setVolumes(st.settings.sfx, st.settings.music)).catch(() => {});
+}
+
+/* ☁️ tab close safety net — one sendBeacon flushes any pending profile change
+ * so nothing is lost even when the player closes the browser mid-session. */
+if (typeof window !== "undefined") {
+  window.addEventListener("beforeunload", () => {
+    if (!cloudDirty || !cloudTimer) return;
+    const s = useGame.getState();
+    if (!s.playerName.trim()) return;
+    clearTimeout(cloudTimer);
+    cloudTimer = null;
+    try {
+      navigator.sendBeacon(
+        "/api/profile",
+        new Blob([JSON.stringify({ name: s.playerName, data: cloudBlob(s) })], { type: "application/json" }),
+      );
+    } catch { /* ignore */ }
+  });
+}
+
+/** 💾 download the player profile as a JSON backup file (locker/profile UI) —
+ *  the player keeps a copy on their PC even without cookies/cloud sync. */
+export function downloadProfile() {
+  if (typeof window === "undefined") return;
+  const s = useGame.getState();
+  const file = new Blob([cloudBlob(s)], { type: "application/json" });
+  const a = document.createElement("a");
+  const tag = (s.playerName || "guest").replace(/[^a-z0-9_-]/gi, "").toLowerCase() || "guest";
+  a.href = URL.createObjectURL(file);
+  a.download = `7nights-profile-${tag}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 3000);
 }
