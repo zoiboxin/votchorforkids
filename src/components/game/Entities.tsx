@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  ANIMAL_SET, ATTACK_CD, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, ROCK_BREAK_S, SHIRT_COLORS, SKIN_TONES,
+  ANIMAL_SET, ATTACK_CD, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, ROCK_BREAK_S, SHIRT_COLORS, SKIN_TONES, TOOLS,
   TOTAL_VOTES, TREE_FALL_S, ZONE_WALL_H, FARM_RADIUS, JUNGLE_RADIUS, WILDLIFE, normalizeAppearance, type AnimalKind, type Appearance,
 } from "@/lib/game/constants";
 import { preloadModels, onModelsReady, spawnModel } from "@/lib/game/models";
@@ -142,12 +142,15 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     const p = engine.player;
     const morphing = engine.morphKind != null;
     const beast = engine.youPossessed && engine.phase === "night";
-    // ⚔️ swing progress (0→1 through the attack cooldown) drives the arm/tool animation
-    const swing = engine.attackCd > 0 ? 1 - engine.attackCd / ATTACK_CD : 0;
     // 🪓 the held arm rides the right hand — swap the tool mesh when the belt changes
     // 🚗 hands stay free inside a car (driving OR riding shotgun)
     const heldKind = !beast && !morphing && !engine.drive && !engine.ride && engine.held >= 0 && engine.tools[engine.held]
       ? engine.tools[engine.held].kind as HeldToolKind : null;
+    // ⚔️ swing progress (0→1 through the attack cooldown) drives the arm/tool
+    // animation — normalized by the ACTIVE weapon's cooldown (the jewelled
+    // dagger swings twice as fast, so its arc must complete twice as fast)
+    const swingCd = heldKind ? (TOOLS.find((t) => t.kind === heldKind)?.cd ?? ATTACK_CD) : ATTACK_CD;
+    const swing = engine.attackCd > 0 ? Math.max(0, 1 - engine.attackCd / swingCd) : 0;
     if (heldRef.current !== heldKind) { setHeldTool(mesh, heldKind); heldRef.current = heldKind; }
     // 🚗 the PASSENGER stays visible in open-top cars too (mirrored seat) —
     // sealed roofs keep the classic hidden body

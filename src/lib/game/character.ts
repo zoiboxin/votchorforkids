@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { AGE_STATS, ITEMS, POLICE_UNIFORM, policeOutfitOf, type Appearance } from "./constants";
 import { loadGlbTemplate, makeGlbInstance, crossToGlb, setGlbLocomotion, glbApplyBone, glbHipsTo, glbOvEase, tintGlbZombie, POLICE_CHAR, type GlbInstance } from "./glbCharacters";
+import { isWeaponKind, loadWeaponTemplate, makeWeaponInstance, weaponReady } from "./weapons";
 
 /* ------------------------------------------------------------------ */
 /* Shared caches + merged-geometry "buckets"                           */
@@ -509,11 +510,21 @@ export const rigOf = (g: THREE.Object3D): CharRig => g.userData.rig as CharRig;
 /* Built from the same merged vertex-colour buckets as the characters   */
 /* so they share the cel-shaded look (and draw in one call).            */
 /* ------------------------------------------------------------------ */
-export type HeldToolKind = "axe" | "sword" | "hammer" | "builder";
+export type HeldToolKind = "axe" | "sword" | "hammer" | "builder" | "armsword" | "handaxe" | "dagger" | "spear";
 
 /** A tool mesh in "grip space": the origin is where the fist closes,
  *  the handle runs UP (+Y) so the head sits above the hand at rest. */
 export function buildToolMesh(kind: HeldToolKind): THREE.Group {
+  /* ⚔️ shop-forged weapons — real Polyfork GLB steel (cached at boot) */
+  if (isWeaponKind(kind) && weaponReady(kind)) {
+    const inst = makeWeaponInstance(kind);
+    if (inst) {
+      const g = new THREE.Group();
+      g.add(inst);
+      g.traverse((o) => { if (o instanceof THREE.Mesh) { o.castShadow = false; o.receiveShadow = false; } });
+      return g;
+    }
+  }
   const b = new Bucket();
   const wood = "#8a5a33", woodDk = "#6e4526", steel = "#b8c4d0", steelHi = "#e4ebf3";
   if (kind === "axe") {
@@ -533,6 +544,13 @@ export function buildToolMesh(kind: HeldToolKind): THREE.Group {
     b.add(cyl(0.034, 0.042, 0.5, 8), wood, false, 0, 0.19, 0);
     b.add(box(0.34, 0.15, 0.15), "#6b7280", false, 0, 0.46, 0);    // mallet head
     b.add(box(0.36, 0.05, 0.16), "#9aa5b1", false, 0, 0.46, 0);    // face bands
+  } else if (isWeaponKind(kind)) {
+    // ⚔️ steel placeholder while the weapon's GLB streams in — a stick of the
+    // right length so the hand never looks empty; setHeldTool swaps the real
+    // model in the moment the file lands
+    const len = kind === "spear" ? 1.9 : kind === "armsword" ? 0.95 : kind === "handaxe" ? 0.6 : 0.35;
+    b.add(cyl(0.03, 0.036, len, 8), steel, false, 0, len / 2 - 0.06, 0);
+    b.add(cyl(0.038, 0.038, 0.05, 8), steelHi, false, 0, len - 0.12, 0);
   } else { // builder — a chunky wrench
     b.add(box(0.07, 0.44, 0.035), "#c0c8d4", false, 0, 0.16, 0);   // shaft
     b.add(cyl(0.085, 0.085, 0.04, 10), "#d5dce6", false, 0, 0.4, 0, 0, 0, Math.PI / 2); // head ring
@@ -547,7 +565,9 @@ export function buildToolMesh(kind: HeldToolKind): THREE.Group {
 }
 
 /** Attach a tool mesh to a character's right hand (removes the previous one).
- *  Returns the attached group or null when kind is null. */
+ *  Returns the attached group or null when kind is null. GLB weapons that are
+ *  still streaming attach as a simple steel placeholder and SWAP to the real
+ *  model the moment their file lands (same kind still held). */
 export function setHeldTool(character: THREE.Object3D, kind: HeldToolKind | null): THREE.Group | null {
   const prev = character.userData.heldTool as THREE.Object3D | undefined;
   if (prev) {
@@ -556,6 +576,14 @@ export function setHeldTool(character: THREE.Object3D, kind: HeldToolKind | null
   }
   character.userData.heldKind = kind ?? null;
   if (!kind) return null;
+  // 🗡️ a shop weapon whose file hasn't landed yet — fetch it, then re-seat
+  if (isWeaponKind(kind) && !weaponReady(kind)) {
+    void loadWeaponTemplate(kind)
+      .then(() => {
+        if (character.userData.heldKind === kind) setHeldTool(character, kind);
+      })
+      .catch(() => { /* placeholder stick stays — network lost */ });
+  }
   const tool = buildToolMesh(kind);
   tool.userData.baseRx = -0.5; // ready-stance tilt — the swing arc returns here
   const glb = character.userData.glb as GlbInstance | undefined;

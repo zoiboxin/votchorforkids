@@ -415,6 +415,7 @@ export const ITEMS: readonly ItemDef[] = [
   { name: "First-aid kit", emoji: "🩹", hp: 45, stamina: 0, color: "#e0483a", msg: "First-aid kit! All patched up.", kind: "kit" },
   { name: "Juice", emoji: "🧃", hp: 4, stamina: 45, color: "#ffa726", msg: "Fresh juice! Energy restored.", kind: "drink" },
   { name: "Power drink", emoji: "🥤", hp: 8, stamina: 35, color: "#38e0c8", msg: "Power drink. Charged up!", kind: "drink" },
+  { name: "Potion", emoji: "🧪", hp: 60, stamina: 45, color: "#e0455a", msg: "Mystic potion drained — ❤ +60 ⚡ +45!", kind: "drink" },
 ];
 export const ITEM_COUNT = 30;
 export const PICKUP_RADIUS = 1.9;
@@ -817,10 +818,14 @@ export const DAWN_WARN_S = 30;       // 🌅 pre-dawn warning — the last 30s o
 export const DAWN_ALIVE_CAP: readonly number[] = [0, 55, 30, 16, 9, 6, 4, 2];
 
 /* ---------- arms & tools (collect multiple of the same!) ---------- */
-export type ToolKind = "axe" | "sword" | "hammer" | "builder";
+export type ToolKind =
+  | "axe" | "sword" | "hammer" | "builder"      // the world pickups
+  | "armsword" | "handaxe" | "dagger" | "spear"; // 🛒 ITEM SHOP weapons (GLB-forged)
 export interface ToolDef {
   kind: ToolKind; name: string; emoji: string; color: string;
   dmg: number;   // damage per hit vs the possessed / zombies
+  cd?: number;   // ⏱️ attack cooldown in seconds (default ATTACK_CD 0.45)
+  reach?: number; // 📏 melee reach multiplier (default 1 — spear thrusts far, dagger is short)
   tip: string;   // one-line HUD hint
 }
 export const TOOLS: readonly ToolDef[] = [
@@ -828,8 +833,20 @@ export const TOOLS: readonly ToolDef[] = [
   { kind: "sword",   name: "Sword",   emoji: "🗡️", color: "#aabccb", dmg: 40, tip: "Fight the beast! (F) — 2 hits slay it" },
   { kind: "hammer",  name: "Hammer",  emoji: "🔨", color: "#9aa5b1", dmg: 18, tip: "Smash boulders (F) — stone for campfires" },
   { kind: "builder", name: "Builder", emoji: "🔧", color: "#e0a458", dmg: 12, tip: "B = barricade (4🪓) · V = campfire (2🪓+2🪨)" },
+  /* ---------- ⚔️ the SHOP-forged weapons — real Polyfork GLB steel, tuned STRONG ---------- */
+  { kind: "armsword", name: "Arming Sword", emoji: "⚔️", color: "#d8dfe8", dmg: 55, cd: 0.5, reach: 1.15,
+    tip: "Knight steel — 55 dmg, the hardest hitter in town (F)" },
+  { kind: "handaxe",  name: "Hand Axe",    emoji: "⛏️", color: "#c2b8a3", dmg: 38, cd: 0.45, reach: 1.0,
+    tip: "Raider's blade — 38 dmg AND fells trees (F) — fight & build in one hand" },
+  { kind: "dagger",   name: "Jewelled Dagger", emoji: "🔪", color: "#7fe0c0", dmg: 34, cd: 0.26, reach: 0.85,
+    tip: "Jewel-hilted fang — 34 dmg at DOUBLE swing speed (F) — the DPS king" },
+  { kind: "spear",    name: "Guard's Spear", emoji: "🔱", color: "#caa46a", dmg: 48, cd: 0.48, reach: 1.7,
+    tip: "Long thrust — 48 dmg from FAR away (F) — poke beasts from safety" },
 ];
-export const TOOL_SPAWN: Record<ToolKind, number> = { axe: 5, sword: 5, hammer: 5, builder: 3 };
+export const TOOL_SPAWN: Record<ToolKind, number> = {
+  axe: 5, sword: 5, hammer: 5, builder: 3,
+  armsword: 0, handaxe: 0, dagger: 0, spear: 0, // ⚔️ shop-exclusive — never litter the world
+};
 export const WOOD_PER_TREE = 2;
 export const ROCK_PER_BOULDER = 2;
 export const TREE_HITS = 3;   // axe swings to fell a tree

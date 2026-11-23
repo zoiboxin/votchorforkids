@@ -4995,9 +4995,12 @@ export class GameEngine {
     }
     const tool = this.held >= 0 && this.held < this.tools.length ? this.tools[this.held] : null;
     const kind = tool?.kind ?? null;
-    const dmg = kind ? (TOOLS.find((t) => t.kind === kind)?.dmg ?? HANDS_DMG) : HANDS_DMG;
+    const tdef = kind ? TOOLS.find((t) => t.kind === kind) : undefined;
+    const dmg = tdef?.dmg ?? HANDS_DMG;
+    const reach = tdef?.reach ?? 1; // 📏 spear thrusts far, dagger is short
+    if (tdef?.cd) this.attackCd = tdef.cd; // ⏱️ per-weapon swing speed (dagger double-fast)
     // 1) the possessed pack — slay them ALL to end the night early!
-    let hi = -1, hd = ATTACK_RANGE * ATTACK_RANGE;
+    let hi = -1, hd = ATTACK_RANGE * reach * (ATTACK_RANGE * reach);
     for (let i = 0; i < this.crew.length; i++) {
       const c = this.crew[i];
       if (!c.alive || c.mode !== "possessed") continue;
@@ -5015,7 +5018,7 @@ export class GameEngine {
     // 2) graveyard zombies
     for (const zb of this.zombies) {
       if (zb.dead) continue;
-      if (dist2(p.x, p.z, zb.x, zb.z) < 2.4 * 2.4) {
+      if (dist2(p.x, p.z, zb.x, zb.z) < 2.4 * reach * (2.4 * reach)) {
         zb.hp = (zb.hp ?? ZOMBIE_HP) - dmg;
         sfx.stab();
         this.fxQueue.push({ type: "confetti", x: zb.x, y: 1.1, z: zb.z, hue: 0.35 });
@@ -5046,7 +5049,7 @@ export class GameEngine {
       }
     }
     // 2.5) 🧟 zombie hounds — the night's turned strays
-    let bestDog: Animal | null = null, dogD = 2.3 * 2.3;
+    let bestDog: Animal | null = null, dogD = 2.3 * reach * (2.3 * reach);
     for (const an of this.animals) {
       if (!an.zombie || an.dead) continue;
       const d = dist2(p.x, p.z, an.x, an.z);
@@ -5073,7 +5076,7 @@ export class GameEngine {
       return;
     }
     // 3) innocent townsfolk — swing at them and the LAW takes notice
-    let civHit: Npc | null = null, civD = 2.3 * 2.3;
+    let civHit: Npc | null = null, civD = 2.3 * reach * (2.3 * reach);
     for (const c of this.civs) {
       if (c.dead) continue;
       const d = dist2(p.x, p.z, c.x, c.z);
@@ -5093,7 +5096,7 @@ export class GameEngine {
       return;
     }
     // 3b) innocent contestants in daylight — the contest is SECRET; blades in public are MURDER
-    let innHit = -1, innD = 2.3 * 2.3;
+    let innHit = -1, innD = 2.3 * reach * (2.3 * reach);
     for (let i = 0; i < this.crew.length; i++) {
       const c = this.crew[i];
       if (!c.alive || c.mode === "possessed") continue;
@@ -5115,9 +5118,9 @@ export class GameEngine {
       }
       return;
     }
-    // 4) harvest — axe fells trees, hammer cracks boulders
+    // 4) harvest — axe & hand-axe fell trees, hammer cracks boulders
     const fx = -Math.sin(this.input.yaw), fz = -Math.cos(this.input.yaw);
-    if (kind === "axe") {
+    if (kind === "axe" || kind === "handaxe") {
       const ti = this.nearestTree(fx, fz);
       if (ti >= 0) { this.chopTree(ti, fx, fz); return; }
     }

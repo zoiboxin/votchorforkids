@@ -58,6 +58,28 @@ export const SHOP_ITEMS: readonly ShopItem[] = [
     tip: "Spawn with the 🗡️ Sword — the hardest hitter; two swings slay a beast.",
   },
 
+  /* ---------- ⚔️ SHOP-FORGED WEAPONS — real Polyfork GLB steel, tuned STRONG ----------
+   * Damage / swing-speed / reach tuned ABOVE the world tools — the wallet's
+   * worth it: 55-dmg arming sword, double-speed dagger, far-thrust spear and
+   * a hand axe that fights AND fells trees. They ride the 🎒 wheel like any
+   * belt tool and swing the same fight arc. */
+  {
+    id: "tool-armsword", name: "Knight's Arming Sword", emoji: "⚔️", kind: "gear", price: 420, tool: "armsword",
+    tip: "Spawn with the ⚔️ Arming Sword — 55 dmg knight steel; the strongest blade in town.",
+  },
+  {
+    id: "tool-spear", name: "Guard's Spear", emoji: "🔱", kind: "gear", price: 380, tool: "spear",
+    tip: "Spawn with the 🔱 Spear — 48 dmg with a LONG thrust; poke beasts from safety.",
+  },
+  {
+    id: "tool-dagger", name: "Jewelled Dagger", emoji: "🔪", kind: "gear", price: 340, tool: "dagger",
+    tip: "Spawn with the 🔪 Dagger — 34 dmg at DOUBLE swing speed; the DPS king.",
+  },
+  {
+    id: "tool-handaxe", name: "Raider's Hand Axe", emoji: "⛏️", kind: "gear", price: 300, tool: "handaxe",
+    tip: "Spawn with the ⛏️ Hand Axe — 38 dmg AND it fells trees; fight & build in one hand.",
+  },
+
   /* ---------- ✨ POWERS — pocketed gems, single use, unleashed from the 🎒 wheel ---------- */
   {
     id: "gem-sonic", name: "Sonic Gem", emoji: "⚡", kind: "power", price: 220, power: "sonic",
@@ -91,6 +113,11 @@ export const SHOP_ITEMS: readonly ShopItem[] = [
     id: "snack-drink", name: "Energy Pack ×2", emoji: "🥤", kind: "support", price: 80,
     snack: { def: itemIdx("Power drink"), count: 2 },
     tip: "Start with 2 🥤 Power drinks — the big ⚡ refill for long chases.",
+  },
+  {
+    id: "snack-potion", name: "Mystic Potions ×2", emoji: "🧪", kind: "support", price: 130,
+    snack: { def: itemIdx("Potion"), count: 2 },
+    tip: "Start with 2 🧪 Mystic Potions — ❤ +60 ⚡ +45 in one glug (keys 1–8).",
   },
   {
     id: "perk-license", name: "VIP License", emoji: "🪪", kind: "support", price: 300, license: true,

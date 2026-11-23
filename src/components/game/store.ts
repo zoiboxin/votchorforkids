@@ -1,7 +1,8 @@
 "use client";
 
 import { create } from "zustand";
-import { defaultAppearance, normalizeAppearance, type Appearance } from "@/lib/game/constants";
+import { defaultAppearance, normalizeAppearance, DEFAULT_HERO_SLUG, type Appearance } from "@/lib/game/constants";
+import { glbCharDef } from "@/lib/game/glbCharacters";
 import type { HudData } from "@/lib/game/engine";
 import { DAILY_TASK_POOL, ALL_DONE_BONUS, applyRunToDaily, ensureDaily, freshDaily, type DailyState, type DailyRunFacts } from "@/lib/game/daily";
 import { shopItem } from "@/lib/game/shop";
@@ -144,6 +145,14 @@ function scheduleCloudSave(delayMs = 4000) {
 
 const freshStats = (): PlayerStats => ({ runs: 0, best: 0, votes: 0, rescues: 0, wins: 0, caught: 0, totalScore: 0, playtimeMs: 0 });
 
+/** 🩹 a hero slug that isn't in the catalog (corrupt save, hand-edit, old
+ *  test data) can never stream — normalize it back to the default Traveller
+ *  so the lobby always has a survivor instead of the failure banner. */
+function healHero(look: Appearance): Appearance {
+  if (!look.char || !glbCharDef(look.char)) return { ...look, char: DEFAULT_HERO_SLUG };
+  return look;
+}
+
 function loadProfile(): {
   name: string; look: Appearance; stats: PlayerStats; history: RunRecord[]; bonusXp: number; daily: DailyState;
 } {
@@ -156,7 +165,7 @@ function loadProfile(): {
       const hist = Array.isArray(raw.history) ? raw.history : [];
       return {
         name: typeof raw.name === "string" ? raw.name : "",
-        look: normalizeAppearance(raw.look),
+        look: healHero(normalizeAppearance(raw.look)),
         stats: {
           runs: Number(st.runs) || 0,
           best: Number(st.best) || 0,
@@ -497,7 +506,7 @@ export const useGame = create<GameStore>()((set, get) => ({
           timeMs: Number(h.timeMs) || 0,
         }));
       const coins = Math.max(0, Math.floor(Number(blob.coins) || 0));
-      const look = normalizeAppearance(blob.look);
+      const look = healHero(normalizeAppearance(blob.look));
       const bonusXp = Math.max(0, Math.floor(Number(blob.bonusXp) || 0));
       const daily = ensureDaily(blob.daily);
       const lifeMoney = stats.votes;
