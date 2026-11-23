@@ -103,7 +103,11 @@ export function freshDaily(today = dayKey()): DailyState {
 /** Roll the task set if the local day changed — keeps streak/bookkeeping, zeroes progress. */
 export function ensureDaily(state: DailyState | undefined | null): DailyState {
   const today = dayKey();
-  if (state && state.day === today && Array.isArray(state.tasks) && state.tasks.length === 3) return state;
+  if (
+    state && state.day === today && Array.isArray(state.tasks) && state.tasks.length === 3
+    // every task must be a real object — a malformed old save falls back to a fresh board
+    && state.tasks.every((t) => !!t && typeof t === "object" && typeof (t as { id?: unknown }).id === "string")
+  ) return state;
   const next = freshDaily(today);
   if (state) {
     next.streak = state.streak ?? 0;

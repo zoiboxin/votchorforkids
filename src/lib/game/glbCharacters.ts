@@ -531,6 +531,12 @@ export function loadGlbTemplate(slug: string): Promise<GlbTemplate> {
   return p;
 }
 
+/** 🩹 forget a past load failure so the next loadGlbTemplate() call retries the
+ *  fetch for real (the lobby stage auto-retry uses this on transient hiccups). */
+export function clearGlbFailure(slug: string) {
+  failed.delete(slug);
+}
+
 /** Build a poseable instance from a loaded template (null while loading/failed). */
 export function makeGlbInstance(slug: string, ageScale: number): GlbInstance | null {
   const tpl = templates.get(slug);

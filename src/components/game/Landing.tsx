@@ -379,7 +379,12 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
   const lifeRescues = useGame((s) => s.lifeRescues);
   const playtimeMs = useGame((s) => s.playtimeMs);
 
-  const [tab, setTab] = useState<Tab>("lobby");
+  /* 🗂️ lobby tab lives in the store so any panel can deep-link straight into
+     a tab (locker → "Open the Item Shop" lands on the store grid) */
+  const landingTab = useGame((s) => s.landingTab);
+  const setLandingTabStore = useGame((s) => s.setLandingTab);
+  const tab = landingTab as Tab;
+  const setTab = (t: Tab) => setLandingTabStore(t);
   const [help, setHelp] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);

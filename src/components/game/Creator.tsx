@@ -469,6 +469,7 @@ function LockerItems() {
   const owned = useGame((s) => s.owned);
   const lifeMoney = useGame((s) => s.lifeMoney);
   const setScreen = useGame((s) => s.setScreen);
+  const setLandingTab = useGame((s) => s.setLandingTab);
 
   const items = owned.map((id) => shopItem(id)).filter((it): it is ShopItem => !!it);
 
@@ -529,7 +530,7 @@ function LockerItems() {
       </div>
 
       <Button
-        onClick={() => { sfx.click(); setScreen("landing"); }}
+        onClick={() => { sfx.click(); setLandingTab("store"); setScreen("landing"); }}
         className="h-9 w-full rounded-xl bg-orange-600 text-xs font-black text-white hover:bg-orange-500"
       >
         <ShoppingBag size={13} className="mr-1.5" /> Open the Item Shop

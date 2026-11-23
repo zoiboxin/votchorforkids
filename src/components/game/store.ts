@@ -217,6 +217,10 @@ function saveSettings(s: Settings) {
 
 export interface GameStore {
   screen: Screen;
+  /** 🗂️ which lobby tab is open — lets any panel (locker, victory…) deep-link
+   *  straight into a tab, e.g. "Open the Item Shop" → the store tab */
+  landingTab: "lobby" | "battlepass" | "challenges" | "store" | "career" | "news";
+  setLandingTab: (t: GameStore["landingTab"]) => void;
   look: Appearance;
   playerName: string;
   hud: HudData;
@@ -370,6 +374,8 @@ const savedWallet = typeof window !== "undefined" ? loadWallet() : { coins: 0, o
 
 export const useGame = create<GameStore>()((set, get) => ({
   screen: "landing",
+  landingTab: "lobby",
+  setLandingTab: (t) => set({ landingTab: t }),
   look: saved.look,
   playerName: saved.name,
   hud: emptyHud,

@@ -25,7 +25,7 @@ import * as THREE from "three";
 import { Loader2 } from "lucide-react";
 import { AGE_STATS, DEFAULT_HERO_SLUG, type Appearance } from "@/lib/game/constants";
 import {
-  ensureGlbArea, glbAreaFor, loadGlbTemplate, makeGlbInstance,
+  clearGlbFailure, ensureGlbArea, glbAreaFor, loadGlbTemplate, makeGlbInstance,
   preloadGlbCharacters, TOWN_AREA_ID,
   type GlbInstance,
 } from "@/lib/game/glbCharacters";
@@ -209,17 +209,30 @@ export function LobbyStage({ look }: { look: Appearance }) {
 
   /* stream the hero's area in (idempotent) + load this exact rig.
      loadGlbTemplate shares one inflight promise per slug, so re-picks of the
-     same hero resolve instantly from cache. */
+     same hero resolve instantly from cache. A transient fetch hiccup (dev
+     server mid-compile, dropped request) auto-RETRIES twice instead of
+     leaving the stage stuck on the failure banner. */
   useEffect(() => {
     preloadGlbCharacters();
     ensureGlbArea(glbAreaFor(slug) ?? TOWN_AREA_ID);
     let live = true;
-    loadGlbTemplate(slug)
-      .then(() => {
-        if (!live) return;
-        setLoaded({ slug, inst: makeGlbInstance(slug, ageScale), failed: false });
-      })
-      .catch(() => { if (live) setLoaded({ slug, inst: null, failed: true }); });
+    const attempt = (left: number) => {
+      if (left < 2) clearGlbFailure(slug); // a retry must genuinely re-fetch — the loader caches failures
+      loadGlbTemplate(slug)
+        .then(() => {
+          if (!live) return;
+          setLoaded({ slug, inst: makeGlbInstance(slug, ageScale), failed: false });
+        })
+        .catch(() => {
+          if (!live) return;
+          if (left > 0) {
+            setTimeout(() => { if (live) attempt(left - 1); }, 2200);
+          } else {
+            setLoaded({ slug, inst: null, failed: true });
+          }
+        });
+    };
+    attempt(2);
     return () => { live = false; };
   }, [slug, ageScale]);
 
