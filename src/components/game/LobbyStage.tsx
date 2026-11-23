@@ -15,6 +15,8 @@
  *   • Idle clip runs on the shared mixer (pure standing sway, no hops —
  *     the hero plants on the floor like the big-game lobbies)
  *   • floor: fading asphalt patch + soft shadow pool + small amber/teal ring
+ *   • three zombie-ghost SILHOUETTES shuffle across the distant road
+ *     (borrowed Grimlight rigs — zero extra downloads, pure ambience)
  *   • streams in on demand (no cartoon stand-in): a loader chip until the
  *     file lands, a retry hint if the CDN is unreachable
  */
@@ -199,6 +201,115 @@ function HeroBody({
   );
 }
 
+/* ---------------- distant zombie-ghost shamblers ---------------- */
+
+/** Three shadowy zombies shuffling across the road FAR behind the hero.
+ *  ZERO extra bytes: they borrow Grimlight denizen rigs that
+ *  preloadGlbCharacters() already streams for the game's zombie bots —
+ *  the lobby just joins the same cached downloads once the hero is on
+ *  stage, and renders nothing at all on any failure. Every mesh is
+ *  swapped to one shared translucent shadow material per ghost, so they
+ *  cost no lighting and read as dark silhouettes melted into the misty
+ *  backdrop (near ghost strongest, far ghost faintest — depth fog). */
+const GHOST_SLUGS = [
+  { slug: "flesh-eater-8401c3", x0: -2.3, z: -7.2, dir: 1, drift: 0.55, bound: 3.2, speed: 0.8, opacity: 0.52 },
+  { slug: "undead-pirate-608c9b", x0: 2.4, z: -8.4, dir: -1, drift: 0.45, bound: 2.9, speed: 0.7, opacity: 0.4 },
+  { slug: "mourning-widow-ab6c34", x0: 0.7, z: -9.8, dir: 1, drift: 0.38, bound: 2.6, speed: 0.6, opacity: 0.3 },
+] as const;
+
+type GhostCfg = (typeof GHOST_SLUGS)[number];
+
+function GhostActor({ inst, cfg }: { inst: GlbInstance; cfg: GhostCfg }) {
+  const g = useRef<THREE.Group>(null!);
+  const st = useRef({ x: cfg.x0, dir: cfg.dir });
+  const reduced = useRef(
+    typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches,
+  );
+
+  useEffect(() => () => inst.mixer.stopAllAction(), [inst]);
+
+  useFrame((_, dt) => {
+    const d = Math.min(0.1, Math.max(0, dt));
+    if (!reduced.current) {
+      // lazy shamble + slow ping-pong wander across the distant road
+      inst.mixer.update(d * cfg.speed);
+      const s = st.current;
+      s.x += s.dir * cfg.drift * d;
+      if (s.x > cfg.bound) { s.x = cfg.bound; s.dir = -1; }
+      if (s.x < -cfg.bound) { s.x = -cfg.bound; s.dir = 1; }
+    }
+    if (g.current) {
+      g.current.position.set(st.current.x, 0, cfg.z);
+      // face the wander direction (eased so the turnaround reads naturally)
+      const target = st.current.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+      g.current.rotation.y += (target - g.current.rotation.y) * Math.min(1, d * 6);
+    }
+  });
+
+  return (
+    <group ref={g} scale={0.88}>
+      <primitive object={inst.body} />
+    </group>
+  );
+}
+
+function GhostShamblers() {
+  const [ghosts, setGhosts] = useState<{ inst: GlbInstance; cfg: GhostCfg }[] | null>(null);
+
+  useEffect(() => {
+    let live = true;
+    // defer hard — ghosts are pure ambience and must never race the hero's
+    // first paint; loadGlbTemplate() joins the game's own inflight/cached
+    // Grimlight downloads, so the lobby's total payload never grows.
+    const t = window.setTimeout(() => {
+      void Promise.all(GHOST_SLUGS.map((c) => loadGlbTemplate(c.slug).catch(() => null))).then(
+        (tpls) => {
+          if (!live) return;
+          const made: { inst: GlbInstance; cfg: GhostCfg }[] = [];
+          GHOST_SLUGS.forEach((cfg, i) => {
+            if (!tpls[i]) return; // failed/unavailable → skip quietly
+            const inst = makeGlbInstance(cfg.slug, 1);
+            if (!inst) return;
+            // silhouette pass: every mesh → one shared translucent shadow mat
+            const mat = new THREE.MeshBasicMaterial({
+              color: "#0b0f16",
+              transparent: true,
+              opacity: cfg.opacity,
+              depthWrite: false,
+            });
+            inst.body.traverse((o) => {
+              const m = o as THREE.Mesh;
+              if (m.isMesh) {
+                m.material = mat;
+                m.castShadow = false;
+                m.receiveShadow = false;
+              }
+            });
+            // shuffle instead of idle
+            inst.actions.Idle?.setEffectiveWeight(0);
+            if (inst.actions.Walk) {
+              inst.actions.Walk.play();
+              inst.actions.Walk.setEffectiveWeight(1);
+            }
+            made.push({ inst, cfg });
+          });
+          if (made.length) setGhosts(made);
+        },
+      );
+    }, 2500);
+    return () => { live = false; window.clearTimeout(t); };
+  }, []);
+
+  if (!ghosts) return null;
+  return (
+    <group>
+      {ghosts.map((gh) => (
+        <GhostActor key={gh.cfg.slug} inst={gh.inst} cfg={gh.cfg} />
+      ))}
+    </group>
+  );
+}
+
 /* ---------------- the stage ---------------- */
 
 export function LobbyStage({ look }: { look: Appearance }) {
@@ -290,6 +401,7 @@ export function LobbyStage({ look }: { look: Appearance }) {
         <pointLight position={[0, 5.4, 2.6]} intensity={1.1} color="#ffd27a" distance={14} />
         <GroundFloor />
         {inst && <HeroBody inst={inst} spin={spin} drag={drag} />}
+        {inst && <GhostShamblers />}
       </Canvas>
 
       {/* streaming chip — no cartoon stand-in, we wait for the real rig */}
