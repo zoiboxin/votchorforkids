@@ -43,8 +43,9 @@ function getGroundTex(): THREE.CanvasTexture {
   const c = document.createElement("canvas");
   c.width = c.height = 256;
   const ctx = c.getContext("2d")!;
-  // asphalt base
-  ctx.fillStyle = "#232933";
+  // asphalt base — tinted to the backdrop's road so the patch never reads
+  // as a dark slab sitting on top of it
+  ctx.fillStyle = "#2a303b";
   ctx.fillRect(0, 0, 256, 256);
   // grain speckle — coarse asphalt aggregate
   for (let i = 0; i < 1500; i++) {
@@ -104,9 +105,9 @@ function getBootShadowTex(): THREE.CanvasTexture {
   c.width = c.height = 256;
   const ctx = c.getContext("2d")!;
   const g = ctx.createRadialGradient(128, 128, 8, 128, 128, 126);
-  g.addColorStop(0, "rgba(3,6,11,0.7)");
-  g.addColorStop(0.35, "rgba(3,6,11,0.4)");
-  g.addColorStop(0.7, "rgba(3,6,11,0.15)");
+  g.addColorStop(0, "rgba(3,6,11,0.55)");
+  g.addColorStop(0.35, "rgba(3,6,11,0.3)");
+  g.addColorStop(0.7, "rgba(3,6,11,0.12)");
   g.addColorStop(1, "rgba(3,6,11,0)");
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, 256, 256);
@@ -119,16 +120,18 @@ function GroundFloor() {
   const shadow = getBootShadowTex();
   return (
     <group>
-      {/* wet-asphalt floor patch — melts into the backdrop's road */}
+      {/* wet-asphalt floor patch — melts into the backdrop's road. Kept tight
+          and semi-transparent: a big opaque dark disc read as a "black box"
+          in front of the hero's legs on shorter viewports. */}
       <mesh rotation-x={-Math.PI / 2} position-y={-0.002}>
-        <circleGeometry args={[1.7, 48]} />
-        <meshBasicMaterial map={ground} transparent depthWrite={false} opacity={0.9} />
+        <circleGeometry args={[1.05, 48]} />
+        <meshBasicMaterial map={ground} transparent depthWrite={false} opacity={0.72} />
       </mesh>
 
       {/* soft shadow pool under the boots — sells "standing on the ground" */}
       <mesh rotation-x={-Math.PI / 2} position-y={0.002}>
-        <planeGeometry args={[1.6, 1.6]} />
-        <meshBasicMaterial map={shadow} transparent depthWrite={false} />
+        <planeGeometry args={[1.15, 1.15]} />
+        <meshBasicMaterial map={shadow} transparent depthWrite={false} opacity={0.85} />
       </mesh>
 
       {/* small glowing center circle the hero stands in */}
@@ -268,8 +271,14 @@ export function LobbyStage({ look }: { look: Appearance }) {
     >
       <Canvas
         className="absolute inset-0"
-        camera={{ fov: 38, position: [0, 1.55, 4.9] }}
-        onCreated={({ camera }) => camera.lookAt(0, 1.62, 0)}
+        /* Framing math (fov 38 vertical): camera y=1.30 tilted DOWN to
+           lookAt 1.02 puts the feet at ~80% of frame height and the glow
+           ring's near edge at ~85% — the full boots + circle stay inside
+           the canvas with a bottom margin on every viewport. The previous
+           upward tilt (cam 1.55 → look 1.62) pushed the toes past 100%
+           and clipped the ring's bottom half. */
+        camera={{ fov: 38, position: [0, 1.3, 4.9] }}
+        onCreated={({ camera }) => camera.lookAt(0, 1.02, 0)}
         dpr={[1, 1.75]}
         gl={{ alpha: true, antialias: true }}
       >
