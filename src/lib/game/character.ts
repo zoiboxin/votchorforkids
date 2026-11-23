@@ -2,6 +2,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { AGE_STATS, ITEMS, POLICE_UNIFORM, policeOutfitOf, type Appearance } from "./constants";
 import { loadGlbTemplate, makeGlbInstance, crossToGlb, setGlbLocomotion, glbApplyBone, glbHipsTo, glbOvEase, tintGlbZombie, POLICE_CHAR, type GlbInstance } from "./glbCharacters";
+import { CLIPS, PUNCH_CYCLE, SWORD_CYCLE, glbActUpdate, glbActName, glbWantAct, glbStopAct, glbWarmClip, glbEdge, glbCycleNext, glbEnsureClips, glbClipReady } from "./clipLibrary";
 import { isWeaponKind, loadWeaponTemplate, makeWeaponInstance, weaponReady, WEAPON_FILES } from "./weapons";
 
 /* ------------------------------------------------------------------ */
@@ -648,20 +649,148 @@ export function attachGlbBody(root: THREE.Object3D, slug: string, opts: { zombie
 }
 
 /** 🧍 Clip-driven pose for rigged bodies — the GLB twin of poseCharacter.
- *  Locomotion blends continuously (Idle ⇄ Walk ⇄ JOG ⇄ Run) and a family of
- *  procedural BONE overlays plays on top of the mixer — jump, fight, dance,
- *  wave, cheer, drive, death & get-up — all authored once on the shared
- *  Mixamo bone set, so every cast member animates identically. The cartoon
- *  pose opts (flips, squash, faints, cuffs, tool swings) keep working. */
+ *  Locomotion blends continuously (Idle ⇄ Walk ⇄ JOG ⇄ Run) and the 🎬
+ *  Polyfork action library (clipLibrary.ts) owns the big states with the
+ *  REAL streamed clips — jump + jump-in-air, double-jump flip set, punch
+ *  jab/cross/hook cycles, Sword idle + sword attack/slash cycles on held
+ *  blades, knockback, get-up, pick up, eating, dance and the full zombie
+ *  shamble/attack family — with the original procedural BONE overlays kept
+ *  as the clip-free fallback underneath. Cartoon pose opts (flips, squash,
+ *  faints, cuffs, tool swings) keep working. */
+/* ---------------- 🎬 the Polyfork action library -----------------------
+ * Tool kinds whose attack arc is owned by a REAL sword clip (the arm clip
+ * sweeps the blade riding the hand socket — the procedural chop is skipped);
+ * clip name sets for the per-overlay guards; the shamble swap for the TURNED;
+ * the high-traffic clips warmed on every body's first pose (fetches are
+ * global + cached, per-instance builds are trivial track constructions). */
+const SWORDISH_KINDS: ReadonlySet<string> = new Set(["sword", "armsword", "dagger"]);
+const PUNCH_CLIPS: ReadonlySet<string> = new Set(PUNCH_CYCLE);
+const SWORD_CLIPS: ReadonlySet<string> = new Set(SWORD_CYCLE);
+const AIR_CLIPS: ReadonlySet<string> = new Set([CLIPS.jumpStart, CLIPS.jumpAir, CLIPS.flipStart, CLIPS.flipAir]);
+const ZOMBIE_LOCO: readonly string[] = [CLIPS.zombieIdle, CLIPS.zombieWalk];
+const WARM_CLIPS: readonly string[] = [
+  CLIPS.jumpStart, CLIPS.jumpAir, CLIPS.punchJab, CLIPS.swordIdle, CLIPS.swordAttack,
+  CLIPS.knockback, CLIPS.zombieAttack, CLIPS.zombieIdle, CLIPS.zombieWalk,
+];
+
+/** ?noclips=1 — diagnostic kill switch: skips the whole clip activity layer
+ *  and keeps every procedural overlay (bisects animation hangs).
+ *  ?nowarm=1 — skip the per-body warm pass only. ?noedge=1 — skip the edge
+ *  one-shots (jump/punch/knockback) but keep the hold-clips (sword idle etc). */
+const CLIPS_OFF = typeof window !== "undefined" && window.location.search.includes("noclips");
+const NO_WARM = typeof window !== "undefined" && window.location.search.includes("nowarm");
+const NO_EDGE = typeof window !== "undefined" && window.location.search.includes("noedge");
+const NO_JUMP = typeof window !== "undefined" && window.location.search.includes("nojump");
+const NO_PUNCH = typeof window !== "undefined" && window.location.search.includes("nopunch");
+
 function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: number, o: PoseOpts): void {
-  const gs = (g.userData.gaitGlb ??= { lastT: t }) as { lastT: number };
+  const gs = (g.userData.gaitGlb ??= { lastT: t }) as { lastT: number; warmed?: boolean; airSwap?: string | null };
   const dt = Math.min(0.1, Math.max(0, t - gs.lastT));
   gs.lastT = t;
 
-  // clip pick — continuous weights by speed (jog = Walk+Run mix); while a
-  // hard pose owns the body (drive / death / get-up) the legs keep feeding
-  // the mixer but the overlay slerps over them, so transitions stay smooth
-  setGlbLocomotion(st, o.drive || o.death || o.getup ? Math.min(speed, 0.3) : speed);
+  /* ---------------- 🎬 clip activities (one slot, priority order) --------
+   * One activity clip may own the body at a time: while it plays its weight
+   * eases to 1 and the locomotion trio is damped by the same amount. Every
+   * request FALLS BACK to the procedural overlays below until (or forever,
+   * if) its clip lands — the game never blocks on a clip. */
+  const actW = CLIPS_OFF ? 0 : glbActUpdate(st, dt);
+  const actN = CLIPS_OFF ? null : glbActName(st);
+
+  if (!CLIPS_OFF && !NO_WARM && !gs.warmed) {
+    gs.warmed = true;
+    for (const n of WARM_CLIPS) glbWarmClip(st, n);
+  }
+
+  // rising edges — computed EVERY frame so the per-instance memory stays fresh
+  const swingEdge = CLIPS_OFF ? false : glbEdge(st, "swing", o.swing ?? 0);
+  const atkEdge = CLIPS_OFF ? false : glbEdge(st, "attack", o.attack ?? 0);
+  const airEdge = CLIPS_OFF ? false : glbEdge(st, "air", !!o.airborne);
+  const flipEdge = CLIPS_OFF ? false : glbEdge(st, "flip", o.flip ?? 0);
+  const eatEdge = CLIPS_OFF ? false : glbEdge(st, "eat", !!o.eat);
+  const pickEdge = CLIPS_OFF ? false : glbEdge(st, "pickup", !!o.pickup);
+  const hurtEdge = CLIPS_OFF ? false : glbEdge(st, "hurt", !!o.hurt);
+
+  const bareHand = !g.userData.heldTool;
+  const heldKind = g.userData.heldKind as string | null | undefined;
+  const swordish = !bareHand && !!heldKind && SWORDISH_KINDS.has(heldKind);
+  // 🪂 sustained air is a LOCOMOTION-name swap (Jump in air replaces Walk/Run
+  // in the proven setGlbLocomotion path — zero per-frame wants, zero activity
+  // switching), never a loop activity: at 100-body scale the want-churn was
+  // pathological. Takeoff/landing stay edge-driven one-shots (punch-class).
+
+  // priority chain — the first state that claims the body owns the slot
+  let claimed = false;
+  if (!CLIPS_OFF) {
+  if (o.drive || o.death) {
+    if (actN) glbStopAct(st); // hard poses keep their procedural ownership
+    gs.airSwap = null;
+  } else if ((o.getup ?? 0) > 0 || actN === CLIPS.getUp) {
+    // 🪫 the real stand-up one-shot — it outlives the engine's getup timer
+    claimed = glbWantAct(st, CLIPS.getUp, { loop: false, fade: 0.1 });
+  } else if (o.airborne && !NO_JUMP) {
+    if (o.flip != null && o.flip > 0) {
+      // 🤸 DOUBLE JUMP — Flip jump start one-shot at takeoff, the flip AIR
+      // clip swaps into the walk/run slots while the flip lasts
+      if (flipEdge) claimed = glbWantAct(st, CLIPS.flipStart, { loop: false, fade: 0.06 });
+      if (glbClipReady(st, CLIPS.flipAir)) {
+        glbEnsureClips(st, [CLIPS.flipAir]);
+        gs.airSwap = CLIPS.flipAir;
+        claimed = true;
+      }
+    } else {
+      // 🦘 JUMP — Jump start one-shot at the airborne edge, Jump in air rides
+      // the locomotion swap while the body flies
+      if (airEdge) claimed = glbWantAct(st, CLIPS.jumpStart, { loop: false, fade: 0.06 });
+      if (glbClipReady(st, CLIPS.jumpAir)) {
+        glbEnsureClips(st, [CLIPS.jumpAir]);
+        gs.airSwap = CLIPS.jumpAir;
+        if (!claimed) claimed = true;
+      }
+    }
+  } else if (gs.airSwap) {
+    // 🛬 just landed from a clip-swap jump — zero the swap action's weight
+    // (the trio-zeroing loop only covers Idle/Walk/Run), then flip landers
+    // play the real landing one-shot; plain jumpers let the squash sell it
+    const swapAct = st.actions[gs.airSwap];
+    if (swapAct) swapAct.setEffectiveWeight(0);
+    const wasFlip = gs.airSwap === CLIPS.flipAir;
+    gs.airSwap = null;
+    if (wasFlip && !NO_EDGE) claimed = glbWantAct(st, CLIPS.flipLand, { loop: false, fade: 0.09 });
+  }
+  if (!claimed && !NO_EDGE && hurtEdge) claimed = glbWantAct(st, CLIPS.knockback, { loop: false, fade: 0.07 });
+  if (!claimed && !NO_EDGE && atkEdge) claimed = glbWantAct(st, CLIPS.zombieAttack, { loop: false, fade: 0.06 });
+  if (!claimed && !NO_EDGE && !NO_PUNCH && (o.swing ?? 0) > 0 && !o.detained) {
+    if (bareHand && swingEdge) claimed = glbWantAct(st, glbCycleNext(st, PUNCH_CYCLE), { loop: false, fade: 0.055 });
+    else if (swordish && swingEdge) claimed = glbWantAct(st, glbCycleNext(st, SWORD_CYCLE), { loop: false, fade: 0.05 });
+  }
+  if (!claimed && !NO_EDGE && pickEdge && speed < 3) claimed = glbWantAct(st, CLIPS.pickUp, { loop: false, fade: 0.12 });
+  if (!claimed && !NO_EDGE && eatEdge && speed < 2.5) claimed = glbWantAct(st, CLIPS.eating, { loop: false, fade: 0.12 });
+  if (!claimed) {
+    if (o.dance) claimed = glbWantAct(st, CLIPS.dance, { fade: 0.18 });
+    else if (actN === CLIPS.dance) glbStopAct(st);
+  }
+  if (!claimed) {
+    // ⚔️ the sword GUARD STANCE — standing with a blade plays the real
+    // Sword idle instead of plain Idle, so held steel reads held
+    if (swordish && !o.airborne && !o.zombie && speed < 0.35) claimed = glbWantAct(st, CLIPS.swordIdle, { fade: 0.22 });
+    else if (actN === CLIPS.swordIdle) glbStopAct(st);
+  }
+  }
+
+  // 🧟 zombie locomotion — the shamble swap (Zombie idle/walk) once streamed;
+  // the procedural hunch overlay below only covers the clip-free fallback
+  const zReady = !CLIPS_OFF && o.zombie ? glbEnsureClips(st, ZOMBIE_LOCO) : false;
+  const flipClipOwns = gs.airSwap === CLIPS.flipAir;
+
+  // clip pick — continuous weights by speed (jog = Walk+Run mix), damped by
+  // the activity weight so an owning clip eases the legs out underneath;
+  // while a hard pose owns the body (drive / death / get-up) the legs keep
+  // feeding the mixer but the overlay slerps over them, so transitions stay smooth
+  setGlbLocomotion(st, o.drive || o.death || o.getup ? Math.min(speed, 0.3) : speed, {
+    damp: actW,
+    ...(o.zombie && zReady ? { idleClip: CLIPS.zombieIdle, walkClip: CLIPS.zombieWalk, runClip: CLIPS.zombieWalk }
+      : gs.airSwap ? { walkClip: gs.airSwap, runClip: gs.airSwap } : {}),
+  });
   st.mixer.update(dt); // callers only pose VISIBLE bodies — free animation LOD
 
   const body = st.body;
@@ -694,8 +823,9 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
     glbApplyBone(st, "Spine", 0.06 * loose, 0, 0.1 * loose, loose);
   }
 
-  // 🪫 GET UP — a crouched push-off that unfolds as the timer drains 1 → 0
-  if (o.getup != null && o.getup > 0) {
+  // 🪫 GET UP — the real "Get up" clip owns the body when it's ready; this
+  // procedural crouched push-off only covers the clip-free fallback
+  if (o.getup != null && o.getup > 0 && !(actN === CLIPS.getUp && actW > 0.2)) {
     const c = Math.min(1, o.getup);              // 1 = down · 0 = standing
     const amt = glbOvEase(st, "getup", Math.min(1, c * 2.4), dt);
     glbHipsTo(st, 1 - 0.4 * c, amt);
@@ -733,9 +863,9 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
     glbApplyBone(st, "RightForeArm", -0.34, 0, 0, amt);
   }
 
-  // 🕺 DANCE — a looping party shimmy: hips bounce, torso sways, arms
-  // alternate pump-the-air, head rides the beat. Pure sin() math, loops forever.
-  if (o.dance) {
+  // 🕺 DANCE — the real Dance clip owns the body when streamed; the
+  // procedural shimmy covers the fallback
+  if (o.dance && !(actN === CLIPS.dance && actW > 0.2)) {
     const amt = glbOvEase(st, "dance", 1, dt);
     const b = t * 6.6;                          // the beat (~1 Hz pairs)
     glbHipsTo(st, 0.955 + Math.abs(Math.sin(b)) * 0.045, amt);
@@ -770,9 +900,10 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
     glbApplyBone(st, "Spine", -0.07, 0, 0, amt);
   }
 
-  // 🦘 JUMP — rise (superhero arms, knees tucked) ⇄ fall (arms out, legs
-  // reaching for the ground), blended by vertical speed like the cartoon air pose
-  if (o.airborne && !(o.flip != null && o.flip > 0)) {
+  // 🦘 JUMP — the Jump start one-shot owns takeoff and the Jump in air swap
+  // owns sustained flight; this rise⇄fall bone overlay covers the fallback
+  // (blended by vertical speed like the cartoon air pose)
+  if (o.airborne && !gs.airSwap && !(actN != null && AIR_CLIPS.has(actN) && actW > 0.2)) {
     const amt = glbOvEase(st, "jump", 1, dt);
     const upB = Math.min(1, Math.max(0, ((o.vy ?? 0) + 1.8) / 3.6)); // 1 = rising
     const A = (bone: string, rise: number, fall: number, rz = 0) =>
@@ -791,10 +922,10 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
     glbOvEase(st, "jump", 0, dt);
   }
 
-  // 🥊 FIGHT — bare-hand jab (the tool chop owns the arc when a tool is held):
-  // windup behind → straight thrust with a torso twist → settle
-  const bareHand = !g.userData.heldTool;
-  if (o.swing != null && o.swing > 0 && !o.drive && bareHand) {
+  // 🥊 FIGHT — the real Punch jab/cross/hook clips own bare-hand attacks when
+  // streamed (one alternating one-shot per swing); the procedural jab covers
+  // the fallback: windup behind → straight thrust with a torso twist → settle
+  if (o.swing != null && o.swing > 0 && !o.drive && bareHand && !(actN != null && PUNCH_CLIPS.has(actN) && actW > 0.2)) {
     const sw = Math.min(1, o.swing);
     const amt = glbOvEase(st, "fight", Math.min(1, sw * 6), dt);
     if (sw < 0.2) {
@@ -830,8 +961,9 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
     body.rotation.set(-0.55 * w - 0.08, wob * 0.5, wob);
     body.position.y = -0.2 * w * st.baseScale;
     body.position.z = -0.12 * w;
-  } else if (o.airborne && o.flip && o.flip > 0) {
-    // mid-air front flip — spin the whole body around the hip pivot
+  } else if (o.airborne && o.flip && o.flip > 0 && !flipClipOwns) {
+    // mid-air front flip — the Flip jump clip owns the spin when it plays;
+    // this whole-body rotation around the hip pivot is the fallback
     const p = 1 - Math.min(1, o.flip);
     const th = Math.PI * 2 * p;
     body.rotation.x = th;
@@ -839,11 +971,11 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
     body.position.z = -st.hip * Math.sin(th);
   }
 
-  // 🧟 ZOMBIE SHAMBLE — the hunch: spine curls forward, head lolls side to
-  // side, both arms quest out ahead (one stiffer than the other), hips sink.
-  // The stride clips lose their spring (capped timeScale) so the walk reads
-  // as a dragging lurch, not a stroll. Sits UNDER the attack overlay.
-  if (o.zombie) {
+  // 🧟 ZOMBIE SHAMBLE — the real Zombie idle/walk clips ARE the shamble when
+  // streamed (the locomotion trio swaps to them above); this hunch overlay
+  // (spine curl, lolling head, questing arms, dragging stride caps) covers
+  // the fallback. Sits UNDER the attack overlay.
+  if (o.zombie && !zReady) {
     const ph = o.phase ?? 0;
     const amt = glbOvEase(st, "zombie", 1, dt);
     glbHipsTo(st, 0.93, amt);
@@ -862,10 +994,11 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
     if (runA && runA.getEffectiveTimeScale() > 0.88) runA.setEffectiveTimeScale(0.88);
   }
 
-  // 🧟 ATTACK — the lunge-bite: both arms snap ahead with a torso lurch,
-  // peak mid-swing, then recover into the questing reach. Driven by the
-  // engine's zb.attackT (decays 1 → 0 over 0.5 s).
-  if (o.attack != null && o.attack > 0) {
+  // 🧟 ATTACK — the real Zombie attack clip owns the lunge when streamed;
+  // the procedural lunge-bite covers the fallback: both arms snap ahead with
+  // a torso lurch, peak mid-swing, then recover (driven by zb.attackT, 1→0
+  // over 0.5 s)
+  if (o.attack != null && o.attack > 0 && !(actN === CLIPS.zombieAttack && actW > 0.2)) {
     const p = 1 - Math.min(1, o.attack);
     const amt = glbOvEase(st, "attack", Math.min(1, p * 9), dt);
     const lunge = Math.sin(Math.min(1, p / 0.72) * Math.PI);
@@ -881,11 +1014,13 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
 
   // ⚔️ swing — the tool (riding the hand socket) whistles through the chop arc;
   // between swings it eases back to the ready-stance tilt (bare-hand fights
-  // use the bone-level punch overlay above instead). THRUST weapons (the
-  // spear) lunge straight ahead instead — a 2.1 m shaft chopping overhead
-  // clips the ground and the body, while a shove forward reads instantly.
+  // use the bone-level punch overlay above instead). SWORD kinds hand the arc
+  // to the real Sword clips when they own the arm — the blade rides the hand
+  // bone untouched through the streamed slash. THRUST weapons (the spear)
+  // lunge straight ahead — a 2.1 m shaft chopping overhead clips the ground.
   const tool = g.userData.heldTool as THREE.Object3D | undefined;
-  if (tool) {
+  const swordClipOwns = swordish && actN != null && SWORD_CLIPS.has(actN) && actW > 0.2;
+  if (tool && !swordClipOwns) {
     const base = (tool.userData.baseRx as number | undefined) ?? -0.5;
     const thrust = tool.userData.swingStyle === "thrust";
     if (o.swing != null && o.swing > 0) {
@@ -932,7 +1067,7 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
 /* ------------------------------------------------------------------ */
 /* Posing — walk / run / jump / idle / sit + auto-blink & expressions  */
 /* ------------------------------------------------------------------ */
-export interface PoseOpts { phase?: number; airborne?: boolean; detained?: boolean; zombie?: boolean; /** 🧟 1 → 0 lunge-bite countdown — plays the zombie ATTACK overlay while > 0 */ attack?: number; /** 😱 fleeing a horror — arms thrown up, flailing, glancing over the shoulder */ panic?: boolean; vy?: number; flip?: number; squash?: number; faint?: number; /** 0..1 progress of an arm swing (axe chop / sword slash / beast claw) — 0 = none */ swing?: number; /** 🕺 emotes — dance loops until canceled, wave says hello, cheer celebrates */ dance?: boolean; wave?: boolean; cheer?: boolean; /** 🚗 seated at the wheel (rigged bodies only — the car hides cartoon sit poses) */ drive?: boolean; /** ☠️ 0..1 death collapse progress — limbs go loose while the root tips over */ death?: number; /** 🪫 get-up timer (1 → 0): crouched push-off unfolding to standing */ getup?: number; }
+export interface PoseOpts { phase?: number; airborne?: boolean; detained?: boolean; zombie?: boolean; /** 🧟 1 → 0 lunge-bite countdown — plays the zombie ATTACK overlay while > 0 */ attack?: number; /** 😱 fleeing a horror — arms thrown up, flailing, glancing over the shoulder */ panic?: boolean; vy?: number; flip?: number; squash?: number; faint?: number; /** 0..1 progress of an arm swing (axe chop / sword slash / beast claw) — 0 = none */ swing?: number; /** 🕺 emotes — dance loops until canceled, wave says hello, cheer celebrates */ dance?: boolean; wave?: boolean; cheer?: boolean; /** 🚗 seated at the wheel (rigged bodies only — the car hides cartoon sit poses) */ drive?: boolean; /** ☠️ 0..1 death collapse progress — limbs go loose while the root tips over */ death?: number; /** 🪫 get-up timer (1 → 0): crouched push-off unfolding to standing */ getup?: number; /** 🎬 clip-library extras (GLB bodies): 🩸 fresh damage flash → Knockback one-shot */ hurt?: boolean; /** 🍽 fresh lastGain window → Eating one-shot */ eat?: boolean; /** 🧰 world tool just pocketed → Pick up one-shot */ pickup?: boolean; }
 
 /** All channels poseCharacter drives — computed as targets, blended, then applied. */
 interface PoseCh {

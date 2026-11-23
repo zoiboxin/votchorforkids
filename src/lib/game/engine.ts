@@ -579,6 +579,7 @@ export class GameEngine {
   hp = 100; stamina = 100;
   inv: { def: number; count: number }[] = []; // pocketed food, used from the HUD item bar
   hurtT = 0;                // red damage-flash timer
+  pickupT = 0;              // 🧰 1 → 0 just pocketed a world tool — plays the Pick up clip
   flipT = 0;                // double-jump front-flip timer (FLIP_S → 0)
   squashT = 0;              // landing squash-and-stretch timer (LAND_SQUASH_S → 0)
   lastGain: { hp: number; stamina: number; at: number } = { hp: 0, stamina: 0, at: 0 }; // bumped on every eat
@@ -1760,7 +1761,7 @@ export class GameEngine {
     this.crimeReport = null; this.botLootCd = 0; this.botDeathCd = 0; this.msAnnounced = PLAYERS_TOTAL;
     this.lastToastMsg = ""; this.lastToastT = 0; // 📣 the duplicate guard rewinds too
     this.setPersonalPause(false); this.pauseLog = []; this.spectating = false; this.specName = ""; this.specKey = ""; this.autoSpecDone = false;
-    this.inv = []; this.hurtT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0; this.powerFullT = 0;
+    this.inv = []; this.hurtT = 0; this.pickupT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0; this.powerFullT = 0;
     this.invOnceT = 0; this.toolOnceT = 0; this.botDriven.clear();
     this.flipT = 0; this.squashT = 0; this.faintT = 0; this.carHitCd = 0;
     this.danceOn = false; this.waveT = 0; this.getupT = 0; this.wasFaint = false; this.cheerT = 0; // 🎭 emotes rewind too
@@ -5428,6 +5429,7 @@ export class GameEngine {
     }
     const slot = { kind, count: 1 };
     this.tools.push(slot);
+    this.pickupT = 1; // 🧰 the bend-down-and-grab clip fires from the renderer
     if (this.held < 0) this.held = this.tools.indexOf(slot); // first tool auto-equips
     sfx.pickup();
     this.fxQueue.push({ type: "confetti", x, y: 1.2, z, hue: 0.08 });
@@ -5750,6 +5752,7 @@ export class GameEngine {
     this.pocketFullT = Math.max(0, this.pocketFullT - dt);
     this.powerFullT = Math.max(0, this.powerFullT - dt);
     this.hurtT = Math.max(0, this.hurtT - dt);
+    this.pickupT = Math.max(0, this.pickupT - dt);
     this.flipT = Math.max(0, this.flipT - dt);
     this.squashT = Math.max(0, this.squashT - dt);
     this.faintT = Math.max(0, this.faintT - dt);

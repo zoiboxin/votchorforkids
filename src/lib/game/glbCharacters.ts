@@ -659,26 +659,47 @@ const sstep01 = (a: number, b: number, x: number) => {
  *  jog for real. The stride timeScale follows ground speed so feet don't
  *  skate. The jog band starts ABOVE normal walk (5.2–7.2 u/s after the pace
  *  bump) — the old 4.2-onset blended 25–65% Run into every casual walk while
- *  its clamped-low timeScale crawled, making normal walking read slow. */
-export function setGlbLocomotion(st: GlbInstance, speed: number): void {
+ *  its clamped-low timeScale crawled, making normal walking read slow.
+ *
+ *  `damp` (0..1) scales the whole trio down — the clip-library activity layer
+ *  passes its eased weight so a jump/punch/slash can own the body while the
+ *  legs ease out underneath. `idleClip/walkClip/runClip` swap the trio for
+ *  state-specific clips (🧟 zombies shamble on Zombie idle/Zombie walk); a
+ *  missing action falls back to the stock clip. */
+export function setGlbLocomotion(
+  st: GlbInstance,
+  speed: number,
+  opts?: { damp?: number; idleClip?: string; walkClip?: string; runClip?: string },
+): void {
+  const damp = 1 - Math.min(1, Math.max(0, opts?.damp ?? 0));
+  const pick = (alt: string | undefined, base: string) =>
+    (alt && st.actions[alt] ? alt : base);
+  const idleN = pick(opts?.idleClip, "Idle");
+  const walkN = pick(opts?.walkClip, "Walk");
+  const runN = pick(opts?.runClip, "Run");
   const wIn = sstep01(0.25, 0.7, speed);    // 0 = standing · 1 = moving
   const jogK = sstep01(6.0, 9.4, speed);    // 0 = walk · 1 = full run
-  const iw = 1 - wIn;
-  const ww = wIn * (1 - jogK);
-  const rw = wIn * jogK;
+  const iw = (1 - wIn) * damp;
+  const ww = wIn * (1 - jogK) * damp;
+  const rw = wIn * jogK * damp;
   const set = (name: string, w: number) => {
     const a = st.actions[name];
     if (a) a.setEffectiveWeight(w);
   };
-  set("Idle", iw); set("Walk", ww); set("Run", rw);
+  // the trio not currently selected must sit at zero (a zombie swapping to
+  // Zombie walk must silence Walk, and vice versa)
+  for (const base of ["Idle", "Walk", "Run"]) {
+    if (base !== idleN && base !== walkN && base !== runN) set(base, 0);
+  }
+  set(idleN, iw); set(walkN, ww); set(runN, rw);
   // stride cadence tracks ground speed (clamped — a frantic blur reads worse
   // than a little foot-slide on the cartoon proportions). Walk plays ~35%
   // faster than the old mapping: a brisk, purposeful survivor stride.
-  const walk = st.actions.Walk;
+  const walk = st.actions[walkN];
   if (walk && ww > 0.01) walk.setEffectiveTimeScale(clamp(speed / 3.6, 0.65, 1.65));
-  const run = st.actions.Run;
+  const run = st.actions[runN];
   if (run && rw > 0.01) run.setEffectiveTimeScale(clamp(speed / 9.0, 0.8, 1.5));
-  st.cur = rw > ww ? "Run" : ww > 0.01 ? "Walk" : "Idle";
+  st.cur = rw > ww ? runN : ww > 0.01 ? walkN : idleN;
 }
 
 const _ovE = new THREE.Euler();

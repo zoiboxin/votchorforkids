@@ -189,6 +189,10 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       drive: !!(engine.drive || (engine.ride && rideSeat)),
       getup: engine.getupT > 0 ? engine.getupT : 0,
       death: engine.lost ? Math.min(1, engine.deathT / 0.85) : 0,
+      // 🎬 clip-library extras — the real Knockback / Eating / Pick up one-shots
+      hurt: engine.hurtT > 0.25,
+      eat: Date.now() - engine.lastGain.at < 1150,
+      pickup: engine.pickupT > 0,
     });
     // 🚗 the visible driver — the body glues to the car's seat and plays the
     // Drive pose (open-top rides only: a sealed sedan would clip the roof)
