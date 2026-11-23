@@ -934,12 +934,17 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
           </div>
         </aside>
 
-        {/* -------- center: the survivor stage -------- */}
+        {/* -------- center: the survivor stage --------
+             The left rail (330px) is far wider than the right rail (56px),
+             which shoves a plain flex-1 stage right of the viewport center.
+             A compensating lg right margin re-centers the whole stage — hero,
+             name plate and rank pill all line up dead-center like the big-game
+             lobbies. (Offset = (330 − 56) / 2 + gap = 137px → margin = 274px.) */}
         <section
           aria-label="Your survivor — drag to spin"
-          className="relative order-1 h-[44vh] min-h-[300px] w-full lg:order-2 lg:mr-[72px] lg:h-auto lg:min-h-0 lg:flex-1"
+          className="relative order-1 h-[44vh] min-h-[300px] w-full lg:order-2 lg:mr-[274px] lg:h-auto lg:min-h-0 lg:flex-1"
         >
-          {/* name plate + ready status (Fortnite center-stage) */}
+          {/* name plate + rank pill (Fortnite center-stage) */}
           <div className="pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 text-center">
             <div className="pointer-events-auto flex items-center gap-2 rounded-full bg-slate-950/75 px-4 py-1.5 ring-1 ring-white/20 backdrop-blur">
               {rank.id === "legend" && <Crown size={15} className="shrink-0 text-yellow-300" />}
@@ -954,26 +959,19 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
                 <Pencil size={12} />
               </button>
             </div>
-            <div
-              className={`mt-1.5 inline-block rounded px-3 py-0.5 text-[11px] font-black uppercase tracking-[0.2em] ${
-                hasProfile ? "bg-yellow-400/90 text-slate-950" : "bg-slate-950/75 text-yellow-300 ring-1 ring-yellow-300/50"
-              }`}
-            >
-              {hasProfile ? "Ready" : "Not ready"}
+            {/* rank pill — moved up from under the stage circle into the old
+                READY badge's slot (the Not-ready badge is gone for good) */}
+            <div className="mt-1.5 inline-block">
+              <div className="flex items-center gap-2 whitespace-nowrap rounded-full bg-black/55 px-4 py-1.5 text-[11px] font-black text-yellow-200 ring-1 ring-yellow-300/40 backdrop-blur">
+                <Zap size={13} className="shrink-0 text-yellow-300" />
+                {rank.emoji} {rank.name} · {careerXp.toLocaleString()} XP
+              </div>
             </div>
           </div>
 
           {/* the rigged GLB survivor standing on the lobby floor (drag to spin) */}
           <div className="absolute inset-0">
             <LobbyStage look={look} />
-          </div>
-
-          {/* rank boost pill — mobile keeps it under the stage glow */}
-          <div className="pointer-events-none absolute bottom-1 left-1/2 z-20 -translate-x-1/2 lg:hidden">
-            <div className="flex items-center gap-2 whitespace-nowrap rounded-full bg-black/55 px-3 py-1.5 text-[11px] font-black text-yellow-200 ring-1 ring-yellow-300/40 backdrop-blur sm:px-4">
-              <Zap size={13} className="shrink-0 text-yellow-300" />
-              {rank.emoji} {rank.name} · {careerXp.toLocaleString()} XP
-            </div>
           </div>
         </section>
 
@@ -987,14 +985,6 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
 
       {/* ================= bottom bar: play buttons + chat dock (mobile) ================= */}
       <footer className="relative z-30 flex flex-col gap-2 px-2 pb-[max(0.5rem,env(safe-area-inset-bottom))] sm:px-3 lg:flex-row lg:items-end lg:justify-end">
-        {/* desktop: rank pill hangs just below the stage's glowing circle */}
-        <div className="absolute -top-2 left-1/2 z-20 hidden -translate-x-1/2 lg:block">
-          <div className="flex items-center gap-2 whitespace-nowrap rounded-full bg-black/55 px-4 py-1.5 text-[11px] font-black text-yellow-200 ring-1 ring-yellow-300/40 backdrop-blur">
-            <Zap size={13} className="shrink-0 text-yellow-300" />
-            {rank.emoji} {rank.name} · {careerXp.toLocaleString()} XP
-          </div>
-        </div>
-
         <div className="relative flex flex-col gap-2 lg:w-80">
           {/* mobile keeps the chat dock here — desktop moved it to the right rail */}
           <div className="flex items-center justify-end gap-3 lg:hidden">

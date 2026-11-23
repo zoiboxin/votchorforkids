@@ -121,27 +121,27 @@ function GroundFloor() {
     <group>
       {/* wet-asphalt floor patch — melts into the backdrop's road */}
       <mesh rotation-x={-Math.PI / 2} position-y={-0.002}>
-        <circleGeometry args={[2.2, 48]} />
+        <circleGeometry args={[1.7, 48]} />
         <meshBasicMaterial map={ground} transparent depthWrite={false} opacity={0.9} />
       </mesh>
 
       {/* soft shadow pool under the boots — sells "standing on the ground" */}
       <mesh rotation-x={-Math.PI / 2} position-y={0.002}>
-        <planeGeometry args={[2.3, 2.3]} />
+        <planeGeometry args={[1.6, 1.6]} />
         <meshBasicMaterial map={shadow} transparent depthWrite={false} />
       </mesh>
 
       {/* small glowing center circle the hero stands in */}
       <mesh rotation-x={-Math.PI / 2} position-y={0.004}>
-        <circleGeometry args={[0.8, 48]} />
+        <circleGeometry args={[0.5, 48]} />
         <meshBasicMaterial color="#8a5a18" transparent opacity={0.12} />
       </mesh>
       <mesh rotation-x={-Math.PI / 2} position-y={0.006}>
-        <ringGeometry args={[0.72, 0.84, 48]} />
+        <ringGeometry args={[0.44, 0.52, 48]} />
         <meshBasicMaterial color="#fde047" transparent opacity={0.72} />
       </mesh>
       <mesh rotation-x={-Math.PI / 2} position-y={0.006}>
-        <ringGeometry args={[1.04, 1.08, 48]} />
+        <ringGeometry args={[0.64, 0.68, 48]} />
         <meshBasicMaterial color="#5eead4" transparent opacity={0.32} />
       </mesh>
     </group>
@@ -269,7 +269,7 @@ export function LobbyStage({ look }: { look: Appearance }) {
       <Canvas
         className="absolute inset-0"
         camera={{ fov: 38, position: [0, 1.55, 4.9] }}
-        onCreated={({ camera }) => camera.lookAt(0, 1.46, 0)}
+        onCreated={({ camera }) => camera.lookAt(0, 1.62, 0)}
         dpr={[1, 1.75]}
         gl={{ alpha: true, antialias: true }}
       >
