@@ -51,8 +51,15 @@ export type ConnState = "idle" | "connecting" | "lobby" | "room" | "error" | "cl
 export interface NetAmbient { tr: number[]; pl: number[][]; }
 
 export type MpEvent =
-  | { t: "phase"; phase: string; nightNo: number; phaseLeft: number; clock?: number; amb?: NetAmbient }
+  | { t: "phase"; phase: string; nightNo: number; phaseLeft: number; clock?: number; amb?: NetAmbient;
+      /** 🧱 the host's current wall level — rides every clock packet so missed
+       *  `zone` events and mid-match joiners snap onto the shared safe zone */
+      zone?: number }
   | { t: "roster"; possessed: number[]; beastSlots: number[]; nightNo: number }
+  /** 🧱 THE WALL — the host's authoritative safe-zone level, broadcast the
+   *  moment a dawn shrink fires. Guests slam the same circle within one RTT
+   *  instead of each shrinking on a private, drifting clock. */
+  | { t: "zone"; level: number; nightNo: number }
   | { t: "crewDeath"; idx: number; clue: string; slain: boolean; loot?: { x: number; z: number; amt: number; label: string } }
   | { t: "dmg"; target: number; amount: number }
   | { t: "claw"; x: number; z: number }

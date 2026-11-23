@@ -3575,14 +3575,22 @@ export class GameEngine {
   }
 
   /** Dawn after night N: the transparent wall slams down one ring tighter.
-   *  Everyone outside it (player, bots, townsfolk) starts withering. */
+   *  Everyone outside it (player, bots, townsfolk) starts withering.
+   *  🌐 THE HOST'S WALL IS THE LAW — guests never slam the wall on their own
+   *  clock (their phaseT may drift from the host's, and a mid-match joiner
+   *  never crossed the earlier dawns at all). The host shrinks and BROADCASTS
+   *  the new level; every guest's wall lands within one RTT — same circle,
+   *  same second, on every screen. The zone field on the 2 Hz phase packets
+   *  re-arms anyone who missed the event (packet loss, late joiner). */
   private shrinkZone() {
     if (this.zoneLevel >= ZONE_RADII.length - 1) return;
+    if (this.mp && !this.mpHost) return; // the wall word comes from the host
     this.zoneLevel++;
     this.zoneGraceT = ZONE_GRACE_S;
     const R = this.zoneRadius();
     sfx.howl();
     this.toast(`🧱 THE WALL CLOSED IN — safe ground is now ${R}u wide. Outside it, your life DRAINS away!`, "bad");
+    if (this.mp) this.netEmit?.({ t: "zone", level: this.zoneLevel, nightNo: this.nightNo });
   }
 
   /** 🧱 per-frame wall tick for the PLAYER: outside = health drains to death.
@@ -7399,6 +7407,27 @@ export class GameEngine {
     // indices mean the same beast on every client. (Dusk rosters wait — the
     // pack rises at NIGHT only, or shells would shambling around at sunset.)
     if (this.phase === "night" || this.zombies.length > 0) this.reconcileZombies();
+  }
+
+  /** 🧱 Apply the HOST's wall level — the shared safe zone is host-authoritative.
+   *  Fired by the reliable `zone` event the instant the host's dawn shrink fires,
+   *  and re-armed by the `zone` field riding every 2 Hz phase packet (missed
+   *  events, packet loss, mid-match joiners). Never un-shrinks: an equal or
+   *  lower level is a stale echo from before our own snap and is ignored. */
+  applyNetZone(level: number, nightNo: number) {
+    if (!this.mp || this.mpHost) return; // the host IS the truth
+    const lv = Math.max(0, Math.min(level, ZONE_RADII.length - 1));
+    if (lv <= this.zoneLevel) return;
+    const prev = this.zoneLevel;
+    this.zoneLevel = lv;
+    this.zoneGraceT = ZONE_GRACE_S; // fresh grace — nobody melts the instant the word lands
+    this.zoneToastCd = 0;
+    const R = this.zoneRadius();
+    sfx.howl();
+    this.toast(prev === 0
+      ? `🧱 THE WALL IS UP — safe ground is ${R}u wide. Outside it, your life DRAINS away!`
+      : `🧱 THE WALL CLOSED IN — safe ground is now ${R}u wide. Outside it, your life DRAINS away!`, "bad");
+    this.trace(`🧱 net wall: level ${prev} → ${lv} (${R}u) from the host @ night ${nightNo} — shared zone snapped`);
   }
 
   /** 🧟 rebuild this.zombies from the shared possessed roster — the SAME order

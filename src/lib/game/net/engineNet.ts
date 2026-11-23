@@ -282,6 +282,10 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
 
   on("roster", (ev) => engine.applyRoster(ev.possessed, ev.beastSlots));
 
+  // 🧱 THE WALL — the host's dawn shrink lands here the moment it fires: the
+  // same circle, the same second, on every seat. Guests never self-shrink.
+  on("zone", (ev) => engine.applyNetZone(ev.level, ev.nightNo));
+
   on("phase", (ev, from) => {
     if (isHost) return; // we own the clock
     // only the host's clock speaks — resolve the host's slot LIVE (host
@@ -336,6 +340,10 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
           : (engine.clock + dc * 0.15 + 1) % 1;
       }
     }
+    // 🧱 the wall level rides every clock packet — the reliable `zone` event is
+    // the fast path, this is the catch-up that re-arms anyone who missed it
+    // (packet loss) or joined mid-match with no dawns of their own
+    if (ev.zone !== undefined) engine.applyNetZone(ev.zone, ev.nightNo);
     // 🌐✈️ ambient mirror — snap traffic angles + the bot-plane fleet onto the
     // host's truth (guest-side; the host's own sim IS the truth)
     if (ev.amb) engine.applyNetAmbient(ev.amb);
@@ -406,7 +414,7 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
     acc = 0;
     net.send({ t: "score", points: engine.points, kills: engine.kills, money: engine.money });
     if (isHost) {
-      net.send({ t: "phase", phase: engine.phase, nightNo: engine.nightNo, phaseLeft: Math.max(0, Math.round(engine.phaseT)), clock: Math.round(engine.clock * 100) / 100 });
+      net.send({ t: "phase", phase: engine.phase, nightNo: engine.nightNo, phaseLeft: Math.max(0, Math.round(engine.phaseT)), clock: Math.round(engine.clock * 100) / 100, zone: engine.zoneLevel });
     }
   }, 500);
   // host keeps a tight 2 Hz clock so guest transitions never drift far
@@ -421,7 +429,7 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
           pl: engine.planes.map((p) => [Math.round(p.x * 10) / 10, Math.round(p.z * 10) / 10, Math.round(p.alt * 10) / 10, Math.round(p.hdg * 1000) / 1000]),
         }
       : undefined;
-    net.send({ t: "phase", phase: engine.phase, nightNo: engine.nightNo, phaseLeft: Math.max(0, Math.round(engine.phaseT)), clock: Math.round(engine.clock * 100) / 100, amb });
+    net.send({ t: "phase", phase: engine.phase, nightNo: engine.nightNo, phaseLeft: Math.max(0, Math.round(engine.phaseT)), clock: Math.round(engine.clock * 100) / 100, zone: engine.zoneLevel, amb });
     // 🌐 the possession roster rides along at night — a mid-night quick-joiner
     // lands with NO local dusk (they never ran choosePossessed), so unless the
     // roster arrives on a timer they'd stare at an empty, zombie-less night
