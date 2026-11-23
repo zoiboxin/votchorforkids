@@ -40,14 +40,14 @@ import {
 } from "@/lib/game/constants";
 import { poseCharacter } from "@/lib/game/character";
 import {
-  ALL_GLB_CHARS, GLB_AREAS, GLB_CHAR_COUNT, TOWN_AREA_ID, ensureGlbArea,
+  RANDOM_POOL, GLB_AREAS, GLB_CHAR_COUNT, MYTHIC_AREA_ID, TOWN_AREA_ID, ensureGlbArea,
   glbAreaStatus, glbCharDef, glbCharFailed, glbTemplate, glbThumb,
   loadGlbTemplate, makeGlbInstance, preloadGlbCharacters,
   useGlbAreaState, useGlbThumbs,
   type GlbInstance,
 } from "@/lib/game/glbCharacters";
 import { sfx } from "@/lib/game/audio";
-import { shopItem, SHOP_ITEMS, SHOP_KINDS, type ShopItem } from "@/lib/game/shop";
+import { RPG_VAULT_ITEM_ID, shopItem, SHOP_ITEMS, SHOP_KINDS, type ShopItem } from "@/lib/game/shop";
 import { useGame } from "./store";
 import { Leaderboard } from "./Leaderboard";
 import { HowToPlay } from "./Panels";
@@ -335,6 +335,9 @@ function AgeCards({ value, onChange }: { value: AgeGroup; onChange: (a: AgeGroup
 function HeroPicker({ value, onChange }: { value: string; onChange: (slug: string) => void }) {
   useGlbThumbs();    // re-renders as portraits finish
   useGlbAreaState(); // re-renders when the chosen area starts/finishes streaming
+  // 🐉 Mythic Vault purchase-gating — selector hooks stay up top, unconditional
+  const owned = useGame((s) => s.owned);
+  const pushToast = useGame((s) => s.pushToast);
   // Browsed area as DERIVED state: a manual pick is remembered "for" the
   // hero currently worn; when the worn hero changes from elsewhere (Random,
   // restore), the dropdown snaps back to that hero's own area — no effects.
@@ -389,23 +392,35 @@ function HeroPicker({ value, onChange }: { value: string; onChange: (slug: strin
             const on = value === h.slug;
             const thumb = glbThumb(h.slug);
             const dead = glbCharFailed(h.slug);
+            // 🐉 Mythic Vault heroes — purchasable in the Item Shop, locked until owned
+            const locked = h.area === MYTHIC_AREA_ID && !owned.includes(RPG_VAULT_ITEM_ID);
             return (
               <button
                 key={h.slug}
                 aria-pressed={on}
-                title={dead ? `${h.name} — unavailable` : h.name}
+                aria-label={locked ? `${h.name} — locked` : undefined}
+                title={dead ? `${h.name} — unavailable` : locked ? `${h.name} — locked` : h.name}
                 disabled={dead}
-                onClick={() => { sfx.click(); onChange(h.slug); }}
+                onClick={() => {
+                  sfx.click();
+                  if (locked) pushToast("🐉 The Mythic Vault is locked — purchase it in the Item Shop!", "bad");
+                  else onChange(h.slug);
+                }}
                 className={`relative rounded-xl border-2 p-1.5 text-center transition-all ${
                   dead
                     ? "cursor-not-allowed border-white/10 bg-white/5 opacity-45"
-                    : on
-                      ? "border-yellow-300 bg-yellow-300/20 shadow-[0_0_12px_rgba(253,224,71,0.3)] hover:scale-105"
-                      : "border-white/20 bg-white/5 hover:scale-105"
+                    : locked
+                      ? "border-white/10 bg-white/5 opacity-60"
+                      : on
+                        ? "border-yellow-300 bg-yellow-300/20 shadow-[0_0_12px_rgba(253,224,71,0.3)] hover:scale-105"
+                        : "border-white/20 bg-white/5 hover:scale-105"
                 }`}
               >
                 {dead && (
                   <span aria-hidden className="absolute right-1 top-1 text-[10px] font-black text-red-300">✕</span>
+                )}
+                {locked && !dead && (
+                  <span aria-hidden className="absolute right-1 top-1 text-[10px]">🔒</span>
                 )}
                 {thumb ? (
                   <img
@@ -462,16 +477,27 @@ function HeroPicker({ value, onChange }: { value: string; onChange: (slug: strin
 
 /* ============================ locker items ============================ */
 
-/** 🛍️ the Items tab — the player's collection: wallet balance, every PURCHASED
- *  shop item and where the money comes from (cash scooped while roaming). */
+/** 🚪 the Items tab — the STORAGE ROOM: wallet balance plus every purchase the
+ *  player has ever made, grouped by shop section with bigger collection tiles
+ *  (each badge shows where the item surfaces once you're roaming), and a jump
+ *  into the full-page Item Shop to grow the pile. */
 function LockerItems() {
   const coins = useGame((s) => s.coins);
   const owned = useGame((s) => s.owned);
   const lifeMoney = useGame((s) => s.lifeMoney);
   const setScreen = useGame((s) => s.setScreen);
-  const setLandingTab = useGame((s) => s.setLandingTab);
 
   const items = owned.map((id) => shopItem(id)).filter((it): it is ShopItem => !!it);
+
+  // 🏷️ per-kind badge — where each purchase surfaces in a run
+  const kindBadge = (it: ShopItem): string => {
+    switch (it.kind) {
+      case "gear": return "🎒 wheel";
+      case "power": return "✨ wheel";
+      case "support": return it.snack ? "1–8 hotbar" : "🪪 auto";
+      case "style": return it.presetId ? "👕 outfit" : "🐉 heroes";
+    }
+  };
 
   return (
     <div className="space-y-3">
@@ -487,59 +513,68 @@ function LockerItems() {
         </div>
       </div>
 
-      {/* 🛍️ purchased collection — grouped by shop section */}
+      {/* 🚪 storage room — every purchase lives here, grouped by shop section */}
       <div>
-        <div className="mb-1.5 text-xs font-bold uppercase tracking-wide text-white/70">
-          Purchased ({items.length})
+        <div className="mb-1.5 text-xs font-bold text-white/90">
+          <span aria-hidden>🚪</span> Storage room — every purchase lives here
         </div>
         {items.length === 0 ? (
-          <div className="rounded-xl bg-white/5 p-3.5 text-center text-[11px] font-bold leading-snug text-white/55">
-            Nothing collected yet — roam the town, bank some 💰 and spend it in the{" "}
-            <b className="text-yellow-300">Item Shop</b>!
+          <div className="rounded-xl bg-white/5 p-3.5 text-center">
+            <ShoppingBag size={18} aria-hidden className="mx-auto mb-1 text-white/40" />
+            <div className="text-[11px] font-bold leading-snug text-white/55">
+              Your storage room is empty — roam the town, bank some 💰 and spend it in the{" "}
+              <b className="text-yellow-300">Item Shop</b>!
+            </div>
           </div>
         ) : (
-          <div className="space-y-2">
-            {SHOP_KINDS.map((sec) => {
-              const rows = items.filter((it) => it.kind === sec.id);
-              if (rows.length === 0) return null;
-              return (
-                <div key={sec.id}>
-                  <div className="mb-1 flex items-center gap-1.5 text-[10px] font-black uppercase tracking-wider text-white/55">
-                    <span aria-hidden>{sec.emoji}</span> {sec.label}
-                  </div>
-                  <div className="grid grid-cols-3 gap-1.5">
-                    {rows.map((it) => (
-                      <div
-                        key={it.id}
-                        title={it.tip}
-                        className="rounded-xl border border-emerald-300/30 bg-emerald-400/10 p-1.5 text-center"
-                      >
-                        <div className="text-lg leading-none">{it.emoji}</div>
-                        <div className="mt-0.5 truncate text-[9px] font-bold text-white/85">{it.name}</div>
-                        <div className="text-[8px] font-black uppercase text-emerald-300">
-                          {it.kind === "style" ? "outfit" : "every run"}
+          <div className="max-h-80 overflow-y-auto rounded-xl bg-black/20 p-2 [scrollbar-width:thin] [&::-webkit-scrollbar]:w-1.5 [&::-webkit-scrollbar-thumb]:rounded-full [&::-webkit-scrollbar-thumb]:bg-white/25 [&::-webkit-scrollbar-track]:bg-transparent">
+            <div className="space-y-2">
+              {SHOP_KINDS.map((sec) => {
+                const rows = items.filter((it) => it.kind === sec.id);
+                if (rows.length === 0) return null;
+                const total = SHOP_ITEMS.filter((i) => i.kind === sec.id).length;
+                return (
+                  <div key={sec.id}>
+                    <div className="mb-1 flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-black uppercase tracking-wider text-white/55">
+                        <span aria-hidden>{sec.emoji}</span> {sec.label}
+                      </span>
+                      <span className="text-[10px] font-bold text-white/40">{rows.length}/{total} owned</span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2 sm:grid-cols-3">
+                      {rows.map((it) => (
+                        <div
+                          key={it.id}
+                          title={it.tip}
+                          className="rounded-xl border border-emerald-300/40 bg-emerald-400/10 p-2 text-center"
+                        >
+                          <div className="text-2xl leading-none">{it.emoji}</div>
+                          <div className="mt-1 truncate text-[11px] font-bold text-white/85">{it.name}</div>
+                          <div className="mt-0.5 text-[8px] font-black uppercase tracking-wide text-emerald-300">
+                            {kindBadge(it)}
+                          </div>
                         </div>
-                      </div>
-                    ))}
+                      ))}
+                    </div>
                   </div>
-                </div>
-              );
-            })}
+                );
+              })}
+            </div>
           </div>
         )}
       </div>
 
       <Button
-        onClick={() => { sfx.click(); setLandingTab("store"); setScreen("landing"); }}
-        className="h-9 w-full rounded-xl bg-orange-600 text-xs font-black text-white hover:bg-orange-500"
+        onClick={() => { sfx.click(); setScreen("shop"); }}
+        className="h-10 w-full rounded-xl bg-orange-600 text-sm font-black text-white hover:bg-orange-500"
       >
-        <ShoppingBag size={13} className="mr-1.5" /> Open the Item Shop
+        <ShoppingBag size={14} className="mr-1.5" /> 🛒 Open the Item Shop
       </Button>
 
       <div className="rounded-xl bg-white/5 p-2.5 text-[11px] leading-relaxed text-white/70">
-        <b className="text-white">How it works:</b> every dollar you scoop while roaming gets banked when the run
-        ends. Spend it in the Item Shop — purchased gear, gems &amp; snacks spawn with you EVERY run; tools &amp;
-        gems ride the 🎒 wheel (<b>G</b> / right-click), snacks fill the 1–8 hotbar.
+        <b className="text-white">How it works:</b> cash you scoop while roaming banks when the run ends — spend it
+        in the Item Shop and every purchase lives in this storage room forever. Gear &amp; gems ride the 🎒 wheel
+        (<b>G</b> / right-click), snacks fill the 1–8 hotbar.
       </div>
     </div>
   );
@@ -692,8 +727,9 @@ export function Creator({ onStart }: { onStart: () => void }) {
                     onClick={() => {
                       sfx.click();
                       // any of the catalog's rigged citizens (minus known-broken
-                      // downloads) + a random size — the whole look is GLB-driven
-                      const ok = ALL_GLB_CHARS.filter((c) => !glbCharFailed(c.slug));
+                      // downloads and the PURCHASABLE Mythic Vault) + a random
+                      // size — the whole look is GLB-driven
+                      const ok = RANDOM_POOL.filter((c) => !glbCharFailed(c.slug));
                       const hero = ok[Math.floor(Math.random() * ok.length)].slug;
                       const ages = Object.keys(AGE_STATS) as AgeGroup[];
                       const age = ages[Math.floor(Math.random() * ages.length)];

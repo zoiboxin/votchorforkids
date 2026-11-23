@@ -13,6 +13,9 @@
 
 import { ITEMS, OUTFIT_PRESETS, POWERS, TOOLS, type PowerKind, type ToolKind } from "./constants";
 
+/** 🐉 the Mythic Hero Vault bundle — unlocks every kit hero */
+export const RPG_VAULT_ITEM_ID = "kit-rpg-vault";
+
 export type ShopKind = "gear" | "power" | "support" | "style";
 
 export interface ShopItem {
@@ -28,6 +31,8 @@ export interface ShopItem {
   snack?: { def: number; count: number };
   presetId?: string;
   license?: boolean;
+  /** hero bundle — owning this unlocks the hero kit(s) listed in its tip */
+  heroBundle?: true;
 }
 
 /* stable lookups into the shared catalogs */
@@ -125,6 +130,10 @@ export const SHOP_ITEMS: readonly ShopItem[] = [
   },
 
   /* ---------- 👕 STYLE — cosmetic outfits, worn from the shop or the locker ---------- */
+  {
+    id: RPG_VAULT_ITEM_ID, name: "Mythic Hero Vault", emoji: "🐉", kind: "style", price: 560, heroBundle: true,
+    tip: "Unlock 28 rigged RPG heroes — Dragonborn, Dwarves, Elves, Orcs, Goblins & more. Wear them here or in the Locker!",
+  },
   ...OUTFIT_PRESETS.map(
     (p): ShopItem => ({
       id: `style-${p.id}`, name: p.label, emoji: p.emoji, kind: "style",

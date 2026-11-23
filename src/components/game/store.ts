@@ -8,7 +8,7 @@ import { DAILY_TASK_POOL, ALL_DONE_BONUS, applyRunToDaily, ensureDaily, freshDai
 import { shopItem } from "@/lib/game/shop";
 import { lsGet, lsRemove, lsSet } from "@/lib/game/storage";
 
-export type Screen = "landing" | "profile" | "select" | "outfit" | "creator" | "connecting" | "lobby" | "matchlobby" | "play";
+export type Screen = "landing" | "profile" | "shop" | "select" | "outfit" | "creator" | "connecting" | "lobby" | "matchlobby" | "play";
 export interface Toast { msg: string; kind: "info" | "good" | "bad"; id: number }
 
 export interface ScoreRow { id: string; name: string; points: number; votes: number; rescues: number; won: boolean; timeMs: number; createdAt: string }

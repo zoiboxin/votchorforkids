@@ -134,6 +134,14 @@ export interface Npc extends SteerMemory {
   deadT?: number;
   /** true while this bot's death has already dropped its loot */
   looted?: boolean;
+  /** 🥊 rolled on first hit: brave townsfolk FIGHT BACK instead of fleeing */
+  brave?: boolean;
+  /** 🥊 seconds left actively fighting the player back (0 = not fighting) */
+  retaliateT?: number;
+  /** 🥊 punch cooldown while retaliating */
+  atkCd?: number;
+  /** ⏱️ punch swing animation timer (0.5 s decay — renderer maps it to the arm swing) */
+  attackT?: number;
 }
 export interface Zombie extends SteerMemory {
   id: number; x: number; z: number; vx: number; vz: number; face: number; phase: number; touchCd: number; hp?: number; dead?: boolean;
@@ -232,6 +240,14 @@ export interface Crew extends SteerMemory {
   /** 🎯 sticky dusk shelter index — assigned ONCE per dusk so 99 contestants
    *  don't re-pick the nearest hideout every frame and pile into one doorway */
   hideHi?: number;
+  /** 🥊 rolled on first hit: brave contestants FIGHT BACK instead of fleeing */
+  brave?: boolean;
+  /** 🥊 seconds left actively fighting the player back (0 = not fighting) */
+  retaliateT?: number;
+  /** 🥊 punch cooldown while retaliating */
+  atkCd?: number;
+  /** ⏱️ punch swing animation timer (0.5 s decay — renderer maps it to the arm swing) */
+  attackT?: number;
 }
 
 /** A daylight "human player" activity a contestant bot can be doing. */
@@ -486,6 +502,15 @@ export interface HudData {
 export type ToastFn = (msg: string, kind?: "info" | "good" | "bad") => void;
 
 const dist2 = (ax: number, az: number, bx: number, bz: number) => (ax - bx) * (ax - bx) + (az - bz) * (az - bz);
+
+/* 🥊 bot retaliation — hit a bot and the brave ones hit BACK (the rest bolt) */
+const RETALIATE_CHANCE_CIV = 0.3;   // 30% of townsfolk are brave
+const RETALIATE_CHANCE_CREW = 0.45; // contestants are fighters
+const RETALIATE_S = 7;              // seconds a grudge lasts
+const BOT_PUNCH_CIV = 6;            // townsfolk punch damage
+const BOT_PUNCH_CREW = 8;           // contestant punch damage
+const BOT_PUNCH_RANGE_SQ = 1.7 * 1.7;
+const BOT_PUNCH_CD = 1.15;
 
 /** 👀 free cam: seconds before the camera drifts to another living soul */
 const SPEC_SWAP_S = 12;
@@ -4133,6 +4158,12 @@ export class GameEngine {
         c.mode = "wander";
         c.hideHi = undefined; // 🌤️ dawn — shelters forgotten until the next dusk rush
         const spd = CREW_SPEED * ((c.boostT ?? 0) > 0 ? CREW_BOOST_MULT : 1);
+        // 🥊 brave contestant fighting the player back — overrides forage/flee
+        if ((c.retaliateT ?? 0) > 0) {
+          if (c.drive) this.endBotDrive(c); // 🚗 no joyriding mid-brawl — park & square up
+          this.stepBotRetaliate(c, dt, BOT_PUNCH_CREW, spd * 1.3); continue;
+        }
+        if ((c.attackT ?? 0) > 0) c.attackT = Math.max(0, (c.attackT ?? 0) - dt); // finish the swing anim
         // 🫨 just saw a crime (or got punched) — bolt from that spot first
         if ((c.fearT ?? 0) > 0) {
           const dx = c.x - (c.fearX ?? p.x), dz = c.z - (c.fearZ ?? p.z), dl = Math.hypot(dx, dz) || 1;
@@ -4197,6 +4228,7 @@ export class GameEngine {
       // every shelter + a personal ring slot, never one grinding blob)
       if (c.drive) this.endBotDrive(c); // 🚗 nobody hides inside a car — park & run
       c.job = null; c.seek = null; c.jobCd = 0; // night erases daylight plans
+      c.retaliateT = 0; c.atkCd = 0; c.attackT = 0; // 🥊 night resets grudges — everyone runs from everyone
       if (c.mode !== "hide") { c.mode = "hide"; c.timer = 0; }
       const h = this.hideTargetFor(c, shelterCrowd, shelterAssigned);
       if (dist2(c.x, c.z, h.x, h.z) > 2.4 * 2.4) {
@@ -4809,6 +4841,60 @@ export class GameEngine {
     if (this.mp) this.netEmit?.({ t: "loot", x: s.x, z: s.z, amt: Math.round(amt), label });
   }
 
+  /* 🥊 shared retaliation brain — a brave bot marches at the player and
+   * swings; it breaks off (and flees) when badly hurt, when the player
+   * escapes in a car or gets far away, or when a night horror closes in. */
+  private stepBotRetaliate(c: Npc | Crew, dt: number, punchDmg: number, spd: number): void {
+    const p = this.player;
+    c.retaliateT = Math.max(0, (c.retaliateT ?? 0) - dt);
+    c.atkCd = Math.max(0, (c.atkCd ?? 0) - dt);
+    c.attackT = Math.max(0, (c.attackT ?? 0) - dt);
+    // ⏱️ grudge expired → back to normal life
+    if (c.retaliateT <= 0) return;
+    const d2 = dist2(c.x, c.z, p.x, p.z);
+    // 🚗 the player roared off in a car / is being carried — no street fight with traffic
+    if (this.drive || this.ride || d2 > 26 * 26) {
+      c.retaliateT = 0;
+      c.fearX = p.x; c.fearZ = p.z;
+      if ("fearT" in c) { c.fearT = 3; } else if ("panicT" in c) { c.panicT = 2.5; } // crew flees via fearT, townsfolk via panicT
+      return;
+    }
+    // 🧟 a horror (zombie / turned beast) within 8 m beats any grudge — survive first
+    if (this.phase === "night") {
+      let horrorD2 = Infinity;
+      for (const zb of this.zombies) { if (!zb.dead) { const d = dist2(c.x, c.z, zb.x, zb.z); if (d < horrorD2) horrorD2 = d; } }
+      if (!this.youPossessed && this.phase === "night") horrorD2 = Math.min(horrorD2, d2);
+      if (horrorD2 < 8 * 8) {
+        c.retaliateT = 0;
+        c.fearX = p.x; c.fearZ = p.z;
+        if ("fearT" in c) { c.fearT = 3; } else if ("panicT" in c) { c.panicT = 3; }
+        return;
+      }
+    }
+    // 🩸 too hurt to keep swinging — cut losses and bolt
+    const hp = (c.hp ?? 30);
+    if (hp < 12) {
+      c.retaliateT = 0;
+      c.fearX = p.x; c.fearZ = p.z;
+      if ("fearT" in c) { c.fearT = 3; } else if ("panicT" in c) { c.panicT = 3; }
+      return;
+    }
+    // 🥊 march at the attacker and swing
+    stepNpc(c, p.x, p.z, spd, dt, this.world);
+    if (d2 < BOT_PUNCH_RANGE_SQ && (c.atkCd ?? 0) <= 0 && this.detainedT <= 0) {
+      c.atkCd = BOT_PUNCH_CD;
+      c.attackT = 0.5;
+      if (this.invulnT <= 0) {
+        this.hp = Math.max(0, this.hp - punchDmg);
+        this.hurtT = HURT_FLASH_S;
+        this.addShake(0.28); // 💥 SMALL-MEDIUM — a bot's punch landed
+        const dx = p.x - c.x, dz = p.z - c.z, dl = Math.hypot(dx, dz) || 1;
+        p.vx = (dx / dl) * 6.5; p.vz = (dz / dl) * 6.5; // shove back — you feel it
+        sfx.stab();
+      }
+    }
+  }
+
   /** 🧟 a townsfolk is caught by the dark — they fall, their purse drops,
    *  and the town quietly refills them at dawn (the city stays alive). */
   private killCiv(c: Npc, by: "zombie" | "beast" | "player" | "wall") {
@@ -5084,9 +5170,17 @@ export class GameEngine {
     }
     if (civHit) {
       civHit.hp = (civHit.hp ?? 30) - dmg;
-      civHit.panicT = 3; civHit.fearX = p.x; civHit.fearZ = p.z; // flee the attacker
       sfx.stab();
       this.fxQueue.push({ type: "confetti", x: civHit.x, y: 1.2, z: civHit.z, hue: 0.98 });
+      // 🥊 roll the bot's nerve ONCE — the brave ones square up, the rest bolt
+      if (civHit.brave === undefined) civHit.brave = this.rnd() < RETALIATE_CHANCE_CIV;
+      if (civHit.brave) {
+        if ((civHit.retaliateT ?? 0) <= 0) this.toast(`🥊 ${civHit.name} had enough — FIGHTS BACK!`, "bad");
+        civHit.retaliateT = RETALIATE_S; // every extra hit refreshes the grudge
+        civHit.fearX = undefined; civHit.fearZ = undefined; // brave: no fleeing
+      } else {
+        civHit.panicT = 3; civHit.fearX = p.x; civHit.fearZ = p.z; // flee the attacker
+      }
       if (civHit.hp <= 0) {
         this.killCiv(civHit, "player");
         this.reportCrime("murder", civHit.x, civHit.z);
@@ -5106,10 +5200,19 @@ export class GameEngine {
     if (innHit >= 0) {
       const c = this.crew[innHit];
       c.hp -= dmg;
-      c.attackAnimT = 0.45; // flinch
-      c.fearT = 4; c.fearX = p.x; c.fearZ = p.z; c.seek = null; // flee the attacker
       sfx.stab();
       this.fxQueue.push({ type: "confetti", x: c.x, y: 1.2, z: c.z, hue: 0.98 });
+      // 🥊 contestants are street-tough — nearly half of them swing back
+      if (c.brave === undefined) c.brave = this.rnd() < RETALIATE_CHANCE_CREW;
+      if (c.brave) {
+        if ((c.retaliateT ?? 0) <= 0) this.toast(`⚔️ ${c.name} fights back — watch out!`, "bad");
+        c.retaliateT = RETALIATE_S; // every extra hit refreshes the grudge
+        c.fearT = 0; // brave: no fleeing
+        c.seek = null;
+      } else {
+        c.attackAnimT = 0.45; // flinch
+        c.fearT = 4; c.fearX = p.x; c.fearZ = p.z; c.seek = null; // flee the attacker
+      }
       if (c.hp <= 0) {
         this.killCrew(innHit, false, -1, false, true);
         this.reportCrime("murder", c.x, c.z);
@@ -6189,6 +6292,9 @@ export class GameEngine {
       // 🧟💀 a fallen townsfolk lies still until dawn refills the town
       if (c.dead) { c.deadT = (c.deadT ?? 0) + dt; continue; } // ⏱️ the corpse choreography clock runs
       if ((c.panicT ?? 0) > 0) c.panicT = (c.panicT ?? 0) - dt;
+      // 🥊 brave townsfolk fighting the player back — overrides every other job
+      if ((c.retaliateT ?? 0) > 0) { this.stepBotRetaliate(c, dt, BOT_PUNCH_CIV, c.speed * 1.25); continue; }
+      if ((c.attackT ?? 0) > 0) c.attackT = Math.max(0, (c.attackT ?? 0) - dt); // finish the swing anim
       // 🫨 an attacker / crime scene spooked this townsfolk — flee that spot at any hour
       if ((c.panicT ?? 0) > 0 && c.fearX !== undefined) {
         const dx = c.x - (c.fearX ?? 0), dz = c.z - (c.fearZ ?? 0), dl = Math.hypot(dx, dz) || 1;

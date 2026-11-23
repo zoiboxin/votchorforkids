@@ -17,6 +17,7 @@ import { Hud } from "./Hud";
 import { Creator } from "./Creator";
 import { Landing } from "./Landing";
 import { Profile } from "./Profile";
+import { ShopPage } from "./ShopPage";
 import { VictoryModal } from "./VictoryModal";
 import { Multiplayer } from "./Multiplayer";
 import { MatchLobby } from "./MatchLobby";
@@ -447,6 +448,9 @@ export function GameRoot() {
 
       {/* 👤 full-page profile hub (rank, daily tasks, hall of fame, account, features) */}
       {screen === "profile" && <Profile />}
+
+      {/* 🛒 full-page item shop — the lobby's store tab navigates here */}
+      {screen === "shop" && <ShopPage />}
 
       {/* 7Nights: no side selection — everyone joins as a survivor (screen kept for legacy saves) */}
       {screen === "select" && <Creator onStart={startMatchLobby} />}

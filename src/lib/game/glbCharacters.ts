@@ -341,17 +341,56 @@ export interface GlbAreaDef {
 /** The special first dropdown entry — the preloaded crew the town wears. */
 export const TOWN_AREA_ID = "town";
 
+/* 🐉 MYTHIC VAULT — the purchasable "Ultimate RPG Character" kit
+ * (polyfork.dev/kit/the-ultimate-rpg-character-a066e1): rigged low-poly
+ * fantasy classes on the shared Mixamo-style skeleton. Files ship LOCALLY
+ * (public/models/heroes) so the bundle works offline; unlocked in-game by
+ * buying the Mythic Hero Vault in the Item Shop (kit-rpg-vault). */
+export const MYTHIC_AREA_ID = "mythic";
+export const MYTHIC_HEROES: readonly GlbCharacterDef[] = [
+  { slug: "dragonborn-berserker-67ba6f", name: "Dragonborn Berserker", emoji: "🐉", url: "/models/heroes/dragonborn-berserker-67ba6f.glb", area: MYTHIC_AREA_ID },
+  { slug: "dragonborn-knight-9f16b1", name: "Dragonborn Knight", emoji: "🐉", url: "/models/heroes/dragonborn-knight-9f16b1.glb", area: MYTHIC_AREA_ID },
+  { slug: "dragonborn-monk-6ee8c9", name: "Dragonborn Monk", emoji: "🐉", url: "/models/heroes/dragonborn-monk-6ee8c9.glb", area: MYTHIC_AREA_ID },
+  { slug: "dryad-hunter-093b74", name: "Dryad Hunter", emoji: "🌿", url: "/models/heroes/dryad-hunter-093b74.glb", area: MYTHIC_AREA_ID },
+  { slug: "dryad-priest-0c60e3", name: "Dryad Priest", emoji: "🌿", url: "/models/heroes/dryad-priest-0c60e3.glb", area: MYTHIC_AREA_ID },
+  { slug: "dwarf-berserker-13558d", name: "Dwarf Berserker", emoji: "⛏️", url: "/models/heroes/dwarf-berserker-13558d.glb", area: MYTHIC_AREA_ID },
+  { slug: "dwarf-knight-2fff64", name: "Dwarf Knight", emoji: "🛡️", url: "/models/heroes/dwarf-knight-2fff64.glb", area: MYTHIC_AREA_ID },
+  { slug: "dwarf-priest-bcbea0", name: "Dwarf Priest", emoji: "⛏️", url: "/models/heroes/dwarf-priest-bcbea0.glb", area: MYTHIC_AREA_ID },
+  { slug: "elf-assassin-944f87", name: "Elf Assassin", emoji: "🏹", url: "/models/heroes/elf-assassin-944f87.glb", area: MYTHIC_AREA_ID },
+  { slug: "elf-hunter-511e25", name: "Elf Hunter", emoji: "🏹", url: "/models/heroes/elf-hunter-511e25.glb", area: MYTHIC_AREA_ID },
+  { slug: "elf-mage-de335e", name: "Elf Mage", emoji: "✨", url: "/models/heroes/elf-mage-de335e.glb", area: MYTHIC_AREA_ID },
+  { slug: "gnome-mage-2b94dc", name: "Gnome Mage", emoji: "✨", url: "/models/heroes/gnome-mage-2b94dc.glb", area: MYTHIC_AREA_ID },
+  { slug: "gnome-warrior-bbc2b5", name: "Gnome Warrior", emoji: "⚔️", url: "/models/heroes/gnome-warrior-bbc2b5.glb", area: MYTHIC_AREA_ID },
+  { slug: "goblin-assassin-f8d72b", name: "Goblin Assassin", emoji: "🗡️", url: "/models/heroes/goblin-assassin-f8d72b.glb", area: MYTHIC_AREA_ID },
+  { slug: "goblin-berserker-2b28c2", name: "Goblin Berserker", emoji: "👺", url: "/models/heroes/goblin-berserker-2b28c2.glb", area: MYTHIC_AREA_ID },
+  { slug: "goblin-mage-60c815", name: "Goblin Mage", emoji: "👺", url: "/models/heroes/goblin-mage-60c815.glb", area: MYTHIC_AREA_ID },
+  { slug: "halfling-assassin-b99057", name: "Halfling Assassin", emoji: "🍃", url: "/models/heroes/halfling-assassin-b99057.glb", area: MYTHIC_AREA_ID },
+  { slug: "halfling-hunter-4fa876", name: "Halfling Hunter", emoji: "🍃", url: "/models/heroes/halfling-hunter-4fa876.glb", area: MYTHIC_AREA_ID },
+  { slug: "halfling-monk-9bde42", name: "Halfling Monk", emoji: "🍃", url: "/models/heroes/halfling-monk-9bde42.glb", area: MYTHIC_AREA_ID },
+  { slug: "hooded-staff-acolyte-f24f63", name: "Hooded Staff Acolyte", emoji: "🧙", url: "/models/heroes/hooded-staff-acolyte-f24f63.glb", area: MYTHIC_AREA_ID },
+  { slug: "human-assassin-049e85", name: "Human Assassin", emoji: "🗡️", url: "/models/heroes/human-assassin-049e85.glb", area: MYTHIC_AREA_ID },
+  { slug: "human-knight-f544dd", name: "Human Knight", emoji: "🛡️", url: "/models/heroes/human-knight-f544dd.glb", area: MYTHIC_AREA_ID },
+  { slug: "human-mage-662684", name: "Human Mage", emoji: "✨", url: "/models/heroes/human-mage-662684.glb", area: MYTHIC_AREA_ID },
+  { slug: "human-priest-02f0e6", name: "Human Priest", emoji: "🕯️", url: "/models/heroes/human-priest-02f0e6.glb", area: MYTHIC_AREA_ID },
+  { slug: "human-warrior-62c9a5", name: "Human Warrior", emoji: "⚔️", url: "/models/heroes/human-warrior-62c9a5.glb", area: MYTHIC_AREA_ID },
+  { slug: "orc-berserker-2da4d0", name: "Orc Berserker", emoji: "👹", url: "/models/heroes/orc-berserker-2da4d0.glb", area: MYTHIC_AREA_ID },
+  { slug: "orc-hunter-4f0410", name: "Orc Hunter", emoji: "🏹", url: "/models/heroes/orc-hunter-4f0410.glb", area: MYTHIC_AREA_ID },
+  { slug: "orc-warrior-bffa73", name: "Orc Warrior", emoji: "👹", url: "/models/heroes/orc-warrior-bffa73.glb", area: MYTHIC_AREA_ID },
+];
+
 /** Dropdown areas in order: Town Cast, then every Polyfork kit area. */
 export const GLB_AREAS: readonly GlbAreaDef[] = [
   { id: TOWN_AREA_ID, name: "Town Cast", emoji: "🌙", chars: [...GLB_CHARACTERS, POLICE_CHAR_DEF] },
   ...CATALOG_AREAS.map((a) => ({ ...a, chars: GLB_CATALOG.filter((c) => c.area === a.id) })),
+  { id: MYTHIC_AREA_ID, name: "Mythic Vault", emoji: "🐉", chars: MYTHIC_HEROES },
 ];
 
-/** Every selectable citizen (catalog first, then any cast-only extras). */
+/** Every selectable citizen (catalog first, then any cast-only extras, then
+ *  the purchasable Mythic Vault kit heroes). */
 const ALL_CHARS: readonly GlbCharacterDef[] = (() => {
   const seen = new Set<string>();
   const out: GlbCharacterDef[] = [];
-  for (const c of [...GLB_CATALOG, ...GLB_AREAS[0].chars]) {
+  for (const c of [...GLB_CATALOG, ...GLB_AREAS[0].chars, ...MYTHIC_HEROES]) {
     if (seen.has(c.slug)) continue;
     seen.add(c.slug);
     out.push(c);
@@ -368,8 +407,14 @@ export const glbAreaFor = (slug: string): string | undefined => glbCharDef(slug)
 /** Total selectable rigged citizens (for UI copy). */
 export const GLB_CHAR_COUNT = ALL_CHARS.length;
 
-/** Every selectable citizen as a flat list (Random button pool etc.). */
+/** Every selectable citizen as a flat list. NOTE: includes the LOCKED Mythic
+ *  Vault heroes — Random picks should use RANDOM_POOL below instead. */
 export const ALL_GLB_CHARS: readonly GlbCharacterDef[] = ALL_CHARS;
+
+/** Random-button pool — everything EXCEPT the purchasable Mythic Vault.
+ *  Creator.tsx's Random button should read this so a free reroll can never
+ *  land on a hero the player hasn't bought. */
+export const RANDOM_POOL: readonly GlbCharacterDef[] = ALL_CHARS.filter((c) => c.area !== MYTHIC_AREA_ID);
 
 /* ---------------- template loading (one shared rig per character) ---------------- */
 

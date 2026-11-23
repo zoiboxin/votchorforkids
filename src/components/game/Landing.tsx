@@ -21,8 +21,8 @@
  * Wiring is unchanged: SOLO PLAYER queues through the PUBG-style match lobby
  * (bots fill the 100-soul night; a name is rolled automatically the first
  * time), Locker opens the full survivor creator, Career opens the profile
- * hub. Keyboard: [H] help · [P] profile · [L] locker · [C] challenges ·
- * [B] battle pass · [N] news.
+ * hub. Keyboard: [H] help · [P] profile · [L] locker · [S] item shop ·
+ * [C] challenges · [B] battle pass · [N] news.
  */
 
 import { useEffect, useRef, useState } from "react";
@@ -30,7 +30,7 @@ import { motion } from "framer-motion";
 import { io, type Socket } from "socket.io-client";
 import {
   BarChart3, CalendarDays, Check, ChevronRight, Cloud, CloudOff, CloudUpload, Crown, Flame, History as HistoryIcon, Info,
-  Lock, MessageSquare, Newspaper, Pencil, Play, Send, Settings, ShoppingBag, Sparkles, Star, Trophy, User, Users, X, Zap,
+  Lock, MessageSquare, Newspaper, Pencil, Play, Send, Settings, Sparkles, Star, Trophy, User, Users, X, Zap,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -42,7 +42,6 @@ import {
 } from "@/lib/game/constants";
 import { RANKS, rankFor } from "@/lib/game/ranks";
 import { primeAudio, sfx, startMusic } from "@/lib/game/audio";
-import { outfitPreset, SHOP_ITEMS, SHOP_KINDS, type ShopItem } from "@/lib/game/shop";
 import { storageBlocked } from "@/lib/game/storage";
 import { useGame } from "./store";
 import { HowToPlay, SettingsDialog, StatsDialog, HistoryDialog } from "./Panels";
@@ -130,7 +129,7 @@ interface ChatMsg { id: string; name: string; msg: string; ts: number }
 
 const CHAT_PORT = 3003;
 
-function GlobalChatDock({ name }: { name: string }) {
+function GlobalChatDock({ name, placement }: { name: string; placement: "rail" | "dock" }) {
   const [chat, setChat] = useState<ChatMsg[]>([]);
   const [draft, setDraft] = useState("");
   const [open, setOpen] = useState(false);
@@ -200,6 +199,15 @@ function GlobalChatDock({ name }: { name: string }) {
     sfx.click();
   };
 
+  /* 📍 panel position follows the placement:
+     • "rail" (desktop right-rail icon near the TOP) → FIXED under the header
+       bar and opens DOWNWARD — a bottom-anchored panel here would fly off the
+       top of the screen; fixed + top-16 always fits every viewport
+     • "dock" (mobile footer icon) → anchored to its icon, opens UPWARD as before */
+  const panelPos = placement === "rail"
+    ? "fixed right-3 top-16 z-40 w-[min(20rem,calc(100vw-2.5rem))]"
+    : "absolute bottom-[calc(100%+10px)] right-0 z-40 w-[min(20rem,calc(100vw-2.5rem))]";
+
   return (
     <div className="relative">
       {/* dock icon — the SAME rail-icon style as Season/Suggested/Daily (right side):
@@ -230,13 +238,14 @@ function GlobalChatDock({ name }: { name: string }) {
         />
       </button>
 
-      {/* the chat panel — same card style as the challenges board, docked right */}
+      {/* the chat panel — same card style as the challenges board; rail opens
+          DOWNWARD from under the header, dock opens UPWARD above its icon */}
       {open && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.15 }}
-          className="absolute bottom-[calc(100%+10px)] right-0 z-40 w-[min(20rem,calc(100vw-2.5rem))]"
+          className={panelPos}
         >
           <Panel>
             <Strip
@@ -373,11 +382,7 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
   const playerName = useGame((s) => s.playerName);
   const careerXp = useGame((s) => s.careerXp);
   const look = useGame((s) => s.look);
-  const setLook = useGame((s) => s.setLook);
   const coins = useGame((s) => s.coins);
-  const owned = useGame((s) => s.owned);
-  const buyItem = useGame((s) => s.buyItem);
-  const pushToast = useGame((s) => s.pushToast);
   const consent = useGame((s) => s.consent);
   const setConsent = useGame((s) => s.setConsent);
   const syncStatus = useGame((s) => s.syncStatus);
@@ -391,7 +396,7 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
   const playtimeMs = useGame((s) => s.playtimeMs);
 
   /* 🗂️ lobby tab lives in the store so any panel can deep-link straight into
-     a tab (locker → "Open the Item Shop" lands on the store grid) */
+     a tab (locker → "Open the Item Shop" now lands on the full shop page) */
   const landingTab = useGame((s) => s.landingTab);
   const setLandingTabStore = useGame((s) => s.setLandingTab);
   const tab = landingTab as Tab;
@@ -432,6 +437,15 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
     return () => { clearTimeout(first); clearInterval(id); };
   }, [ensureDailyToday]);
 
+  /* 🛒 the Item Shop is its own full page now — an old deep-link that still
+     asks for the "store" tab lands on the shop page instead (panel is gone) */
+  useEffect(() => {
+    if (landingTab === "store") {
+      setLandingTabStore("lobby");
+      setScreen("shop");
+    }
+  }, [landingTab, setLandingTabStore, setScreen]);
+
   /* keyboard shortcuts — PC lobby feel (typing in chat never triggers them) */
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -441,6 +455,7 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
       switch (e.key.toLowerCase()) {
         case "p": sfx.click(); setScreen("profile"); break;
         case "l": sfx.click(); setScreen("creator"); break;
+        case "s": sfx.click(); setScreen("shop"); break;
         case "c": sfx.click(); setTab("challenges"); break;
         case "b": sfx.click(); setTab("battlepass"); break;
         case "n": sfx.click(); setTab("news"); break;
@@ -465,31 +480,6 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
   };
 
   const openTab = (id: Tab) => { sfx.click(); setTab(id); };
-
-  /** 🛒 buy a shop item with the wallet's banked cash — toasts the result */
-  const buyShopItem = (it: ShopItem) => {
-    sfx.click();
-    if (owned.includes(it.id)) return;
-    if (buyItem(it.id)) {
-      sfx.pickup();
-      pushToast(
-        it.kind === "style"
-          ? `${it.emoji} ${it.name} purchased — wear it from the shop or the locker!`
-          : `${it.emoji} ${it.name} purchased — it spawns with you every run (🎒 wheel: G / right-click)!`,
-        "good",
-      );
-    } else {
-      pushToast(`Not enough cash — ${it.name} costs $${it.price}. Roam the town & bank more 💰!`, "bad");
-    }
-  };
-
-  /** 👕 wear a purchased outfit preset straight from the shop */
-  const wearPreset = (it: ShopItem) => {
-    const p = outfitPreset(it.presetId);
-    if (!p) return;
-    sfx.pickup();
-    setLook(p.look);
-  };
 
   /** left-rail icons — open exactly ONE lobby card (Season / Suggested / Daily);
    *  clicking the active icon closes it, clicking another swaps the panel */
@@ -539,11 +529,17 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
                 key={t.id}
                 role="tab"
                 aria-selected={active}
-                onClick={() => openTab(t.id)}
+                title={t.id === "store" ? "Open the full Item Shop page [S]" : undefined}
+                onClick={() => {
+                  if (t.id === "store") { sfx.click(); setScreen("shop"); } // 🛒 the shop is its own page now
+                  else openTab(t.id);
+                }}
                 className={`-skew-x-[10deg] shrink-0 rounded-[3px] px-3 py-1.5 ring-1 transition-all sm:px-3.5 ${
                   active
                     ? "bg-yellow-400 shadow-[0_0_16px_rgba(253,224,71,0.4)] ring-yellow-300"
-                    : "bg-slate-950/85 ring-white/15 hover:bg-slate-800/90 hover:ring-white/30"
+                    : t.id === "store"
+                      ? "bg-slate-950/85 ring-white/15 hover:bg-orange-900/80 hover:ring-orange-300/40"
+                      : "bg-slate-950/85 ring-white/15 hover:bg-slate-800/90 hover:ring-white/30"
                 }`}
               >
                 <span className={`block skew-x-[10deg] whitespace-nowrap text-[10px] font-black uppercase tracking-wider sm:text-[11px] ${active ? "text-slate-950" : "text-white/85"}`}>
@@ -867,110 +863,6 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
               </Panel>
             )}
 
-            {/* ---------- ITEM SHOP tab: spend the cash you banked in town ---------- */}
-            {tab === "store" && (
-              <Panel>
-                <Strip
-                  right={
-                    <span className="flex items-center gap-1 text-[10px] font-black text-yellow-300">
-                      <span aria-hidden>💰</span>${coins.toLocaleString()}
-                    </span>
-                  }
-                >
-                  Item shop
-                </Strip>
-                <div className="lobby-scroll max-h-[54vh] space-y-2.5 overflow-y-auto p-2.5">
-                  <div className="rounded border border-yellow-300/30 bg-yellow-400/10 px-2.5 py-2 text-[10px] font-bold leading-snug text-yellow-100">
-                    💰 Roam the town &amp; bank cash piles, purses and zombie hoards — every dollar
-                    funds this shop. Purchased gear spawns with you <b>EVERY run</b>: press{" "}
-                    <b className="text-white">G</b> (or right-click) to open the 🎒 wheel and use it.
-                  </div>
-                  {SHOP_KINDS.map((sec) => {
-                    const rows = SHOP_ITEMS.filter((it) => it.kind === sec.id);
-                    const ownCount = rows.filter((it) => owned.includes(it.id)).length;
-                    return (
-                      <div key={sec.id}>
-                        <div className="mb-1 flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-white/60">
-                          <span className="flex items-center gap-1">
-                            <span aria-hidden>{sec.emoji}</span> {sec.label}
-                          </span>
-                          <span className="text-white/35">{ownCount}/{rows.length} owned</span>
-                        </div>
-                        <div className="space-y-2">
-                          {rows.map((it) => {
-                            const has = owned.includes(it.id);
-                            const afford = coins >= it.price;
-                            const worn = it.kind === "style" && (() => {
-                              const p = outfitPreset(it.presetId);
-                              return !!p && (Object.entries(p.look) as [keyof Appearance, unknown][]).every(([k, v]) => look[k] === v);
-                            })();
-                            return (
-                              <div
-                                key={it.id}
-                                className={`flex items-center gap-3 rounded-lg border p-3 transition-colors ${
-                                  has ? "border-emerald-300/40 bg-emerald-400/10" : "border-white/12 bg-white/5"
-                                }`}
-                              >
-                                <span aria-hidden className="w-10 shrink-0 text-center text-3xl leading-none">{it.emoji}</span>
-                                <div className="min-w-0 flex-1">
-                                  <div className="flex items-start justify-between gap-2">
-                                    <span className="min-w-0 flex-1 text-[13px] font-black leading-tight text-white">{it.name}</span>
-                                    {has && it.kind === "style" && (
-                                      <span className="flex shrink-0 items-center gap-0.5 text-[10px] font-black uppercase text-emerald-300">
-                                        <Check size={11} strokeWidth={3.5} /> owned
-                                      </span>
-                                    )}
-                                    {!has && (
-                                      <span className={`shrink-0 text-[13px] font-black ${afford ? "text-yellow-300" : "text-rose-300/80"}`}>
-                                        ${it.price}
-                                      </span>
-                                    )}
-                                  </div>
-                                  <div className="mt-0.5 line-clamp-2 text-[10px] font-semibold leading-snug text-white/55">{it.tip}</div>
-                                </div>
-                                {it.kind === "style" && has ? (
-                                  <button
-                                    onClick={() => wearPreset(it)}
-                                    aria-pressed={worn}
-                                    className={`shrink-0 rounded-md px-3 py-2.5 text-[10px] font-black uppercase transition-colors ${
-                                      worn ? "bg-yellow-300/25 text-yellow-200" : "bg-yellow-400 text-slate-950 hover:bg-yellow-300"
-                                    }`}
-                                  >
-                                    {worn ? "✓ wearing" : "wear"}
-                                  </button>
-                                ) : has ? (
-                                  <div className="shrink-0 rounded-md border border-emerald-300/30 px-2 py-2.5 text-center text-[9px] font-black uppercase leading-tight text-emerald-200/80">
-                                    in every<br />run
-                                  </div>
-                                ) : (
-                                  <button
-                                    onClick={() => buyShopItem(it)}
-                                    disabled={!afford}
-                                    aria-label={`Buy ${it.name} for $${it.price}`}
-                                    title={afford ? `Buy ${it.name} for $${it.price}` : `Not enough cash — ${it.name} costs $${it.price}`}
-                                    className={`shrink-0 rounded-md px-3 py-2.5 text-[10px] font-black uppercase transition-colors ${
-                                      afford
-                                        ? "bg-orange-600 text-white hover:bg-orange-500"
-                                        : "cursor-not-allowed bg-white/10 text-white/45"
-                                    }`}
-                                  >
-                                    {afford ? "buy" : "no cash"}
-                                  </button>
-                                )}
-                              </div>
-                            );
-                          })}
-                        </div>
-                      </div>
-                    );
-                  })}
-                  <div className="border-t border-white/10 px-1 pb-1 pt-2 text-[10px] font-bold text-white/45">
-                    Your full collection lives in the LOCKER — wallet, purchased items &amp; lifetime bank.
-                  </div>
-                </div>
-              </Panel>
-            )}
-
             {/* ---------- CAREER tab: quick stats → full profile ---------- */}
             {tab === "career" && (
               <Panel>
@@ -1086,9 +978,10 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
         </section>
 
         {/* -------- right rail: the chat icon rides UP opposite the Season icon --------
-             Same rail-icon style, same top offset (mt-8) as the left rail — mirrored. */}
+             Same rail-icon style, same top offset (mt-8) as the left rail — mirrored.
+             Its panel opens DOWNWARD from a fixed spot under the header (placement="rail"). */}
         <div className="order-3 hidden shrink-0 lg:order-3 lg:mt-8 lg:flex lg:w-14 lg:flex-col lg:items-center">
-          <GlobalChatDock name={playerName} />
+          <GlobalChatDock name={playerName} placement="rail" />
         </div>
       </main>
 
@@ -1105,7 +998,7 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
         <div className="relative flex flex-col gap-2 lg:w-80">
           {/* mobile keeps the chat dock here — desktop moved it to the right rail */}
           <div className="flex items-center justify-end gap-3 lg:hidden">
-            <GlobalChatDock name={playerName} />
+            <GlobalChatDock name={playerName} placement="dock" />
           </div>
           {/* desktop: controller-style hints */}
           <div className="hidden items-center justify-end gap-3 text-[10px] font-bold text-white/45 lg:flex">

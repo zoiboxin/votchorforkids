@@ -29,13 +29,17 @@ interface WeaponAsset {
   scale: number;
   /** the instance sits this far below the fist (spear: hold the shaft mid-way) */
   gripY: number;
+  /** how the swing animates: "chop" = overhead arc (default),
+   *  "thrust" = straight lunge — a 2.1 m spear chopping like an axe clips
+   *  the ground and the body; a shove forward reads instantly. */
+  swingStyle?: "chop" | "thrust";
 }
 
 export const WEAPON_FILES: Record<WeaponKind, WeaponAsset> = {
   armsword: { url: "/models/weapons/arming-sword-401972.glb", scale: 1.05, gripY: 0 },
   handaxe:  { url: "/models/weapons/hand-axe-cee9e7.glb",     scale: 1.05, gripY: 0 },
   dagger:   { url: "/models/weapons/jewelled-dagger-38f556.glb", scale: 1.15, gripY: 0 },
-  spear:    { url: "/models/weapons/spear-e9824e.glb",        scale: 1.0,  gripY: -0.42 },
+  spear:    { url: "/models/weapons/spear-e9824e.glb",        scale: 1.0,  gripY: -0.42, swingStyle: "thrust" },
 };
 
 export const isWeaponKind = (kind: string): kind is WeaponKind => kind in WEAPON_FILES;
@@ -66,6 +70,7 @@ export function loadWeaponTemplate(kind: WeaponKind): Promise<THREE.Group> {
           if (o instanceof THREE.Mesh) { o.castShadow = false; o.receiveShadow = false; }
         });
         g.userData.gripY = asset.gripY;
+        g.userData.swingStyle = asset.swingStyle ?? "chop";
         templates.set(kind, g);
         pending.delete(kind);
         resolve(g);

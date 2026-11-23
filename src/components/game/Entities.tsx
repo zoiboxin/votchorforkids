@@ -508,7 +508,12 @@ export function Npcs({ engine }: { engine: GameEngine }) {
         dd = Math.atan2(Math.sin(dd), Math.cos(dd));
         v.mesh.rotation.y += dd * 0.15;
         const speed = Math.hypot(n.vx, n.vz);
-        poseCharacter(v.mesh, speed, t, { phase: n.phase, detained: n.mode === "detained", panic: (n.panicT ?? 0) > 0 });
+        poseCharacter(v.mesh, speed, t, {
+          phase: n.phase,
+          detained: n.mode === "detained",
+          panic: (n.panicT ?? 0) > 0,
+          swing: (n.attackT ?? 0) > 0 ? 1 - (n.attackT ?? 0) / 0.5 : 0, // 🥊 punch overlay
+        });
         if (v.bubble) v.bubble.visible = close && n.mode === "detained";
         if (v.tag) v.tag.visible = close && n.mode !== "detained" && !namesHidden;
       }
@@ -1427,7 +1432,10 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
         v.mesh.rotation.x = 0;
         v.mesh.rotation.z = 0;
         const speed = Math.hypot(c.vx, c.vz);
-        poseCharacter(v.mesh, speed, t, { phase: c.phase });
+        poseCharacter(v.mesh, speed, t, {
+          phase: c.phase,
+          swing: (c.attackT ?? 0) > 0 ? 1 - (c.attackT ?? 0) / 0.5 : 0, // 🥊 punch overlay
+        });
         const close = d2 < DETAIL_SQ;
         const rig = v.mesh.userData.rig as { lids: THREE.Object3D[]; brows: THREE.Object3D[] } | undefined;
         if (rig) {

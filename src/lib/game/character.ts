@@ -2,7 +2,7 @@ import * as THREE from "three";
 import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { AGE_STATS, ITEMS, POLICE_UNIFORM, policeOutfitOf, type Appearance } from "./constants";
 import { loadGlbTemplate, makeGlbInstance, crossToGlb, setGlbLocomotion, glbApplyBone, glbHipsTo, glbOvEase, tintGlbZombie, POLICE_CHAR, type GlbInstance } from "./glbCharacters";
-import { isWeaponKind, loadWeaponTemplate, makeWeaponInstance, weaponReady } from "./weapons";
+import { isWeaponKind, loadWeaponTemplate, makeWeaponInstance, weaponReady, WEAPON_FILES } from "./weapons";
 
 /* ------------------------------------------------------------------ */
 /* Shared caches + merged-geometry "buckets"                           */
@@ -521,6 +521,7 @@ export function buildToolMesh(kind: HeldToolKind): THREE.Group {
     if (inst) {
       const g = new THREE.Group();
       g.add(inst);
+      g.userData.swingStyle = (inst.userData.swingStyle as string) ?? "chop";
       g.traverse((o) => { if (o instanceof THREE.Mesh) { o.castShadow = false; o.receiveShadow = false; } });
       return g;
     }
@@ -560,6 +561,9 @@ export function buildToolMesh(kind: HeldToolKind): THREE.Group {
   const g = new THREE.Group();
   const m = b.mesh("toon");
   if (m) g.add(m);
+  // ⚔️ steel placeholders inherit their weapon's swing style so a spear that
+  // lands mid-swing never snaps from a chop arc to a lunge
+  if (isWeaponKind(kind)) g.userData.swingStyle = WEAPON_FILES[kind].swingStyle ?? "chop";
   g.traverse((o) => { if (o instanceof THREE.Mesh) { o.castShadow = false; o.receiveShadow = false; } });
   return g;
 }
@@ -601,6 +605,7 @@ export function setHeldTool(character: THREE.Object3D, kind: HeldToolKind | null
     rig.arms[1].add(tool);
   }
   character.userData.heldTool = tool;
+  tool.userData.baseZ = tool.position.z; // rest z — thrust weapons lunge from here
   return tool;
 }
 
@@ -876,26 +881,49 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
 
   // ⚔️ swing — the tool (riding the hand socket) whistles through the chop arc;
   // between swings it eases back to the ready-stance tilt (bare-hand fights
-  // use the bone-level punch overlay above instead)
+  // use the bone-level punch overlay above instead). THRUST weapons (the
+  // spear) lunge straight ahead instead — a 2.1 m shaft chopping overhead
+  // clips the ground and the body, while a shove forward reads instantly.
   const tool = g.userData.heldTool as THREE.Object3D | undefined;
   if (tool) {
     const base = (tool.userData.baseRx as number | undefined) ?? -0.5;
+    const thrust = tool.userData.swingStyle === "thrust";
     if (o.swing != null && o.swing > 0) {
       const sw = Math.min(1, o.swing);
-      let ax: number;
-      if (sw < 0.12) {
-        ax = base + (-2.55 - base) * (sw / 0.12); // wind up behind the head
-      } else if (sw < 0.35) {
-        const k = (sw - 0.12) / 0.23;
-        ax = -2.55 + (1.1 + 2.55) * k * k;        // the strike
+      if (thrust) {
+        const restZ = (tool.userData.baseZ as number | undefined) ?? tool.position.z;
+        // windup → LUNGE → recover — the shaft shoves through the fist
+        if (sw < 0.18) {
+          const k = sw / 0.18;
+          tool.position.z = restZ - 0.14 * k;            // pulled back
+          tool.rotation.x = base - 0.18 * k;             // cocked slightly up
+        } else if (sw < 0.4) {
+          const k = (sw - 0.18) / 0.22;
+          tool.position.z = restZ - 0.14 + 0.72 * k * k; // the lunge
+          tool.rotation.x = base - 0.18 + 0.14 * k;
+        } else {
+          const k = sstep(0, 1, (sw - 0.4) / 0.6);
+          tool.position.z = restZ + 0.58 * (1 - k);      // settle back
+          tool.rotation.x = base - 0.04 * (1 - k);
+        }
+        body.rotation.y += Math.sin(sw * Math.PI) * -0.1; // tighter torso twist
       } else {
-        const k = sstep(0, 1, (sw - 0.35) / 0.65);
-        ax = 1.1 + (base - 1.1) * k;              // settle back
+        let ax: number;
+        if (sw < 0.12) {
+          ax = base + (-2.55 - base) * (sw / 0.12); // wind up behind the head
+        } else if (sw < 0.35) {
+          const k = (sw - 0.12) / 0.23;
+          ax = -2.55 + (1.1 + 2.55) * k * k;        // the strike
+        } else {
+          const k = sstep(0, 1, (sw - 0.35) / 0.65);
+          ax = 1.1 + (base - 1.1) * k;              // settle back
+        }
+        tool.rotation.x = ax;
+        body.rotation.y += Math.sin(sw * Math.PI) * -0.18; // torso twist substitute
       }
-      tool.rotation.x = ax;
-      body.rotation.y += Math.sin(sw * Math.PI) * -0.18; // torso twist substitute
     } else {
       tool.rotation.x = base;
+      if (thrust) tool.position.z = (tool.userData.baseZ as number | undefined) ?? tool.position.z;
     }
   }
 }
