@@ -28,7 +28,7 @@ import * as THREE from "three";
 import { motion } from "framer-motion";
 import {
   Play, Sparkles, ArrowLeft, Dices, HelpCircle, Hand, Moon,
-  Gauge, ChevronsUp, HeartPulse, Baby, UserRound, Loader2,
+  Gauge, ChevronsUp, HeartPulse, Baby, UserRound, Loader2, ShoppingBag,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -47,6 +47,7 @@ import {
   type GlbInstance,
 } from "@/lib/game/glbCharacters";
 import { sfx } from "@/lib/game/audio";
+import { shopItem, SHOP_ITEMS, SHOP_KINDS, type ShopItem } from "@/lib/game/shop";
 import { useGame } from "./store";
 import { Leaderboard } from "./Leaderboard";
 import { HowToPlay } from "./Panels";

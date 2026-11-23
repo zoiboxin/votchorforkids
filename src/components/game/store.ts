@@ -4,6 +4,7 @@ import { create } from "zustand";
 import { defaultAppearance, normalizeAppearance, type Appearance } from "@/lib/game/constants";
 import type { HudData } from "@/lib/game/engine";
 import { DAILY_TASK_POOL, ALL_DONE_BONUS, applyRunToDaily, ensureDaily, freshDaily, type DailyState, type DailyRunFacts } from "@/lib/game/daily";
+import { shopItem } from "@/lib/game/shop";
 
 export type Screen = "landing" | "profile" | "select" | "outfit" | "creator" | "connecting" | "lobby" | "matchlobby" | "play";
 export interface Toast { msg: string; kind: "info" | "good" | "bad"; id: number }
@@ -34,6 +35,33 @@ const LS_PROFILE = "votechor_profile_v3";
 const LS_PROFILE_V2 = "votechor_profile_v2"; // migrated once, then rewritten as v3
 const LS_SETTINGS = "votechor_settings_v2";
 const HISTORY_CAP = 60;
+
+/* ---------- 🛒 the wallet — banked cash + purchased items (own save slot) ----------
+ * Kept separate from the big profile blob so run-end banking and shop buys
+ * never rewrite the whole save. First boot seeds the coins from the money the
+ * old profile already banked (stats.votes = "Money banked"). */
+const LS_WALLET = "votechor_wallet_v1";
+
+function loadWallet(): { coins: number; owned: string[] } {
+  if (typeof window === "undefined") return { coins: 0, owned: [] };
+  try {
+    const raw = JSON.parse(localStorage.getItem(LS_WALLET) ?? "null");
+    if (raw && typeof raw === "object") {
+      return {
+        coins: Math.max(0, Math.floor(Number(raw.coins) || 0)),
+        owned: Array.isArray(raw.owned) ? raw.owned.filter((x: unknown) => typeof x === "string" && !!shopItem(x as string)) : [],
+      };
+    }
+    // first wallet boot — carry over the cash the profile already banked
+    const prof = JSON.parse(localStorage.getItem(LS_PROFILE) ?? localStorage.getItem(LS_PROFILE_V2) ?? "null") as { stats?: { votes?: number } } | null;
+    return { coins: Math.max(0, Math.floor(Number(prof?.stats?.votes) || 0)), owned: [] };
+  } catch { return { coins: 0, owned: [] }; }
+}
+
+function saveWallet(coins: number, owned: string[]) {
+  if (typeof window === "undefined") return;
+  try { localStorage.setItem(LS_WALLET, JSON.stringify({ coins: Math.max(0, Math.floor(coins)), owned })); } catch { /* ignore */ }
+}
 
 const freshStats = (): PlayerStats => ({ runs: 0, best: 0, votes: 0, rescues: 0, wins: 0, caught: 0, totalScore: 0, playtimeMs: 0 });
 
@@ -149,6 +177,18 @@ export interface GameStore {
   lifeCaught: number;
   playtimeMs: number;
   history: RunRecord[];
+  /** 💰 spendable wallet — the cash banked from roaming the town (piles, purses,
+   *  zombie hoards). Funds the ITEM SHOP. Banked at the end of every run. */
+  coins: number;
+  /** 💰 lifetime money collected — career-stat flavour ("Money banked") */
+  lifeMoney: number;
+  /** 🛒 ids of every shop item PURCHASED — gear/gems/snacks/license spawn with
+   *  you every run; outfits are worn from the shop or the locker */
+  owned: string[];
+  /** buy a shop item — true on success (coins deducted, id added to owned) */
+  buyItem: (id: string) => boolean;
+  /** 💰 bank run earnings straight into the wallet (also used by tests/debug) */
+  bankCoins: (n: number) => void;
   /** 🌐 multiplayer lobby state — the Multiplayer panel renders from this */
   mp: {
     open: boolean;
@@ -238,6 +278,7 @@ const freshMp = () => ({
 const saved = typeof window !== "undefined"
   ? loadProfile()
   : { name: "", look: defaultAppearance(), stats: freshStats(), history: [] as RunRecord[], bonusXp: 0, daily: freshDaily() };
+const savedWallet = typeof window !== "undefined" ? loadWallet() : { coins: 0, owned: [] as string[] };
 
 export const useGame = create<GameStore>()((set, get) => ({
   screen: "landing",
@@ -270,6 +311,27 @@ export const useGame = create<GameStore>()((set, get) => ({
   lifeCaught: saved.stats.caught,
   playtimeMs: saved.stats.playtimeMs,
   history: saved.history,
+  coins: savedWallet.coins,
+  lifeMoney: saved.stats.votes,
+  owned: savedWallet.owned,
+  buyItem: (id) => {
+    const it = shopItem(id);
+    const s = get();
+    if (!it) return false;            // unknown item
+    if (s.owned.includes(id)) return true; // already ours — no double charge
+    if (s.coins < it.price) return false;  // not enough banked cash
+    const coins = s.coins - it.price;
+    const owned = [...s.owned, id];
+    saveWallet(coins, owned);
+    set({ coins, owned });
+    return true;
+  },
+  bankCoins: (n) => set((s) => {
+    const coins = s.coins + Math.max(0, Math.floor(n));
+    const lifeMoney = s.lifeMoney + Math.max(0, Math.floor(n));
+    saveWallet(coins, s.owned);
+    return { coins, lifeMoney };
+  }),
   setLook: (p) => {
     set((s) => {
       const look = { ...s.look, ...p };
@@ -368,14 +430,20 @@ export const useGame = create<GameStore>()((set, get) => ({
       const history = [rec, ...s.history].slice(0, HISTORY_CAP);
       const bonusXp = s.bonusXp + bonus;
       const careerXp = runScoreTotal + bonusXp;
+      // 💰 every dollar scooped while roaming banks into the wallet — the ITEM
+      // SHOP funds itself from the money lying around town
+      const coins = s.coins + rec.votes;
+      const lifeMoney = s.lifeMoney + rec.votes;
+      saveWallet(coins, s.owned);
       saveProfile(s.playerName, s.look, stats, history, bonusXp, res.daily);
       if (res.streakJustGrew) toasts.push({ msg: `🔥 Day ${res.streak} streak! Play daily for bonus XP!`, kind: "good" });
       for (const t of res.completed) toasts.push({ msg: `📅 Daily task done: ${t.emoji} +${t.xp} XP!`, kind: "good" });
       if (res.allJustDone) toasts.push({ msg: `🌟 All 3 daily tasks complete! +${ALL_DONE_BONUS} XP bonus!`, kind: "good" });
+      if (rec.votes > 0) toasts.push({ msg: `💰 $${rec.votes} banked — wallet $${coins}. Spend it in the ITEM SHOP!`, kind: "good" });
       return {
         runsPlayed: stats.runs, bestScore: stats.best, lifeVotes: stats.votes, lifeRescues: stats.rescues,
         careerXp, bonusXp, daily: res.daily, wins: stats.wins, lifeCaught: stats.caught, playtimeMs: stats.playtimeMs,
-        history,
+        history, coins, lifeMoney,
       };
     });
     for (const t of toasts) useGame.getState().pushToast(t.msg, t.kind);
@@ -409,9 +477,11 @@ export const useGame = create<GameStore>()((set, get) => ({
   resetStats: () => set((s) => {
     const daily = freshDaily();
     saveProfile(s.playerName, s.look, freshStats(), [], 0, daily);
+    saveWallet(0, s.owned); // purchases survive a stat reset — only the cash resets
     return {
       runsPlayed: 0, bestScore: 0, lifeVotes: 0, lifeRescues: 0,
       careerXp: 0, bonusXp: 0, daily, wins: 0, lifeCaught: 0, playtimeMs: 0, history: [],
+      coins: 0, lifeMoney: 0,
     };
   }),
 }));

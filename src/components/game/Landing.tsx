@@ -37,11 +37,12 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DAILY_TASK_POOL, ALL_DONE_BONUS } from "@/lib/game/daily";
 import {
-  NAME_SUGGESTIONS, NIGHT_TICKER, OUTFIT_PRESETS,
-  type Appearance, type OutfitPreset,
+  NAME_SUGGESTIONS, NIGHT_TICKER,
+  type Appearance,
 } from "@/lib/game/constants";
 import { RANKS, rankFor } from "@/lib/game/ranks";
 import { primeAudio, sfx, startMusic } from "@/lib/game/audio";
+import { outfitPreset, SHOP_ITEMS, SHOP_KINDS, type ShopItem } from "@/lib/game/shop";
 import { useGame } from "./store";
 import { HowToPlay, SettingsDialog, StatsDialog, HistoryDialog } from "./Panels";
 import { RankBadge } from "./RankCard";
@@ -65,10 +66,6 @@ function resetCountdown(): string {
   const h = Math.floor(ms / 3_600_000);
   const m = Math.floor((ms % 3_600_000) / 60_000);
   return h > 0 ? `${h}h ${m}m` : `${m}m`;
-}
-
-function presetEquipped(look: Appearance, p: OutfitPreset): boolean {
-  return (Object.entries(p.look) as [keyof Appearance, unknown][]).every(([k, v]) => look[k] === v);
 }
 
 /* ---------------- tabs ---------------- */
@@ -204,16 +201,23 @@ function GlobalChatDock({ name }: { name: string }) {
 
   return (
     <div className="relative">
-      {/* dock icon — unread badge appears only while messages are unseen */}
+      {/* dock icon — the SAME rail-icon style as Season/Suggested/Daily (right side):
+          square tile, icon over label, badge at the corner, ember glow while open */}
       <button
         onClick={toggle}
         aria-label={`Global chat${unread > 0 ? ` — ${unread} unread` : ""}`}
         aria-expanded={open}
-        className="relative flex h-10 w-10 items-center justify-center rounded-md border border-white/15 bg-slate-950/85 text-white/80 shadow-lg backdrop-blur transition-colors hover:bg-slate-800/90 hover:text-white"
+        title="Global chat"
+        className={`relative flex h-14 w-14 flex-col items-center justify-center gap-0.5 rounded-md border transition-all ${
+          open
+            ? "border-orange-400/80 bg-orange-600/25 text-orange-200 shadow-[0_0_14px_rgba(234,88,12,0.4)]"
+            : "border-white/15 bg-slate-950/85 text-white/70 backdrop-blur hover:bg-slate-800/90 hover:text-white"
+        }`}
       >
         <MessageSquare size={18} />
+        <span className="text-[8px] font-black uppercase tracking-wider">Chat</span>
         {unread > 0 && (
-          <span className="absolute -right-1.5 -top-1.5 flex h-5 min-w-5 items-center justify-center rounded-full bg-red-600 px-1 text-[10px] font-black text-white ring-2 ring-slate-950">
+          <span className="absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-orange-600 px-1 text-[9px] font-black text-white ring-2 ring-slate-950">
             {unread > 99 ? "99+" : unread}
           </span>
         )}
@@ -319,6 +323,10 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
   const careerXp = useGame((s) => s.careerXp);
   const look = useGame((s) => s.look);
   const setLook = useGame((s) => s.setLook);
+  const coins = useGame((s) => s.coins);
+  const owned = useGame((s) => s.owned);
+  const buyItem = useGame((s) => s.buyItem);
+  const pushToast = useGame((s) => s.pushToast);
   const daily = useGame((s) => s.daily);
   const ensureDailyToday = useGame((s) => s.ensureDailyToday);
   const runsPlayed = useGame((s) => s.runsPlayed);
@@ -391,6 +399,31 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
   };
 
   const openTab = (id: Tab) => { sfx.click(); setTab(id); };
+
+  /** 🛒 buy a shop item with the wallet's banked cash — toasts the result */
+  const buyShopItem = (it: ShopItem) => {
+    sfx.click();
+    if (owned.includes(it.id)) return;
+    if (buyItem(it.id)) {
+      sfx.pickup();
+      pushToast(
+        it.kind === "style"
+          ? `${it.emoji} ${it.name} purchased — wear it from the shop or the locker!`
+          : `${it.emoji} ${it.name} purchased — it spawns with you every run (🎒 wheel: G / right-click)!`,
+        "good",
+      );
+    } else {
+      pushToast(`Not enough cash — ${it.name} costs $${it.price}. Roam the town & bank more 💰!`, "bad");
+    }
+  };
+
+  /** 👕 wear a purchased outfit preset straight from the shop */
+  const wearPreset = (it: ShopItem) => {
+    const p = outfitPreset(it.presetId);
+    if (!p) return;
+    sfx.pickup();
+    setLook(p.look);
+  };
 
   /** left-rail icons — open exactly ONE lobby card (Season / Suggested / Daily);
    *  clicking the active icon closes it, clicking another swaps the panel */
@@ -743,41 +776,101 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
               </Panel>
             )}
 
-            {/* ---------- ITEM SHOP tab: outfit presets, all free ---------- */}
+            {/* ---------- ITEM SHOP tab: spend the cash you banked in town ---------- */}
             {tab === "store" && (
               <Panel>
-                <Strip right={<span className="text-[10px] font-black text-slate-800">Everything FREE</span>}>
-                  Item shop · Outfits
+                <Strip
+                  right={
+                    <span className="flex items-center gap-1 text-[10px] font-black text-yellow-300">
+                      <span aria-hidden>💰</span>${coins.toLocaleString()}
+                    </span>
+                  }
+                >
+                  Item shop
                 </Strip>
-                <div className="grid grid-cols-2 gap-1.5 p-2.5">
-                  {OUTFIT_PRESETS.map((p) => {
-                    const on = presetEquipped(look, p);
-                    const dots = (["shirt", "pants", "shoe"] as const).map((k) => p.look[k]).filter(Boolean);
+                <div className="lobby-scroll max-h-[54vh] space-y-2.5 overflow-y-auto p-2.5">
+                  <div className="rounded border border-yellow-300/30 bg-yellow-400/10 px-2.5 py-2 text-[10px] font-bold leading-snug text-yellow-100">
+                    💰 Roam the town &amp; bank cash piles, purses and zombie hoards — every dollar
+                    funds this shop. Purchased gear spawns with you <b>EVERY run</b>: press{" "}
+                    <b className="text-white">G</b> (or right-click) to open the 🎒 wheel and use it.
+                  </div>
+                  {SHOP_KINDS.map((sec) => {
+                    const rows = SHOP_ITEMS.filter((it) => it.kind === sec.id);
+                    const ownCount = rows.filter((it) => owned.includes(it.id)).length;
                     return (
-                      <button
-                        key={p.id}
-                        onClick={() => { sfx.pickup(); setLook(p.look); }}
-                        aria-pressed={on}
-                        className={`rounded border p-2 text-center transition-all hover:scale-[1.03] ${
-                          on ? "border-yellow-300 bg-yellow-300/15 shadow-[0_0_12px_rgba(253,224,71,0.3)]" : "border-white/12 bg-white/5 hover:border-yellow-300/50"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between">
-                          <span className="text-xl leading-none">{p.emoji}</span>
-                          {on ? <span className="flex items-center gap-0.5 text-[9px] font-black uppercase text-yellow-300"><Check size={10} strokeWidth={3.5} /> worn</span> : <span className="text-[9px] font-black uppercase text-emerald-300">free</span>}
+                      <div key={sec.id}>
+                        <div className="mb-1 flex items-center justify-between text-[10px] font-black uppercase tracking-wider text-white/60">
+                          <span className="flex items-center gap-1">
+                            <span aria-hidden>{sec.emoji}</span> {sec.label}
+                          </span>
+                          <span className="text-white/35">{ownCount}/{rows.length} owned</span>
                         </div>
-                        <div className="mt-1 truncate text-left text-[10px] font-bold text-white/85">{p.label}</div>
-                        <div className="mt-1 flex items-center gap-1">
-                          {dots.map((c, i) => (
-                            <span key={i} aria-hidden className="h-2 w-2 rounded-full border border-black/40 ring-1 ring-white/20" style={{ background: c }} />
-                          ))}
+                        <div className="grid grid-cols-2 gap-1.5">
+                          {rows.map((it) => {
+                            const has = owned.includes(it.id);
+                            const afford = coins >= it.price;
+                            const worn = it.kind === "style" && (() => {
+                              const p = outfitPreset(it.presetId);
+                              return !!p && (Object.entries(p.look) as [keyof Appearance, unknown][]).every(([k, v]) => look[k] === v);
+                            })();
+                            return (
+                              <div
+                                key={it.id}
+                                className={`rounded border p-2 transition-colors ${
+                                  has ? "border-emerald-300/40 bg-emerald-400/10" : "border-white/12 bg-white/5"
+                                }`}
+                              >
+                                <div className="flex items-center justify-between">
+                                  <span className="text-xl leading-none">{it.emoji}</span>
+                                  {has ? (
+                                    <span className="flex items-center gap-0.5 text-[9px] font-black uppercase text-emerald-300">
+                                      <Check size={10} strokeWidth={3.5} /> owned
+                                    </span>
+                                  ) : (
+                                    <span className={`text-[10px] font-black ${afford ? "text-yellow-300" : "text-rose-300/80"}`}>
+                                      ${it.price}
+                                    </span>
+                                  )}
+                                </div>
+                                <div className="mt-1 truncate text-[10px] font-bold text-white/85">{it.name}</div>
+                                <div className="mt-0.5 line-clamp-2 text-[9px] font-semibold leading-tight text-white/50">{it.tip}</div>
+                                {it.kind === "style" && has ? (
+                                  <button
+                                    onClick={() => wearPreset(it)}
+                                    aria-pressed={worn}
+                                    className={`mt-1.5 w-full rounded px-2 py-1 text-[9px] font-black uppercase transition-colors ${
+                                      worn ? "bg-yellow-300/25 text-yellow-200" : "bg-yellow-400 text-slate-950 hover:bg-yellow-300"
+                                    }`}
+                                  >
+                                    {worn ? "✓ wearing" : "wear"}
+                                  </button>
+                                ) : has ? (
+                                  <div className="mt-1.5 rounded border border-emerald-300/30 px-2 py-1 text-center text-[9px] font-black uppercase text-emerald-200/80">
+                                    in every run
+                                  </div>
+                                ) : (
+                                  <button
+                                    onClick={() => buyShopItem(it)}
+                                    aria-label={`Buy ${it.name} for $${it.price}`}
+                                    className={`mt-1.5 w-full rounded px-2 py-1 text-[9px] font-black uppercase transition-colors ${
+                                      afford
+                                        ? "bg-orange-600 text-white hover:bg-orange-500"
+                                        : "bg-white/10 text-white/45"
+                                    }`}
+                                  >
+                                    {afford ? `buy $${it.price}` : "need more cash"}
+                                  </button>
+                                )}
+                              </div>
+                            );
+                          })}
                         </div>
-                      </button>
+                      </div>
                     );
                   })}
-                </div>
-                <div className="border-t border-white/10 px-3 py-2 text-[10px] font-bold text-white/45">
-                  Tap an outfit to wear it instantly — fine-tune colors in the LOCKER.
+                  <div className="border-t border-white/10 px-1 pb-1 pt-2 text-[10px] font-bold text-white/45">
+                    Your full collection lives in the LOCKER — wallet, purchased items &amp; lifetime bank.
+                  </div>
                 </div>
               </Panel>
             )}

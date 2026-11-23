@@ -2,7 +2,7 @@ import {
   AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, BUST_CARRY_BONUS, BUST_POINTS, BUST_TARGET, CARRY_RADIUS, CAR_ACCEL, CAR_BRAKE, CAR_COAST, CAR_COAST_FRICTION, CAR_ENTER_R, CAR_HIT_CD, CAR_HIT_DMG, CAR_HIT_MIN_CLOSING, CAR_HIT_TRANSFER, CAR_REV_SPEED, CAR_SLIDE_FRICTION, CAR_SPIN_FRICTION, CAR_STEER, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
   CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, CONFISCATE_FINE, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
-  ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HAUL_CAMP_R, HURT_FLASH_S, ITEMS, INV_SLOTS, ITEM_COUNT,
+  ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HAUL_CAMP_R, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
   DEEP_JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER,
   ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
@@ -28,6 +28,7 @@ import {
   type AnimalKind, type Appearance, type Phase, type PolicePerk, type PowerKind, type Side, type ToolKind, type Zone, zoneOf, ZONE_TOAST,
 } from "./constants";
 import { clamp, mulberry32, range } from "./rng";
+import type { OwnedGear } from "./shop";
 import { addDynamicCircle, freeSpot, lineClear, refreshCarCircle, resolve, ringTrafficPoint, RING_R, ROADS, scatterSpots, spotNear, terrainHeight, TOWN_SQUARE, type CircleCollider, type World } from "./worldgen";
 import { nightFactor, newBody, stepBody, stepNpc, type Body, type SteerMemory } from "./sim";
 import { sfx, startDrone, stopDrone, setInsects, stopInsects } from "./audio";
@@ -1719,7 +1720,7 @@ export class GameEngine {
     return ts.find((t) => t.key === this.specKey) ?? null;
   }
 
-  reset(look: Appearance) {
+  reset(look: Appearance, gear?: OwnedGear) {
     this.look = look;
     this.side = look.fac;
     this.policePerk = policeOutfitOf(look.fac === "police" ? look.outfit : "").stats;
@@ -1813,7 +1814,36 @@ export class GameEngine {
       cop.tx = sp.x; cop.tz = sp.z; cop.mode = "patrol"; cop.alertT = 0; cop.timer = 0;
       cop.targetCiv = undefined; cop.copCd = 0;
     }
+    // 🎒 locker gear — everything PURCHASED in the Item Shop spawns with you:
+    // belt tools, pocketed gems, hotbar snacks and the VIP license
+    if (gear) this.grantLockerGear(gear);
     this.running = true;
+  }
+
+  /** 🎒 grant the LOCKER gear — items purchased in the Item Shop spawn with the
+   *  player every run, skipping the world hunt but keeping the SAME pickup
+   *  rules (one tool per kind, hotbar slot limits, single-use gems). Owned
+   *  tools & gems ride the 🎒 wheel (G / right-click), snacks fill the 1–8
+   *  hotbar, the VIP license starts the run already collected. */
+  private grantLockerGear(gear: OwnedGear) {
+    for (const kind of gear.tools) {
+      if (this.tools.some((s) => s.kind === kind)) continue; // one per kind, like world pickups
+      this.tools.push({ kind, count: 1 });
+    }
+    if (this.tools.length > 0 && this.held < 0) this.held = 0; // first tool auto-equips
+    for (const kind of gear.powers) {
+      if (!this.powerPockets.some((d) => POWERS[d]?.kind === kind)) {
+        const def = POWERS.findIndex((p) => p.kind === kind);
+        if (def >= 0) this.powerPockets.push(def);
+      }
+    }
+    for (const s of gear.snacks) {
+      if (!ITEMS[s.def]) continue;
+      const slot = this.inv.find((x) => x.def === s.def);
+      if (slot) slot.count = Math.min(INV_STACK, slot.count + s.count);
+      else if (this.inv.length < INV_SLOTS) this.inv.push({ def: s.def, count: s.count });
+    }
+    if (gear.license) this.hasLicense = true;
   }
 
   /* ---------------- interactions ---------------- */

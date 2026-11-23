@@ -12,6 +12,7 @@ import { net, sessionSeed } from "@/lib/game/net/client";
 import { attachNet, type NetHandle } from "@/lib/game/net/engineNet";
 import { enterMatchLobby, leaveMatchmaking } from "@/lib/game/net/matchlobby";
 import type { Appearance } from "@/lib/game/constants";
+import { gearSummary, ownedGear } from "@/lib/game/shop";
 import { Hud } from "./Hud";
 import { Creator } from "./Creator";
 import { Landing } from "./Landing";
@@ -70,7 +71,11 @@ export function GameRoot() {
     recapPostedRef.current = false; // 📝 the fresh week posts its own score
     clearEndKick();
     if (engineRef.current) {
-      engineRef.current.reset(useGame.getState().look);
+      // 🎒 locker gear rides every restart too — purchased items always spawn
+      const gear = ownedGear(useGame.getState().owned);
+      engineRef.current.reset(useGame.getState().look, gear);
+      const gs = gearSummary(gear);
+      if (gs) useGame.getState().pushToast(`🎒 Locker gear — ${gs}`, "good");
       netRef.current?.resync(); // 🌐 fresh crew — re-free the real-soul chairs
       useGame.getState().setVictoryOpen(false);
     }
@@ -143,7 +148,12 @@ export function GameRoot() {
         }
         // FIRST RUN init: the constructor spawns the town, but only reset() grants
         // the driving license, scatters the cash piles, homes the vans & calms the cops.
-        eng.reset(freshLook);
+        // 🎒 locker gear: every PURCHASED item spawns with you — tools & gems ride
+        // the 🎒 wheel (G / right-click), snacks fill the hotbar, license skips the hunt
+        const gear = ownedGear(useGame.getState().owned);
+        eng.reset(freshLook, gear);
+        const gs = gearSummary(gear);
+        if (gs) pushToast(`🎒 Locker gear — ${gs}`, "good");
         netRef.current?.resync(); // 🌐 fresh crew — re-free the real-soul bot chairs
         eng.setToast((msg, kind) => pushToast(msg, kind));
         eng.playerName = useGame.getState().playerName || "You"; // survivor name for the start toast
@@ -317,7 +327,11 @@ export function GameRoot() {
         endSavedRef.current = false; // 💾 the fresh week saves its own end
         recapPostedRef.current = false; // 📝 the fresh week posts its own score
         clearEndKick();
-        eng.reset(useGame.getState().look);
+        // 🎒 locker gear rides every restart — purchased items always spawn
+        const gear = ownedGear(useGame.getState().owned);
+        eng.reset(useGame.getState().look, gear);
+        const gs = gearSummary(gear);
+        if (gs) useGame.getState().pushToast(`🎒 Locker gear — ${gs}`, "good");
         netRef.current?.resync(); // 🏟️ re-seed remote souls after the rewind
         useGame.getState().setVictoryOpen(false);
         useGame.getState().pushToast("🌙 Fresh night — the whole squad starts together!", "good");
