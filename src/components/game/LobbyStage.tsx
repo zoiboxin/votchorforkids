@@ -122,9 +122,10 @@ function GroundFloor() {
     <group>
       {/* wet-asphalt floor patch — melts into the backdrop's road. Kept tight
           and semi-transparent: a big opaque dark disc read as a "black box"
-          in front of the hero's legs on shorter viewports. */}
+          in front of the hero's legs on shorter viewports, and with the low
+          camera its front rim must end BEFORE the frame's bottom edge. */}
       <mesh rotation-x={-Math.PI / 2} position-y={-0.002}>
-        <circleGeometry args={[1.05, 48]} />
+        <circleGeometry args={[0.85, 48]} />
         <meshBasicMaterial map={ground} transparent depthWrite={false} opacity={0.72} />
       </mesh>
 
@@ -271,14 +272,14 @@ export function LobbyStage({ look }: { look: Appearance }) {
     >
       <Canvas
         className="absolute inset-0"
-        /* Framing math (fov 38 vertical): camera y=1.30 tilted DOWN to
-           lookAt 1.02 puts the feet at ~80% of frame height and the glow
-           ring's near edge at ~85% — the full boots + circle stay inside
-           the canvas with a bottom margin on every viewport. The previous
-           upward tilt (cam 1.55 → look 1.62) pushed the toes past 100%
-           and clipped the ring's bottom half. */
-        camera={{ fov: 38, position: [0, 1.3, 4.9] }}
-        onCreated={({ camera }) => camera.lookAt(0, 1.02, 0)}
+        /* Framing math (fov 38 vertical): a low camera (y=1.05) tilted gently
+           UP to lookAt 1.50 drops the hero back into the lower half — head at
+           ~47% of frame, feet at ~94%, ring near edge at ~97% — the same
+           "down" composition as before, but with the full boots + circle
+           inside the canvas on every viewport (a chest-height level camera
+           mathematically clips any ground detail in front of the feet). */
+        camera={{ fov: 38, position: [0, 1.05, 5] }}
+        onCreated={({ camera }) => camera.lookAt(0, 1.5, 0)}
         dpr={[1, 1.75]}
         gl={{ alpha: true, antialias: true }}
       >
