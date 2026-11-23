@@ -5,6 +5,7 @@ import { defaultAppearance, normalizeAppearance, type Appearance } from "@/lib/g
 import type { HudData } from "@/lib/game/engine";
 import { DAILY_TASK_POOL, ALL_DONE_BONUS, applyRunToDaily, ensureDaily, freshDaily, type DailyState, type DailyRunFacts } from "@/lib/game/daily";
 import { shopItem } from "@/lib/game/shop";
+import { lsGet, lsRemove, lsSet } from "@/lib/game/storage";
 
 export type Screen = "landing" | "profile" | "select" | "outfit" | "creator" | "connecting" | "lobby" | "matchlobby" | "play";
 export interface Toast { msg: string; kind: "info" | "good" | "bad"; id: number }
@@ -45,7 +46,7 @@ const LS_WALLET = "votechor_wallet_v1";
 function loadWallet(): { coins: number; owned: string[] } {
   if (typeof window === "undefined") return { coins: 0, owned: [] };
   try {
-    const raw = JSON.parse(localStorage.getItem(LS_WALLET) ?? "null");
+    const raw = JSON.parse(lsGet(LS_WALLET) ?? "null");
     if (raw && typeof raw === "object") {
       return {
         coins: Math.max(0, Math.floor(Number(raw.coins) || 0)),
@@ -53,20 +54,20 @@ function loadWallet(): { coins: number; owned: string[] } {
       };
     }
     // first wallet boot — carry over the cash the profile already banked
-    const prof = JSON.parse(localStorage.getItem(LS_PROFILE) ?? localStorage.getItem(LS_PROFILE_V2) ?? "null") as { stats?: { votes?: number } } | null;
+    const prof = JSON.parse(lsGet(LS_PROFILE) ?? lsGet(LS_PROFILE_V2) ?? "null") as { stats?: { votes?: number } } | null;
     return { coins: Math.max(0, Math.floor(Number(prof?.stats?.votes) || 0)), owned: [] };
   } catch { return { coins: 0, owned: [] }; }
 }
 
 function saveWallet(coins: number, owned: string[]) {
   if (typeof window === "undefined") return;
-  try { localStorage.setItem(LS_WALLET, JSON.stringify({ coins: Math.max(0, Math.floor(coins)), owned })); } catch { /* ignore */ }
+  try { lsSet(LS_WALLET, JSON.stringify({ coins: Math.max(0, Math.floor(coins)), owned })); } catch { /* ignore */ }
 }
 
 /* ---------- 🍪 cookie consent — gates the cloud profile sync ---------- */
 const LS_CONSENT = "votechor_consent_v1";
 const consentAccepted = (): boolean =>
-  typeof window !== "undefined" && localStorage.getItem(LS_CONSENT) === "1";
+  typeof window !== "undefined" && lsGet(LS_CONSENT) === "1";
 
 /* ---------- ☁️ cloud profile sync — LOCAL-FIRST, minimal server load ----------
  * The game NEVER waits on the network: every mutation writes localStorage
@@ -149,7 +150,7 @@ function loadProfile(): {
   const fresh = { name: "", look: defaultAppearance(), stats: freshStats(), history: [] as RunRecord[], bonusXp: 0, daily: freshDaily() };
   if (typeof window === "undefined") return fresh;
   try {
-    const raw = JSON.parse(localStorage.getItem(LS_PROFILE) ?? localStorage.getItem(LS_PROFILE_V2) ?? "null");
+    const raw = JSON.parse(lsGet(LS_PROFILE) ?? lsGet(LS_PROFILE_V2) ?? "null");
     if (raw && typeof raw === "object") {
       const st = (raw.stats && typeof raw.stats === "object" ? raw.stats : {}) as Partial<PlayerStats>;
       const hist = Array.isArray(raw.history) ? raw.history : [];
@@ -190,7 +191,7 @@ function loadProfile(): {
 function loadSettings(): Settings {
   if (typeof window === "undefined") return { music: 0.7, sfx: 0.8, showFps: false };
   try {
-    const raw = JSON.parse(localStorage.getItem(LS_SETTINGS) ?? "null");
+    const raw = JSON.parse(lsGet(LS_SETTINGS) ?? "null");
     if (raw && typeof raw === "object") {
       return {
         music: typeof raw.music === "number" ? Math.min(1, Math.max(0, raw.music)) : 0.7,
@@ -205,14 +206,14 @@ function loadSettings(): Settings {
 function saveProfile(name: string, look: Appearance, stats: PlayerStats, history: RunRecord[], bonusXp: number, daily: DailyState) {
   if (typeof window === "undefined") return;
   try {
-    localStorage.setItem(LS_PROFILE, JSON.stringify({ name, look, stats, history: history.slice(0, HISTORY_CAP), bonusXp, daily, savedAt: Date.now() }));
-    if (localStorage.getItem(LS_PROFILE_V2)) localStorage.removeItem(LS_PROFILE_V2);
+    lsSet(LS_PROFILE, JSON.stringify({ name, look, stats, history: history.slice(0, HISTORY_CAP), bonusXp, daily, savedAt: Date.now() }));
+    if (lsGet(LS_PROFILE_V2)) lsRemove(LS_PROFILE_V2);
   } catch { /* ignore */ }
 }
 
 function saveSettings(s: Settings) {
   if (typeof window === "undefined") return;
-  try { localStorage.setItem(LS_SETTINGS, JSON.stringify(s)); } catch { /* ignore */ }
+  try { lsSet(LS_SETTINGS, JSON.stringify(s)); } catch { /* ignore */ }
 }
 
 export interface GameStore {
@@ -430,7 +431,7 @@ export const useGame = create<GameStore>()((set, get) => ({
   }),
   consent: typeof window !== "undefined" ? consentAccepted() : false,
   setConsent: (v) => {
-    if (typeof window !== "undefined") localStorage.setItem(LS_CONSENT, v ? "1" : "0");
+    if (typeof window !== "undefined") lsSet(LS_CONSENT, v ? "1" : "0");
     set({ consent: v });
     if (v) {
       // 🍪 accepted → the cloud profile comes alive: pull whatever the server
@@ -457,7 +458,7 @@ export const useGame = create<GameStore>()((set, get) => ({
         savedAt?: number; look?: Partial<Appearance>; stats?: Partial<PlayerStats>;
         history?: unknown; bonusXp?: number; daily?: DailyState; coins?: number; owned?: unknown;
       };
-      const localRaw = JSON.parse(localStorage.getItem(LS_PROFILE) ?? "null") as { savedAt?: number } | null;
+      const localRaw = JSON.parse(lsGet(LS_PROFILE) ?? "null") as { savedAt?: number } | null;
       const localAt = Number(localRaw?.savedAt) || 0;
       const serverAt = Number(blob.savedAt) || 0;
       const st = (blob.stats && typeof blob.stats === "object" ? blob.stats : {}) as Partial<PlayerStats>;

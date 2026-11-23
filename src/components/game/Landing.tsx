@@ -43,6 +43,7 @@ import {
 import { RANKS, rankFor } from "@/lib/game/ranks";
 import { primeAudio, sfx, startMusic } from "@/lib/game/audio";
 import { outfitPreset, SHOP_ITEMS, SHOP_KINDS, type ShopItem } from "@/lib/game/shop";
+import { storageBlocked } from "@/lib/game/storage";
 import { useGame } from "./store";
 import { HowToPlay, SettingsDialog, StatsDialog, HistoryDialog } from "./Panels";
 import { RankBadge } from "./RankCard";
@@ -325,6 +326,10 @@ export function CookieBar() {
   const consent = useGame((s) => s.consent);
   const setConsent = useGame((s) => s.setConsent);
   const [later, setLater] = useState(false);
+  // 🛡️ the preview panel runs the game in a sandboxed iframe — many browsers
+  // block storage there; the game still plays (session-only) via the safe
+  // storage fallback, and the banner says so instead of silently not saving
+  const [blocked] = useState(() => storageBlocked());
   if (consent || later) return null;
   return (
     <div
@@ -337,6 +342,12 @@ export function CookieBar() {
         7Nights saves your hero, cash, purchases and stats on this device — and syncs them to your
         <b className="text-white"> player profile</b> so nothing is ever lost. Accept to turn on the cloud save.
       </p>
+      {blocked && (
+        <p className="mt-1.5 rounded-lg bg-amber-400/15 px-2 py-1.5 text-[10px] font-bold leading-snug text-amber-200">
+          ⚠️ This view blocks saving (sandboxed panel) — progress lasts this session only.
+          Open the game in a new tab to keep your hero, cash &amp; purchases forever.
+        </p>
+      )}
       <div className="mt-2 flex gap-2">
         <button
           onClick={() => { sfx.pickup(); setConsent(true); }}

@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Panel simulator — sandboxed iframe (storage blocked)</title>
+<style>
+  body { margin: 0; background: #0b1020; font: 12px/1.5 system-ui, sans-serif; color: #cbd5e1; }
+  header { padding: 8px 12px; }
+  iframe { display: block; width: 100%; height: 82vh; border: 1px solid #334155; border-radius: 8px; }
+  code { color: #fbbf24; }
+</style>
+</head>
+<body>
+<header>
+  Panel simulator — the game runs in a <code>sandbox="allow-scripts"</code> iframe (null origin,
+  localStorage <b>throws</b>, like the preview panel). If the lobby boots below, the fix works.
+</header>
+<iframe sandbox="allow-scripts allow-pointer-lock" src="/"></iframe>
+</body>
+</html>
