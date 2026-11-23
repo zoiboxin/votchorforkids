@@ -4,7 +4,7 @@ import {
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
   ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HAUL_CAMP_R, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
   DEEP_JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER,
-  ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
+  ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_BUFFER_S, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
   RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SCAVENGER_COUNT, SCAVENGER_SENSE_R, SPAWN, SONIC_MULT, STAR_DECAY_S, TAXI_TYPE, TOTAL_VOTES, TRAFFIC_COUNT, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_LABELS, VEHICLE_POOL, VEHICLE_STEER, VEHICLE_TOP, VAN_AXLE, VAN_LOAD_S, VAN_PATROL_GATE_S, VAN_PATROL_WAIT_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
   AIRPORT, PLANE_COUNT, POWER_CARRY,
@@ -581,6 +581,7 @@ export class GameEngine {
   hurtT = 0;                // red damage-flash timer
   pickupT = 0;              // 🧰 1 → 0 just pocketed a world tool — plays the Pick up clip
   flipT = 0;                // double-jump front-flip timer (FLIP_S → 0)
+  jumpBufT = 0;             // ⏱️ jump-buffer — a fresh Space tap banks here in GAME time so a laggy frame can never swallow it (was a 120 ms real-time setTimeout that expired between two slow frames mid-sprint)
   squashT = 0;              // landing squash-and-stretch timer (LAND_SQUASH_S → 0)
   lastGain: { hp: number; stamina: number; at: number } = { hp: 0, stamina: 0, at: 0 }; // bumped on every eat
   private exhaustedAnnounced = false;
@@ -5060,6 +5061,16 @@ export class GameEngine {
   /** Any gameplay action interrupts the party tricks. */
   private breakEmote() { this.danceOn = false; this.waveT = 0; }
 
+  /** ⏱️ Bank one fresh jump press (Space / the mobile JUMP button). The tap
+   *  waits JUMP_BUFFER_S of GAME time for the next sim frame — a laggy frame
+   *  mid-sprint can no longer swallow it the way the old 120 ms real-time
+   *  setTimeout did. Consumed the instant a jump actually fires; one press =
+   *  one attempt (the body latch still blocks hold-to-double-jump). */
+  queueJump() {
+    if (!this.running || this.lost || this.personalPause || this.detainedT > 0 || this.drive) return;
+    this.jumpBufT = JUMP_BUFFER_S;
+  }
+
   /** Swing the held arm — claws, blade, axe, hammer… or sad bare fists. */
   attack() {
     if (!this.running || this.personalPause || this.lost || this.attackCd > 0 || this.faintT > 0 || this.detainedT > 0 || this.drive) return;
@@ -5687,7 +5698,11 @@ export class GameEngine {
     if (this.personalPause || this.lost) {
       this.input.f = 0; this.input.r = 0; this.input.sprint = false;
       this.input.jump = false; this.input.turn = 0;
+      this.jumpBufT = 0; // ⏱️ no banking jumps through a pause
     }
+    // ⏱️ the banked jump tap decays in GAME time — it stays live across laggy
+    // real-time gaps (that's the point) but never lingers into unrelated states
+    this.jumpBufT = Math.max(0, this.jumpBufT - dt);
 
     // 🎮 keyboard camera turn (hold Z / X) — the fallback when the mouse cursor
     // can't be hard-locked (sandboxed preview iframes block pointer lock) and the
@@ -5832,11 +5847,15 @@ export class GameEngine {
       p.stamina = this.stamina; // engine stamina is the single source of truth
       // while dizzy from a car bonk the legs don't answer — momentum carries the tumble
       const faint = this.faintT > 0;
+      // ⏱️ jump buffer — the fresh Space tap banks in game time and waits for
+      // this sim frame; a laggy frame mid-sprint can no longer swallow it
+      const wantJump = this.jumpBufT > 0;
+      this.input.jump = wantJump; // legacy mirror — the emote-break + HUD still read input.jump
       // 🎭 real actions cancel the party tricks — first step / jump ends the dance
-      if ((this.input.f !== 0 || this.input.r !== 0 || this.input.jump) && (this.danceOn || this.waveT > 0)) this.breakEmote();
+      if ((this.input.f !== 0 || this.input.r !== 0 || wantJump) && (this.danceOn || this.waveT > 0)) this.breakEmote();
       stepBody(p, faint
         ? { f: 0, r: 0, sprint: false, jump: false }
-        : { f: this.input.f, r: this.input.r, sprint: this.input.sprint, jump: this.input.jump },
+        : { f: this.input.f, r: this.input.r, sprint: this.input.sprint, jump: wantJump },
         dt, this.look.age, this.world, {
           yaw: this.input.yaw,
           // 🩸 the beast inside you runs FASTER than any kid · ⚡ Sonic Dash blurs
@@ -5862,6 +5881,7 @@ export class GameEngine {
         if (this.activePower !== "jump") this.stamina = Math.max(0, this.stamina - JUMP2_COST);
         this.flipT = FLIP_S;
       }
+      if (p.jumps !== prevJumps) this.jumpBufT = 0; // ⏱️ a jump fired — the banked tap is spent (one press = one attempt)
       if (prevY > 0 && p.y === 0) { sfx.land(); this.squashT = LAND_SQUASH_S; }
       if (this.stamina <= 0.5 && !this.exhaustedAnnounced) {
         this.exhaustedAnnounced = true;

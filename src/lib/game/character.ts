@@ -734,6 +734,10 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
       if (flipEdge) claimed = glbWantAct(st, CLIPS.flipStart, { loop: false, fade: 0.06 });
       if (glbClipReady(st, CLIPS.flipAir)) {
         glbEnsureClips(st, [CLIPS.flipAir]);
+        if (gs.airSwap && gs.airSwap !== CLIPS.flipAir) {
+          const prev = st.actions[gs.airSwap]; // 🛬 zero the outgoing swap — an abandoned
+          if (prev) prev.setEffectiveWeight(0); //    hot air pose would blend over the ground trio forever
+        }
         gs.airSwap = CLIPS.flipAir;
         claimed = true;
       }
@@ -743,16 +747,23 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
       if (airEdge) claimed = glbWantAct(st, CLIPS.jumpStart, { loop: false, fade: 0.06 });
       if (glbClipReady(st, CLIPS.jumpAir)) {
         glbEnsureClips(st, [CLIPS.jumpAir]);
+        if (gs.airSwap && gs.airSwap !== CLIPS.jumpAir) {
+          const prev = st.actions[gs.airSwap]; // 🛬 zero the outgoing swap (flip → plain air handover)
+          if (prev) prev.setEffectiveWeight(0);
+        }
         gs.airSwap = CLIPS.jumpAir;
         if (!claimed) claimed = true;
       }
     }
   } else if (gs.airSwap) {
-    // 🛬 just landed from a clip-swap jump — zero the swap action's weight
-    // (the trio-zeroing loop only covers Idle/Walk/Run), then flip landers
-    // play the real landing one-shot; plain jumpers let the squash sell it
-    const swapAct = st.actions[gs.airSwap];
-    if (swapAct) swapAct.setEffectiveWeight(0);
+    // 🛬 just landed from a clip-swap jump — zero BOTH swap actions' weight
+    // (a mid-air handover can leave an earlier one hot; the trio-zeroing loop
+    // only covers Idle/Walk/Run), then flip landers play the real landing
+    // one-shot; plain jumpers let the squash sell it
+    for (const n of [CLIPS.jumpAir, CLIPS.flipAir]) {
+      const a = st.actions[n];
+      if (a) a.setEffectiveWeight(0);
+    }
     const wasFlip = gs.airSwap === CLIPS.flipAir;
     gs.airSwap = null;
     if (wasFlip && !NO_EDGE) claimed = glbWantAct(st, CLIPS.flipLand, { loop: false, fade: 0.09 });

@@ -1214,8 +1214,7 @@ function MobileButtons({ engine }: { engine: GameEngine }) {
         className="h-16 w-16 rounded-full border-2 border-white/50 bg-amber-400/80 text-lg font-black text-amber-950 shadow-lg active:scale-95"
         onTouchStart={(e) => {
           e.preventDefault();
-          engine.input.jump = true;
-          setTimeout(() => { engine.input.jump = false; }, 120);
+          engine.queueJump(); // ⏱️ banked in game time — laggy frames can't swallow it
         }}
       >JUMP</button>
       <button

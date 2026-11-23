@@ -129,6 +129,7 @@ export const GRAVITY = 22;
 
 /* ---------- jump feel ---------- */
 export const COYOTE_S = 0.12;        // grace window to jump after walking off an edge
+export const JUMP_BUFFER_S = 0.16;   // ⏱️ a Space tap waits this many GAME seconds to be honored — a laggy frame can no longer swallow it
 export const DOUBLE_JUMP_VY = 0.92;  // double-jump power as a fraction of the ground jump
 export const JUMP2_COST = 8;         // extra stamina for the mid-air double jump
 export const FLIP_S = 0.55;          // front-flip duration after a double jump

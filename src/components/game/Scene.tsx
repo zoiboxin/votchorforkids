@@ -93,10 +93,7 @@ export function useGameInput(engine: GameEngine | null) {
       }
       if (e.code === "Space") {
         e.preventDefault();
-        if (!menuOwns) {
-          engine.input.jump = true;
-          setTimeout(() => { engine.input.jump = false; }, 120);
-        }
+        if (!menuOwns && !e.repeat) engine.queueJump(); // ⏱️ banked in game time — laggy frames can't swallow it
       }
       if (menuOwns) { applyKey(); return; }
       if (e.code === "KeyE" && !e.repeat) engine.interact();

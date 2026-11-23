@@ -63,12 +63,17 @@ export function stepBody(
   // ---- jump / double jump (edge-detected via latch) ----
   // ⛰️ "ground" is the terrain height in the mountain band — hills are jumpable,
   // and walking up a slope pops you onto it like a ramp
+  // 🐛 the coyote window used to swallow the DOUBLE JUMP: airT also runs fresh
+  // right after a real jump, so a quick tap-tap re-entered this branch as a
+  // second FULL-POWER "ground" jump (jumps stayed 1 — no flip, no jump2 sfx).
+  // Coyote forgiveness now applies only to a body that hasn't jumped yet
+  // (stepping off a ledge keeps jumps=0; a real jump sets jumps=1).
   const ground = terrainHeight(b.x, b.z);
   if (inp.jump && !b.jumpLatch) {
     const js = opts.jumpScale ?? 1;
     b.jumpLatch = true;
-    if (b.y <= ground + 0.02 || b.airT < COYOTE_S) {
-      b.vy = A.jump * js;                  // ground (or coyote) jump
+    if (b.y <= ground + 0.02 || (b.airT < COYOTE_S && b.jumps === 0)) {
+      b.vy = A.jump * js;                  // ground (or ledge-coyote) jump
       if (b.y <= ground) b.y = ground + 0.01;
       b.jumps = 1;
     } else if (b.jumps < 2) {
