@@ -15,7 +15,9 @@
  *   • Idle clip runs on the shared mixer (pure standing sway, no hops —
  *     the hero plants on the floor like the big-game lobbies)
  *   • floor: fading asphalt patch + soft shadow pool + small amber/teal ring
- *   • three zombie-ghost SILHOUETTES shuffle across the distant road
+ *   • three zombie-ghost SILHOUETTES patrol the full distant road — edge
+ *     to edge, softly dissolving at one side, rematerializing seconds
+ *     later and shuffling all the way to the other side
  *     (borrowed Grimlight rigs — zero extra downloads, pure ambience)
  *   • streams in on demand (no cartoon stand-in): a loader chip until the
  *     file lands, a retry hint if the CDN is unreachable
@@ -203,46 +205,108 @@ function HeroBody({
 
 /* ---------------- distant zombie-ghost shamblers ---------------- */
 
-/** Three shadowy zombies shuffling across the road FAR behind the hero.
+/** Three shadowy zombies patrolling the road FAR behind the hero.
  *  ZERO extra bytes: they borrow Grimlight denizen rigs that
  *  preloadGlbCharacters() already streams for the game's zombie bots —
  *  the lobby just joins the same cached downloads once the hero is on
  *  stage, and renders nothing at all on any failure. Every mesh is
  *  swapped to one shared translucent shadow material per ghost, so they
  *  cost no lighting and read as dark silhouettes melted into the misty
- *  backdrop (near ghost strongest, far ghost faintest — depth fog). */
+ *  backdrop (near ghost strongest, far ghost faintest — depth fog).
+ *
+ *  Patrol loop: shuffle the FULL visible width of the road → softly
+ *  dissolve at the frame edge → stay gone a few seconds → rematerialize
+ *  at that same edge → shuffle all the way to the OPPOSITE edge → repeat.
+ *  The turnaround point is computed LIVE from the camera frustum at each
+ *  ghost's own depth, so "full left / full right" is the true frame edge
+ *  on every viewport (wide desktop → long sweep, narrow phone → short). */
 const GHOST_SLUGS = [
-  { slug: "flesh-eater-8401c3", x0: -2.3, z: -7.2, dir: 1, drift: 0.55, bound: 3.2, speed: 0.8, opacity: 0.52 },
-  { slug: "undead-pirate-608c9b", x0: 2.4, z: -8.4, dir: -1, drift: 0.45, bound: 2.9, speed: 0.7, opacity: 0.4 },
-  { slug: "mourning-widow-ab6c34", x0: 0.7, z: -9.8, dir: 1, drift: 0.38, bound: 2.6, speed: 0.6, opacity: 0.3 },
+  { slug: "flesh-eater-8401c3", x0: -2.3, z: -7.2, dir: 1, drift: 0.9, speed: 0.85, opacity: 0.52, hold: 2.4 },
+  { slug: "undead-pirate-608c9b", x0: 2.4, z: -8.4, dir: -1, drift: 0.75, speed: 0.75, opacity: 0.4, hold: 3.6 },
+  { slug: "mourning-widow-ab6c34", x0: 0.7, z: -9.8, dir: 1, drift: 0.65, speed: 0.65, opacity: 0.3, hold: 4.8 },
 ] as const;
 
 type GhostCfg = (typeof GHOST_SLUGS)[number];
+type GhostPhase = "walk" | "out" | "hidden" | "in";
 
-function GhostActor({ inst, cfg }: { inst: GlbInstance; cfg: GhostCfg }) {
+const FADE_S = 1.4; // seconds to dissolve / rematerialize
+const SINK = 0.16;  // melts a touch into the road while fading
+
+function GhostActor({
+  inst, cfg, mat,
+}: { inst: GlbInstance; cfg: GhostCfg; mat: THREE.MeshBasicMaterial }) {
   const g = useRef<THREE.Group>(null!);
-  const st = useRef({ x: cfg.x0, dir: cfg.dir });
+  const st = useRef({ x: cfg.x0, dir: cfg.dir, phase: "walk" as GhostPhase, t: 0 });
   const reduced = useRef(
     typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches,
   );
 
   useEffect(() => () => inst.mixer.stopAllAction(), [inst]);
 
-  useFrame((_, dt) => {
+  useFrame((s, dt) => {
     const d = Math.min(0.1, Math.max(0, dt));
+    const q = st.current;
+    let fade = 1;
+    let sink = 0;
+    let visible = true;
+
     if (!reduced.current) {
-      // lazy shamble + slow ping-pong wander across the distant road
-      inst.mixer.update(d * cfg.speed);
-      const s = st.current;
-      s.x += s.dir * cfg.drift * d;
-      if (s.x > cfg.bound) { s.x = cfg.bound; s.dir = -1; }
-      if (s.x < -cfg.bound) { s.x = -cfg.bound; s.dir = 1; }
+      // visible half-width of the frame at THIS ghost's depth — "full
+      // left / full right" means the actual frame edge on every viewport
+      const cam = s.camera as THREE.PerspectiveCamera;
+      const dz = Math.max(1, cam.position.z - cfg.z);
+      const halfW = Math.tan(((cam.fov * Math.PI) / 180) / 2) * dz * (cam.aspect || 1.6);
+      const edge = halfW * 1.02;
+
+      if (q.phase === "walk") {
+        q.x += q.dir * cfg.drift * d;
+        inst.mixer.update(d * cfg.speed);
+        if (q.dir > 0 ? q.x >= edge : q.x <= -edge) {
+          q.x = edge * q.dir;
+          q.phase = "out";
+          q.t = 0;
+        }
+      } else if (q.phase === "out") {
+        // softly dissolve at the edge — still shuffling as it melts away
+        inst.mixer.update(d * cfg.speed);
+        q.t += d;
+        const p = Math.min(1, q.t / FADE_S);
+        const e = p * p * (3 - 2 * p); // smoothstep — a melt, not a blink
+        fade = 1 - e;
+        sink = SINK * e;
+        if (p >= 1) { q.phase = "hidden"; q.t = 0; visible = false; }
+      } else if (q.phase === "hidden") {
+        // gone for a few seconds — mixer paused, mesh skipped entirely
+        q.t += d;
+        fade = 0;
+        visible = false;
+        if (q.t >= cfg.hold) {
+          q.dir = -q.dir; // rematerialize facing the way it is about to walk
+          q.phase = "in";
+          q.t = 0;
+        }
+      } else {
+        // "in" — rematerialize at the same edge, then walk to the far one
+        inst.mixer.update(d * cfg.speed);
+        q.t += d;
+        const p = Math.min(1, q.t / FADE_S);
+        const e = p * p * (3 - 2 * p);
+        fade = e;
+        sink = SINK * (1 - e);
+        if (p >= 1) q.phase = "walk";
+      }
     }
+    // prefers-reduced-motion: silhouettes stand still at their start spots
+
+    mat.opacity = cfg.opacity * fade;
     if (g.current) {
-      g.current.position.set(st.current.x, 0, cfg.z);
-      // face the wander direction (eased so the turnaround reads naturally)
-      const target = st.current.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
-      g.current.rotation.y += (target - g.current.rotation.y) * Math.min(1, d * 6);
+      g.current.visible = visible;
+      if (visible) {
+        g.current.position.set(q.x, -sink, cfg.z);
+        // face the travel direction (eased so turnarounds read naturally)
+        const target = q.dir > 0 ? Math.PI / 2 : -Math.PI / 2;
+        g.current.rotation.y += (target - g.current.rotation.y) * Math.min(1, d * 6);
+      }
     }
   });
 
@@ -254,7 +318,7 @@ function GhostActor({ inst, cfg }: { inst: GlbInstance; cfg: GhostCfg }) {
 }
 
 function GhostShamblers() {
-  const [ghosts, setGhosts] = useState<{ inst: GlbInstance; cfg: GhostCfg }[] | null>(null);
+  const [ghosts, setGhosts] = useState<{ inst: GlbInstance; cfg: GhostCfg; mat: THREE.MeshBasicMaterial }[] | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -265,7 +329,7 @@ function GhostShamblers() {
       void Promise.all(GHOST_SLUGS.map((c) => loadGlbTemplate(c.slug).catch(() => null))).then(
         (tpls) => {
           if (!live) return;
-          const made: { inst: GlbInstance; cfg: GhostCfg }[] = [];
+          const made: { inst: GlbInstance; cfg: GhostCfg; mat: THREE.MeshBasicMaterial }[] = [];
           GHOST_SLUGS.forEach((cfg, i) => {
             if (!tpls[i]) return; // failed/unavailable → skip quietly
             const inst = makeGlbInstance(cfg.slug, 1);
@@ -291,7 +355,7 @@ function GhostShamblers() {
               inst.actions.Walk.play();
               inst.actions.Walk.setEffectiveWeight(1);
             }
-            made.push({ inst, cfg });
+            made.push({ inst, cfg, mat });
           });
           if (made.length) setGhosts(made);
         },
@@ -304,7 +368,7 @@ function GhostShamblers() {
   return (
     <group>
       {ghosts.map((gh) => (
-        <GhostActor key={gh.cfg.slug} inst={gh.inst} cfg={gh.cfg} />
+        <GhostActor key={gh.cfg.slug} inst={gh.inst} cfg={gh.cfg} mat={gh.mat} />
       ))}
     </group>
   );
