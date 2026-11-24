@@ -21,7 +21,6 @@ import { Button } from "@/components/ui/button";
 import { useGame } from "./store";
 import { net } from "@/lib/game/net/client";
 import { LOBBY_MS } from "@/lib/game/net/matchlobby";
-import { PLAYERS_TOTAL } from "@/lib/game/constants";
 
 const SLOT_COLORS = ["#f472b6", "#fbbf24", "#4ade80", "#2dd4bf", "#f87171", "#c084fc", "#fb923c", "#a3e635"];
 
@@ -90,7 +89,6 @@ export function MatchLobby() {
 
   /* ---------- derived ---------- */
   const realCount = Math.max(1, mp.players.length || 1);
-  const botsFill = PLAYERS_TOTAL - realCount;
   const mode = mp.matchMode;
   const matching = left === null;
   const pct = matching ? 0 : Math.max(0, Math.min(1, (left ?? 0) / (LOBBY_MS / 1000)));
@@ -99,25 +97,39 @@ export function MatchLobby() {
 
   const banner =
     mode === "relobby" ? (
-      <div className="rounded-2xl border border-rose-400/40 bg-rose-500/10 px-4 py-2.5 text-center text-sm font-bold text-rose-200">
+      <div className="rounded-2xl border border-rose-400/40 bg-rose-950/60 px-4 py-2.5 text-center text-sm font-bold text-rose-200 shadow-lg backdrop-blur-md">
         🔴 A night is already running — it <b>restarts fresh</b> when the timer fires, so everyone plays together.
       </div>
     ) : mode === "solo" ? (
-      <div className="rounded-2xl border border-white/15 bg-white/5 px-4 py-2.5 text-center text-sm font-bold text-slate-300">
+      <div className="rounded-2xl border border-white/15 bg-slate-950/60 px-4 py-2.5 text-center text-sm font-bold text-slate-300 shadow-lg backdrop-blur-md">
         📴 Matchmaking offline — a <b>solo night</b> starts when the timer fires (your world still joins the relay if it comes back).
       </div>
     ) : (
-      <div className="rounded-2xl border border-emerald-400/30 bg-emerald-400/10 px-4 py-2.5 text-center text-sm font-bold text-emerald-200">
+      <div className="rounded-2xl border border-emerald-400/30 bg-emerald-950/60 px-4 py-2.5 text-center text-sm font-bold text-emerald-200 shadow-lg backdrop-blur-md">
         ⚡ Waiting for survivors — share the code! Friends who <b>⚡ Quick join</b> land in THIS lobby.
       </div>
     );
 
   return (
-    <div className="fixed inset-0 z-40 overflow-y-auto bg-gradient-to-b from-slate-950 via-slate-900 to-amber-950/40">
-      <div className="mx-auto flex min-h-full w-full max-w-xl flex-col items-center justify-center gap-4 px-4 py-8 text-center">
+    <div className="fixed inset-0 z-40 overflow-y-auto">
+      {/* 🌙 cinematic night-town backdrop — the drop zone you are about to enter */}
+      <div
+        aria-hidden
+        className="fixed inset-0 bg-cover bg-center"
+        style={{ backgroundImage: "url(/hero-lobby-night.png)" }}
+      />
+      <div aria-hidden className="fixed inset-0 bg-slate-950/72" />
+      <div aria-hidden className="fixed inset-0 bg-gradient-to-b from-slate-950/85 via-slate-950/35 to-slate-950/90" />
+
+      <div className="relative mx-auto flex min-h-full w-full max-w-xl flex-col items-center justify-center gap-4 px-4 py-8 text-center">
         <motion.div initial={{ opacity: 0, y: 14 }} animate={{ opacity: 1, y: 0 }}>
-          <h1 className="text-3xl font-black tracking-tight text-amber-100">🏟️ Match Lobby</h1>
-          <p className="mt-1 text-sm text-slate-400">
+          <h1
+            className="text-3xl font-black tracking-tight text-amber-100"
+            style={{ textShadow: "0 0 24px rgba(251,191,36,0.35), 0 2px 12px rgba(0,0,0,0.8)" }}
+          >
+            🏟️ Match Lobby
+          </h1>
+          <p className="mt-1 text-sm font-semibold text-slate-300/90" style={{ textShadow: "0 1px 6px rgba(0,0,0,0.8)" }}>
             {mode === "relobby"
               ? "Regathering the squad for a fresh night"
               : "The 7 nights launch together — PUBG style"}
@@ -132,15 +144,24 @@ export function MatchLobby() {
           role="timer"
           aria-label={matching ? "Matching — connecting to matchmaking" : `${left} seconds until the match starts`}
         >
+          <div
+            aria-hidden
+            className="absolute inset-2 rounded-full"
+            style={{
+              background: mode === "relobby"
+                ? "radial-gradient(circle, rgba(251,113,133,0.28) 0%, transparent 70%)"
+                : "radial-gradient(circle, rgba(251,191,36,0.28) 0%, transparent 70%)",
+            }}
+          />
           <svg width="170" height="170" viewBox="0 0 170 170" className="-rotate-90">
-            <circle cx="85" cy="85" r={R} fill="none" stroke="rgba(255,255,255,0.08)" strokeWidth="10" />
+            <circle cx="85" cy="85" r={R} fill="rgba(2,6,23,0.55)" stroke="rgba(255,255,255,0.14)" strokeWidth="10" />
             <circle
               cx="85" cy="85" r={R} fill="none"
               stroke={mode === "relobby" ? "#fb7185" : "#fbbf24"}
               strokeWidth="10" strokeLinecap="round"
               strokeDasharray={CIRC}
               strokeDashoffset={CIRC * (1 - pct)}
-              style={{ transition: "stroke-dashoffset 0.3s linear" }}
+              style={{ transition: "stroke-dashoffset 0.3s linear", filter: "drop-shadow(0 0 6px rgba(251,191,36,0.55))" }}
             />
           </svg>
           <div className="absolute inset-0 grid place-items-center">
@@ -148,8 +169,8 @@ export function MatchLobby() {
               <div className="animate-pulse text-sm font-black uppercase tracking-widest text-amber-200">Matching…</div>
             ) : (
               <div>
-                <div className="text-6xl font-black tabular-nums text-white">{left}</div>
-                <div className="text-[10px] font-bold uppercase tracking-[0.25em] text-slate-400">seconds</div>
+                <div className="text-6xl font-black tabular-nums text-white" style={{ textShadow: "0 2px 14px rgba(0,0,0,0.85)" }}>{left}</div>
+                <div className="text-[10px] font-bold uppercase tracking-[0.25em] text-slate-300">seconds</div>
               </div>
             )}
           </div>
@@ -161,7 +182,7 @@ export function MatchLobby() {
         {mp.code ? (
           <button
             onClick={copyCode}
-            className="rounded-2xl border border-white/15 bg-white/5 px-6 py-3 transition hover:bg-white/10"
+            className="rounded-2xl border border-white/15 bg-slate-950/55 px-6 py-3 shadow-lg backdrop-blur-md transition hover:border-amber-300/40 hover:bg-slate-900/70"
             title="Click to copy the room code"
           >
             <div className="text-[10px] font-bold uppercase tracking-[0.25em] text-slate-400">Room code — click to copy</div>
@@ -170,20 +191,20 @@ export function MatchLobby() {
             </div>
           </button>
         ) : (
-          <div className="rounded-2xl border border-dashed border-white/15 px-6 py-3 text-xs text-slate-500">
+          <div className="rounded-2xl border border-dashed border-white/20 bg-slate-950/50 px-6 py-3 text-xs font-semibold text-slate-400 backdrop-blur-md">
             No room — starting a solo session
           </div>
         )}
 
         {/* squad roster */}
-        <div className="w-full rounded-2xl border border-white/10 bg-white/5 p-4">
-          <div className="mb-2 flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-400">
+        <div className="w-full rounded-2xl border border-white/12 bg-slate-950/55 p-4 shadow-lg backdrop-blur-md">
+          <div className="mb-2 flex items-center justify-between text-xs font-bold uppercase tracking-wider text-slate-300">
             <span>Real survivors</span>
             <span>{realCount}/8 souls</span>
           </div>
           <div className="space-y-1.5">
             {(mp.players.length ? mp.players : [{ sid: "me", slot: mp.slot, name: useGame.getState().playerName || "You", ready: true, self: true }]).map((p) => (
-              <div key={p.sid} className="flex items-center gap-3 rounded-xl border border-white/10 bg-slate-900/50 px-3 py-2 text-left">
+              <div key={p.sid} className="flex items-center gap-3 rounded-xl border border-white/10 bg-slate-900/70 px-3 py-2 text-left">
                 <span
                   className="grid h-7 w-7 shrink-0 place-items-center rounded-full text-[10px] font-black text-slate-950"
                   style={{ backgroundColor: SLOT_COLORS[p.slot % SLOT_COLORS.length] }}
@@ -199,9 +220,6 @@ export function MatchLobby() {
               </div>
             ))}
           </div>
-          <div className="mt-3 rounded-xl border border-amber-400/25 bg-amber-400/10 px-3 py-2 text-[11px] font-bold text-amber-200">
-            🤖 AI fills the rest: <b>{botsFill}</b> bots — survivors, vote-runners 🏃 &amp; police officers 👮 · {PLAYERS_TOTAL} souls in one session. Each dusk, half may turn…
-          </div>
         </div>
 
         {/* actions */}
@@ -209,7 +227,7 @@ export function MatchLobby() {
           {mp.isHost && mode !== "solo" && (
             <Button
               onClick={launch}
-              className="h-12 flex-1 bg-amber-500 text-lg font-black text-slate-950 hover:bg-amber-400"
+              className="h-12 flex-1 bg-amber-500 text-lg font-black text-slate-950 shadow-lg shadow-amber-500/25 hover:bg-amber-400"
             >
               🚀 Launch now
             </Button>
@@ -223,7 +241,7 @@ export function MatchLobby() {
           </Button>
         </div>
 
-        <p className="pb-2 text-[11px] text-slate-500">
+        <p className="pb-2 text-[11px] font-semibold text-slate-400" style={{ textShadow: "0 1px 6px rgba(0,0,0,0.8)" }}>
           When the timer fires, every lobby member drops into the same town at the same moment — the night syncs in real time from there.
         </p>
       </div>

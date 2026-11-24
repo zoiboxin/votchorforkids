@@ -5,7 +5,7 @@ import { AnimatePresence, motion } from "framer-motion";
 import {
   Heart, Zap, Star, Sun, Moon, MapPin, Volume2, VolumeX, Pause, Play as PlayIcon,
   Gauge, CircleHelp, Flag, Home, Settings as SettingsIcon, CheckCircle2, Siren, Info, ShieldCheck,
-  ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon, Mouse, Eye, ScrollText,
+  ChevronUp, Timer, Package, Copy, Check, X, Map as MapIcon, MousePointerClick, Eye, ScrollText,
 } from "lucide-react";
 import type { GameEngine } from "@/lib/game/engine";
 import { AIRPORT, DETAIN_SECONDS, GRAVEYARD, ITEMS, INV_SLOTS, MUSEUM, NIGHTS_TOTAL, POLICE_STATIONS, POWERS, PREHISTORIC, TOOLS, WILDLIFE_ENABLED } from "@/lib/game/constants";
@@ -359,7 +359,14 @@ function Minimap({ engine, onOpen, pin }: { engine: GameEngine; onOpen: () => vo
   }, [engine, hud, pin]);
   return (
     <button
-      data-ui type="button" onClick={onOpen}
+      data-ui type="button"
+      onClick={() => {
+        // 🖱️ cursor not welded yet? this click IS a fresh gesture — bind the mouse
+        // first (the map then frees it again), so hunting for the map can never
+        // leave the player stuck with an unbound camera
+        if (!document.pointerLockElement) requestGameLock();
+        onOpen();
+      }}
       title="Open the big world map (M)"
       aria-label="Open the big world map"
       className="pointer-events-auto relative block origin-top-right scale-[0.72] cursor-pointer transition-transform hover:scale-90 sm:scale-100 sm:hover:scale-105"
@@ -1963,7 +1970,10 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
               transition={{ type: "spring", stiffness: 380, damping: 26 }}
               role="note"
               aria-label="Goal and quick tips — press I to hide"
-              className="pointer-events-auto w-[248px] rounded-2xl bg-black/55 p-3 text-white shadow-2xl ring-1 ring-white/15 backdrop-blur-md sm:w-[268px]"
+              /* 🖱️ click-through card: only the ✕ is interactive, every other
+                 click falls through to the world so hunting for the bind never
+                 dead-ends on this card (the grab handler welds the mouse) */
+              className="pointer-events-none w-[248px] rounded-2xl bg-black/55 p-3 text-white shadow-2xl ring-1 ring-white/15 backdrop-blur-md sm:w-[268px]"
             >
               <div className="flex items-start justify-between gap-2">
                 <p className="text-[11px] font-semibold leading-snug">
@@ -1973,7 +1983,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
                 <button
                   onClick={() => setShowHelp(false)}
                   aria-label="Hide goal card (I)"
-                  className="shrink-0 rounded-md p-0.5 text-white/55 transition-colors hover:bg-white/15 hover:text-white"
+                  className="pointer-events-auto shrink-0 rounded-md p-0.5 text-white/55 transition-colors hover:bg-white/15 hover:text-white"
                 >
                   <X size={13} />
                 </button>
@@ -1993,31 +2003,41 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         </AnimatePresence>
       </div>
 
-      {/* mouse steering hint — the cursor is bound to the game while playing */}
+      {/* mouse steering hints — the cursor is bound to the game while playing */}
       {!touch && !paused && !victoryOpen && !hud.detained && (
-        <div className="absolute left-1/2 top-16 -translate-x-1/2">
+        <div className="pointer-events-none absolute left-1/2 top-16 -translate-x-1/2">
           <AnimatePresence mode="wait">
-            {mouseLocked ? (
-              lockTip ? (
-                <motion.div
-                  key="lock-tip" role="status"
-                  initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
-                  className="rounded-full bg-black/45 px-4 py-1.5 text-xs font-bold text-white/90 backdrop-blur-md"
-                >
-                  Mouse locked to the game — press <b className="text-yellow-300">Esc</b> to pause
-                </motion.div>
-              ) : null
-            ) : (
+            {mouseLocked && lockTip ? (
               <motion.div
-                key="steer-tip" role="status"
+                key="lock-tip" role="status"
                 initial={{ opacity: 0, y: -8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
-                className="flex items-center gap-1.5 rounded-full bg-black/45 px-4 py-1.5 text-xs font-bold text-white/90 backdrop-blur-md"
+                className="rounded-full bg-black/45 px-4 py-1.5 text-xs font-bold text-white/90 backdrop-blur-md"
               >
-                <Mouse size={13} aria-hidden />
-                <span>Click to lock the mouse · hold Z / X to turn the camera</span>
+                Mouse locked to the game — press <b className="text-yellow-300">Esc</b> to pause
               </motion.div>
-            )}
+            ) : null}
           </AnimatePresence>
+        </div>
+      )}
+
+      {/* 🖱️ mouse NOT bound yet — a big, CLICK-THROUGH call-to-action dead center.
+          The match lobby boots the world from a timer (no fresh gesture), so the
+          automatic pointer-lock fails there; this banner makes the bind obvious
+          and pointer-events-none lets the player's click fall through to the
+          world, where it grabs the lock (a W press binds too). */}
+      {!touch && !paused && !victoryOpen && !hud.detained && !mouseLocked && (
+        <div className="pointer-events-none absolute left-1/2 top-[30%] z-10 -translate-x-1/2">
+          <motion.div
+            key="bind-tip" role="status"
+            initial={{ opacity: 0, y: 10, scale: 0.94 }} animate={{ opacity: 1, y: 0, scale: 1 }} exit={{ opacity: 0, y: 10, scale: 0.94 }}
+            className="animate-pulse flex items-center gap-2.5 rounded-2xl border border-amber-300/60 bg-black/65 px-5 py-3 text-base font-black text-amber-200 shadow-xl backdrop-blur-md"
+          >
+            <MousePointerClick size={20} aria-hidden />
+            <span>Click anywhere — or press W — to bind the mouse</span>
+          </motion.div>
+          <p className="mt-2 text-center text-[11px] font-bold text-white/75" style={{ textShadow: "0 1px 6px rgba(0,0,0,0.9)" }}>
+            hold <b>Z</b> / <b>X</b> to turn the camera meanwhile
+          </p>
         </div>
       )}
 

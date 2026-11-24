@@ -82,6 +82,20 @@ export function useGameInput(engine: GameEngine | null) {
     const down = (e: KeyboardEvent) => {
       if (typing(e)) return;
       keys.add(e.code);
+      // 🖱️ the first movement/action key WELDS the mouse to the camera: a keydown
+      // grants the page transient activation, so no click is needed. The match
+      // lobby launches the world from a 30 s countdown timer — no fresh gesture
+      // at boot — so the automatic lock request there fails silently; the first
+      // WASD / Space / F press is the gesture that actually binds the cursor.
+      {
+        const s = useGame.getState();
+        const moveKey = e.code === "KeyW" || e.code === "KeyA" || e.code === "KeyS" || e.code === "KeyD" ||
+          e.code === "Space" || e.code === "KeyF" || e.code === "ShiftLeft" || e.code === "ShiftRight" ||
+          e.code === "ArrowUp" || e.code === "ArrowDown" || e.code === "ArrowLeft" || e.code === "ArrowRight";
+        if (moveKey && s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen && !s.wheelOpen && !s.licenseOpen && !s.touch && !document.pointerLockElement) {
+          requestGameLock();
+        }
+      }
       // 🖱️ menus own the keyboard: the big map, the tool wheel and the victory
       // screen swallow every game verb (E/F/B/V/R/Q/H) so nothing fires unseen
       const s0 = useGame.getState();
@@ -213,8 +227,19 @@ export function useGameInput(engine: GameEngine | null) {
     };
     // a late/rejected lock attempt must never clear a LIVE lock (Chrome fires
     // pointerlockerror during its post-Escape cooldown even when a later
-    // request succeeded — only clear the flag when truly unlocked)
-    const ple = () => { if (!document.pointerLockElement) useGame.getState().setMouseLocked(false); };
+    // request succeeded — only clear the flag when truly unlocked). AND: Chrome
+    // rejects requests for ~1.25 s after a failed/escaped lock, so one quiet
+    // retry lands the bind when the player's first click arrived during that
+    // cooldown (the click's activation is still fresh — the retry succeeds).
+    let pleRetry = 0;
+    const ple = () => {
+      if (!document.pointerLockElement) useGame.getState().setMouseLocked(false);
+      clearTimeout(pleRetry);
+      pleRetry = window.setTimeout(() => {
+        const s = useGame.getState();
+        if (s.screen === "play" && !s.paused && !s.victoryOpen && !s.bigMapOpen && !s.wheelOpen && !s.licenseOpen && !s.touch && !document.pointerLockElement) requestGameLock();
+      }, 1400);
+    };
     // free the cursor whenever a menu, modal, the big map or the victory screen takes over
     const lockWatch = setInterval(() => {
       const s = useGame.getState();
@@ -275,6 +300,7 @@ export function useGameInput(engine: GameEngine | null) {
       removeEventListener("click", grab);
       document.removeEventListener("pointerlockchange", plc);
       document.removeEventListener("pointerlockerror", ple);
+      clearTimeout(pleRetry);
       clearInterval(lockWatch);
       removeEventListener("touchstart", ts);
       removeEventListener("touchmove", tm);
