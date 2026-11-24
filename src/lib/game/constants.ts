@@ -918,14 +918,16 @@ export const CREW_PURSE: readonly [number, number] = [40, 120]; // $ each surviv
 export const CIV_PURSE: readonly [number, number] = [10, 60];   // $ each townsfolk carries
 export const ZOMBIE_PURSE: readonly [number, number] = [10, 30]; // $ dropped by a slain zombie
 /* ---------- ⚰️ the phantom hearse's graveyard guardians ----------
- * Walk up to the unique hearse and the dirt erupts: HEARSE_GUARD_COUNT
- * restless dead rise around it and hunt whoever came to take the car.
- * A real fight — tougher than street zombies (more HP, they swarm), and
- * they NEVER back off while you stay near the hearse. Slay the whole pack
- * to unlock the wheel (day or night — they don't crumble at dawn).      */
-export const HEARSE_GUARD_COUNT = 4;
-export const HEARSE_GUARD_HP = 60;      // ~8 punches / 2 sword hits each
-export const HEARSE_GUARD_SPEED = 3.3;  // slower than night zombies — you CAN kite
+ * Walk up to the unique hearse and the dirt erupts: a pack of 3-4 restless
+ * dead (rolled fresh on every encounter) rises around it and hunts whoever
+ * came to take the car. A real fight — tougher than street zombies (more
+ * HP, they swarm), and they NEVER back off while you stay near the hearse.
+ * Slay the whole pack to unlock the wheel (day or night — they don't
+ * crumble at dawn).                                                      */
+export const HEARSE_GUARD_COUNT_MIN = 3;
+export const HEARSE_GUARD_COUNT_MAX = 4;
+export const HEARSE_GUARD_HP = 70;      // ~9 punches / 2-3 sword hits each — a REAL fight
+export const HEARSE_GUARD_SPEED = 3.5;  // slower than night zombies — you CAN kite, barely
 export const HEARSE_GUARD_DMG = 8;      // rotting hands — horde parity (the graveyard
                                         // trip ALSO bleeds wall-drain, so it adds up)
 export const HEARSE_GUARD_LEASH = 32;   // they pursue within this range of the car…
