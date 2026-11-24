@@ -50,6 +50,8 @@ const FILES = {
   backhoe: "/models/construction/backhoe-loader-66dccb.glb",
   roadRoller: "/models/construction/tandem-road-roller-f7d8f3.glb",
   mixerTruck: "/models/construction/concrete-mixer-truck-4a8d94.glb",
+  arrowBoard: "/models/construction/arrow-board-2eea6b.glb",
+  skip: "/models/construction/builder-s-skip-191d35.glb",
 } as const;
 
 export type ConstructionKind = keyof typeof FILES;
@@ -168,6 +170,15 @@ export function bakeConstructionModel(kind: ConstructionKind, placements: Constr
   const mesh = new THREE.Mesh(merged, mat);
   mesh.castShadow = true;
   return mesh;
+}
+
+/** A fresh CLONE of one kit template (shares geometry + material) — used for
+ *  the live crane tops, which must rotate independently of the baked mesh.
+ *  Returns null while the model is still streaming in. */
+export function cloneConstructionModel(kind: ConstructionKind): THREE.Group | null {
+  const rig = cache.get(kind);
+  if (!rig) return null;
+  return rig.template.clone();
 }
 
 /** Fire the callback when every construction model is in (or immediately if so).

@@ -278,11 +278,82 @@ const MT_PEAKS: MTPeak[] = (() => {
   return list;
 })();
 
+/* ---------------- 🕳️ walkable construction digs ----------------
+ * Each building site carves a REAL pit into the ground — terraced dirt walls
+ * and a graded ramp the player walks DOWN and back UP (never a blocked "hole").
+ * terrainHeight returns the negative depth so the whole physics stack (player,
+ * bots, cars, camera) follows for free; the render side reads the SAME profile
+ * (the CityGround disc is holed over each pit and a dirt DigGround patch builds
+ * the walls/floor/ramp), so visuals and physics can never disagree.
+ * depth is metres below grade — 0 means solid ground.                          */
+export interface DigDef {
+  id: string;
+  cx: number; cz: number;        // site centre
+  hx: number; hz: number;        // dirt yard footprint (half extents, visual patch)
+  px: number; pz: number;        // pit rectangle (half extents, inside the yard)
+  depth: number;                 // floor depth below grade
+  rampSide: 0 | 1 | 2 | 3;       // 0 = north (+z) · 1 = east (+x) · 2 = south (−z) · 3 = west (−x)
+  rampW: number;                 // ramp corridor width
+}
+
+export const DIGS: DigDef[] = [
+  // A · Lakeshore Towers — deep foundation dig under the rising tower
+  { id: "A", cx: -168.75, cz: 33.75, hx: 24, hz: 23, px: 13, pz: 11.5, depth: 3.0, rampSide: 2, rampW: 5.4 },
+  // B · Eastside Mega Dig — the flagship open-pit excavation (deepest, 4.3m)
+  { id: "B", cx: 236.25, cz: -101.25, hx: 24.5, hz: 23.5, px: 18, pz: 15.5, depth: 4.3, rampSide: 0, rampW: 6.2 },
+  // C · Northgate Works — the block-build foundation dig (the x26/z125 site)
+  { id: "C", cx: 33.75, cz: 168.75, hx: 24, hz: 24, px: 12.5, pz: 11, depth: 2.7, rampSide: 3, rampW: 5.2 },
+];
+
+const smooth01 = (k: number) => { const t = Math.min(1, Math.max(0, k)); return t * t * (3 - 2 * t); };
+
+/** terraced wall fall — t 0 = floor edge … 1 = rim; returns depth fraction
+ *  1 → 0 in four levels (floor · lower terrace · upper terrace · grade) with
+ *  each dug face easing over the middle of its band, so the walls read as the
+ *  flat-shelved terraces in the kit cover art */
+function terraceFall(t: number): number {
+  const s = Math.min(4, Math.max(0, t * 4));
+  const i = Math.floor(s);
+  const f = s - i;
+  const step = Math.min(4, i + smooth01((f - 0.25) / 0.5)); // shelf … face … shelf
+  return Math.max(0, 1 - step / 4);
+}
+
+/** Excavation depth (metres below grade, ≥ 0) at world (x, z) — shared by
+ *  terrainHeight (physics), the CityGround hole and the DigGround patch mesh.
+ *  NEVER make this expensive: it runs per frame via terrainHeight. */
+export function digDown(x: number, z: number): number {
+  for (const d of DIGS) {
+    const ax = Math.abs(x - d.cx), az = Math.abs(z - d.cz);
+    if (ax > d.px + 0.6 || az > d.pz + 0.6) continue;      // quick reject (outside pit + rim lip)
+    const wallIn = Math.min(d.px - ax, d.pz - az);         // distance in from the NEAREST wall
+    const WALL_W = 5.2;                                    // terraced wall band width
+    let depth = d.depth * terraceFall(1 - Math.max(0, Math.min(1, wallIn / WALL_W)));
+    // the ramp corridor cuts a graded walkway through the wall terraces
+    const across = d.rampSide === 1 || d.rampSide === 3 ? z - d.cz : x - d.cx; // cross axis
+    const along = d.rampSide === 1 || d.rampSide === 3 ? ax : az;              // descent axis (≥ 0)
+    const onSide = d.rampSide === 0 ? z >= d.cz : d.rampSide === 2 ? z <= d.cz : d.rampSide === 1 ? x >= d.cx : x <= d.cx;
+    if (onSide) {
+      const half = d.rampW / 2;
+      const blend = 1 - smooth01((Math.abs(across) - half) / 1.1);        // soft corridor edges
+      if (blend > 0) {
+        // u 0 at the rim (grade) → 1 at the floor: the graded walkway descent
+        const u = 1 - Math.min(1, Math.max(0, (along - 2.5) / (d[along === az ? "pz" : "px"] - 2.5)));
+        depth = depth * (1 - blend) + d.depth * smooth01(u) * blend;
+      }
+    }
+    return depth;
+  }
+  return 0;
+}
+
 /** Ground height of the playable ⛰️ band (0 everywhere else). Climbing slows you
  *  the steeper it gets — see stepBody. NEVER make this expensive: it runs per frame. */
 export function terrainHeight(x: number, z: number): number {
   const r = Math.hypot(x, z);
-  if (r < MOUNTAIN_INNER - 10 || r > MOUNTAIN_OUTER + 14) return 0;
+  if (r < MOUNTAIN_INNER - 10 || r > MOUNTAIN_OUTER + 14) {
+    return -digDown(x, z); // 🕳️ the city digs — real walkable construction pits
+  }
   let h = 0;
   for (const p of MT_PEAKS) {
     const dx = x - p.x, dz = z - p.z;
@@ -724,20 +795,35 @@ function seededDerive(n: number): () => number {
 }
 
 /* ---------------- 🚧 Construction sites — polyfork Construction Site kit ----------------
- * Three REAL building sites grow on empty city blocks (one per compass side):
- *   A  "Lakeshore Towers"  — a tower-crane steel-frame build in the west
- *   B  "Eastside Dig"      — an excavation/trench job in the east belt
- *   C  "Northgate Works"   — roadworks chewing up the north boulevard
+ * Three REAL building sites, each with its own character, all digging REAL
+ * walkable pits (DIGS above — graded ramp in, terraced dirt walls, machines
+ * on the floor):
+ *   A  "Lakeshore Towers"  — west midtown SKYSCRAPER job: 30m tower crane over
+ *      a tower rising straight out of its deep foundation pit, excavator +
+ *      dump truck working the floor, welfare corner and materials yard NW/NE
+ *   B  "Eastside Mega Dig" — east belt OPEN-PIT excavation (deepest, 4.3m):
+ *      the rising structure sits ON the pit floor, two excavators + two dump
+ *      trucks, spoil heaps ringing the rim, trench bays, haul-road mud tiles
+ *   C  "Northgate Works"   — north boulevard BLOCK BUILD: its own tower crane,
+ *      mixer truck pouring at the west ramp gate, backhoe + roller, roadworks
+ *      dressing on the boulevard outside (this is the x26/z125 site)
+ * Every prop is the REAL kit model (also arrowBoard + skip — files were on
+ * disk but never wired). craneTop is NOT baked: <CraneTops> renders each
+ * slewing top as a live clone so the cranes actually WORK (slow yaw swing).
+ * Kit crew: real kit characters idle at their work spots (see site.crew).
  * Placements + colliders are derived here so the render and the physics grid
  * can never disagree (same contract as GRAVEKIT). The GLBs render via
  * <ConstructionSites> (src/components/game/ConstructionSites.tsx) — every
- * repeated prop is baked into ONE merged mesh per kind (~20 draw calls total). */
+ * repeated prop is baked into ONE merged mesh per kind (~25 draw calls total,
+ * plus 3 dig meshes + 3 crane tops + 6 crew — all static but the cranes). */
 export interface ConSitePlacement { x: number; y?: number; z: number; rot?: number; s?: number }
 export interface ConSiteDef {
   name: string;
   /** block centre — also the cottage-exclusion anchor */
   cx: number; cz: number;
   props: Record<string, ConSitePlacement[]>;
+  /** kit crew — real character slugs idling at their work spots (y = pit floor) */
+  crew?: { slug: string; x: number; z: number; y?: number; rot: number }[];
   /** solid props → physics circles (r) */
   cols: { x: number; z: number; r: number }[];
   /** solid buildings (cabin) → physics boxes */
@@ -757,115 +843,188 @@ function runRow(x: number, z: number, n: number, step: number, rot: number): Con
 const conCol = (x: number, z: number, r: number) => ({ x, z, r });
 
 export const SITEKIT = (() => {
-  /* ---- Site A · LAKESHORE TOWERS — west midtown block (-168.75, 33.75) ---- */
+  /* ---- Site A · LAKESHORE TOWERS — west midtown block (-168.75, 33.75) ----
+   * THE SKYSCRAPER JOB. Foundation pit (DIGS A, ramp south): the tower climbs
+   * straight out of it — three two-storey bay columns + a two-section core ON
+   * the pit floor (y −3). Crane NE, welfare NW, materials yard NE. */
   const A: ConSiteDef = {
     name: "Lakeshore Towers", cx: -168.75, cz: 33.75,
     props: {
       // ⭐ the tower crane: two 15m mast sections stacked + the slewing top
-      craneMast: [{ x: -177, z: 41 }, { x: -177, z: 41, y: 15 }],
-      craneTop: [{ x: -177, z: 41, y: 30, rot: Math.PI * 0.25 }],
-      // the rising steel skeleton (three 5.8m bays) + concrete core + scaffold
+      craneMast: [{ x: -189, z: 14 }, { x: -189, z: 14, y: 15 }],
+      craneTop: [{ x: -189, z: 14, y: 30, rot: Math.PI * 0.25 }],
+      // the rising tower — two storeys of steel bays + core ON the pit floor
       steelFrame: [
-        { x: -162, z: 46, rot: Math.PI / 2 }, { x: -162, z: 40, rot: Math.PI / 2 }, { x: -162, z: 34, rot: Math.PI / 2 },
+        { x: -162.5, z: 28, y: -3, rot: Math.PI / 2 }, { x: -162.5, z: 34, y: -3, rot: Math.PI / 2 }, { x: -162.5, z: 40, y: -3, rot: Math.PI / 2 },
+        { x: -162.5, z: 28, y: 2.8, rot: Math.PI / 2 }, { x: -162.5, z: 34, y: 2.8, rot: Math.PI / 2 }, { x: -162.5, z: 40, y: 2.8, rot: Math.PI / 2 },
       ],
-      coreSection: [{ x: -156, z: 44, rot: Math.PI / 2 }, { x: -156, z: 44, y: 6.6, rot: Math.PI / 2 }],
-      scaffold: [{ x: -155, z: 34, rot: Math.PI / 2 }, { x: -155, z: 38.5, rot: Math.PI / 2 }],
-      // site hoarding (west flank, gate gap in the middle) + mesh fence runs
-      hoarding: [...runRow(-193, 22, 3, 4.2, Math.PI / 2), ...runRow(-193, 40, 2, 4.2, Math.PI / 2)],
-      meshFence: [...runRow(-181, 59, 4, 4.2, 0), ...runRow(-177, 10, 2, 4.2, 0)],
-      // site welfare + yard furniture
-      cabin: [{ x: -186, z: 24, rot: -Math.PI / 2 }],
-      toilet: [{ x: -183, z: 18.5, rot: Math.PI }, { x: -183, z: 16.5, rot: Math.PI }],
-      lightTower: [{ x: -190, z: 46 }],
-      generator: [{ x: -188, z: 30, rot: 0.4 }],
-      pallet: [{ x: -152, z: 28, rot: 0.3 }, { x: -153, z: 30.5, rot: -0.5 }, { x: -151, z: 26, rot: 1.1 }],
-      precast: [{ x: -159, z: 20, rot: 0.3 }, { x: -159, z: 24, rot: -0.2 }],
-      rebar: [{ x: -150, z: 44, rot: 1 }],
-      cone: [{ x: -149, z: 18, rot: 0.2 }, { x: -146.5, z: 20.5 }, { x: -149, z: 30, rot: 0.4 }, { x: -146.5, z: 28 }, { x: -147.5, z: 24 }],
-      signBoard: [{ x: -148, z: 24, rot: Math.PI / 2 }],
+      coreSection: [{ x: -173, z: 34, y: -3, rot: Math.PI / 2 }, { x: -173, z: 34, y: 3.6, rot: Math.PI / 2 }],
+      // scaffold stands at grade beside the east rim
+      scaffold: [{ x: -152, z: 34, rot: Math.PI / 2 }, { x: -152, z: 38.5, rot: Math.PI / 2 }],
+      // machines working the foundation pit + spoil heaps rim & floor
+      excavator: [{ x: -175.5, z: 26.5, y: -3, rot: 0.55 }],
+      dumpTruck: [{ x: -161.5, z: 40, y: -3, rot: -0.9 }],
+      spoilHeap: [{ x: -177, z: 42, y: -3, s: 1.2 }, { x: -155.5, z: 25, s: 1.1 }, { x: -158.5, z: 21.5, s: 0.9 }],
+      // site hoarding (west + south street flanks) + mesh fence (north + east)
+      hoarding: [...runRow(-192.2, 20, 4, 4.2, 0), ...runRow(-186, 11.4, 5, 4.2, Math.PI / 2)],
+      meshFence: [...runRow(-180, 56.6, 5, 4.2, Math.PI / 2), ...runRow(-145.6, 40, 3, 4.2, 0)],
+      // welfare corner (NW): cabin, loos, generator, light tower
+      cabin: [{ x: -186, z: 44, rot: 0 }],
+      toilet: [{ x: -181.5, z: 52.5, rot: 0 }, { x: -179.5, z: 52.5, rot: 0 }],
+      lightTower: [{ x: -190.5, z: 50 }],
+      generator: [{ x: -183, z: 48, rot: 0.4 }],
+      // materials yard (NE) + site furniture
+      pallet: [{ x: -153, z: 52, rot: 0.4 }, { x: -151, z: 49, rot: -0.6 }],
+      precast: [{ x: -150, z: 46, rot: 0.3 }, { x: -150, z: 50, rot: -0.2 }],
+      rebar: [{ x: -157, z: 52.5, rot: 1 }],
+      skip: [{ x: -147, z: 22, rot: 0.3 }],
+      arrowBoard: [{ x: -193.6, z: 33.5, rot: Math.PI / 2 }],
+      signBoard: [{ x: -160, z: 12.6, rot: 0.2 }],
+      mudTile: [{ x: -152.5, z: 28, rot: 0.2 }, { x: -157, z: 44, rot: 0.5 }],
+      crashBarrier: [{ x: -165, z: 20.4, rot: 0 }, { x: -172.5, z: 20.4, rot: 0 }],
+      cone: [{ x: -165.5, z: 19.5, rot: 0.2 }, { x: -172, z: 20 }, { x: -168.75, z: 16.5 }, { x: -147.5, z: 24, rot: 0.4 }, { x: -150, z: 18.5 }, { x: -189, z: 18 }],
     },
-    cols: [
-      conCol(-177, 41, 2.5),                                     // crane base
-      conCol(-162, 46, 2.5), conCol(-162, 40, 2.5), conCol(-162, 34, 2.5), // steel bays
-      conCol(-156, 44, 2.4),                                     // concrete core
-      conCol(-155, 34, 1.8), conCol(-155, 38.5, 1.8),            // scaffold bays
-      conCol(-190, 46, 0.9),                                     // lighting tower
-      conCol(-188, 30, 1.2),                                     // generator
-      conCol(-159, 20, 2.1), conCol(-159, 24, 2.1),              // precast stacks
-      conCol(-150, 44, 1.1),                                     // rebar cage
-      conCol(-183, 18.5, 0.8), conCol(-183, 16.5, 0.8),          // portable toilets
-      conCol(-152, 28, 0.7), conCol(-153, 30.5, 0.7), conCol(-151, 26, 0.7), // pallets
+    crew: [
+      { slug: "groundworker-083f5c", x: -164.5, z: 31, y: -3, rot: 2.2 },
+      { slug: "site-manager-d60b95", x: -183.5, z: 46.5, rot: 0.9 },
     ],
-    boxes: [{ x: -186, z: 24, w: 4.4, d: 8.4, h: 3.4 }],         // site cabin
+    cols: [
+      conCol(-189, 14, 2.5),                                     // crane base
+      conCol(-175.5, 26.5, 2.6), conCol(-161.5, 40, 2.5),        // pit machines
+      conCol(-177, 42, 1.5), conCol(-155.5, 25, 1.4), conCol(-158.5, 21.5, 1.2), // spoil heaps
+      conCol(-190.5, 50, 0.9), conCol(-183, 48, 1.2),            // light tower + generator
+      conCol(-181.5, 52.5, 0.8), conCol(-179.5, 52.5, 0.8),      // portable toilets
+      conCol(-153, 52, 0.7), conCol(-151, 49, 0.7),              // pallets
+      conCol(-150, 46, 2.1), conCol(-150, 50, 2.1),              // precast stacks
+      conCol(-157, 52.5, 1.1),                                   // rebar cage
+      conCol(-147, 22, 1.7),                                     // skip
+      conCol(-193.6, 33.5, 0.6), conCol(-160, 12.6, 0.6),        // arrow + sign boards
+      conCol(-152, 34, 1.8), conCol(-152, 38.5, 1.8),            // scaffold bays
+    ],
+    boxes: [{ x: -186, z: 44, w: 4.4, d: 8.4, h: 3.4 }],         // site cabin
   };
   for (const h of A.props.hoarding!) A.cols.push(conCol(h.x, h.z, 0.5));
   for (const f of A.props.meshFence!) A.cols.push(conCol(f.x, f.z, 0.45));
+  for (const b of A.props.crashBarrier!) A.cols.push(conCol(b.x, b.z, 0.5));
 
-  /* ---- Site B · EASTSIDE DIG — east belt block (236.25, -101.25) ---- */
+  /* ---- Site B · EASTSIDE MEGA DIG — east belt block (236.25, -101.25) ----
+   * THE OPEN-PIT MEGA DIG (the kit cover-art site). The whole block is one
+   * terraced 4.3m excavation with a north haul ramp; the rising structure
+   * stands ON the pit floor (y −4.3), two excavators + two dump trucks work
+   * it, spoil heaps ring the rim, trench bays + mud-tile haul road. */
   const B: ConSiteDef = {
-    name: "Eastside Dig", cx: 236.25, cz: -101.25,
+    name: "Eastside Mega Dig", cx: 236.25, cz: -101.25,
     props: {
-      excavator: [{ x: 235, z: -100, rot: 0.7 }],
-      trench: [{ x: 230, z: -106, rot: 0.15 }, { x: 234.5, z: -107.5, rot: 0.15 }],
-      spoilHeap: [{ x: 228, z: -99, s: 1.35 }, { x: 232.5, z: -96, s: 1 }, { x: 226, z: -103, s: 0.9 }],
-      mudTile: [{ x: 239, z: -108 }, { x: 243, z: -104, rot: 0.5 }, { x: 235, z: -93 }],
-      dumpTruck: [{ x: 243, z: -97, rot: -0.9 }],
-      crashBarrier: runRow(230, -128, 3, 4.3, 0),
-      trafficLight: [{ x: 226, z: -126, rot: -Math.PI / 2 }, { x: 247, z: -124, rot: Math.PI / 2 }],
-      skip: [{ x: 246, z: -108, rot: 0.4 }],
-      generator: [{ x: 228, z: -92, rot: -0.6 }],
-      hoarding: runRow(213, -96, 3, 4.2, Math.PI / 2),
-      pallet: [{ x: 241, z: -111, rot: 0.2 }, { x: 239.5, z: -112.5, rot: 0.9 }],
-      signBoard: [{ x: 218, z: -92, rot: -Math.PI / 4 }],
-      cone: [{ x: 222, z: -97 }, { x: 220, z: -100, rot: 0.3 }, { x: 238, z: -92 }, { x: 240, z: -94.5, rot: 0.5 }, { x: 231, z: -112 }, { x: 233, z: -110 }],
+      craneMast: [{ x: 250, z: -83.5 }],
+      craneTop: [{ x: 250, z: -83.5, y: 15, rot: -Math.PI * 0.3 }],
+      steelFrame: [{ x: 243, z: -96, y: -4.3, rot: Math.PI / 2 }, { x: 243, z: -102, y: -4.3, rot: Math.PI / 2 }],
+      coreSection: [{ x: 249, z: -99, y: -4.3, rot: Math.PI / 2 }],
+      scaffold: [{ x: 243, z: -90, y: -4.3, rot: Math.PI / 2 }],
+      excavator: [{ x: 230.5, z: -90.5, y: -4.3, rot: 2.7 }, { x: 257.5, z: -95, rot: -0.8 }],
+      dumpTruck: [{ x: 228, z: -104, y: -4.3, rot: 0.8 }, { x: 244.5, z: -81, rot: Math.PI }],
+      spoilHeap: [
+        { x: 216, z: -92, s: 1.5 }, { x: 219, z: -86.5, s: 1.2 }, { x: 256, z: -102, s: 1.6 }, { x: 252.5, z: -108.5, s: 1.3 },
+        { x: 222, z: -112, y: -4.3, s: 1.4 }, { x: 248, z: -112.5, y: -4.3, s: 1.1 },
+      ],
+      trench: [{ x: 232, z: -110, y: -4.3, rot: 0.15 }, { x: 236, z: -111.5, y: -4.3, rot: 0.15 }],
+      mudTile: [{ x: 236, z: -80, rot: 0 }, { x: 232.5, z: -84, rot: 0.3 }, { x: 240, z: -76.5, rot: 0.6 }],
+      crashBarrier: [{ x: 231.5, z: -78.4, rot: Math.PI / 2 }, { x: 241, z: -78.4, rot: Math.PI / 2 }],
+      trafficLight: [{ x: 228.5, z: -72.6, rot: -Math.PI / 2 }, { x: 244.5, z: -72.6, rot: Math.PI / 2 }],
+      hoarding: [...runRow(212.3, -96, 4, 4.2, 0), ...runRow(222, -124.2, 5, 4.2, Math.PI / 2)],
+      meshFence: [...runRow(260.2, -110, 3, 4.2, 0)],
+      cabin: [{ x: 254, z: -90, rot: -Math.PI / 2 }],
+      toilet: [{ x: 249.5, z: -83.2, rot: 0 }, { x: 251.5, z: -83.2, rot: 0 }],
+      generator: [{ x: 256.5, z: -97, rot: 0.5 }],
+      lightTower: [{ x: 216.5, z: -80.5 }],
+      pallet: [{ x: 259.5, z: -88, rot: 0.3 }, { x: 257.5, z: -85.5, rot: -0.5 }],
+      rebar: [{ x: 256, z: -112, rot: 1 }],
+      skip: [{ x: 214.5, z: -104, rot: 0.4 }],
+      signBoard: [{ x: 218.5, z: -79.5, rot: -Math.PI / 4 }],
+      arrowBoard: [{ x: 214, z: -127, rot: 0.2 }],
+      cone: [{ x: 233, z: -79 }, { x: 239.5, z: -79 }, { x: 236.25, z: -76.5 }, { x: 220, z: -88 }, { x: 253, z: -90.5, rot: 0.3 }, { x: 224, z: -114.5 }, { x: 247.5, z: -114.5, rot: 0.4 }, { x: 216, z: -100 }],
     },
-    cols: [
-      conCol(235, -100, 2.9),                        // excavator
-      conCol(230, -106, 2.4), conCol(234.5, -107.5, 2.4), // trench bays (solid — nobody falls in)
-      conCol(228, -99, 1.6), conCol(232.5, -96, 1.3), conCol(226, -103, 1.2), // spoil heaps
-      conCol(243, -97, 2.7),                         // dump truck
-      conCol(226, -126, 0.55), conCol(247, -124, 0.55), // traffic lights
-      conCol(246, -108, 1.8),                        // skip
-      conCol(228, -92, 1.2),                         // generator
-      conCol(241, -111, 0.7), conCol(239.5, -112.5, 0.7), // pallets
-      conCol(218, -92, 0.6),                         // sign board
+    crew: [
+      { slug: "steel-erector-124bef", x: 240, z: -96, y: -4.3, rot: -0.8 },
+      { slug: "crane-banksman-3994e0", x: 238.5, z: -80.5, rot: 0.4 },
     ],
-    boxes: [],
+    cols: [
+      conCol(250, -83.5, 2.2),                                   // crane base
+      conCol(230.5, -90.5, 2.6), conCol(257.5, -95, 2.6),        // excavators (pit + yard)
+      conCol(228, -104, 2.5), conCol(244.5, -81, 2.7),           // dump trucks (pit + ramp top)
+      conCol(232, -110, 2.4), conCol(236, -111.5, 2.4),          // trench bays on the floor
+      conCol(216, -92, 1.5), conCol(219, -86.5, 1.2), conCol(256, -102, 1.6), conCol(252.5, -108.5, 1.3), // rim spoil heaps
+      conCol(228.5, -72.6, 0.55), conCol(244.5, -72.6, 0.55),    // traffic lights
+      conCol(216.5, -80.5, 0.9), conCol(256.5, -97, 1.2),        // light tower + generator
+      conCol(249.5, -83.2, 0.8), conCol(251.5, -83.2, 0.8),      // loos
+      conCol(259.5, -88, 0.7), conCol(257.5, -85.5, 0.7),        // pallets
+      conCol(256, -112, 1.1), conCol(214.5, -104, 1.7),          // rebar + skip
+      conCol(218.5, -79.5, 0.6), conCol(214, -127, 0.6),         // sign + arrow boards
+    ],
+    boxes: [{ x: 254, z: -90, w: 8.4, d: 4.4, h: 3.4 }],         // site cabin (rot −π/2 → length along x)
   };
   for (const b of B.props.crashBarrier!) B.cols.push(conCol(b.x, b.z, 0.5));
   for (const h of B.props.hoarding!) B.cols.push(conCol(h.x, h.z, 0.5));
+  for (const f of B.props.meshFence!) B.cols.push(conCol(f.x, f.z, 0.45));
 
-  /* ---- Site C · NORTHGATE WORKS — north block (33.75, 168.75), chewing the boulevard ---- */
+  /* ---- Site C · NORTHGATE WORKS — north block (33.75, 168.75) ----
+   * THE BLOCK BUILD — this is the site the player walks to from x26/z125.
+   * Its own tower crane, a mid-rise rising from the 2.7m foundation dig (west
+   * ramp), the mixer truck pouring at the gate, backhoe on the floor, and the
+   * roller + roadworks dressing still chewing up the boulevard outside. */
   const C: ConSiteDef = {
     name: "Northgate Works", cx: 33.75, cz: 168.75,
     props: {
-      backhoe: [{ x: 30, z: 150, rot: 1.4 }],
-      roadRoller: [{ x: 41, z: 147, rot: -0.5 }],
-      mixerTruck: [{ x: 24, z: 156, rot: 1.1 }],
-      brokenRoad: [{ x: 26, z: 140, rot: 0.3 }, { x: 33, z: 142, rot: -0.15 }, { x: 40, z: 139, rot: 0.5 }],
-      mudTile: [{ x: 37, z: 137, rot: 0.9 }, { x: 30, z: 144, rot: 0.2 }],
-      arrowBoard: [{ x: 46, z: 144, rot: -Math.PI / 2 }],
-      trafficLight: [{ x: 20, z: 138, rot: -Math.PI / 2 }, { x: 47, z: 139, rot: Math.PI / 2 }],
-      crashBarrier: [{ x: 44, z: 143, rot: -0.9 }, { x: 46, z: 146, rot: -0.9 }, { x: 48, z: 149, rot: -0.9 }, { x: 17, z: 141, rot: 0.9 }],
-      skip: [{ x: 14, z: 152, rot: 0.2 }],
-      generator: [{ x: 20, z: 160, rot: 1.2 }],
-      pallet: [{ x: 37, z: 153, rot: 0.4 }, { x: 35, z: 155, rot: -0.7 }],
-      rebar: [{ x: 43, z: 158, rot: 0.7 }],
-      cone: [
-        { x: 24, z: 146, rot: 0.2 }, { x: 28, z: 148 }, { x: 33, z: 147.5, rot: 0.5 }, { x: 38, z: 150 },
-        { x: 44, z: 152, rot: 0.3 }, { x: 22, z: 141 }, { x: 27, z: 139.5, rot: 0.6 }, { x: 35, z: 138.5 },
-      ],
+      craneMast: [{ x: 15, z: 185 }],
+      craneTop: [{ x: 15, z: 185, y: 15, rot: Math.PI * 0.4 }],
+      steelFrame: [{ x: 30, z: 163, y: -2.7, rot: Math.PI / 2 }, { x: 36.5, z: 163, y: -2.7, rot: Math.PI / 2 }],
+      coreSection: [{ x: 41, z: 172, y: -2.7, rot: Math.PI / 2 }],
+      scaffold: [{ x: 50, z: 168, rot: 0 }, { x: 50, z: 172.5, rot: 0 }],
+      excavator: [{ x: 27.5, z: 176.5, y: -2.7, rot: 2.2 }],
+      dumpTruck: [{ x: 44, z: 184, rot: -0.7 }],
+      mixerTruck: [{ x: 14.5, z: 162, rot: 0.6 }],
+      backhoe: [{ x: 12, z: 178, rot: 1.2 }],
+      roadRoller: [{ x: 30, z: 197.5, rot: 0.2 }],
+      brokenRoad: [{ x: 26, z: 200, rot: 0.3 }, { x: 33, z: 199, rot: -0.15 }, { x: 40, z: 200.5, rot: 0.5 }],
+      mudTile: [{ x: 20, z: 176, rot: 0.9 }, { x: 26, z: 186, rot: 0.2 }],
+      arrowBoard: [{ x: 44, z: 196.5, rot: Math.PI }],
+      trafficLight: [{ x: 20, z: 196.5, rot: -Math.PI / 2 }, { x: 48, z: 196.5, rot: Math.PI / 2 }],
+      hoarding: [...runRow(18, 145.4, 6, 4.2, Math.PI / 2), ...runRow(57.2, 158, 4, 4.2, 0), ...runRow(42, 192.4, 3, 4.2, Math.PI / 2)],
+      meshFence: [...runRow(10.4, 150, 4, 4.2, 0), ...runRow(10.4, 175, 2, 4.2, 0)],
+      cabin: [{ x: 50, z: 152, rot: -Math.PI / 2 }],
+      toilet: [{ x: 46, z: 147, rot: Math.PI / 2 }, { x: 44, z: 147, rot: Math.PI / 2 }],
+      generator: [{ x: 54.5, z: 158, rot: 0.3 }],
+      lightTower: [{ x: 12.5, z: 150.5 }],
+      pallet: [{ x: 44, z: 176, rot: 0.4 }, { x: 42, z: 178.5, rot: -0.7 }],
+      precast: [{ x: 50, z: 182, rot: 0.3 }, { x: 50, z: 178, rot: -0.2 }],
+      rebar: [{ x: 38, z: 188, rot: 0.7 }],
+      skip: [{ x: 56, z: 168, rot: 0.2 }],
+      signBoard: [{ x: 14.5, z: 160, rot: Math.PI / 2 }],
+      crashBarrier: [{ x: 18.4, z: 163.5, rot: 0 }, { x: 18.4, z: 174, rot: 0 }],
+      cone: [{ x: 18, z: 165.5 }, { x: 18, z: 172, rot: 0.3 }, { x: 14.5, z: 168.75 }, { x: 48, z: 160, rot: 0.4 }, { x: 24, z: 158 }, { x: 44, z: 164, rot: 0.2 }, { x: 12, z: 190, rot: 0.5 }],
     },
-    cols: [
-      conCol(30, 150, 2.5), conCol(41, 147, 2.4), conCol(24, 156, 2.9), // backhoe, roller, mixer
-      conCol(46, 144, 0.6), conCol(20, 138, 0.55), conCol(47, 139, 0.55), // arrow board + lights
-      conCol(14, 152, 1.8), conCol(20, 160, 1.2),     // skip + generator
-      conCol(37, 153, 0.7), conCol(35, 155, 0.7),     // pallets
-      conCol(43, 158, 1.1),                           // rebar cage
+    crew: [
+      { slug: "surveyor-82e5c7", x: 47, z: 165.5, rot: -1.2 },
+      { slug: "groundworker-083f5c", x: 32, z: 179, y: -2.7, rot: 0.8 },
     ],
-    boxes: [],
+    cols: [
+      conCol(15, 185, 2.2),                                      // crane base
+      conCol(27.5, 176.5, 2.5),                                  // excavator (pit floor)
+      conCol(14.5, 162, 2.7), conCol(12, 178, 2.3), conCol(30, 197.5, 2.4), // mixer, backhoe, roller
+      conCol(44, 184, 2.5),                                      // dump truck
+      conCol(50, 168, 1.8), conCol(50, 172.5, 1.8),              // scaffold bays
+      conCol(50, 182, 2.1), conCol(50, 178, 2.1),                // precast stacks
+      conCol(44, 176, 0.7), conCol(42, 178.5, 0.7),              // pallets
+      conCol(38, 188, 1.1),                                      // rebar cage
+      conCol(56, 168, 1.7),                                      // skip
+      conCol(46, 147, 0.8), conCol(44, 147, 0.8),                // loos
+      conCol(54.5, 158, 1.2), conCol(12.5, 150.5, 0.9),          // generator + light tower
+      conCol(14.5, 160, 0.6), conCol(44, 196.5, 0.6), conCol(20, 196.5, 0.55), conCol(48, 196.5, 0.55), // boards + lights
+    ],
+    boxes: [{ x: 50, z: 152, w: 8.4, d: 4.4, h: 3.4 }],          // site cabin (rot −π/2 → length along x)
   };
   for (const b of C.props.crashBarrier!) C.cols.push(conCol(b.x, b.z, 0.5));
+  for (const h of C.props.hoarding!) C.cols.push(conCol(h.x, h.z, 0.5));
+  for (const f of C.props.meshFence!) C.cols.push(conCol(f.x, f.z, 0.45));
 
   return { at: [A, B, C] as ConSiteDef[] };
 })();

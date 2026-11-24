@@ -9,7 +9,7 @@ import {
   WILDLIFE_ENABLED,
 } from "@/lib/game/constants";
 import {
-  AVENUE, BARN_BASE, FARMKIT, FIELDS_BASE, GATE, generateWorld, GRAVEKIT, inAirportPlot, MALL, MAIN_ROAD, NYC, PARK, RAILWAY, RAILWAY_crossCottage, RAILWAY_signalBox, RAILWAY_stationHouse, RAILWAY_waterTower, railPoint, RING_GAP, RING_R, RING_W, ROAD_W, ROADS, SCHOOL, TOWN_SQUARE, terrainHeight,
+  AVENUE, BARN_BASE, DIGS, FARMKIT, FIELDS_BASE, GATE, generateWorld, GRAVEKIT, inAirportPlot, MALL, MAIN_ROAD, NYC, PARK, RAILWAY, RAILWAY_crossCottage, RAILWAY_signalBox, RAILWAY_stationHouse, RAILWAY_waterTower, railPoint, RING_GAP, RING_R, RING_W, ROAD_W, ROADS, SCHOOL, TOWN_SQUARE, terrainHeight,
   type World,
 } from "@/lib/game/worldgen";
 import { nameTag } from "@/lib/game/character";
@@ -64,6 +64,36 @@ function Ring({ a, b, color, y }: { a: number; b: number; color: string; y: numb
     <mesh rotation-x={-Math.PI / 2} position-y={y}>
       <ringGeometry args={[a, b, 96]} />
       <meshLambertMaterial color={color} />
+    </mesh>
+  );
+}
+
+/** 🕳️ the city ground — one flat disc with a rectangular hole punched over
+ *  each walkable construction dig (DIGS): the <DigGround> dirt patch builds
+ *  the pit walls/ramp/floor inside the hole, so the player sees (and walks)
+ *  straight down into the excavation. Built as a ShapeGeometry so the holes
+ *  are real — no z-fighting, no fake dark decals. */
+function CityGround() {
+  const geo = useMemo(() => {
+    const shape = new THREE.Shape();
+    shape.absarc(0, 0, CITY_RADIUS, 0, Math.PI * 2);
+    for (const d of DIGS) {
+      const hole = new THREE.Path();
+      hole.moveTo(d.cx - d.px - 0.5, -(d.cz - d.pz - 0.5));
+      hole.lineTo(d.cx - d.px - 0.5, -(d.cz + d.pz + 0.5));
+      hole.lineTo(d.cx + d.px + 0.5, -(d.cz + d.pz + 0.5));
+      hole.lineTo(d.cx + d.px + 0.5, -(d.cz - d.pz - 0.5));
+      hole.closePath();
+      shape.holes.push(hole);
+    }
+    const g = new THREE.ShapeGeometry(shape, 64);
+    g.rotateX(-Math.PI / 2); // shape plane → ground plane (shape y ↦ world −z)
+    return g;
+  }, []);
+  useEffect(() => () => geo.dispose(), [geo]);
+  return (
+    <mesh geometry={geo} receiveShadow>
+      <meshLambertMaterial color="#9a968c" />
     </mesh>
   );
 }
@@ -5141,7 +5171,7 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
     <>
       <Env clockRef={clockRef} />
       <Disc r={900} color="#3f7a36" y={-0.12} />
-      <Disc r={CITY_RADIUS} color="#9a968c" y={0} />
+      <CityGround />
       <Ring a={CITY_RADIUS} b={FARM_RADIUS} color="#9cb84e" y={0.02} />
       <Ring a={FARM_RADIUS} b={DEEP_JUNGLE_RADIUS} color="#2d7a3a" y={0.03} />
       <Ring a={DEEP_JUNGLE_RADIUS} b={JUNGLE_RADIUS} color="#1e5630" y={0.031} />
@@ -5168,7 +5198,7 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
         <NycDistrict />
         <Landmarks />
         <HospitalCampus engine={engine} />
-        <ConstructionSites />
+        <ConstructionSites engine={engine} />
         <PrehistoricValley engine={engine} />
         <Forest engine={engine} />
         <Camps engine={engine} clockRef={clockRef} />
