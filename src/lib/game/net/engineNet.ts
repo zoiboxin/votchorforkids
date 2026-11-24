@@ -344,6 +344,9 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
     // the fast path, this is the catch-up that re-arms anyone who missed it
     // (packet loss) or joined mid-match with no dawns of their own
     if (ev.zone !== undefined) engine.applyNetZone(ev.zone, ev.nightNo);
+    // ⚰️ the hearse state rides along too — a mid-run joiner never re-fights
+    // a guardian pack that was broken before they dropped in
+    if (ev.hu) engine.netHearseUnlockCatchUp();
     // 🌐✈️ ambient mirror — snap traffic angles + the bot-plane fleet onto the
     // host's truth (guest-side; the host's own sim IS the truth)
     if (ev.amb) engine.applyNetAmbient(ev.amb);
@@ -396,6 +399,11 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
   // so everyone can race over and snatch it
   on("dropLicense", (ev) => engine.spawnDroppedLicense(ev.x, ev.z, ev.from));
 
+  // ⚰️🚗 a teammate broke the phantom hearse's guardian pack — the unlock is
+  // WORLD truth: every licensed soul can now walk up and drive (or steal) it
+  // without fighting a pack that's already dust
+  on("hearseUnlock", (ev) => engine.netHearseUnlock(ev.from));
+
   on("hello", (_ev, from) => {
     const r = engine.remotes.find((x) => x.slot === from);
     if (r) engine.toast(`🌐 ${r.name} is back in town!`, "good");
@@ -414,7 +422,7 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
     acc = 0;
     net.send({ t: "score", points: engine.points, kills: engine.kills, money: engine.money });
     if (isHost) {
-      net.send({ t: "phase", phase: engine.phase, nightNo: engine.nightNo, phaseLeft: Math.max(0, Math.round(engine.phaseT)), clock: Math.round(engine.clock * 100) / 100, zone: engine.zoneLevel });
+      net.send({ t: "phase", phase: engine.phase, nightNo: engine.nightNo, phaseLeft: Math.max(0, Math.round(engine.phaseT)), clock: Math.round(engine.clock * 100) / 100, zone: engine.zoneLevel, hu: engine.hearseUnlocked });
     }
   }, 500);
   // host keeps a tight 2 Hz clock so guest transitions never drift far
@@ -429,7 +437,7 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
           pl: engine.planes.map((p) => [Math.round(p.x * 10) / 10, Math.round(p.z * 10) / 10, Math.round(p.alt * 10) / 10, Math.round(p.hdg * 1000) / 1000]),
         }
       : undefined;
-    net.send({ t: "phase", phase: engine.phase, nightNo: engine.nightNo, phaseLeft: Math.max(0, Math.round(engine.phaseT)), clock: Math.round(engine.clock * 100) / 100, zone: engine.zoneLevel, amb });
+    net.send({ t: "phase", phase: engine.phase, nightNo: engine.nightNo, phaseLeft: Math.max(0, Math.round(engine.phaseT)), clock: Math.round(engine.clock * 100) / 100, zone: engine.zoneLevel, hu: engine.hearseUnlocked, amb });
     // 🌐 the possession roster rides along at night — a mid-night quick-joiner
     // lands with NO local dusk (they never ran choosePossessed), so unless the
     // roster arrives on a timer they'd stare at an empty, zombie-less night

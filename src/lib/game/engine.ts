@@ -2,7 +2,7 @@ import {
   AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, BUST_CARRY_BONUS, BUST_POINTS, BUST_TARGET, CARRY_RADIUS, CAR_ACCEL, CAR_BRAKE, CAR_COAST, CAR_COAST_FRICTION, CAR_ENTER_R, CAR_HIT_CD, CAR_HIT_DMG, CAR_HIT_MIN_CLOSING, CAR_HIT_TRANSFER, CAR_REV_SPEED, CAR_SLIDE_FRICTION, CAR_SPIN_FRICTION, CAR_STEER, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
   CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, CONFISCATE_FINE, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
-  ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HAUL_CAMP_R, HEARSE_GUARD_COUNT, HEARSE_GUARD_DMG, HEARSE_GUARD_HP, HEARSE_GUARD_HOME_R, HEARSE_GUARD_LEASH, HEARSE_GUARD_SPEED, HEARSE_HOARD, HEARSE_TYPE, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
+  ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HAUL_CAMP_R, HEARSE_GUARD_COUNT_MAX, HEARSE_GUARD_COUNT_MIN, HEARSE_GUARD_DMG, HEARSE_GUARD_HP, HEARSE_GUARD_HOME_R, HEARSE_GUARD_LEASH, HEARSE_GUARD_SPEED, HEARSE_HOARD, HEARSE_TYPE, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
   DEEP_JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER,
   ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_BUFFER_S, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
@@ -2102,8 +2102,11 @@ export class GameEngine {
       return;
     }
     this.hearseGuards = [];
-    for (let i = 0; i < HEARSE_GUARD_COUNT; i++) {
-      const a = (i / HEARSE_GUARD_COUNT) * TAU + range(this.rnd, -0.4, 0.4);
+    // 🎲 a fresh roll every encounter — 3 or 4 restless dead rise (never the
+    // same night twice; the shared seed keeps solo & relay worlds in step)
+    const pack = HEARSE_GUARD_COUNT_MIN + (this.rnd() < 0.5 ? 0 : 1);
+    for (let i = 0; i < pack; i++) {
+      const a = (i / pack) * TAU + range(this.rnd, -0.4, 0.4);
       const r = HEARSE_GUARD_HOME_R + range(this.rnd, -0.7, 1.0);
       const gx = car.x + Math.cos(a) * r;
       const gz = car.z + Math.sin(a) * r;
@@ -2118,13 +2121,16 @@ export class GameEngine {
     this.hearseGuardRev++;
     sfx.scream();
     this.addShake(0.45); // 💥 the ground heaves
-    this.toast(`⚰️ The dirt MOVES — ${HEARSE_GUARD_COUNT} restless guardians rise to defend the phantom hearse! FIGHT (F) — slay them all to claim it!`, "bad");
+    this.toast(`⚰️ The dirt MOVES — ${pack} restless guardians rise to defend the phantom hearse! FIGHT (F) — slay them all to claim it!`, "bad");
   }
 
   /** The last guardian crumbles — the graveyard falls silent and the wheel
    *  unlocks. A small hoard spills with the pack; the hearse is now a normal
    *  (license-gated) car: drive it anywhere, and any OTHER licensed soul can
-   *  still steal it later. If its driver dies, the car stays where it rests. */
+   *  still steal it later. If its driver dies, the car stays where it rests.
+   *  🌐 the unlock is WORLD truth, not private: every seat hears it, so a
+   *  licensed teammate (or the next soul to find the car after we die) can
+   *  walk up and DRIVE it instead of facing a pack that's already broken. */
   private unlockHearse() {
     this.hearseUnlocked = true;
     this.points += POINTS_HEARSE_BONUS;
@@ -2133,6 +2139,28 @@ export class GameEngine {
     const car = this.hearseCar();
     if (car) this.dropLoot(car.x + Math.sin(car.rot) * 2.6, car.z + Math.cos(car.rot) * 2.6, range(this.rnd, HEARSE_HOARD[0], HEARSE_HOARD[1]), "the hearse's grave-hoard");
     this.toast(`⚰️ The graveyard falls silent — the PHANTOM HEARSE is yours! +${POINTS_HEARSE_BONUS} · fastest ride in town… but any licensed driver can still steal it!`, "good");
+    if (this.mp) this.netEmit?.({ t: "hearseUnlock", from: this.playerName });
+  }
+
+  /** 🌐 a teammate broke the guardian pack — the hearse is unlocked for the
+   *  WHOLE room on our screen too (no second fight for the same car). */
+  netHearseUnlock(fromName: string) {
+    if (this.hearseUnlocked) return;
+    this.hearseUnlocked = true;
+    this.hearseGuards = [];
+    this.hearseGuardRev++; // the renderer drops our local guardian models
+    this.toast(`🔓 ${fromName || "A survivor"} broke the graveyard pack — the PHANTOM HEARSE is claimable! Any licensed driver can take it.`, "good");
+  }
+
+  /** 🌐 catch-up for mid-run joiners: the clock packet says the pack was
+   *  already broken before we dropped in — arm the flag quietly (one toast so
+   *  the player knows the hearse needs no second fight). */
+  netHearseUnlockCatchUp() {
+    if (this.hearseUnlocked) return;
+    this.hearseUnlocked = true;
+    this.hearseGuards = [];
+    this.hearseGuardRev++;
+    this.toast("⚰️ The graveyard's guardians were already broken — the PHANTOM HEARSE is claimable by any licensed driver!", "info");
   }
 
   /** Guardian AI — runs day & night (these dead don't fear the sun). While
@@ -4103,6 +4131,13 @@ export class GameEngine {
   private die() {
     if (this.won || this.lost) return;
     this.lost = true;
+    // 🚗 die at the wheel → the car PARKS right here and its pose stream stops:
+    // every peer's mirror releases it within a beat, so another LICENSED soul
+    // can walk up and claim it (a dead owner never keeps a car hostage — that
+    // was the "hearse locked forever after its driver died" bug). Riding
+    // shotgun? The body tumbles off the running board too.
+    if (this.drive) this.exitCar();
+    if (this.ride) this.exitRide(true);
     this.breakEmote(); // 🎭 the party is over
     this.deathT = 0; // 🎬 the death fall starts — the recap waits until the body settles
     stopDrone(); stopInsects(); // 🦗 the chorus falls silent with the light

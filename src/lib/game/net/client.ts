@@ -54,7 +54,10 @@ export type MpEvent =
   | { t: "phase"; phase: string; nightNo: number; phaseLeft: number; clock?: number; amb?: NetAmbient;
       /** 🧱 the host's current wall level — rides every clock packet so missed
        *  `zone` events and mid-match joiners snap onto the shared safe zone */
-      zone?: number }
+      zone?: number
+      /** ⚰️ the host's phantom-hearse state (pack already broken?) — rides every
+       *  clock packet too, so a mid-run joiner never re-fights a defeated pack */
+      hu?: boolean }
   | { t: "roster"; possessed: number[]; beastSlots: number[]; nightNo: number }
   /** 🧱 THE WALL — the host's authoritative safe-zone level, broadcast the
    *  moment a dawn shrink fires. Guests slam the same circle within one RTT
@@ -70,6 +73,7 @@ export type MpEvent =
   | { t: "dead" }
   | { t: "gift"; kind: "license"; toSlot: number; from: string }
   | { t: "dropLicense"; x: number; z: number; from: string }
+  | { t: "hearseUnlock"; from: string }
   | { t: "zhit"; kind: "zombie" | "hound"; idx: number; amt: number }
   | { t: "reset" }
   | { t: "start" }
