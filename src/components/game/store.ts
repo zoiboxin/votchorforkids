@@ -427,8 +427,15 @@ export const useGame = create<GameStore>()((set, get) => ({
     const coins = s.coins - it.price;      // 💰 the price leaves the wallet right here
     const owned = [...s.owned, id];
     saveWallet(coins, owned);
+    // 🛡️ purchases are PERMANENT — bump the profile's savedAt as well, because
+    // the cloud push stamps savedAt ~4 s AFTER saveProfile wrote it (the debounce
+    // delay), so the server copy is always slightly "newer" than the local one.
+    // A pull that ran before this purchase reached the cloud would otherwise
+    // adopt the pre-purchase server wallet and silently WIPE the buy (the
+    // "purchased the license but the game doesn't show it" bug).
+    saveProfile(s.playerName, s.look, profileStatsOf(s), s.history, s.bonusXp, s.daily);
     set({ coins, owned });
-    scheduleCloudSave();
+    scheduleCloudSave(600); // 🛒 purchases reach the cloud FAST — tiny loss window
     return true;
   },
   bankCoins: (n) => set((s) => {
@@ -473,12 +480,18 @@ export const useGame = create<GameStore>()((set, get) => ({
       const st = (blob.stats && typeof blob.stats === "object" ? blob.stats : {}) as Partial<PlayerStats>;
       const hist = Array.isArray(blob.history) ? blob.history : [];
       const serverOwned = Array.isArray(blob.owned) ? (blob.owned as unknown[]).filter((x): x is string => typeof x === "string" && !!shopItem(x)) : [];
+      const s0 = get();
+      // 🛡️ purchases are PERMANENT — the adopted wallet UNIONs the cloud owned
+      // with the local one, so a pull can ADD cloud purchases but NEVER remove
+      // a buy this device made whose push hadn't landed yet (offline blip, tab
+      // closed inside the debounce, sandboxed preview storage). Owned is
+      // idempotent — items are one-time buys — so the union is always safe.
+      const mergedOwned = Array.from(new Set([...serverOwned, ...s0.owned]));
       // how much LIFE lives on each side — a brand-new device (empty wallet, no
       // runs, no purchases) must adopt the cloud even if its timestamp is newer
       const serverProgress = Math.max(0, Number(blob.coins) || 0)
         + serverOwned.length * 50 + Math.max(0, Number(st.runs) || 0) * 10
         + Math.max(0, Number(st.totalScore) || 0) + hist.length * 5;
-      const s0 = get();
       const localProgress = s0.coins + s0.owned.length * 50 + s0.runsPlayed * 10
         + Math.max(0, s0.careerXp - s0.bonusXp) + s0.history.length * 5;
       if (serverAt <= localAt && !(serverProgress > 0 && localProgress === 0)) {
@@ -512,10 +525,10 @@ export const useGame = create<GameStore>()((set, get) => ({
       const lifeMoney = stats.votes;
       // write the adopted copy back to localStorage (local-first, instant)
       saveProfile(name, look, stats, history, bonusXp, daily);
-      saveWallet(coins, serverOwned);
+      saveWallet(coins, mergedOwned);
       cloudDirty = false; // the adopted copy IS the cloud copy — no urgent push needed
       set({
-        look, stats, history, bonusXp, daily, owned: serverOwned, coins, lifeMoney,
+        look, stats, history, bonusXp, daily, owned: mergedOwned, coins, lifeMoney,
         careerXp: stats.totalScore + bonusXp,
         runsPlayed: stats.runs, bestScore: stats.best, lifeVotes: stats.votes,
         lifeRescues: stats.rescues, wins: stats.wins, lifeCaught: stats.caught,

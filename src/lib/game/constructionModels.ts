@@ -56,10 +56,24 @@ const FILES = {
 
 export type ConstructionKind = keyof typeof FILES;
 
+/** props whose authored ORIGIN is their mechanical pivot — the loader must NOT
+ *  re-centre them in x/z (only ground Y), because their placement + the live
+ *  slewing rotation pivot on that exact point. The tower-crane top is authored
+ *  around its slewing-ring axis (ring at x/z ±1.5, apex ±0.6, jib hanging far
+ *  out to −x): re-centring would shove the ring ~11 m off the mast head AND
+ *  make the swing orbit the wrong pivot. */
+const PIVOT_AT_ORIGIN = new Set<ConstructionKind>(["craneTop"]);
+
 export interface ConstructionRig {
   template: THREE.Group;
   /** authored size (metres) — placement code scales models to fit the site */
   size: THREE.Vector3;
+  /** the model's authored minimum Y BEFORE grounding — the loader lifts every
+   *  model so its lowest vertex sits at y=0, so a prop with hanging parts
+   *  (the crane top's hook + cables hang ~2m below its slewing ring) renders
+   *  `−groundY` higher than authored. Mount points (crane top → mast) must
+   *  add this back to seat the ring exactly on the mast head. */
+  groundY: number;
 }
 
 const cache = new Map<ConstructionKind, ConstructionRig>();
@@ -92,15 +106,19 @@ export function preloadConstructionModels(): void {
           }
         });
         // ground the model (origin at its turf contact point), centre x/z —
-        // the box is computed BEFORE wrapping so grounding is exact
+        // the box is computed BEFORE wrapping so grounding is exact.
+        // PIVOT_AT_ORIGIN props keep their authored x/z (mechanical pivot),
+        // everything else centres on its footprint
         const box = new THREE.Box3().setFromObject(scene);
         const size = box.getSize(new THREE.Vector3());
         const center = box.getCenter(new THREE.Vector3());
-        scene.position.set(-center.x, -box.min.y, -center.z);
+        const groundY = box.min.y; // remember the authored low point (crane top's hook hangs below its ring)
+        const pivot = PIVOT_AT_ORIGIN.has(kind);
+        scene.position.set(pivot ? 0 : -center.x, -box.min.y, pivot ? 0 : -center.z);
         const wrap = new THREE.Group();
         wrap.add(scene);
         wrap.updateMatrixWorld(true);
-        cache.set(kind, { template: wrap, size });
+        cache.set(kind, { template: wrap, size, groundY });
         notify();
       },
       undefined,
@@ -179,6 +197,14 @@ export function cloneConstructionModel(kind: ConstructionKind): THREE.Group | nu
   const rig = cache.get(kind);
   if (!rig) return null;
   return rig.template.clone();
+}
+
+/** The authored minimum-Y the loader lifted this model by — a mount point
+ *  (crane slewing top onto the mast head) adds it back so the parts that
+ *  hang BELOW the seating plane (hook + cables) don't leave the ring floating
+ *  above the tower. 0 while the model is still streaming in. */
+export function constructionGroundY(kind: ConstructionKind): number {
+  return cache.get(kind)?.groundY ?? 0;
 }
 
 /** Fire the callback when every construction model is in (or immediately if so).

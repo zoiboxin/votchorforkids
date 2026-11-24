@@ -463,7 +463,7 @@ export const RAILWAY: RailwayCfg = (() => {
   for (let a = RAIL_A0 + 0.14; a < RAIL_A1 - 0.1; a += 0.24) {
     poles.push({
       x: Math.cos(a) * (RAIL_R + 6.5), z: Math.sin(a) * (RAIL_R + 6.5),
-      rot: -(a + Math.PI / 2),
+      rot: -a,
     });
   }
   // the 15:07 to somewhere — locomotive + two carriages + brake van at the platform
@@ -471,18 +471,25 @@ export const RAILWAY: RailwayCfg = (() => {
   const kinds: (0 | 1 | 2)[] = [0, 1, 1, 2];
   for (let i = 0; i < 4; i++) {
     const a = 1.945 + i * 0.0208;
-    stock.push({ x: Math.cos(a) * RAIL_R, z: Math.sin(a) * RAIL_R, rot: -(a + Math.PI / 2), kind: kinds[i] });
+    stock.push({ x: Math.cos(a) * RAIL_R, z: Math.sin(a) * RAIL_R, rot: -a, kind: kinds[i] });
   }
   const ends = [RAIL_A0, RAIL_A1].map((a) => ({
-    x: Math.cos(a) * RAIL_R, z: Math.sin(a) * RAIL_R, rot: -(a + Math.PI / 2),
+    x: Math.cos(a) * RAIL_R, z: Math.sin(a) * RAIL_R, rot: -a,
   }));
   return { R: RAIL_R, a0: RAIL_A0, a1: RAIL_A1, station: { a: 2.05 }, crossing: { a: Math.PI / 2 }, poles, stock, ends };
 })();
 
-/** 🚂 helper — world position + facing of a point at angle `a` offset `off` from the rail centre */
+/** 🚂 helper — world position + facing of a point at angle `a` offset `off` from the rail centre.
+ *  rot = -a turns the kit models' LENGTH axis (local +Z for the Z-forward
+ *  majority: track sections join end-to-end along their rails, coaches sit ON
+ *  the rails, pole/fence runs march the line) along the arc tangent. The few
+ *  X-forward props (platform & canopy runs, seat furniture) add a ±π/2 rot
+ *  offset via RAILKIT's `ro` option — verified against each GLB's geometry:
+ *  the straight-track's railheads + sleeper spacing, platform-run's ramp and
+ *  edge wall, fence-run's panel, stock box lengths. */
 export function railPoint(a: number, off = 0): { x: number; z: number; rot: number } {
   const r = RAILWAY.R + off;
-  return { x: Math.cos(a) * r, z: Math.sin(a) * r, rot: -(a + Math.PI / 2) };
+  return { x: Math.cos(a) * r, z: Math.sin(a) * r, rot: -a };
 }
 
 /** 🚂 true while (x,z) sits within `margin` of the branch line's track bed —
@@ -494,13 +501,238 @@ export function nearRailway(x: number, z: number, margin: number): boolean {
   if (!(a >= RAILWAY.a0 || a <= RAILWAY.a1 - Math.PI * 2)) return false;
   return Math.abs(Math.hypot(x, z) - RAILWAY.R) < margin;
 }
-/** the country station house sits just inside the platform, and the crossing
- *  keeper's cottage guards the farm lane at the level crossing (tucked clear
- *  of the track bed — its corner used to brush the rails) */
+/** the country station house sits just inside the platform — the map landmark
+ *  marker anchors here (the REAL kit station building renders nearby) */
 export const RAILWAY_stationHouse = railPoint(RAILWAY.station.a, -14.5);
-export const RAILWAY_crossCottage = { x: 10, z: RAILWAY.R - 13 };
-export const RAILWAY_waterTower = railPoint(RAILWAY.station.a + 0.055, -20);
-export const RAILWAY_signalBox = railPoint(RAILWAY.station.a - 0.055, -20);
+
+/* ---------------- 🚂 RAILKIT — the polyfork Countryside Railway kit ----------------
+ * The branch line grows a REAL country station, goods yard and crossing built
+ * from the countryside-railway kit GLBs (see railwayModels.ts / <RailwayKit>):
+ *   · 4m straight-track sections carry the ENTIRE arc (ballast + twin rails +
+ *     sleepers baked into one mesh — replaces the hand-made bed entirely)
+ *   · the blue country station building fronts a real platform (runs, canopy,
+ *     shelter, benches, lamps, clock post, bookstall, posters, barrow, trolley)
+ *   · the station footbridge spans the rails just down the line
+ *   · the goods yard behind the track: engine shed + goods shed, water tower +
+ *     water crane + pump house, coal stage + merchant's bin, weighbridge, yard
+ *     crane, fuel tank, cattle dock, loading gauge, 20m turntable, sleeper /
+ *     rail stacks and ballast heaps — with the diesel shunter + railbus parked
+ *   · the 15:07 is REAL stock — tank loco, coal tender, two coaches and a brake
+ *     van — and a full goods rake parks further down the line
+ *   · the level crossing gains its keeper's cottage and real gates; semaphore
+ *     + disc signals, pole runs, fence runs, huts and lineside trees dress the
+ *     whole branch; the kit crew (station master, crossing keeper, platelayer,
+ *     driver, fireman, passenger, trainspotter) idles at their posts
+ * Every position derives from railPoint(angle, offset) so colliders + rendering
+ * stay in lock-step (same contract as SITEKIT/GRAVEKIT). */
+
+export interface RailPlacement { x: number; y?: number; z: number; rot?: number; s?: number }
+export interface RailKitDef {
+  props: Record<string, RailPlacement[]>;
+  /** kit crew — skinned characters idling at their posts */
+  crew: { slug: string; x: number; z: number; rot: number }[];
+  /** solid props → physics circles (r) */
+  cols: { x: number; z: number; r: number }[];
+}
+
+export const RAILKIT: RailKitDef = (() => {
+  const props: Record<string, RailPlacement[]> = {};
+  const cols: { x: number; z: number; r: number }[] = [];
+  const crew: RailKitDef["crew"] = [];
+  const ST = RAILWAY.station.a, CR = Math.PI / 2;
+  /** place a kit prop at (angle, radial offset); rot defaults to the arc tangent.
+   *  `ro` = extra rot OFFSET in radians for the X-forward props (platform &
+   *  canopy runs need +π/2 so their length axis rides the tangent; the seat
+   *  furniture keeps its authored facing with -π/2). */
+  const P = (kind: string, a: number, off: number, o: { y?: number; da?: number; rot?: number; ro?: number; s?: number } = {}) => {
+    const p = railPoint(a + (o.da ?? 0), off);
+    (props[kind] ??= []).push({ x: p.x, y: o.y, z: p.z, rot: (o.rot ?? p.rot) + (o.ro ?? 0), s: o.s });
+  };
+  /** one solid circle at (angle, offset) */
+  const col = (a: number, off: number, r: number, da = 0) => {
+    const p = railPoint(a + da, off);
+    cols.push({ x: p.x, z: p.z, r });
+  };
+  /** a parked vehicle: circles at ±len/4 so walkers can slip between pieces */
+  const veh = (kind: string, a: number, off: number, len: number, o: { y?: number; rot?: number } = {}) => {
+    P(kind, a, off, o);
+    col(a, off, Math.max(1.2, len / 4), -(len / 4) / RAILWAY.R);
+    col(a, off, Math.max(1.2, len / 4), +(len / 4) / RAILWAY.R);
+  };
+
+  /* ---- the track itself: 4m kit sections chord the whole arc (sagitta ~5mm) ---- */
+  for (let a = RAILWAY.a0; a < RAILWAY.a1; a += 4.0 / RAILWAY.R) P("track", a, 0, { y: 0.02 });
+
+  /* ---- the 15:07 — tank loco, coal tender, two coaches, brake van ---- */
+  {
+    const rake: [string, number][] = [["tankLoco", 9], ["coalTender", 7.3], ["coach", 18], ["coach", 18], ["brakeCoach", 18]];
+    let head = ST - (rake.reduce((s, [, l]) => s + l, 0) / 2) / RAILWAY.R;
+    for (const [kind, len] of rake) {
+      veh(kind, head + (len / 2) / RAILWAY.R, 0, len, { y: 0.02 });
+      head += len / RAILWAY.R;
+    }
+  }
+
+  /* ---- the goods rake parked further down the line (angle 3.42) ---- */
+  {
+    const wagons: [string, number][] = [
+      ["guardsVan", 7.2], ["goodsVan", 6.5], ["openWagon", 6], ["cattleWagon", 6.5],
+      ["flatWagon", 9], ["hopperWagon", 7], ["tankWagon", 6.2],
+    ];
+    let head = 3.42 - (wagons.reduce((s, [, l]) => s + l, 0) / 2) / RAILWAY.R;
+    for (const [kind, len] of wagons) {
+      veh(kind, head + (len / 2) / RAILWAY.R, 0, len, { y: 0.02 });
+      head += len / RAILWAY.R;
+    }
+  }
+
+  /* ---- the country station (inside the arc, fronting the platform) ---- */
+  for (let i = 0; i < 4; i++) P("platformRun", ST, -3.2, { da: (i - 1.5) * (4.0 / RAILWAY.R), ro: Math.PI / 2 }); // 16m platform edge — X-forward sections join along the line
+  for (let i = 0; i < 3; i++) P("canopyRun", ST, -3.0, { da: (i - 1) * (6.2 / RAILWAY.R), ro: Math.PI / 2 });     // canopy over the middle — X-forward 6.2m modules
+  P("shelter", ST, -3.2, { da: -0.0165, ro: -Math.PI / 2 });
+  P("bench", ST, -3.7, { da: -0.006, ro: -Math.PI / 2 });
+  P("bench", ST, -3.7, { da: 0, ro: -Math.PI / 2 });
+  P("bench", ST, -3.7, { da: 0.006, ro: -Math.PI / 2 });
+  P("lampPost", ST, -4.7, { da: -0.013 });
+  P("lampPost", ST, -4.7, { da: 0.002 });
+  P("lampPost", ST, -4.7, { da: 0.013 });
+  P("clockPost", ST, -4.1, { da: 0.008 });
+  P("bookstall", ST, -4.4, { da: -0.0105, ro: -Math.PI / 2 });
+  P("posterBoard", ST, -4.6, { da: 0.004, ro: -Math.PI / 2 });
+  P("posterBoard", ST, -4.6, { da: 0.0065, ro: -Math.PI / 2 });
+  P("barrow", ST, -3.4, { da: 0.011 });
+  P("trolley", ST, -3.3, { da: -0.009 });
+  P("runningBoard", ST, -2.3, { da: -0.022 });
+  P("gardenBed", ST, -7.6, { da: -0.010, ro: -Math.PI / 2 });
+  P("gardenBed", ST, -7.6, { da: 0.010, ro: -Math.PI / 2 });
+  P("stationBuilding", ST, -13.5);                     // the blue station house
+  P("footbridge", ST, 0, { da: 0.030 });               // spans the rails down the platform
+  P("semaphore", ST, -2.1, { da: -0.026 });
+  P("semaphore", ST, -2.1, { da: 0.028 });
+  P("handcar", ST, 0, { da: 0.045, y: 0.02 });         // parked on the rails past the bridge
+  col(ST, -13.5, 6.8);                                 // station building
+  col(ST, 0, 1.0, 0.030 - 0.0114);                     // footbridge stair legs
+  col(ST, 0, 1.0, 0.030 + 0.0114);
+  col(ST, -4.7, 0.35, -0.013); col(ST, -4.7, 0.35, 0.002); col(ST, -4.7, 0.35, 0.013); // lamp posts
+  col(ST, -4.1, 0.4, 0.008);                           // clock post
+  col(ST, -4.4, 1.6, -0.0105);                         // bookstall
+  col(ST, -3.2, 1.8, -0.0165);                         // shelter
+  col(ST, -2.1, 0.5, -0.026); col(ST, -2.1, 0.5, 0.028); // semaphore posts
+  col(ST, 0, 1.2, 0.045);                              // handcar
+
+  /* ---- the goods yard (outside the arc, behind the sheds) ---- */
+  P("engineShed", ST, 16.5, { da: -0.009, rot: -(ST - 0.009) + Math.PI }); // doors face the line
+  P("goodsShed", ST, 16.5, { da: 0.0185, rot: -(ST + 0.0185) + Math.PI });
+  P("weighbridge", ST, 9.5, { da: 0.004 });
+  P("yardCrane", ST, 10, { da: 0.026 });
+  P("waterTower", ST, 13, { da: 0.028 });
+  P("waterCrane", ST, 2.2, { da: 0.020 });
+  P("pumpHouse", ST, 13, { da: 0.036 });
+  P("coalStage", ST, 11, { da: 0.043 });
+  P("coalBin", ST, 6.5, { da: 0.036 });
+  P("fuelTank", ST, 13, { da: 0.033 });
+  P("cattleDock", ST, 21, { da: 0.027 });
+  P("loadingGauge", ST, 3.2, { da: 0.012 });
+  P("turntable", ST, 14, { da: -0.052 });
+  P("sleeperStack", ST, 8, { da: 0.006 });
+  P("sleeperStack", ST, 8.6, { da: 0.010 });
+  P("railStack", ST, 7.5, { da: 0.014 });
+  P("ballastHeap", ST, 6.5, { da: -0.004 });
+  P("ballastHeap", ST, 6, { da: 0.024 });
+  P("ballastHeap", ST, 6.5, { da: 0.047 });
+  P("signalBox", ST, -20, { da: -0.055 });             // classic box across from the platform
+  P("discSignal", ST, 3.4, { da: 0.058 });
+  P("shunter", ST, 8.5, { da: -0.002 });               // the yard pilot waits by the shed road
+  P("railbus", ST, -6.5, { da: 0.060 });               // single-car railbus limps home on the far side
+  col(ST, 16.5, 7.2, -0.009);                          // engine shed
+  col(ST, 16.5, 7.2, 0.0185);                          // goods shed
+  col(ST, 9.5, 2.8, 0.004);                            // weighbridge
+  col(ST, 10, 1.8, 0.026);                             // yard crane
+  col(ST, 13, 2.2, 0.028);                             // water tower
+  col(ST, 2.2, 0.6, 0.020);                            // water crane
+  col(ST, 13, 2.2, 0.036);                             // pump house
+  col(ST, 11, 2.6, 0.043);                             // coal stage
+  col(ST, 6.5, 1.8, 0.036);                            // coal bin
+  col(ST, 13, 2.6, 0.033);                             // fuel tank
+  col(ST, 21, 1.8, 0.027);                             // cattle dock
+  col(ST, 3.2, 0.5, 0.012);                            // loading gauge
+  col(ST, 8.5, 1.8, 0.006);                            // sleeper stacks
+  col(ST, 7.5, 0.8, 0.014);                            // rail stack
+  col(ST, 6.5, 1.3, -0.004); col(ST, 6, 1.3, 0.024); col(ST, 6.5, 1.3, 0.047); // ballast heaps
+  col(ST, -20, 2.8, -0.055);                           // signal box
+  col(ST, 3.4, 0.3, 0.058);                            // disc signal
+  col(ST, 8.5, 1.6, -0.002 - (2.1 / RAILWAY.R)); col(ST, 8.5, 1.6, -0.002 + (2.1 / RAILWAY.R)); // shunter
+  col(ST, -6.5, 1.6, 0.060 - (3 / RAILWAY.R)); col(ST, -6.5, 1.6, 0.060 + (3 / RAILWAY.R));     // railbus
+
+  /* ---- telegraph pole runs march the whole line (replaces hand-made poles) ---- */
+  for (let a = RAILWAY.a0 + 0.06; a < RAILWAY.a1 - 0.05; a += 12.4 / RAILWAY.R) {
+    P("poleRun", a, 6.5);
+    col(a, 6.5, 0.4);
+  }
+
+  /* ---- lineside dressing: fences near the station + yard, huts, trees, signs ---- */
+  for (let i = 0; i < 6; i++) P("fenceRun", ST, -6.3, { da: (-0.052 + i * 4.0 / RAILWAY.R) });
+  for (let i = 0; i < 5; i++) P("fenceRun", ST, 5.5, { da: (0.014 + i * 4.0 / RAILWAY.R) });
+  P("hut", ST, 8, { da: 0.052 });
+  P("tree", ST, -9, { da: -0.034 });
+  P("tree", ST, 10, { da: -0.062 });
+  P("tree", ST, -10, { da: 0.044 });
+  P("tree", ST, 9.5, { da: 0.070 });
+  P("tree", CR, -9.5, { da: 0.028 });
+  P("signPost", ST, -7.4, { da: -0.020 });
+  P("signPost", CR, -6.5, { da: -0.016 });
+  col(ST, 8, 1.8, 0.052);                              // lineside hut
+  for (const [da, off] of [[-0.034, -9], [-0.062, 10], [0.044, -10], [0.070, 9.5]] as const) col(ST, off, 0.8, da);
+  col(ST, -7.4, 0.3, -0.020);
+
+  /* ---- the level crossing: real deck, gates + the keeper's cottage ---- */
+  P("levelCrossing", CR, 0, { y: 0.02 });
+  P("crossingGate", CR, -5.6, { da: -0.0103 });
+  P("crossingGate", CR, 5.6, { da: 0.0103 });
+  P("cottage", CR, -13, { da: -0.02 });
+  col(CR, -5.6, 0.45, -0.0103);
+  col(CR, 5.6, 0.45, 0.0103);
+  col(CR, -13, 3.4, -0.02);
+
+  /* ---- buffer stops close both ends of the branch ---- */
+  P("bufferStop", RAILWAY.a0 + 0.006, 0, { y: 0.02 });
+  P("bufferStop", RAILWAY.a1 - 0.006, 0, { y: 0.02 });
+  col(RAILWAY.a0 + 0.006, 0, 1.6);
+  col(RAILWAY.a1 - 0.006, 0, 1.6);
+
+  /* ---- the kit crew at their posts ---- */
+  {
+    const sm = railPoint(ST, -3.9);
+    crew.push({ slug: "station-master-1d6a0a", x: sm.x, z: sm.z, rot: sm.rot });
+    const ck = railPoint(CR - 0.0103, -4.9);
+    crew.push({ slug: "crossing-keeper-e13207", x: ck.x, z: ck.z, rot: ck.rot });
+    const pl = railPoint(ST, 7.2);
+    crew.push({ slug: "platelayer-47dbe6", x: pl.x, z: pl.z, rot: pl.rot });
+    const ed = railPoint(ST, 9.8);
+    crew.push({ slug: "engine-driver-1ba1e2", x: ed.x, z: ed.z, rot: ed.rot });
+    const fm = railPoint(ST, 11.5);
+    crew.push({ slug: "fireman-96bf23", x: fm.x, z: fm.z, rot: fm.rot });
+    const pa = railPoint(ST, -4.9);
+    crew.push({ slug: "passenger-ac425a", x: pa.x, z: pa.z, rot: pa.rot });
+    const ts = railPoint(ST, -2.9);
+    crew.push({ slug: "trainspotter-ffd141", x: ts.x, z: ts.z, rot: ts.rot });
+  }
+
+  return { props, crew, cols };
+})();
+
+/** 🚂 the railway's station + yard + crossing zones keep the countryside scatter
+ *  (trees, rocks, flowers, tufts, woodsheds) out of the kit furniture */
+export function inRailwayYard(x: number, z: number, pad = 0): boolean {
+  const r = Math.hypot(x, z);
+  if (Math.abs(r - RAILWAY.R) > 30 + pad) return false;
+  const a = Math.atan2(z, x);
+  const da = pad / RAILWAY.R;
+  const ST = RAILWAY.station.a;
+  if (a > ST - 0.13 - da && a < ST + 0.12 + da) return true;  // station + goods yard band
+  if (Math.abs(a - Math.PI / 2) < 0.035 + da) return true;    // the level crossing
+  return false;
+}
 
 /* ---------------- 🚜 cozy farm kit — the farmsteads grow real furniture ----------------
  * Everything is derived from the barn positions + crop fields so worldgen
@@ -1566,8 +1798,8 @@ export function generateWorld(seed = WORLD_SEED): World {
   const silos: Silo[] = barns.map(([x, z]) => ({ x: x + 11.5, z: z + 2 }));
   for (const fh of FARMKIT.farmhouses) push(fh.x, fh.z, 6, 4.5, 5.2, 2, 0xd8c8a8, 0x8a5a3a); // farmhouse with a pyramid roof
   push(FARMKIT.greenhouse.x, FARMKIT.greenhouse.z, 4.2, 2.8, 3.4, 0, 0x9fc4d8, 0x5a6472);     // glasshouse shell (glazing drawn in <Farm>)
-  push(RAILWAY_crossCottage.x, RAILWAY_crossCottage.z, 5.5, 4.5, 5, 2, 0xc8b08a, 0x7a4a34);   // crossing keeper's cottage
-  push(RAILWAY_stationHouse.x, RAILWAY_stationHouse.z, 7, 5, 5.5, 1, 0x8a5a3a, 0x4a3a2e, 1);  // country station house + canopy awning
+  // 🚂 the kit crossing keeper's cottage + country station house are REAL kit
+  // models now (see RAILKIT / <RailwayKit>) — their colliders ride RAILKIT.cols
   const fields: Field[] = FIELDS_BASE.map((f) => ({ ...f, w: 12, d: 8 }) as Field);
   const windmills = [
     { x: 425, z: -68, rot: 0 }, { x: 403, z: 195, rot: 1.2 }, { x: -412, z: 193, rot: 2.1 },
@@ -1723,7 +1955,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8 || graveyardLaneDist(x, z) < 9) continue;
     if (inAirportPlot(x, z)) continue;
-    if (Math.abs(Math.hypot(x, z) - RAILWAY.R) < 5.5) continue; // 🚂 the branch line stays clear
+    if (Math.abs(Math.hypot(x, z) - RAILWAY.R) < 5.5 || inRailwayYard(x, z, 4)) continue; // 🚂 the branch line + its yard stay clear
     if (fields.some((f) => Math.abs(x - f.x) < f.w + 3 && Math.abs(z - f.z) < f.d + 3)) continue;
     if (buildings.some((b) => Math.abs(x - b.x) < b.w + 3 && Math.abs(z - b.z) < b.d + 3)) continue;
     addTree(x, z, range(rnd, 0.8, 1.3), treeKindRoll(rnd, FARM_TREE_MIX)); // 🌲 birches & maples shade the lanes
@@ -1828,7 +2060,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     if (graveyardLaneDist(x, z) < pad) return false;
     if (inFlightZone(x, z)) return false; // ✈️ plot + climb-out corridor stay prop-free
     if (inHospitalCampus(x, z, pad)) return false; // 🏥 the medical campus grounds stay prop-free
-    if (nearRailway(x, z, 5 + pad)) return false; // 🚂 no tufts/bushes/ferns sprouting on the rails
+    if (nearRailway(x, z, 5 + pad) || inRailwayYard(x, z, pad)) return false; // 🚂 no tufts/bushes/ferns sprouting on the rails or in the yard
     if (buildings.some((b) => Math.abs(x - b.x) < b.w + pad && Math.abs(z - b.z) < b.d + pad)) return false;
     if (fields.some((f) => Math.abs(x - f.x) < f.w + pad && Math.abs(z - f.z) < f.d + pad)) return false;
     if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 8.5)) return false;
@@ -2013,7 +2245,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     const a = Math.atan2(bz, bx);
     const wx = bx + Math.cos(a + 0.9) * 16, wz = bz + Math.sin(a + 0.9) * 16;
     if (fields.some((f) => Math.abs(wx - f.x) < f.w + 2 && Math.abs(wz - f.z) < f.d + 2)) continue;
-    if (nearRailway(wx, wz, 8)) continue; // 🚂 never a woodshed on the branch line
+    if (nearRailway(wx, wz, 8) || inRailwayYard(wx, wz, 4)) continue; // 🚂 never a woodshed on the branch line or in its yard
     if (inFlightZone(wx, wz)) continue;   // ✈️ nor one parked on the airfield
     woodsheds.push({ x: wx, z: wz, rot: a + Math.PI });
   }
@@ -2055,7 +2287,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     const x = Math.cos(a) * rr, z = Math.sin(a) * rr;
     if (Math.hypot(x - GRAVEYARD.x, z - GRAVEYARD.z) < GRAVEYARD.r + 8 || graveyardLaneDist(x, z) < 8) continue;
     if (inAirportPlot(x, z)) continue;
-    if (Math.abs(Math.hypot(x, z) - RAILWAY.R) < 6) continue; // 🚂 no boulders blocking the branch line
+    if (Math.abs(Math.hypot(x, z) - RAILWAY.R) < 6 || inRailwayYard(x, z, 3)) continue; // 🚂 no boulders blocking the branch line or the yard
     // keep the ring road, main road, avenues and the street grid drivable
     if (Math.abs(rr - RING_R) < RING_W / 2 + 4) continue;
     if (Math.abs(x) < ROAD_W / 2 + 4 && z > MAIN_ROAD.z0 - 4 && z < MAIN_ROAD.z1 + 4) continue;
@@ -2076,7 +2308,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     const a = range(rnd, 0, Math.PI * 2), d = range(rnd, CITY_RADIUS + 6, FARM_RADIUS - 8);
     const x = Math.cos(a) * d, z = Math.sin(a) * d;
     if (inAirportPlot(x, z)) continue;                         // keep the apron pretty
-    if (nearRailway(x, z, 7)) continue;                        // 🚂 no flowers on the branch line
+    if (nearRailway(x, z, 7) || inRailwayYard(x, z, 2)) continue;              // 🚂 no flowers on the branch line or in the yard
     if (fields.some((f) => Math.abs(x - f.x) < f.w + 1 && Math.abs(z - f.z) < f.d + 1)) continue;
     addFlower(x, z);
   }
@@ -2181,16 +2413,8 @@ export function generateWorld(seed = WORLD_SEED): World {
   // 🧱 builder pool — dormant circles parked under the museum podium (r≈0 never
   // collides). moveCircle() teleports one onto a build spot; reset() brings it back.
   for (let i = 0; i < BUILD_POOL; i++) circles.push({ x: MUSEUM.x, z: MUSEUM.z, r: 0.001, build: i });
-  /* ---- 🚂 countryside railway — solid furniture (the track bed itself stays walkable) ---- */
-  boxes.push({ x: RAILWAY_waterTower.x, z: RAILWAY_waterTower.z, w: 2.4, d: 2.4, h: 12 }); // water tower legs
-  boxes.push({ x: RAILWAY_signalBox.x, z: RAILWAY_signalBox.z, w: 2.2, d: 1.8, h: 5.5 }); // signal box
-  for (const pl of RAILWAY.poles) circles.push({ x: pl.x, z: pl.z, r: 0.35 });            // telegraph poles
-  for (const st of RAILWAY.stock) circles.push({ x: st.x, z: st.z, r: 1.8 });             // parked rolling stock
-  for (const en of RAILWAY.ends) circles.push({ x: en.x, z: en.z, r: 0.9 });              // buffer stops
-  // level-crossing posts — four corners of the farm-lane × track intersection
-  const RAIL_CROSS = railPoint(RAILWAY.crossing.a);
-  for (const [gx0, gz0] of [[-6.5, -5.5], [6.5, -5.5], [-6.5, 5.5], [6.5, 5.5]] as const)
-    circles.push({ x: RAIL_CROSS.x + gx0, z: RAIL_CROSS.z + gz0, r: 0.42 });
+  /* ---- 🚂 countryside railway — the kit furniture is solid (the track bed stays walkable) ---- */
+  for (const c of RAILKIT.cols) circles.push(c);
   /* ---- 🚜 cozy farm kit — the barnyard is solid ---- */
   for (const hb of FARMKIT.bales) circles.push({ x: hb.x, z: hb.z, r: 1.05 });            // hay bales
   for (const sc of FARMKIT.scarecrows) circles.push({ x: sc.x, z: sc.z, r: 0.4 });        // scarecrow posts

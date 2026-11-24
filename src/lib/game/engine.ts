@@ -1865,6 +1865,11 @@ export class GameEngine {
     // 🎒 locker gear — everything PURCHASED in the Item Shop spawns with you:
     // belt tools, pocketed gems, hotbar snacks and the VIP license
     if (gear) this.grantLockerGear(gear);
+    // 📸 rebuild the cached HUD snapshot NOW — getHud() returns the constructor-era
+    // copy until the loop's next 0.1 s rebuild, so a fresh run's first frames
+    // would otherwise hide the 🪪 license badge (and every other granted perk)
+    // for a beat — the "purchased the license but the game doesn't show it" moment.
+    this.hud = this.buildHud();
     this.running = true;
   }
 

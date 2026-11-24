@@ -9,7 +9,7 @@ import {
   WILDLIFE_ENABLED,
 } from "@/lib/game/constants";
 import {
-  AVENUE, BARN_BASE, DIGS, FARMKIT, FIELDS_BASE, GATE, generateWorld, GRAVEKIT, inAirportPlot, MALL, MAIN_ROAD, NYC, PARK, RAILWAY, RAILWAY_crossCottage, RAILWAY_signalBox, RAILWAY_stationHouse, RAILWAY_waterTower, railPoint, RING_GAP, RING_R, RING_W, ROAD_W, ROADS, SCHOOL, TOWN_SQUARE, terrainHeight,
+  AVENUE, BARN_BASE, DIGS, FARMKIT, FIELDS_BASE, GATE, generateWorld, GRAVEKIT, inAirportPlot, MALL, MAIN_ROAD, NYC, PARK, RAILWAY, railPoint, RING_GAP, RING_R, RING_W, ROAD_W, ROADS, SCHOOL, TOWN_SQUARE, terrainHeight,
   type World,
 } from "@/lib/game/worldgen";
 import { nameTag } from "@/lib/game/character";
@@ -28,6 +28,7 @@ import {
 import { GraveyardEstate } from "@/components/game/GraveyardKit";
 import { isGraveyardModelReady, onGraveyardModelsReady, spawnGraveyardModel } from "@/lib/game/graveyardModels";
 import { HospitalCampus } from "@/components/game/HospitalKit";
+import { RailwayKit } from "@/components/game/RailwayKit";
 import { ConstructionSites } from "@/components/game/ConstructionSites";
 import { PrehistoricValley } from "@/components/game/PrehistoricValley";
 import { registerCullRoot, resetCullRoots, tickStaticCull } from "@/lib/game/staticCull";
@@ -3713,162 +3714,16 @@ function Planes({ engine }: { engine: GameEngine }) {
 
 /* ------------------------- 🚂 countryside railway ------------------------- */
 function Railway() {
-  const sleepers = useRef<THREE.InstancedMesh>(null!);
-  const sleeperData = useMemo(() => {
-    const out: { x: number; z: number; rot: number }[] = [];
-    for (let a = RAILWAY.a0; a < RAILWAY.a1; a += 2.3 / RAILWAY.R)
-      out.push({ x: Math.cos(a) * RAILWAY.R, z: Math.sin(a) * RAILWAY.R, rot: -(a + Math.PI / 2) });
-    return out;
-  }, []);
-  useLayoutEffect(() => {
-    sleeperData.forEach((sl, i) => {
-      tmp.position.set(sl.x, 0.1, sl.z);
-      tmp.rotation.set(0, sl.rot, 0);
-      tmp.scale.setScalar(1);
-      tmp.updateMatrix();
-      sleepers.current.setMatrixAt(i, tmp.matrix);
-    });
-    sleepers.current.instanceMatrix.needsUpdate = true;
-  }, [sleeperData]);
-  const platform = railPoint(RAILWAY.station.a, -3.4);
   const cross = railPoint(RAILWAY.crossing.a);
+  /* 🚂 the branch line itself is the REAL Countryside-Railway kit now — 4m
+   * straight-track sections (ballast + twin rails + sleepers) bake the whole
+   * arc, and the station, goods yard, crossing furniture, rolling stock and
+   * kit crew render via <RailwayKit>. Only the farm lane stays procedural: */
   return (
-    <>
-      {/* ballast bed + twin rails — flat ribbons along the arc.
-       * rotation-x=-π/2 MIRRORS ring angles (θ → world −θ), so the thetaStart
-       * is −a1 (not a0!) to land the ribbon ON the sleepers/station side —
-       * the old mirrored ribbon drew a ghost half-arc on the far side of town. */}
-      <mesh rotation-x={-Math.PI / 2} position-y={0.045}>
-        <ringGeometry args={[RAILWAY.R - 2.3, RAILWAY.R + 2.3, 160, 1, -RAILWAY.a1, RAILWAY.a1 - RAILWAY.a0]} />
-        <meshLambertMaterial color="#5a5248" side={THREE.DoubleSide} />
-      </mesh>
-      {[RAILWAY.R - 0.75, RAILWAY.R + 0.75].map((r, i) => (
-        <mesh key={i} rotation-x={-Math.PI / 2} position-y={0.18}>
-          <ringGeometry args={[r - 0.07, r + 0.07, 200, 1, -RAILWAY.a1, RAILWAY.a1 - RAILWAY.a0]} />
-          <meshLambertMaterial color="#4a4440" side={THREE.DoubleSide} />
-        </mesh>
-      ))}
-      <instancedMesh ref={sleepers} args={[undefined, undefined, Math.max(1, sleeperData.length)]}>
-        <boxGeometry args={[2.7, 0.12, 0.5]} />
-        <meshLambertMaterial color="#4a3c2c" />
-      </instancedMesh>
-      {/* 📮 telegraph poles march beside the line */}
-      {RAILWAY.poles.map((pl, i) => (
-        <group key={i} position={[pl.x, 0, pl.z]} rotation-y={pl.rot}>
-          <mesh position-y={4.1}><cylinderGeometry args={[0.14, 0.2, 8.2, 6]} /><meshLambertMaterial color="#3d3229" /></mesh>
-          <mesh position-y={7.4}><boxGeometry args={[2.1, 0.14, 0.14]} /><meshLambertMaterial color="#3d3229" /></mesh>
-          <mesh position-y={6.9}><boxGeometry args={[1.6, 0.12, 0.12]} /><meshLambertMaterial color="#3d3229" /></mesh>
-        </group>
-      ))}
-      {/* 🚉 country station: platform, canopy, name board, benches, lamp */}
-      <group position={[platform.x, 0, platform.z]} rotation-y={platform.rot}>
-        <mesh position-y={0.28}><boxGeometry args={[14, 0.55, 3.2]} /><meshLambertMaterial color="#9a948c" /></mesh>
-        <mesh position-y={0.58}><boxGeometry args={[14, 0.1, 3.0]} /><meshLambertMaterial color="#b8b2a8" /></mesh>
-        {[-5.8, 5.8].map((x) => (
-          <mesh key={x} position={[x, 2.4, -1.1]}><cylinderGeometry args={[0.11, 0.13, 3.9, 6]} /><meshLambertMaterial color="#1d3a2a" /></mesh>
-        ))}
-        <mesh position={[0, 4.4, -0.7]}><boxGeometry args={[14.4, 0.16, 3.6]} /><meshLambertMaterial color="#274a34" /></mesh>
-        <mesh position={[0, 4.75, -0.7]}><boxGeometry args={[14.8, 0.12, 3.9]} /><meshLambertMaterial color="#1d3a2a" /></mesh>
-        {/* name board */}
-        <mesh position={[0, 3.2, -1.35]}><boxGeometry args={[3.6, 0.7, 0.12]} /><meshLambertMaterial color="#0e3a24" /></mesh>
-        {[-3.4, 3.4].map((x) => (
-          <mesh key={x} position={[x, 0.85, -0.4]} rotation-y={x > 0 ? -0.25 : 0.25}><boxGeometry args={[1.6, 0.45, 0.5]} /><meshLambertMaterial color="#6e5a3a" /></mesh>
-        ))}
-      </group>
-      {/* 💧 water tower beside the station */}
-      <group position={[RAILWAY_waterTower.x, 0, RAILWAY_waterTower.z]}>
-        {[[-1.5, -1.5], [1.5, -1.5], [-1.5, 1.5], [1.5, 1.5]].map(([x, z], i) => (
-          <mesh key={i} position={[x, 4.4, z]} rotation-z={x * 0.045} rotation-x={-z * 0.045}>
-            <cylinderGeometry args={[0.16, 0.2, 8.8, 6]} /><meshLambertMaterial color="#4a3c30" />
-          </mesh>
-        ))}
-        <mesh position-y={9.6}><cylinderGeometry args={[2.6, 2.9, 3.4, 10]} /><meshLambertMaterial color="#8a6a4a" /></mesh>
-        <mesh position-y={11.8}><coneGeometry args={[3, 1.6, 10]} /><meshLambertMaterial color="#3a3430" /></mesh>
-      </group>
-      {/* 🚦 signal box */}
-      <group position={[RAILWAY_signalBox.x, 0, RAILWAY_signalBox.z]} rotation-y={RAILWAY_signalBox.rot}>
-        <mesh position-y={2.3}><boxGeometry args={[3.8, 2.6, 3]} /><meshLambertMaterial color="#6e5a3a" /></mesh>
-        <mesh position-y={3.75}><boxGeometry args={[4.2, 1.1, 3.4]} /><meshLambertMaterial color="#28303a" /></mesh>
-        <mesh position-y={4.5}><boxGeometry args={[4.4, 0.3, 3.6]} /><meshLambertMaterial color="#2c241c" /></mesh>
-      </group>
-      {/* 🚂 the 15:07 waits at the platform — loco, two carriages, brake van */}
-      {RAILWAY.stock.map((st, i) => (
-        <group key={i} position={[st.x, 0, st.z]} rotation-y={st.rot}>
-          {st.kind === 0 && (
-            <>
-              <mesh position-y={1.5}><boxGeometry args={[6.4, 1.9, 2.4]} /><meshLambertMaterial color="#1e3a2e" /></mesh>
-              <mesh position={[-1.6, 3.3, 0]}><boxGeometry args={[3, 2.4, 2.3]} /><meshLambertMaterial color="#1e3a2e" /></mesh>
-              <mesh position={[2.9, 4.1, 0]}><cylinderGeometry args={[0.32, 0.42, 1.6, 8]} /><meshLambertMaterial color="#12100c" /></mesh>
-              <mesh position={[1.4, 2.9, 0]}><cylinderGeometry args={[0.4, 0.4, 0.7, 8]} /><meshLambertMaterial color="#c8a832" /></mesh>
-              <mesh position={[3.4, 0.9, 0]}><boxGeometry args={[0.9, 1.8, 2]} /><meshLambertMaterial color="#7a1e14" /></mesh>
-              {[-2.2, -0.6, 1.2, 2.6].map((x, k) => (
-                <mesh key={k} position={[x, 0.55, k % 2 === 0 ? 1.15 : -1.15]} rotation-x={Math.PI / 2}>
-                  <cylinderGeometry args={[0.55, 0.55, 0.22, 10]} /><meshLambertMaterial color="#2c2c30" />
-                </mesh>
-              ))}
-            </>
-          )}
-          {st.kind === 1 && (
-            <>
-              <mesh position-y={1.75}><boxGeometry args={[7.6, 2.3, 2.5]} /><meshLambertMaterial color="#5a1e14" /></mesh>
-              <mesh position-y={1.9}><boxGeometry args={[7.0, 0.9, 2.56]} /><meshLambertMaterial color="#d8c8a0" /></mesh>
-              <mesh position-y={3.15}><boxGeometry args={[7.8, 0.2, 2.7]} /><meshLambertMaterial color="#3a1c14" /></mesh>
-              {[-2.6, -0.4, 1.8].map((x, k) => (
-                <mesh key={k} position={[x, 0.55, k % 2 === 0 ? 1.1 : -1.1]} rotation-x={Math.PI / 2}>
-                  <cylinderGeometry args={[0.5, 0.5, 0.2, 10]} /><meshLambertMaterial color="#2c2c30" />
-                </mesh>
-              ))}
-            </>
-          )}
-          {st.kind === 2 && (
-            <>
-              <mesh position-y={1.7}><boxGeometry args={[6.6, 2.2, 2.5]} /><meshLambertMaterial color="#3a2418" /></mesh>
-              <mesh position-y={3.2}><boxGeometry args={[1.6, 1.2, 2.1]} /><meshLambertMaterial color="#3a2418" /></mesh>
-              {[-2.2, 2.2].map((x, k) => (
-                <mesh key={k} position={[x, 0.55, k % 2 === 0 ? 1.1 : -1.1]} rotation-x={Math.PI / 2}>
-                  <cylinderGeometry args={[0.5, 0.5, 0.2, 10]} /><meshLambertMaterial color="#2c2c30" />
-                </mesh>
-              ))}
-            </>
-          )}
-        </group>
-      ))}
-      {/* buffer stops where the branch line ends */}
-      {RAILWAY.ends.map((en, i) => (
-        <group key={i} position={[en.x, 0, en.z]} rotation-y={en.rot}>
-          <mesh position={[1.1, 0.85, 0]}><boxGeometry args={[0.4, 1.7, 2.4]} /><meshLambertMaterial color="#8a2418" /></mesh>
-          <mesh position={[1.1, 1.8, 0]}><boxGeometry args={[0.9, 0.2, 2.4]} /><meshLambertMaterial color="#3a3430" /></mesh>
-        </group>
-      ))}
-      {/* ✖️ the farm lane meets the line — the long lane strip sits AT the crossing
-       * (it used to render at the world origin, a dirt stripe right through downtown!) */}
-      <mesh rotation-x={-Math.PI / 2} position={[cross.x, 0.04, cross.z]}>
-        <planeGeometry args={[7, 108]} />
-        <meshLambertMaterial color="#7a6a50" />
-      </mesh>
-      {/* wooden crossing deck planks */}
-      <mesh rotation-x={-Math.PI / 2} position={[cross.x, 0.11, cross.z]}>
-        <planeGeometry args={[7.6, 4.6]} />
-        <meshLambertMaterial color="#4a3c2c" />
-      </mesh>
-      {[[-6.5, -5.5], [6.5, -5.5], [-6.5, 5.5], [6.5, 5.5]].map(([dx, dz], i) => (
-        <group key={i} position={[cross.x + dx, 0, cross.z + dz]}>
-          <mesh position-y={0.7}><cylinderGeometry args={[0.16, 0.2, 1.4, 6]} /><meshLambertMaterial color="#e8e4dc" /></mesh>
-          <mesh position-y={1.5}><sphereGeometry args={[0.24, 8, 6]} /><meshLambertMaterial color="#c8332a" /></mesh>
-          {/* half-lowered gate arms angled across the lane */}
-          <mesh position={[dx > 0 ? -2.6 : 2.6, 1.1, 0]} rotation-y={dx > 0 ? 0.85 : -0.85}>
-            <boxGeometry args={[5.4, 0.16, 0.12]} />
-            <meshLambertMaterial color="#e8e4dc" />
-          </mesh>
-        </group>
-      ))}
-      {/* crossbuck sign facing the lane */}
-      <group position={[cross.x + 8.5, 0, cross.z]}>
-        <mesh position-y={2.2}><cylinderGeometry args={[0.12, 0.16, 4.4, 6]} /><meshLambertMaterial color="#e8e4dc" /></mesh>
-        <mesh position-y={3.9} rotation-z={0.6}><boxGeometry args={[1.9, 0.34, 0.1]} /><meshLambertMaterial color="#e8e4dc" /></mesh>
-        <mesh position-y={3.9} rotation-z={-0.6}><boxGeometry args={[1.9, 0.34, 0.1]} /><meshLambertMaterial color="#e8e4dc" /></mesh>
-      </group>
-    </>
+    <mesh rotation-x={-Math.PI / 2} position={[cross.x, 0.04, cross.z]}>
+      <planeGeometry args={[7, 108]} />
+      <meshLambertMaterial color="#7a6a50" />
+    </mesh>
   );
 }
 
@@ -5199,6 +5054,7 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
         <Landmarks />
         <HospitalCampus engine={engine} />
         <ConstructionSites engine={engine} />
+        <RailwayKit engine={engine} />
         <PrehistoricValley engine={engine} />
         <Forest engine={engine} />
         <Camps engine={engine} clockRef={clockRef} />

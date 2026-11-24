@@ -23,7 +23,7 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { DIGS, SITEKIT, digDown, type ConSiteDef } from "@/lib/game/worldgen";
 import {
-  bakeConstructionModel, cloneConstructionModel, onConstructionModelsReady,
+  bakeConstructionModel, cloneConstructionModel, constructionGroundY, onConstructionModelsReady,
   preloadConstructionModels,
   type ConstructionKind,
 } from "@/lib/game/constructionModels";
@@ -121,6 +121,9 @@ function DigGround() {
       g.computeVertexNormals();
       const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true }));
       m.receiveShadow = true;
+      m.name = `digground-${d.id}`;
+      // eslint-disable-next-line no-console -- temporary diagnostic
+      console.log("[digground] patch", d.id, "verts", pos.length / 3, "tris", idx.length / 3, "yRange", (0.06 - d.depth).toFixed(2), "→0.06");
       out.push(m);
     }
     return out;
@@ -151,7 +154,12 @@ function CraneTops() {
         if (!p) continue;
         const g = cloneConstructionModel("craneTop");
         if (!g) continue;
-        g.position.set(p.x, p.y ?? 0, p.z);
+        // seat the SLEWING RING on the mast head: p.y is the mast-top height,
+        // but the loader lifted the whole top by −groundY (its hook + cables
+        // hang ~2m below the ring) — without this the ring floats above the
+        // tower with only the cables bridging the gap (the "crane top in the
+        // air" bug)
+        g.position.set(p.x, (p.y ?? 0) + constructionGroundY("craneTop"), p.z);
         g.rotation.y = p.rot ?? 0;
         out.push(g);
       }
