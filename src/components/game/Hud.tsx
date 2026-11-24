@@ -234,6 +234,8 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
   }
   // night danger: the risen horde — the ONE thing the mini must never hide
   if (night) for (const zb of engine.zombies) dot(zb.x, zb.z, 2.4 * U, "#c084fc");
+  // ⚰️ the phantom hearse's guardians — awake day & night while they defend the car
+  for (const g of engine.hearseGuards) if (!g.dead) dot(g.x, g.z, 2.6 * U, "#e0a0ff", 0.95);
   if (!mini) {
     // 7 Nights: the crew — each survivor in their color; the fallen leave a dark-red ✕ where they died
     for (const cm of engine.crew) {

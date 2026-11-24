@@ -654,6 +654,88 @@ export function Zombies({ engine }: { engine: GameEngine }) {
 }
 
 /* ------------------------------------------------------------------ */
+/* ⚰️ Phantom hearse guardians                                          */
+/* ------------------------------------------------------------------ */
+/* The graveyard's unique car wakes its own pack when challenged. Unlike the
+ * contest horde these dead rise DAY OR NIGHT (they're bound to the car, not
+ * the moon), claw out of the dirt in front of you and defend their posts.
+ * Same rotten pipeline as the horde — grimlight denizen skins, shamble
+ * pose, lunge-bite attack — plus a rise-from-the-dirt entrance and a bigger,
+ * meaner stance. Slain guards fall, sink, and stay gone. */
+export function HearseGuards({ engine }: { engine: GameEngine }) {
+  const cacheRef = useRef(new Map<number, THREE.Group>());
+  const [rev, setRev] = useState(engine.hearseGuardRev);
+  const revRef = useRef(engine.hearseGuardRev);
+  const views = useMemo(() => {
+    const map = new Map<number, THREE.Group>();
+    for (const g of engine.hearseGuards) {
+      let b = cacheRef.current.get(g.id);
+      if (!b) {
+        const v = ZOMBIE_VARIANTS[Math.abs(g.id) % ZOMBIE_VARIANTS.length];
+        b = buildCharacter(
+          { fac: "protester", outfit: "", skin: v.skin, shirt: v.shirt, pants: v.pants, shoe: "#2e2e26", hair: v.hair, hairStyle: v.hairStyle, cap: false, capColor: "#3a4a2a", glasses: false, age: v.age, girl: false },
+          { zombie: true, keepShirt: true },
+        );
+        // a grimlight denizen skin with a HEAVIER rot wash — these dead are meaner
+        attachGlbBody(b, grimlightPick(g.id * 23 + 9), { zombieSeed: g.id, tintMix: 0.34 });
+        b.scale.setScalar(1.06 + (Math.abs(g.id) % 3) * 0.04); // guardians stand bigger
+        cacheRef.current.set(g.id, b);
+      }
+      map.set(g.id, b);
+    }
+    // released guards' stand-ins go home (their GLB skins share template buffers)
+    for (const [k, g] of [...cacheRef.current]) {
+      if (!map.has(k)) { disposeCartoonOnly(g); cacheRef.current.delete(k); }
+    }
+    return map;
+  }, [engine, rev]);
+  useEffect(() => () => {
+    for (const g of cacheRef.current.values()) disposeCartoonOnly(g);
+    cacheRef.current.clear();
+  }, []);
+  useFrame((s) => {
+    if (engine.hearseGuardRev !== revRef.current) { revRef.current = engine.hearseGuardRev; setRev(engine.hearseGuardRev); }
+    const t = s.clock.elapsedTime;
+    const cam = s.camera.position;
+    for (const g of engine.hearseGuards) {
+      const m = views.get(g.id);
+      if (!m) continue;
+      const dx = g.x - cam.x, dz = g.z - cam.z;
+      if (g.dead) {
+        // slain — topple face-first, rest, then the hungry dirt pulls them under
+        const dT = g.deadT ?? 0;
+        if (dT > 1.5 + CORPSE_SINK_S || dx * dx + dz * dz > CULL_SQ) { m.visible = false; continue; }
+        m.visible = true;
+        const fall = Math.min(1, dT / 0.5);
+        const ez = fall * fall * (3 - 2 * fall);
+        const sinkD = Math.max(0, dT - 1.5) / CORPSE_SINK_S;
+        m.position.set(g.x, -1.85 * sinkD, g.z);
+        let dd = g.face - m.rotation.y;
+        dd = Math.atan2(Math.sin(dd), Math.cos(dd));
+        m.rotation.y += dd * 0.2;
+        m.rotation.x = -ez * Math.PI / 2.05;
+        m.rotation.z = 0;
+        continue;
+      }
+      if (dx * dx + dz * dz > CULL_SQ) { m.visible = false; continue; }
+      m.visible = true;
+      // 🌱 clawing out of the dirt — the first ~1.1 s of life rises them from below
+      const rise = THREE.MathUtils.clamp((g.spawnT ?? 1) / 1.1, 0, 1);
+      const er = rise * rise * (3 - 2 * rise);
+      m.position.set(g.x, -1.9 * (1 - er), g.z);
+      let dd = g.face - m.rotation.y;
+      dd = Math.atan2(Math.sin(dd), Math.cos(dd));
+      m.rotation.y += dd * 0.14;
+      m.rotation.x = 0; m.rotation.z = 0;
+      // the shamble + the lunge-bite overlay while the bite clock is live
+      const atk = (g.attackT ?? 0) / 0.5;
+      poseCharacter(m, Math.hypot(g.vx, g.vz), t, { phase: g.phase, zombie: true, attack: atk > 0 ? atk : 0 });
+    }
+  });
+  return <>{[...views.values()].map((m, i) => <primitive object={m} key={i} />)}</>;
+}
+
+/* ------------------------------------------------------------------ */
 /* Animals                                                             */
 /* ------------------------------------------------------------------ */
 /* 🐾 One body pipeline — EVERY species is a rigged polyfork GLB now:

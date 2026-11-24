@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
-import { GameLoop, Npcs, Zombies, Animals, JungleInsects, Pickups, Powers, Licenses, Shadows, Confetti, CrewRig, RemotesView, ToolDrops, BuildsView, RocksView, Stumps, LootView, ZoneWall, type ClockRef } from "./Entities";
+import { GameLoop, Npcs, Zombies, HearseGuards, Animals, JungleInsects, Pickups, Powers, Licenses, Shadows, Confetti, CrewRig, RemotesView, ToolDrops, BuildsView, RocksView, Stumps, LootView, ZoneWall, type ClockRef } from "./Entities";
 import { WorldView, WORLD } from "./WorldView";
 import { GameEngine } from "@/lib/game/engine";
 import type { Appearance } from "@/lib/game/constants";
@@ -349,6 +349,8 @@ export function Scene({ engine }: { engine: GameEngine }) {
       <CrewRig engine={engine} />
       <RemotesView engine={engine} />
       <Zombies engine={engine} />
+      {/* ⚰️ the phantom hearse's graveyard guardians — awake day & night */}
+      <HearseGuards engine={engine} />
       {/* 🚫 Animals & JungleInsects mount only while wildlife is enabled —
         * with the zoo dropped they stay unmounted: no rigs, no mixers, no
         * fly-swarm points, nothing (WILDLIFE_ENABLED in constants.ts). */}

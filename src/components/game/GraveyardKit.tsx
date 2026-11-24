@@ -23,10 +23,9 @@ import {
   type GraveyardKind, type GraveyardPlacement,
 } from "@/lib/game/graveyardModels";
 
-/** authored forward fixes — tune if a catalog update turns a model around */
-const MODEL_YAW: Partial<Record<GraveyardKind, number>> = {
-  hearse: 0,   // authored nose-along-z (like the airport planes)
-};
+/** authored forward fixes — tune if a catalog update turns a model around
+ *  (the hearse left: it's a REAL drivable car now, rendered by GlbCars) */
+const MODEL_YAW: Partial<Record<GraveyardKind, number>> = {};
 
 /** spawn once per component + re-render when the GLB lands */
 function useKitModel(kind: GraveyardKind) {
@@ -169,8 +168,8 @@ function CemeteryEstate() {
       {/* ⚰️ the family mausoleum + the coffin waiting inside */}
       <KitProp kind="mausoleum" x={GRAVEKIT.mausoleum.x} z={GRAVEKIT.mausoleum.z} rot={GRAVEKIT.mausoleum.rot} s={1.15} />
       <KitProp kind="coffin" x={GRAVEKIT.coffin.x} z={GRAVEKIT.coffin.z} y={0.18} rot={GRAVEKIT.coffin.rot} s={1.1} />
-      {/* ⚰️ the vintage hearse parked where the last client left it */}
-      <KitProp kind="hearse" x={GRAVEKIT.hearse.x} z={GRAVEKIT.hearse.z} rot={GRAVEKIT.hearse.rot} />
+      {/* ⚰️ the vintage hearse is a REAL drivable car now (world.cars, type
+          HEARSE_TYPE) — GlbCars renders the model, the engine guards it */}
     </group>
   );
 }

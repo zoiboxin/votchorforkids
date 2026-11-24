@@ -2,7 +2,7 @@ import {
   AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, BUST_CARRY_BONUS, BUST_POINTS, BUST_TARGET, CARRY_RADIUS, CAR_ACCEL, CAR_BRAKE, CAR_COAST, CAR_COAST_FRICTION, CAR_ENTER_R, CAR_HIT_CD, CAR_HIT_DMG, CAR_HIT_MIN_CLOSING, CAR_HIT_TRANSFER, CAR_REV_SPEED, CAR_SLIDE_FRICTION, CAR_SPIN_FRICTION, CAR_STEER, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
   CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, CONFISCATE_FINE, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
-  ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HAUL_CAMP_R, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
+  ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HAUL_CAMP_R, HEARSE_GUARD_COUNT, HEARSE_GUARD_DMG, HEARSE_GUARD_HP, HEARSE_GUARD_HOME_R, HEARSE_GUARD_LEASH, HEARSE_GUARD_SPEED, HEARSE_HOARD, HEARSE_TYPE, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
   DEEP_JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER,
   ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_BUFFER_S, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
@@ -14,7 +14,7 @@ import {
   ACCUSE_RADIUS, ATTACK_CD, ATTACK_RANGE, BARRICADE_COST, BARRICADE_HP, CAMPFIRE_COST, CAMPFIRE_R, CLAW_DMG,
   CREW_COLORS, CREW_COLOR_NAMES, CREW_COUNT, CREW_HP, CREW_NAMES, CREW_SPEED, HANDS_DMG, HUNTER_DMG, HUNTER_HP, HUNTER_SPEED,
   HUNTER_TOUCH_CD, NIGHTS_TOTAL, PHASE_DAY_S, PHASE_DAWN_S, PHASE_DUSK_S, PHASE_NIGHT_S,
-  POINTS_BUILD, POINTS_HARVEST, POINTS_KILL_BEAST, POINTS_KILL_ZOMBIE, POINTS_NIGHT, POINTS_RIGHT_ACCUSE,
+  POINTS_BUILD, POINTS_HARVEST, POINTS_KILL_BEAST, POINTS_KILL_GUARD, POINTS_KILL_ZOMBIE, POINTS_HEARSE_BONUS, POINTS_NIGHT, POINTS_RIGHT_ACCUSE,
   POINTS_WRONG_ACCUSE, ROCK_HITS, ROCK_PER_BOULDER, TOOL_PICKUP_R, TOOL_SPAWN, TOOLS,
   TREE_HITS, WOOD_PER_TREE, WIN_BONUS, PLAYERS_TOTAL, ZOMBIE_CREW_DMG, ZOMBIE_HP,
   ZONE_DRAIN_BASE, ZONE_DRAIN_STEP, ZONE_GRACE_S, ZONE_RADII, DAWN_ALIVE_CAP, DAWN_WARN_S,
@@ -29,7 +29,7 @@ import {
 } from "./constants";
 import { clamp, mulberry32, range } from "./rng";
 import type { OwnedGear } from "./shop";
-import { addDynamicCircle, freeSpot, lineClear, refreshCarCircle, resolve, ringTrafficPoint, RING_R, ROADS, scatterSpots, spotNear, terrainHeight, TOWN_SQUARE, type CircleCollider, type World } from "./worldgen";
+import { addDynamicCircle, freeSpot, lineClear, refreshCarCircle, resolve, ringTrafficPoint, RING_R, ROADS, scatterSpots, spotNear, terrainHeight, TOWN_SQUARE, type Car, type CircleCollider, type World } from "./worldgen";
 import { nightFactor, newBody, stepBody, stepNpc, type Body, type SteerMemory } from "./sim";
 import { sfx, startDrone, stopDrone, setInsects, stopInsects } from "./audio";
 import { preloadModels } from "./models";
@@ -167,6 +167,11 @@ export interface Zombie extends SteerMemory {
   /** ⏱️ attention-recheck cooldown — a closer soul can steal a latched hunter,
    * but the steal roll runs on this cadence so chases don't thrash every frame */
   pickT?: number;
+  /* ⚰️ phantom-hearse guardians — this zombie is one of the graveyard pack
+   * (spawnT = seconds since it clawed out of the dirt — the renderer plays
+   * the rise; gx/gz = its ring post around the hearse it defends). Guards
+   * are a LOCAL encounter: each client's pack hunts its own player, no net. */
+  spawnT?: number; gx?: number; gz?: number;
 }
 
 /* ---------------- 7 Nights: survivors, tools & builds ---------------- */
@@ -595,6 +600,19 @@ export class GameEngine {
   cops: Npc[] = [];
   civs: Npc[] = [];
   zombies: Zombie[] = [];
+  /* ⚰️ the phantom hearse's graveyard guardians — a LOCAL encounter pack.
+   * They rise when someone first tries to take the unique hearse and hunt
+   * whoever came for it until slain (day or night). The renderer reads this
+   * array + the rev counter; no net replication (every soul fights its own). */
+  hearseGuards: Zombie[] = [];
+  /** bumped on any guardians roster change — the renderer rebuilds rigs */
+  hearseGuardRev = 0;
+  /** true once the guardian pack was slain — the hearse's wheel unlocks
+   * (per client: any license holder may then drive or steal the car) */
+  hearseUnlocked = false;
+  /** cached index of the hearse in world.cars (−1 = not yet resolved) —
+   * the world is deterministic, so the index never changes mid-session */
+  private hearseCi = -1;
   animals: Animal[] = [];
   /** 🌲 jungle night ambience director — countdown to the next owl / growl /
    *  twig-snap / howl while you're in the trees after dark (0 = idle, day) */
@@ -1814,6 +1832,9 @@ export class GameEngine {
     this.netScores.clear();
     for (const r of this.remotes) { r.beast = false; r.alive = true; r.hp = 100; }
     this.zombies = []; this.zRev++; // the dirt is empty — the contest fills it at dusk
+    // ⚰️ the graveyard trial resets too — a fresh week means the phantom
+    // hearse is locked again and its guardians sleep in their graves
+    this.hearseGuards = []; this.hearseGuardRev++; this.hearseUnlocked = false; this.hearseCi = -1;
     for (const an of this.animals) { an.dead = false; an.deadT = 0; an.zombie = false; an.hp = undefined; } // 🐕 a fresh week — every stray lives again
     this.finisherT = 0; this.deathT = 0; // ⚔️🩸 death juice rewinds
     stopDrone(); stopInsects(); // 🦗 the chorus falls silent with the light
@@ -1989,6 +2010,13 @@ export class GameEngine {
       return;
     }
     const car = this.world.cars[ci];
+    // ⚰️ THE PHANTOM HEARSE — the graveyard's unique car demands its toll.
+    // While the restless dead still stand, NO ONE turns the wheel (license
+    // or not). Pressing E wakes the pack; slay them all and the door unlocks.
+    if (car.t === HEARSE_TYPE && !this.hearseUnlocked) {
+      this.raiseHearseGuards();
+      return;
+    }
     this.breakEmote(); // 🎭 no dancing behind the wheel
     this.drive = { ci, x: car.x, z: car.z, rot: car.rot, v: 0, c: car.c, t: car.t, vx: car.x, vz: car.z, vrot: car.rot, spin: 0, hitT: 0, steerVis: 0, steer: 0, pedal: 0, lastDir: 1, lights: true };
     // 🚗 hopping into a car that's still coasting — inherit its rolling speed
@@ -2042,6 +2070,137 @@ export class GameEngine {
 
   /** H key while driving — beep beep! */
   horn() { if (this.drive) sfx.horn(); }
+
+  /* ---------------- ⚰️ the phantom hearse & its graveyard guardians ---------------- */
+
+  /** The unique graveyard car (null when the world has none). */
+  private hearseCar(): Car | null {
+    if (this.hearseCi >= 0 && this.hearseCi < this.world.cars.length) {
+      const c = this.world.cars[this.hearseCi];
+      if (c.t === HEARSE_TYPE) return c;
+    }
+    const i = this.world.cars.findIndex((c) => c.t === HEARSE_TYPE);
+    if (i < 0) return null;
+    this.hearseCi = i;
+    return this.world.cars[i];
+  }
+
+  /** E on the locked hearse — the dirt erupts: a pack of restless dead rises
+   *  around the car and hunts whoever came for it. Called on EVERY attempt
+   *  while the pack lives (repeat attempts re-toast the reminder instead of
+   *  re-spawning). Slay them all → unlockHearse(). */
+  private raiseHearseGuards() {
+    const car = this.hearseCar();
+    if (!car) return;
+    const alive = this.hearseGuards.filter((g) => !g.dead);
+    if (alive.length > 0) {
+      if (this.driveMsgT <= 0) {
+        this.driveMsgT = 2.5;
+        sfx.alert();
+        this.toast(`⚰️ ${alive.length} restless dead still guard the phantom hearse — SLAY THEM ALL!`, "bad");
+      }
+      return;
+    }
+    this.hearseGuards = [];
+    for (let i = 0; i < HEARSE_GUARD_COUNT; i++) {
+      const a = (i / HEARSE_GUARD_COUNT) * TAU + range(this.rnd, -0.4, 0.4);
+      const r = HEARSE_GUARD_HOME_R + range(this.rnd, -0.7, 1.0);
+      const gx = car.x + Math.cos(a) * r;
+      const gz = car.z + Math.sin(a) * r;
+      this.hearseGuards.push({
+        id: this.nid(), x: gx, z: gz, vx: 0, vz: 0,
+        face: Math.atan2(car.x - gx, car.z - gz),
+        phase: this.rnd() * 6, touchCd: 0, hp: HEARSE_GUARD_HP, dead: false,
+        chkT: 0, chkX: 0, chkZ: 0, sideT: 0, sideDx: 0, sideDz: 0,
+        spawnT: 0, gx, gz,
+      });
+    }
+    this.hearseGuardRev++;
+    sfx.scream();
+    this.addShake(0.45); // 💥 the ground heaves
+    this.toast(`⚰️ The dirt MOVES — ${HEARSE_GUARD_COUNT} restless guardians rise to defend the phantom hearse! FIGHT (F) — slay them all to claim it!`, "bad");
+  }
+
+  /** The last guardian crumbles — the graveyard falls silent and the wheel
+   *  unlocks. A small hoard spills with the pack; the hearse is now a normal
+   *  (license-gated) car: drive it anywhere, and any OTHER licensed soul can
+   *  still steal it later. If its driver dies, the car stays where it rests. */
+  private unlockHearse() {
+    this.hearseUnlocked = true;
+    this.points += POINTS_HEARSE_BONUS;
+    sfx.scream();
+    this.addShake(0.3);
+    const car = this.hearseCar();
+    if (car) this.dropLoot(car.x + Math.sin(car.rot) * 2.6, car.z + Math.cos(car.rot) * 2.6, range(this.rnd, HEARSE_HOARD[0], HEARSE_HOARD[1]), "the hearse's grave-hoard");
+    this.toast(`⚰️ The graveyard falls silent — the PHANTOM HEARSE is yours! +${POINTS_HEARSE_BONUS} · fastest ride in town… but any licensed driver can still steal it!`, "good");
+  }
+
+  /** Guardian AI — runs day & night (these dead don't fear the sun). While
+   *  their living target stays near the hearse they hunt relentlessly
+   *  (surround-ring like the horde); wander too far and they shuffle back
+   *  to their ring post. Local-only: no multiplayer replication. */
+  private stepHearseGuards(dt: number) {
+    const guards = this.hearseGuards;
+    if (guards.length === 0) return;
+    const p = this.player;
+    const car = this.hearseCar();
+    const carX = car ? car.x : p.x, carZ = car ? car.z : p.z;
+    const leashSq = HEARSE_GUARD_LEASH * HEARSE_GUARD_LEASH;
+    // 🚗 the car shell protects like it does vs the horde — no mauling drivers
+    const canHunt = !this.lost && this.detainedT <= 0 && !this.drive && !this.ride && !this.playerInVan && !this.youPossessed;
+    for (const g of guards) {
+      if (g.dead) { g.deadT = (g.deadT ?? 0) + dt; continue; }
+      g.spawnT = (g.spawnT ?? 0) + dt;
+      // 🌱 still clawing out of the dirt (~1 s) — no walking, no biting yet
+      if ((g.spawnT ?? 0) < 1.0) continue;
+      g.touchCd = Math.max(0, g.touchCd - dt);
+      g.attackT = Math.max(0, (g.attackT ?? 0) - dt);
+      const d2p = canHunt ? dist2(g.x, g.z, p.x, p.z) : Infinity;
+      const playerNearCar = dist2(p.x, p.z, carX, carZ) < leashSq;
+      if (canHunt && d2p < leashSq && playerNearCar) {
+        // 🎯 pack surround — far out each guard aims for its own golden-angle
+        // ring slot; inside ~4.5u the offset fades and it's a straight lunge
+        const td = Math.sqrt(d2p);
+        const offR = Math.max(0, Math.min(2.6, (td - 4.5) * 0.42));
+        const oa = (g.id % 89) * 2.399;
+        stepNpc(g, p.x + Math.cos(oa) * offR, p.z + Math.sin(oa) * offR, HEARSE_GUARD_SPEED, dt, this.world);
+        // caught — rotting hands (harder than the street horde's)
+        if (d2p < 1.55 * 1.55 && g.touchCd <= 0) {
+          g.touchCd = ZOMBIE_TOUCH_CD;
+          g.attackT = 0.5;
+          this.hp = Math.max(0, this.hp - HEARSE_GUARD_DMG);
+          this.hurtT = HURT_FLASH_S;
+          this.addShake(0.4);
+          sfx.zombie();
+          if (this.hp <= 0) this.die();
+        }
+      } else {
+        // back to the post — each guard stands its ring slot around the hearse
+        const hx = g.gx ?? g.x, hz = g.gz ?? g.z;
+        g.roamT = (g.roamT ?? 0) - dt;
+        if ((g.roamT ?? 0) <= 0 || (g.roamX !== undefined && g.roamZ !== undefined && dist2(g.x, g.z, g.roamX, g.roamZ) < 0.8)) {
+          g.roamT = range(this.rnd, 2.5, 6);
+          g.roamX = hx + range(this.rnd, -1.1, 1.1);
+          g.roamZ = hz + range(this.rnd, -1.1, 1.1);
+        }
+        if (g.roamX !== undefined && g.roamZ !== undefined) {
+          stepNpc(g, g.roamX, g.roamZ, HEARSE_GUARD_SPEED * 0.55, dt, this.world);
+        }
+      }
+    }
+    // keep the pack from stacking into one blob
+    for (let i = 0; i < guards.length; i++) {
+      const a = guards[i]; if (a.dead) continue;
+      for (let j = i + 1; j < guards.length; j++) {
+        const b = guards[j]; if (b.dead) continue;
+        const dx = b.x - a.x, dz = b.z - a.z, d = Math.hypot(dx, dz);
+        if (d > 1.35 || d < 1e-4) continue;
+        const push = (1.35 - d) * 3.2 * dt;
+        a.x -= (dx / d) * push; a.z -= (dz / d) * push;
+        b.x += (dx / d) * push; b.z += (dz / d) * push;
+      }
+    }
+  }
 
   /** 🚗 L while driving — flip the headlamps. The TRUE state rides the car
    *  packet (bit 0), so every peer's mirror blazes or dims with us in real
@@ -4396,12 +4555,15 @@ export class GameEngine {
     return n;
   }
 
-  /** Nearest parked car a bot driver may take (player's ride & bot rides excluded). */
+  /** Nearest parked car a bot driver may take (player's ride & bot rides excluded).
+   *  ⚰️ the phantom hearse is EXCLUDED — the unique graveyard car is a human's
+   *  prize: bots never joyride it, so the trial & the steal stay personal. */
   private nearestBotCar(x: number, z: number, maxD: number): number {
     let best = -1, bd = maxD * maxD;
     for (let i = 0; i < this.world.cars.length; i++) {
       if (this.botDriven.has(i) || this.drive?.ci === i) continue;
       const car = this.world.cars[i];
+      if (car.t === HEARSE_TYPE) continue;
       const d = dist2(x, z, car.x, car.z);
       if (d < bd) { bd = d; best = i; }
     }
@@ -5153,6 +5315,37 @@ export class GameEngine {
         }
         return;
       }
+    }
+    // 2.2) ⚰️ the phantom hearse's guardians — tougher dead, they defend the car
+    let bestGuard: Zombie | null = null, guardD = 2.4 * reach * (2.4 * reach);
+    for (const g of this.hearseGuards) {
+      if (g.dead) continue;
+      const d = dist2(p.x, p.z, g.x, g.z);
+      if (d < guardD) { guardD = d; bestGuard = g; }
+    }
+    if (bestGuard) {
+      bestGuard.hp = (bestGuard.hp ?? HEARSE_GUARD_HP) - dmg;
+      sfx.stab();
+      this.fxQueue.push({ type: "confetti", x: bestGuard.x, y: 1.1, z: bestGuard.z, hue: 0.35 });
+      if (bestGuard.hp <= 0) {
+        bestGuard.dead = true;
+        bestGuard.deadT = 0; // ⏱️ the body falls & sinks back into the dirt
+        this.kills++;
+        this.points += POINTS_KILL_GUARD;
+        this.finisherT = FINISHER_S;
+        this.addShake(0.32);
+        this.fxQueue.push({ type: "soul", x: bestGuard.x, y: 1.0, z: bestGuard.z, hue: 0.45 });
+        sfx.scream();
+        this.dropLoot(bestGuard.x, bestGuard.z, range(this.rnd, 15, 40), "a guardian's grave-goods");
+        this.hearseGuardRev++;
+        const left = this.hearseGuards.filter((g) => !g.dead).length;
+        if (left > 0) {
+          this.toast(`⚰️ A guardian crumbles — ${left} still defend the hearse! +${POINTS_KILL_GUARD}`, "good");
+        } else {
+          this.unlockHearse();
+        }
+      }
+      return;
     }
     // 2.5) 🧟 zombie hounds — the night's turned strays
     let bestDog: Animal | null = null, dogD = 2.3 * reach * (2.3 * reach);
@@ -6706,6 +6899,12 @@ export class GameEngine {
       }
     }
 
+    /* ⚰️ the phantom hearse's guardians — awake day & night while their pack
+     * lives. These dead don't fear the sun and don't fear fire (they BOUND to
+     * the car); they hunt whoever stays near the hearse, then stand their
+     * ring posts when the prey escapes. Local encounter — every client's own. */
+    this.stepHearseGuards(dt);
+
     // 🧟 game-ai separation steering — the pack fans out around prey instead of
     // stacking into one overlapping blob all seeking the exact same point
     if (night > 0.55) {
@@ -7302,9 +7501,16 @@ export class GameEngine {
     } else {
       const nc = this.nearestCar(CAR_ENTER_R);
       if (nc >= 0 && !prompt) {
-        prompt = this.isCarDriven(nc)
-          ? "Press E to ride shotgun — hop in with the driver!"
-          : this.hasLicense ? "Press E to hop in and drive!" : "Find a glowing 🪪 license card to unlock cars!";
+        const hc = this.world.cars[nc];
+        if (hc && hc.t === HEARSE_TYPE && !this.hearseUnlocked) {
+          prompt = this.hearseGuards.some((g) => !g.dead)
+            ? "Slay the guardians to claim the PHANTOM HEARSE! (F to fight)"
+            : "Press E to challenge the PHANTOM HEARSE — its guardians will rise!";
+        } else {
+          prompt = this.isCarDriven(nc)
+            ? "Press E to ride shotgun — hop in with the driver!"
+            : this.hasLicense ? "Press E to hop in and drive!" : "Find a glowing 🪪 license card to unlock cars!";
+        }
       }
     }
     let policeNear = false;

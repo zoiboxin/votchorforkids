@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  AIRPORT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, TAXI_TYPE, TREE_FALL_S, TREE_WOBBLE_S, WALL_RADIUS, inPrehistoricValley, stationCage, stationGate,
+  AIRPORT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, HEARSE_TYPE, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, TAXI_TYPE, TREE_FALL_S, TREE_WOBBLE_S, WALL_RADIUS, inPrehistoricValley, stationCage, stationGate,
   WILDLIFE_ENABLED,
 } from "@/lib/game/constants";
 import {
@@ -26,14 +26,16 @@ import {
   KitVor, KitWindsock,
 } from "@/components/game/AirportKit";
 import { GraveyardEstate } from "@/components/game/GraveyardKit";
+import { isGraveyardModelReady, onGraveyardModelsReady, spawnGraveyardModel } from "@/lib/game/graveyardModels";
 import { HospitalCampus } from "@/components/game/HospitalKit";
 import { PrehistoricValley } from "@/components/game/PrehistoricValley";
 import { registerCullRoot, resetCullRoots, tickStaticCull } from "@/lib/game/staticCull";
 
 export const WORLD: World = generateWorld();
-/** 🚕🚓 body types that render from a real polyfork GLB (yellow cab) — skipped
- *  by the boxy instanced part set exactly like the retro-kit cars. */
-const skipProceduralCar = (t: number) => isKitType(t) || t === TAXI_TYPE;
+/** 🚕🚓⚰️ body types that render from a real polyfork GLB (yellow cab + the
+ *  graveyard's phantom hearse) — skipped by the boxy instanced part set
+ *  exactly like the retro-kit cars. */
+const skipProceduralCar = (t: number) => isKitType(t) || t === TAXI_TYPE || t === HEARSE_TYPE;
 const tmp = new THREE.Object3D();
 tmp.rotation.order = "YXZ"; // lets placeCar rake the windshield around the car's own side axis
 const col = new THREE.Color();
@@ -2552,14 +2554,38 @@ interface GlbCarRig {
 
 function GlbCars({ engine, clockRef }: { engine: GameEngine; clockRef: React.MutableRefObject<number> }) {
   const vVer = useVehicles();
+  // ⚰️ the hearse GLB streams through the graveyard kit loader — a bump makes
+  // the fleet rebuild the moment the model lands (or re-renders after a miss)
+  const [gyVer, setGyVer] = useState(isGraveyardModelReady("hearse") ? 1 : 0);
+  useEffect(() => onGraveyardModelsReady(() => setGyVer(1)), []);
   const rigs = useMemo<GlbCarRig[]>(() => {
-    if (!vehicleReady("cab")) return [];
+    if (!vehicleReady("cab") && !isGraveyardModelReady("hearse")) return [];
     const out: GlbCarRig[] = [];
-    const build = (src: "park" | "traffic", i: number, x: number, z: number) => {
-      const r = spawnVehicle("cab");
-      if (!r) return;
+    const build = (kind: "cab" | "hearse", src: "park" | "traffic", i: number, x: number, z: number) => {
+      let root: THREE.Group | null = null;
+      let wheels: THREE.Object3D[] = [];
+      let wheelR = 0.34;
+      if (kind === "cab") {
+        const r = spawnVehicle("cab");
+        if (!r) return;
+        root = r.root; wheels = r.wheels; wheelR = r.wheelR;
+      } else {
+        // ⚰️ the phantom hearse — the Halloween-kit vintage model, grounded
+        // clone. Wheels are picked by the same small-round-mesh heuristic the
+        // police cruiser & cab use (body spans the width, wheels don't).
+        root = spawnGraveyardModel("hearse");
+        if (!root) return;
+        root.traverse((o) => {
+          const m = o as THREE.Mesh;
+          if (!m.isMesh) return;
+          const bb = new THREE.Box3().setFromObject(m);
+          const h = bb.max.y - bb.min.y;
+          const w = bb.max.x - bb.min.x;
+          if (h > 0.05 && h < 1.0 && h * 2.2 > w) { wheels.push(m); wheelR = h / 2; }
+        });
+      }
       // 🔆 two headlight cones poking from the nose — shared kit-fleet material
-      const box = new THREE.Box3().setFromObject(r.root);
+      const box = new THREE.Box3().setFromObject(root);
       const beams: THREE.Mesh[] = [];
       const geo = new THREE.ConeGeometry(0.95, KIT_BEAM_LEN, 10, 1, true);
       for (const s of [-1, 1]) {
@@ -2567,15 +2593,18 @@ function GlbCars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mut
         cone.rotation.x = -Math.PI / 2;
         cone.position.set(s * box.max.x * 0.6, 0.72, box.max.z + KIT_BEAM_LEN / 2 - 0.05);
         cone.visible = false;
-        r.root.add(cone);
+        root.add(cone);
         beams.push(cone);
       }
-      out.push({ src, i, obj: r.root, wheels: r.wheels, wheelR: r.wheelR, beams, spin: 0, lastX: x, lastZ: z });
+      out.push({ src, i, obj: root, wheels, wheelR, beams, spin: 0, lastX: x, lastZ: z });
     };
-    WORLD.cars.forEach((c, i) => { if (c.t === TAXI_TYPE) build("park", i, c.x, c.z); });
-    engine.traffic.forEach((t, i) => { if (t.t === TAXI_TYPE) build("traffic", i, t.x, t.z); });
+    WORLD.cars.forEach((c, i) => {
+      if (c.t === TAXI_TYPE) build("cab", "park", i, c.x, c.z);
+      if (c.t === HEARSE_TYPE) build("hearse", "park", i, c.x, c.z);
+    });
+    engine.traffic.forEach((t, i) => { if (t.t === TAXI_TYPE) build("cab", "traffic", i, t.x, t.z); });
     return out;
-  }, [engine, vVer]);
+  }, [engine, vVer, gyVer]);
 
   useFrame((_, dtRaw) => {
     if (!rigs.length) return;

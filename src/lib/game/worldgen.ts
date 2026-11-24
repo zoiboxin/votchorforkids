@@ -1,4 +1,4 @@
-import { AIRPORT, BUILD_POOL, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, PREHISTORIC, ROCK_COUNT, TAXI_TYPE, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_POOL, WALL_RADIUS, WORLD_SEED, inPrehistoricValley, pickVehicle, stationCage, stationGate } from "./constants";
+import { AIRPORT, BUILD_POOL, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, HEARSE_TYPE, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, PREHISTORIC, ROCK_COUNT, TAXI_TYPE, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_POOL, WALL_RADIUS, WORLD_SEED, inPrehistoricValley, pickVehicle, stationCage, stationGate } from "./constants";
 import { PREHISTORIC_LAYOUT, prehistoricColliders } from "./prehistoric";
 import { mulberry32, range } from "./rng";
 
@@ -1804,6 +1804,13 @@ export function generateWorld(seed = WORLD_SEED): World {
   // freight-ramp & fuel-farm floodlights (the east end of the airport works after dark too)
   pushLamp(AIRPORT.cargo.x - 8, AIRPORT.cargo.z + 6); pushLamp(AIRPORT.fuelTanks[1].x - 4, AIRPORT.fuelTanks[1].z - 8);
   for (let i = 0; i < 3; i++) cars.push({ x: AIRPORT.terminal.x - 10 + i * 9, z: AIRPORT.terminal.z + 8, rot: 0, c: (i + 5) % CAR_COLS.length, t: VEHICLE_POOL[(i * 3 + 2) % VEHICLE_POOL.length] });
+  /* ⚰️ THE PHANTOM HEARSE — the graveyard's ONE unique car, parked on the
+   * cemetery lane just inside the gate where the static prop always stood.
+   * A real drivable vehicle now: walk up and the restless dead rise to
+   * defend it (engine raiseHearseGuards) — slay the pack to claim the
+   * fastest ride in town. Its axle colliders come from the cars.forEach
+   * below like every other vehicle (the old static pair is gone).        */
+  cars.push({ x: GRAVEKIT.hearse.x, z: GRAVEKIT.hearse.z, rot: GRAVEKIT.hearse.rot, c: 0, t: HEARSE_TYPE });
   // windsock pole near the runway threshold — the kit windsock draws its own mast
 
   /* ---- colliders ----
@@ -1881,12 +1888,8 @@ export function generateWorld(seed = WORLD_SEED): World {
   /* ---- 🎃 graveyard estate — fenced all around, one real gate ---- */
   boxes.push({ x: GRAVEKIT.house.x, z: GRAVEKIT.house.z, w: 10, d: 10, h: 13 });          // haunted Victorian house (kit, 12u footprint)
   boxes.push({ x: GRAVEKIT.mausoleum.x, z: GRAVEKIT.mausoleum.z, w: 3.4, d: 3.4, h: 5 }); // family mausoleum (kit)
-  // vintage hearse — two axle circles, like every other vehicle
-  {
-    const fx = Math.sin(GRAVEKIT.hearse.rot), fz2 = Math.cos(GRAVEKIT.hearse.rot);
-    circles.push({ x: GRAVEKIT.hearse.x - fx * 1.5, z: GRAVEKIT.hearse.z - fz2 * 1.5, r: 1.35 });
-    circles.push({ x: GRAVEKIT.hearse.x + fx * 1.5, z: GRAVEKIT.hearse.z + fz2 * 1.5, r: 1.35 });
-  }
+  // (the vintage hearse is a REAL drivable car now — its axle colliders are
+  // pushed by the cars.forEach above, tagged with its car index)
   for (const ln of GRAVEKIT.lanterns) circles.push({ x: ln.x, z: ln.z, r: 0.3 });         // lantern posts
   for (const ok of GRAVEKIT.oaks) circles.push({ x: ok.x, z: ok.z, r: 0.55 });            // twisted dead oaks (kit, 8u crown)
   for (const fc of GRAVEKIT.fenceCols) circles.push({ x: fc.x, z: fc.z, r: 0.4 });        // iron fence ring (solid, gate span open)

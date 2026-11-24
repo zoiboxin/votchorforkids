@@ -713,10 +713,18 @@ export const CAR_STEER = 1.75;         // rad/s at full lock
 export const VEHICLE_LABELS = [
   "🚗 Car", "🚗 Hatchback", "🚐 Van", "🛻 Pickup truck", "🚌 City bus", "🚙 Jeep",
   "🏁 Muscle car", "🚙 Convertible", "🚗 Station wagon", "🏎️ Sports coupe", "🚕 Yellow cab",
+  "⚰️ Phantom hearse",
 ];
 /** 🚕 the GLB yellow cab (polyfork yellow-cab-8df4a0) — a taxi rank by the mall
  *  plus a few cruising the ring: rendered by GlbCars from the real model. */
 export const TAXI_TYPE = 10;
+/** ⚰️ THE PHANTOM HEARSE — the graveyard's unique black car (type 11). ONE
+ *  vehicle in the whole world, parked on the cemetery lane: walk up and the
+ *  restless dead rise to defend it — slay the pack to claim the wheel. It
+ *  drives like any car afterwards (license-gated, stealable, dropped on death)
+ *  but it's the FASTEST ride on the map — a real prize for the survivor who
+ *  dares the graveyard. Rendered from the vintage-hearse Halloween-kit GLB. */
+export const HEARSE_TYPE = 11;
 /** Weighted body-style pool — sedans/hatches/vans fill the streets, buses stay rare,
  *  and the four retro-kit specials cruise in as mid-rarity finds. */
 export const VEHICLE_POOL: readonly number[] = [0, 0, 1, 1, 2, 2, 2, 3, 3, 4, 5, 6, 6, 7, 7, 8, 8, 9, 9, 0, 1];
@@ -725,13 +733,13 @@ export const pickVehicle = (r: () => number): number => VEHICLE_POOL[Math.floor(
  *  the SAME offset/radius pair the parked cars use as colliders, so a moving vehicle
  *  can never overlap a building deeper than a parked one. Longer bodies (bus, pickup)
  *  spread their axles further apart so the nose & tail stay protected. */
-export const VEHICLE_AXLE: readonly number[] = [1.25, 1.02, 1.5, 1.78, 2.35, 1.12, 1.45, 1.35, 1.42, 1.28, 1.28];
-export const VEHICLE_AXLE_R: readonly number[] = [1.16, 1.12, 1.26, 1.3, 1.42, 1.2, 1.18, 1.12, 1.18, 1.08, 1.14];
+export const VEHICLE_AXLE: readonly number[] = [1.25, 1.02, 1.5, 1.78, 2.35, 1.12, 1.45, 1.35, 1.42, 1.28, 1.28, 1.5];
+export const VEHICLE_AXLE_R: readonly number[] = [1.16, 1.12, 1.26, 1.3, 1.42, 1.2, 1.18, 1.12, 1.18, 1.08, 1.14, 1.35];
 /** Per body-style driving feel: top speed (u/s) and steering grip multiplier —
  *  a loaded bus shouldn't corner like a go-kart. The muscle car & coupe are the
  *  fastest rides in town; the convertible & wagon cruise like the sedans. */
-export const VEHICLE_TOP: readonly number[] = [26, 24, 24, 23, 19, 25, 28, 24, 24, 29, 26];
-export const VEHICLE_STEER: readonly number[] = [1, 1, 0.92, 0.85, 0.7, 1, 0.94, 1, 0.95, 1.04, 1];
+export const VEHICLE_TOP: readonly number[] = [26, 24, 24, 23, 19, 25, 28, 24, 24, 29, 26, 31];
+export const VEHICLE_STEER: readonly number[] = [1, 1, 0.92, 0.85, 0.7, 1, 0.94, 1, 0.95, 1.04, 1, 1];
 /* ---------- Car-meets-car physics — momentum transfer & driverless coasting ----------
  * When a driven car rams another car, the struck car is shoved ALONG the contact
  * normal (rear-end → lurches forward, head-on → knocked backward, T-bone → skids
@@ -909,6 +917,22 @@ export const CASH_RESPAWN_S = 70;        // scattered cash re-stocks somewhere e
 export const CREW_PURSE: readonly [number, number] = [40, 120]; // $ each survivor carries
 export const CIV_PURSE: readonly [number, number] = [10, 60];   // $ each townsfolk carries
 export const ZOMBIE_PURSE: readonly [number, number] = [10, 30]; // $ dropped by a slain zombie
+/* ---------- ⚰️ the phantom hearse's graveyard guardians ----------
+ * Walk up to the unique hearse and the dirt erupts: HEARSE_GUARD_COUNT
+ * restless dead rise around it and hunt whoever came to take the car.
+ * A real fight — tougher than street zombies (more HP, they swarm), and
+ * they NEVER back off while you stay near the hearse. Slay the whole pack
+ * to unlock the wheel (day or night — they don't crumble at dawn).      */
+export const HEARSE_GUARD_COUNT = 4;
+export const HEARSE_GUARD_HP = 60;      // ~8 punches / 2 sword hits each
+export const HEARSE_GUARD_SPEED = 3.3;  // slower than night zombies — you CAN kite
+export const HEARSE_GUARD_DMG = 8;      // rotting hands — horde parity (the graveyard
+                                        // trip ALSO bleeds wall-drain, so it adds up)
+export const HEARSE_GUARD_LEASH = 32;   // they pursue within this range of the car…
+export const HEARSE_GUARD_HOME_R = 3.6; // …and each stands its post at this ring radius
+export const POINTS_KILL_GUARD = 60;
+export const POINTS_HEARSE_BONUS = 250; // the pack is broken — the hearse is yours
+export const HEARSE_HOARD: readonly [number, number] = [120, 220]; // $ spilled with the last guardian
 export const POINTS_LOOT = 5;            // points per $ pickup (money ALSO scores)
 /** Zombies & beasts terrify everyone: bots panic-flee within this range… */
 export const CIV_PANIC_R = 11;
