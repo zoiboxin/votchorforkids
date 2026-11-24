@@ -206,6 +206,11 @@ export function bakeRailwayModel(kind: RailwayKind, placements: RailwayPlacement
   rig.template.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (!mesh.isMesh) return;
+    // skinned sub-meshes can't merge with static ones (mergeGeometries refuses
+    // mixed skinIndex attributes — the station garden-bed GLB ships one rigged
+    // part among statics); the static parts bake, the rigged bit keeps its own
+    // skeleton and is simply left out of the merged bed
+    if (mesh instanceof THREE.SkinnedMesh || mesh.geometry.attributes.skinIndex || mesh.geometry.attributes.JOINTS_0) return;
     const rel = mesh.matrixWorld.clone()
       .premultiply(rig.template.matrixWorld.clone().invert()); // node → template-root space
     parts.push({ geo: mesh.geometry.clone(), rel });
