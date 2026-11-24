@@ -699,7 +699,7 @@ export const MORPH_ANIMALS: readonly AnimalKind[] = ["cow", "chicken", "deer", "
 /* ---------- GTA-style driving — license cards unlock every parked car ---------- */
 export const LICENSE_COUNT = 8;        // glowing 🪪 cards hidden around town & farmland
 export const LICENSE_PICKUP_R = 2.4;   // walk-over radius
-export const CAR_ENTER_R = 3.6;        // how close you must walk to a parked car to hop in
+export const CAR_ENTER_R = 4.4;        // how close you must walk to a parked car to hop in
 export const CAR_MAX_SPEED = 26;       // u/s — way faster than any sprinting kid
 export const CAR_REV_SPEED = 9;        // u/s reverse
 export const CAR_ACCEL = 14;           // u/s² on W

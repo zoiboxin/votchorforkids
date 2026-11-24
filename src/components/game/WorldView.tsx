@@ -28,6 +28,7 @@ import {
 import { GraveyardEstate } from "@/components/game/GraveyardKit";
 import { isGraveyardModelReady, onGraveyardModelsReady, spawnGraveyardModel } from "@/lib/game/graveyardModels";
 import { HospitalCampus } from "@/components/game/HospitalKit";
+import { ConstructionSites } from "@/components/game/ConstructionSites";
 import { PrehistoricValley } from "@/components/game/PrehistoricValley";
 import { registerCullRoot, resetCullRoots, tickStaticCull } from "@/lib/game/staticCull";
 
@@ -5167,6 +5168,7 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
         <NycDistrict />
         <Landmarks />
         <HospitalCampus engine={engine} />
+        <ConstructionSites />
         <PrehistoricValley engine={engine} />
         <Forest engine={engine} />
         <Camps engine={engine} clockRef={clockRef} />

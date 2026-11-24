@@ -1959,6 +1959,20 @@ export class GameEngine {
       else this.enterCar(car);
       return;
     }
+    // 🪪 nothing in arm's reach? A car just a few steps beyond the enter ring
+    // must NEVER be a silent no-op — that silence read as "my license is broken".
+    // A wider scan explains exactly what one more step will unlock.
+    const near = this.nearestCar(CAR_ENTER_R * 2.4);
+    if (near >= 0 && this.driveMsgT <= 0) {
+      this.driveMsgT = 3;
+      if (this.hasLicense) {
+        sfx.click();
+        this.toast("🚗 The keys are RIGHT there — walk up to the car door and press E again!", "info");
+      } else {
+        this.toast("🪪 That car needs a DRIVING LICENSE — hunt the glowing blue cards (or buy the VIP License), then walk up and press E.", "info");
+      }
+      return;
+    }
     // police don't rescue their own prisoners — a friendly reminder instead
     if (this.side === "police") {
       this.toast("👮 You're the police today, Officer — no freeing the suspects! Chase runners instead.", "info");

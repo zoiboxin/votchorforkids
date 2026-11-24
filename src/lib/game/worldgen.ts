@@ -723,6 +723,157 @@ function seededDerive(n: number): () => number {
   };
 }
 
+/* ---------------- 🚧 Construction sites — polyfork Construction Site kit ----------------
+ * Three REAL building sites grow on empty city blocks (one per compass side):
+ *   A  "Lakeshore Towers"  — a tower-crane steel-frame build in the west
+ *   B  "Eastside Dig"      — an excavation/trench job in the east belt
+ *   C  "Northgate Works"   — roadworks chewing up the north boulevard
+ * Placements + colliders are derived here so the render and the physics grid
+ * can never disagree (same contract as GRAVEKIT). The GLBs render via
+ * <ConstructionSites> (src/components/game/ConstructionSites.tsx) — every
+ * repeated prop is baked into ONE merged mesh per kind (~20 draw calls total). */
+export interface ConSitePlacement { x: number; y?: number; z: number; rot?: number; s?: number }
+export interface ConSiteDef {
+  name: string;
+  /** block centre — also the cottage-exclusion anchor */
+  cx: number; cz: number;
+  props: Record<string, ConSitePlacement[]>;
+  /** solid props → physics circles (r) */
+  cols: { x: number; z: number; r: number }[];
+  /** solid buildings (cabin) → physics boxes */
+  boxes: { x: number; z: number; w: number; d: number; h: number }[];
+}
+
+/** tiny helper — a row of fence/hoarding runs stepping `step` units along a
+ *  yaw direction from (x,z); rot follows the run's 4m authored length */
+function runRow(x: number, z: number, n: number, step: number, rot: number): ConSitePlacement[] {
+  const out: ConSitePlacement[] = [];
+  for (let i = 0; i < n; i++) {
+    out.push({ x: x + Math.sin(rot) * step * i, z: z + Math.cos(rot) * step * i, rot });
+  }
+  return out;
+}
+
+const conCol = (x: number, z: number, r: number) => ({ x, z, r });
+
+export const SITEKIT = (() => {
+  /* ---- Site A · LAKESHORE TOWERS — west midtown block (-168.75, 33.75) ---- */
+  const A: ConSiteDef = {
+    name: "Lakeshore Towers", cx: -168.75, cz: 33.75,
+    props: {
+      // ⭐ the tower crane: two 15m mast sections stacked + the slewing top
+      craneMast: [{ x: -177, z: 41 }, { x: -177, z: 41, y: 15 }],
+      craneTop: [{ x: -177, z: 41, y: 30, rot: Math.PI * 0.25 }],
+      // the rising steel skeleton (three 5.8m bays) + concrete core + scaffold
+      steelFrame: [
+        { x: -162, z: 46, rot: Math.PI / 2 }, { x: -162, z: 40, rot: Math.PI / 2 }, { x: -162, z: 34, rot: Math.PI / 2 },
+      ],
+      coreSection: [{ x: -156, z: 44, rot: Math.PI / 2 }, { x: -156, z: 44, y: 6.6, rot: Math.PI / 2 }],
+      scaffold: [{ x: -155, z: 34, rot: Math.PI / 2 }, { x: -155, z: 38.5, rot: Math.PI / 2 }],
+      // site hoarding (west flank, gate gap in the middle) + mesh fence runs
+      hoarding: [...runRow(-193, 22, 3, 4.2, Math.PI / 2), ...runRow(-193, 40, 2, 4.2, Math.PI / 2)],
+      meshFence: [...runRow(-181, 59, 4, 4.2, 0), ...runRow(-177, 10, 2, 4.2, 0)],
+      // site welfare + yard furniture
+      cabin: [{ x: -186, z: 24, rot: -Math.PI / 2 }],
+      toilet: [{ x: -183, z: 18.5, rot: Math.PI }, { x: -183, z: 16.5, rot: Math.PI }],
+      lightTower: [{ x: -190, z: 46 }],
+      generator: [{ x: -188, z: 30, rot: 0.4 }],
+      pallet: [{ x: -152, z: 28, rot: 0.3 }, { x: -153, z: 30.5, rot: -0.5 }, { x: -151, z: 26, rot: 1.1 }],
+      precast: [{ x: -159, z: 20, rot: 0.3 }, { x: -159, z: 24, rot: -0.2 }],
+      rebar: [{ x: -150, z: 44, rot: 1 }],
+      cone: [{ x: -149, z: 18, rot: 0.2 }, { x: -146.5, z: 20.5 }, { x: -149, z: 30, rot: 0.4 }, { x: -146.5, z: 28 }, { x: -147.5, z: 24 }],
+      signBoard: [{ x: -148, z: 24, rot: Math.PI / 2 }],
+    },
+    cols: [
+      conCol(-177, 41, 2.5),                                     // crane base
+      conCol(-162, 46, 2.5), conCol(-162, 40, 2.5), conCol(-162, 34, 2.5), // steel bays
+      conCol(-156, 44, 2.4),                                     // concrete core
+      conCol(-155, 34, 1.8), conCol(-155, 38.5, 1.8),            // scaffold bays
+      conCol(-190, 46, 0.9),                                     // lighting tower
+      conCol(-188, 30, 1.2),                                     // generator
+      conCol(-159, 20, 2.1), conCol(-159, 24, 2.1),              // precast stacks
+      conCol(-150, 44, 1.1),                                     // rebar cage
+      conCol(-183, 18.5, 0.8), conCol(-183, 16.5, 0.8),          // portable toilets
+      conCol(-152, 28, 0.7), conCol(-153, 30.5, 0.7), conCol(-151, 26, 0.7), // pallets
+    ],
+    boxes: [{ x: -186, z: 24, w: 4.4, d: 8.4, h: 3.4 }],         // site cabin
+  };
+  for (const h of A.props.hoarding!) A.cols.push(conCol(h.x, h.z, 0.5));
+  for (const f of A.props.meshFence!) A.cols.push(conCol(f.x, f.z, 0.45));
+
+  /* ---- Site B · EASTSIDE DIG — east belt block (236.25, -101.25) ---- */
+  const B: ConSiteDef = {
+    name: "Eastside Dig", cx: 236.25, cz: -101.25,
+    props: {
+      excavator: [{ x: 235, z: -100, rot: 0.7 }],
+      trench: [{ x: 230, z: -106, rot: 0.15 }, { x: 234.5, z: -107.5, rot: 0.15 }],
+      spoilHeap: [{ x: 228, z: -99, s: 1.35 }, { x: 232.5, z: -96, s: 1 }, { x: 226, z: -103, s: 0.9 }],
+      mudTile: [{ x: 239, z: -108 }, { x: 243, z: -104, rot: 0.5 }, { x: 235, z: -93 }],
+      dumpTruck: [{ x: 243, z: -97, rot: -0.9 }],
+      crashBarrier: runRow(230, -128, 3, 4.3, 0),
+      trafficLight: [{ x: 226, z: -126, rot: -Math.PI / 2 }, { x: 247, z: -124, rot: Math.PI / 2 }],
+      skip: [{ x: 246, z: -108, rot: 0.4 }],
+      generator: [{ x: 228, z: -92, rot: -0.6 }],
+      hoarding: runRow(213, -96, 3, 4.2, Math.PI / 2),
+      pallet: [{ x: 241, z: -111, rot: 0.2 }, { x: 239.5, z: -112.5, rot: 0.9 }],
+      signBoard: [{ x: 218, z: -92, rot: -Math.PI / 4 }],
+      cone: [{ x: 222, z: -97 }, { x: 220, z: -100, rot: 0.3 }, { x: 238, z: -92 }, { x: 240, z: -94.5, rot: 0.5 }, { x: 231, z: -112 }, { x: 233, z: -110 }],
+    },
+    cols: [
+      conCol(235, -100, 2.9),                        // excavator
+      conCol(230, -106, 2.4), conCol(234.5, -107.5, 2.4), // trench bays (solid — nobody falls in)
+      conCol(228, -99, 1.6), conCol(232.5, -96, 1.3), conCol(226, -103, 1.2), // spoil heaps
+      conCol(243, -97, 2.7),                         // dump truck
+      conCol(226, -126, 0.55), conCol(247, -124, 0.55), // traffic lights
+      conCol(246, -108, 1.8),                        // skip
+      conCol(228, -92, 1.2),                         // generator
+      conCol(241, -111, 0.7), conCol(239.5, -112.5, 0.7), // pallets
+      conCol(218, -92, 0.6),                         // sign board
+    ],
+    boxes: [],
+  };
+  for (const b of B.props.crashBarrier!) B.cols.push(conCol(b.x, b.z, 0.5));
+  for (const h of B.props.hoarding!) B.cols.push(conCol(h.x, h.z, 0.5));
+
+  /* ---- Site C · NORTHGATE WORKS — north block (33.75, 168.75), chewing the boulevard ---- */
+  const C: ConSiteDef = {
+    name: "Northgate Works", cx: 33.75, cz: 168.75,
+    props: {
+      backhoe: [{ x: 30, z: 150, rot: 1.4 }],
+      roadRoller: [{ x: 41, z: 147, rot: -0.5 }],
+      mixerTruck: [{ x: 24, z: 156, rot: 1.1 }],
+      brokenRoad: [{ x: 26, z: 140, rot: 0.3 }, { x: 33, z: 142, rot: -0.15 }, { x: 40, z: 139, rot: 0.5 }],
+      mudTile: [{ x: 37, z: 137, rot: 0.9 }, { x: 30, z: 144, rot: 0.2 }],
+      arrowBoard: [{ x: 46, z: 144, rot: -Math.PI / 2 }],
+      trafficLight: [{ x: 20, z: 138, rot: -Math.PI / 2 }, { x: 47, z: 139, rot: Math.PI / 2 }],
+      crashBarrier: [{ x: 44, z: 143, rot: -0.9 }, { x: 46, z: 146, rot: -0.9 }, { x: 48, z: 149, rot: -0.9 }, { x: 17, z: 141, rot: 0.9 }],
+      skip: [{ x: 14, z: 152, rot: 0.2 }],
+      generator: [{ x: 20, z: 160, rot: 1.2 }],
+      pallet: [{ x: 37, z: 153, rot: 0.4 }, { x: 35, z: 155, rot: -0.7 }],
+      rebar: [{ x: 43, z: 158, rot: 0.7 }],
+      cone: [
+        { x: 24, z: 146, rot: 0.2 }, { x: 28, z: 148 }, { x: 33, z: 147.5, rot: 0.5 }, { x: 38, z: 150 },
+        { x: 44, z: 152, rot: 0.3 }, { x: 22, z: 141 }, { x: 27, z: 139.5, rot: 0.6 }, { x: 35, z: 138.5 },
+      ],
+    },
+    cols: [
+      conCol(30, 150, 2.5), conCol(41, 147, 2.4), conCol(24, 156, 2.9), // backhoe, roller, mixer
+      conCol(46, 144, 0.6), conCol(20, 138, 0.55), conCol(47, 139, 0.55), // arrow board + lights
+      conCol(14, 152, 1.8), conCol(20, 160, 1.2),     // skip + generator
+      conCol(37, 153, 0.7), conCol(35, 155, 0.7),     // pallets
+      conCol(43, 158, 1.1),                           // rebar cage
+    ],
+    boxes: [],
+  };
+  for (const b of C.props.crashBarrier!) C.cols.push(conCol(b.x, b.z, 0.5));
+
+  return { at: [A, B, C] as ConSiteDef[] };
+})();
+
+/** any of the three construction sites (cottage & prop scatter keep-off guard) */
+export const inConstructionSite = (x: number, z: number, pad = 0): boolean =>
+  SITEKIT.at.some((s) => Math.hypot(x - s.cx, z - s.cz) < 34 + pad);
+
 /* ---------------- 🏥 St. Cross Medical Campus — polyfork Hospital Kit ----------------
  * The hospital block (grid roads x=67.5/135 & z=67.5/135) grew from one white
  * box into a REAL hospital campus built from the hospital-kit-2ebfcb GLB set
@@ -1098,6 +1249,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     if (POLICE_STATIONS.some((st) => Math.hypot(x - st.x, z - st.z) < 32)) continue;
     if (Math.hypot(x - MALL.x, z - MALL.z) < 30 || Math.hypot(x - SCHOOL.x, z - SCHOOL.z) < 26) continue;
     if (inHospitalCampus(x, z, 6)) continue;                                 // 🏥 the medical campus took this whole block
+    if (inConstructionSite(x, z, 6)) continue;                               // 🚧 the three building sites keep the fringe clear
     push(x, z, 4.4, 3.8, range(rnd, 5, 6.2), 2,
       HOME_COLS[buildings.length % HOME_COLS.length],
       HOME_ROOFS[buildings.length % HOME_ROOFS.length], 0, z > 0 ? -1 : 1);
@@ -1110,6 +1262,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (ROADS.some((o) => Math.abs(x - o) < 12 || Math.abs(z - o) < 12)) continue;
     if (inAirportPlot(x, z)) continue;                       // keep the flight path clear
+    if (inConstructionSite(x, z, 6)) continue;               // 🚧 the three building sites keep the fringe clear
     if (buildings.some((b) => Math.abs(x - b.x) < b.w + 6 && Math.abs(z - b.z) < b.d + 6)) continue;
     if (POLICE_STATIONS.some((st) => Math.hypot(x - st.x, z - st.z) < 32)) continue;
     push(x, z, 4.4, 3.8, range(rnd, 5, 6.2), 2,
@@ -1897,6 +2050,11 @@ export function generateWorld(seed = WORLD_SEED): World {
   circles.push({ x: GRAVEKIT.gate.x - GRAVEKIT.v.x * 1.9, z: GRAVEKIT.gate.z - GRAVEKIT.v.z * 1.9, r: 0.35 });
   for (const bu of GRAVEKIT.bushes) circles.push({ x: bu.x, z: bu.z, r: 0.5 });           // bare thorn bushes
   for (const an of GRAVEKIT.angels) circles.push({ x: an.x, z: an.z, r: 0.5 });           // weeping stone angels
+  /* ---- 🚧 construction sites — the machines & yard furniture are solid ---- */
+  for (const site of SITEKIT.at) {
+    for (const b of site.boxes) boxes.push(b);
+    for (const c of site.cols) circles.push(c);
+  }
   /* ---- 🏥 St. Cross Medical Campus — kit buildings & yard furniture are solid ---- */
   boxes.push({ x: HOSPKIT.ward.x, z: HOSPKIT.ward.z, w: HOSPKIT.ward.w, d: HOSPKIT.ward.d, h: HOSPKIT.ward.h });       // ward block (kit, 12×8 footprint)
   boxes.push({ x: HOSPKIT.core.x, z: HOSPKIT.core.z, w: HOSPKIT.core.w, d: HOSPKIT.core.d, h: HOSPKIT.core.h });       // stair & lift core

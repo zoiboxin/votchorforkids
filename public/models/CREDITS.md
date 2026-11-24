@@ -111,3 +111,16 @@ ribcage, trackway, nest, sauropod nest mound, loose egg clutch and hatching egg.
 
 Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
 (https://creativecommons.org/licenses/by/4.0/)
+
+`construction/` — Construction Site kit (https://polyfork.dev/kit/construction-site-9e40b0):
+tower crane (mast + slewing top), steel-frame bay, concrete core section, scaffold
+bay, site hoarding run, mesh site fence run, site cabin, portable toilet, site
+lighting tower, site safety sign board, traffic cone, material pallet, precast
+concrete stack, rebar assembly, site generator, tracked excavator, articulated
+dump truck, open trench bay, spoil heap, mud & rut tile, broken-out road tile,
+crash barrier run, temporary traffic light, backhoe loader, tandem road roller
+and concrete mixer truck — three building sites in the city
+(<ConstructionSites> in WorldView.tsx).
+
+Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
+(https://creativecommons.org/licenses/by/4.0/)
