@@ -110,7 +110,8 @@ function DigGround() {
       for (let i = 0; i < nx; i++) {
         for (let j = 0; j < nz; j++) {
           const a = i * (nz + 1) + j, b = a + nz + 1;
-          idx.push(a, b, a + 1, b, b + 1, a + 1);
+          // counter-clockwise seen from above (+Y normals)
+          idx.push(a, a + 1, b, b, a + 1, b + 1);
         }
       }
       const g = new THREE.BufferGeometry();

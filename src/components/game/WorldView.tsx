@@ -68,15 +68,15 @@ function Ring({ a, b, color, y }: { a: number; b: number; color: string; y: numb
   );
 }
 
-/** 🕳️ the city ground — one flat disc with a rectangular hole punched over
- *  each walkable construction dig (DIGS): the <DigGround> dirt patch builds
- *  the pit walls/ramp/floor inside the hole, so the player sees (and walks)
- *  straight down into the excavation. Built as a ShapeGeometry so the holes
- *  are real — no z-fighting, no fake dark decals. */
-function CityGround() {
+/** 🕳️ ground disc with rectangular holes punched over each walkable
+ *  construction dig (DIGS) — used for BOTH ground layers (city asphalt at y 0
+ *  and the jungle underlay at y −0.12) so nothing lids the pit from above;
+ *  the <DigGround> dirt patch builds the walls/ramp/floor inside the holes.
+ *  Built as a ShapeGeometry so the holes are real — no z-fighting, no decals. */
+function HoledGround({ r, color, y, receive }: { r: number; color: string; y: number; receive?: boolean }) {
   const geo = useMemo(() => {
     const shape = new THREE.Shape();
-    shape.absarc(0, 0, CITY_RADIUS, 0, Math.PI * 2);
+    shape.absarc(0, 0, r, 0, Math.PI * 2);
     for (const d of DIGS) {
       const hole = new THREE.Path();
       hole.moveTo(d.cx - d.px - 0.5, -(d.cz - d.pz - 0.5));
@@ -89,11 +89,11 @@ function CityGround() {
     const g = new THREE.ShapeGeometry(shape, 64);
     g.rotateX(-Math.PI / 2); // shape plane → ground plane (shape y ↦ world −z)
     return g;
-  }, []);
+  }, [r]);
   useEffect(() => () => geo.dispose(), [geo]);
   return (
-    <mesh geometry={geo} receiveShadow>
-      <meshLambertMaterial color="#9a968c" />
+    <mesh geometry={geo} position-y={y} receiveShadow={receive}>
+      <meshLambertMaterial color={color} />
     </mesh>
   );
 }
@@ -5170,8 +5170,8 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
   return (
     <>
       <Env clockRef={clockRef} />
-      <Disc r={900} color="#3f7a36" y={-0.12} />
-      <CityGround />
+      <HoledGround r={900} color="#3f7a36" y={-0.12} />
+      <HoledGround r={CITY_RADIUS} color="#9a968c" y={0} receive />
       <Ring a={CITY_RADIUS} b={FARM_RADIUS} color="#9cb84e" y={0.02} />
       <Ring a={FARM_RADIUS} b={DEEP_JUNGLE_RADIUS} color="#2d7a3a" y={0.03} />
       <Ring a={DEEP_JUNGLE_RADIUS} b={JUNGLE_RADIUS} color="#1e5630" y={0.031} />
