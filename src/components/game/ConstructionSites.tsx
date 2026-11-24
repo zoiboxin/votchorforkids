@@ -122,8 +122,6 @@ function DigGround() {
       const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true }));
       m.receiveShadow = true;
       m.name = `digground-${d.id}`;
-      // eslint-disable-next-line no-console -- temporary diagnostic
-      console.log("[digground] patch", d.id, "verts", pos.length / 3, "tris", idx.length / 3, "yRange", (0.06 - d.depth).toFixed(2), "→0.06");
       out.push(m);
     }
     return out;
