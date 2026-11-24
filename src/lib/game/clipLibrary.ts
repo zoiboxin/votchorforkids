@@ -45,6 +45,10 @@ export const CLIPS = {
   swordSlashA: "Sword slash A",
   swordSlashB: "Sword slash B",
   swordSlashC: "Sword slash C",
+  swordCombo: "Sword combo",
+  swordHeavy: "Sword heavy combo",
+  swordDash: "Sword dash",
+  swordBlock: "Sword block",
   pickUp: "Pick up",
   knockback: "Knockback",
   getUp: "Get up",
@@ -57,9 +61,15 @@ export const CLIPS = {
 
 export type ClipName = (typeof CLIPS)[keyof typeof CLIPS];
 
-/** Attack one-shot cycles — repeated hits alternate so combos never stutter. */
+/** Attack one-shot cycles — repeated hits alternate so combos never stutter.
+ *  ⚔️ the sword cycle now rotates through SIX real attack types (straight
+ *  chop, two slashes, the spinning combo and the heavy finisher) so repeated
+ *  hits never look like the same swing twice. */
 export const PUNCH_CYCLE: readonly string[] = [CLIPS.punchJab, CLIPS.punchCross, CLIPS.hookPunch];
-export const SWORD_CYCLE: readonly string[] = [CLIPS.swordAttack, CLIPS.swordSlashA, CLIPS.swordSlashB, CLIPS.swordSlashC];
+export const SWORD_CYCLE: readonly string[] = [
+  CLIPS.swordAttack, CLIPS.swordSlashA, CLIPS.swordSlashB,
+  CLIPS.swordCombo, CLIPS.swordSlashC, CLIPS.swordHeavy,
+];
 
 /* ---------------- raw clip streaming (own origin, cached) ---------------- */
 

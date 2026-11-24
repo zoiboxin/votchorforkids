@@ -590,13 +590,20 @@ export function setHeldTool(character: THREE.Object3D, kind: HeldToolKind | null
       .catch(() => { /* placeholder stick stays — network lost */ });
   }
   const tool = buildToolMesh(kind);
-  tool.userData.baseRx = -0.5; // ready-stance tilt — the swing arc returns here
   const glb = character.userData.glb as GlbInstance | undefined;
   if (glb?.handBone) {
     // 🧍 rigged body — the tool rides the named hand socket, so it follows the
-    // walk/idle animation through every bone pose
-    tool.position.set(0, -0.12, 0.03);
-    tool.rotation.set(-0.5, 0, 0);
+    // walk/idle animation through every bone pose. The mount below is the
+    // AUTHOR-CALIBRATED grip, measured off the Mythic vault's own
+    // attach-held-rapier (grip 4.4 cm from the wrist, blade running along the
+    // fingers, guard level with the palm) — the exact convention the shipped
+    // elf renders use, so a held sword/gear grips like the reference art in
+    // EVERY pose (idle, walk, sword guard, attack lunges). Verified in the
+    // grip lab against the elf's baked rapier across Idle / Sword idle /
+    // Sword attack. The swing overlay composes ON TOP of this mount
+    // (userData.mountQuat + restPos) — never overwrite tool.rotation here.
+    tool.position.set(0.066, 0.082, -0.053);
+    tool.rotation.set(Math.PI, -0.684, 1.588);
     glb.handBone.add(tool);
   } else {
     const rig = rigOf(character);
@@ -606,7 +613,11 @@ export function setHeldTool(character: THREE.Object3D, kind: HeldToolKind | null
     rig.arms[1].add(tool);
   }
   character.userData.heldTool = tool;
-  tool.userData.baseZ = tool.position.z; // rest z — thrust weapons lunge from here
+  // 🎬 swing-overlay anchors for the GLB path — the mount quat is the grip
+  // rotation above (re-derived here so the overlay never depends on live
+  // euler state); restPos is where thrust weapons lunge from.
+  tool.userData.mountQuat = new THREE.Quaternion().setFromEuler(tool.rotation.clone());
+  tool.userData.restPos = tool.position.clone();
   return tool;
 }
 
@@ -665,13 +676,20 @@ export function attachGlbBody(root: THREE.Object3D, slug: string, opts: { zombie
  * global + cached, per-instance builds are trivial track constructions). */
 const SWORDISH_KINDS: ReadonlySet<string> = new Set(["sword", "armsword", "dagger"]);
 const PUNCH_CLIPS: ReadonlySet<string> = new Set(PUNCH_CYCLE);
-const SWORD_CLIPS: ReadonlySet<string> = new Set(SWORD_CYCLE);
+const SWORD_CLIPS: ReadonlySet<string> = new Set([...SWORD_CYCLE, CLIPS.swordDash, CLIPS.swordBlock]);
 const AIR_CLIPS: ReadonlySet<string> = new Set([CLIPS.jumpStart, CLIPS.jumpAir, CLIPS.flipStart, CLIPS.flipAir]);
 const ZOMBIE_LOCO: readonly string[] = [CLIPS.zombieIdle, CLIPS.zombieWalk];
 const WARM_CLIPS: readonly string[] = [
   CLIPS.jumpStart, CLIPS.jumpAir, CLIPS.punchJab, CLIPS.swordIdle, CLIPS.swordAttack,
+  ...SWORD_CYCLE, CLIPS.swordDash, CLIPS.swordBlock,
   CLIPS.knockback, CLIPS.zombieAttack, CLIPS.zombieIdle, CLIPS.zombieWalk,
 ];
+
+/* swing-overlay scratch (module-level — poseGlbCharacter is single-threaded) */
+const _X_AXIS = new THREE.Vector3(1, 0, 0);
+const _SWING_AXIS_Y = new THREE.Vector3(0, 1, 0);
+const _swingQ = new THREE.Quaternion();
+const _swingV = new THREE.Vector3();
 
 /** ?noclips=1 — diagnostic kill switch: skips the whole clip activity layer
  *  and keeps every procedural overlay (bisects animation hangs).
@@ -768,11 +786,24 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
     gs.airSwap = null;
     if (wasFlip && !NO_EDGE) claimed = glbWantAct(st, CLIPS.flipLand, { loop: false, fade: 0.09 });
   }
-  if (!claimed && !NO_EDGE && hurtEdge) claimed = glbWantAct(st, CLIPS.knockback, { loop: false, fade: 0.07 });
+  if (!claimed && !NO_EDGE && hurtEdge) {
+    // 🛡️ hurt while holding a blade → the real Sword block (a parry read);
+    // bare hands take the knockback stagger
+    claimed = glbWantAct(st, swordish ? CLIPS.swordBlock : CLIPS.knockback, { loop: false, fade: 0.07 });
+  }
   if (!claimed && !NO_EDGE && atkEdge) claimed = glbWantAct(st, CLIPS.zombieAttack, { loop: false, fade: 0.06 });
   if (!claimed && !NO_EDGE && !NO_PUNCH && (o.swing ?? 0) > 0 && !o.detained) {
     if (bareHand && swingEdge) claimed = glbWantAct(st, glbCycleNext(st, PUNCH_CYCLE), { loop: false, fade: 0.055 });
-    else if (swordish && swingEdge) claimed = glbWantAct(st, glbCycleNext(st, SWORD_CYCLE), { loop: false, fade: 0.05 });
+    else if (swordish && swingEdge) {
+      // ⚔️ attack types: striking ON THE MOVE (a running slash) plays the real
+      // Sword dash lunge; standing hits rotate the six-attack combo cycle
+      const onTheMove = speed > 4.8 && !o.airborne;
+      claimed = glbWantAct(
+        st,
+        onTheMove ? CLIPS.swordDash : glbCycleNext(st, SWORD_CYCLE),
+        { loop: false, fade: 0.05 },
+      );
+    }
   }
   if (!claimed && !NO_EDGE && pickEdge && speed < 3) claimed = glbWantAct(st, CLIPS.pickUp, { loop: false, fade: 0.12 });
   if (!claimed && !NO_EDGE && eatEdge && speed < 2.5) claimed = glbWantAct(st, CLIPS.eating, { loop: false, fade: 0.12 });
@@ -1024,52 +1055,59 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
   }
 
   // ⚔️ swing — the tool (riding the hand socket) whistles through the chop arc;
-  // between swings it eases back to the ready-stance tilt (bare-hand fights
-  // use the bone-level punch overlay above instead). SWORD kinds hand the arc
-  // to the real Sword clips when they own the arm — the blade rides the hand
-  // bone untouched through the streamed slash. THRUST weapons (the spear)
-  // lunge straight ahead — a 2.1 m shaft chopping overhead clips the ground.
+  // between swings it eases back to the author-calibrated grip mount (bare-hand
+  // fights use the bone-level punch overlay above instead). SWORD kinds hand
+  // the arc to the real Sword clips when they own the arm — the blade rides
+  // the hand bone untouched through the streamed slash. THRUST weapons (the
+  // spear) lunge straight ahead — a 2.1 m shaft chopping overhead clips the
+  // ground. The arc COMPOSES onto the mount quaternion (guard-axis rotation),
+  // so a chop/sweep never fights the calibrated grip.
   const tool = g.userData.heldTool as THREE.Object3D | undefined;
   const swordClipOwns = swordish && actN != null && SWORD_CLIPS.has(actN) && actW > 0.2;
   if (tool && !swordClipOwns) {
-    const base = (tool.userData.baseRx as number | undefined) ?? -0.5;
+    const mountQ = tool.userData.mountQuat as THREE.Quaternion | undefined;
+    const restPos = tool.userData.restPos as THREE.Vector3 | undefined;
     const thrust = tool.userData.swingStyle === "thrust";
-    if (o.swing != null && o.swing > 0) {
-      const sw = Math.min(1, o.swing);
-      if (thrust) {
-        const restZ = (tool.userData.baseZ as number | undefined) ?? tool.position.z;
-        // windup → LUNGE → recover — the shaft shoves through the fist
-        if (sw < 0.18) {
-          const k = sw / 0.18;
-          tool.position.z = restZ - 0.14 * k;            // pulled back
-          tool.rotation.x = base - 0.18 * k;             // cocked slightly up
-        } else if (sw < 0.4) {
-          const k = (sw - 0.18) / 0.22;
-          tool.position.z = restZ - 0.14 + 0.72 * k * k; // the lunge
-          tool.rotation.x = base - 0.18 + 0.14 * k;
+    if (mountQ && restPos) {
+      if (o.swing != null && o.swing > 0) {
+        const sw = Math.min(1, o.swing);
+        if (thrust) {
+          // windup → LUNGE → recover — the shaft shoves through the fist,
+          // along the mount's own shaft axis (tool-local +Y in socket space)
+          _swingV.copy(_SWING_AXIS_Y).applyQuaternion(mountQ); // shaft axis (socket space)
+          let amt: number;
+          if (sw < 0.18) {
+            amt = -0.14 * (sw / 0.18);                       // pulled back
+          } else if (sw < 0.4) {
+            const k = (sw - 0.18) / 0.22;
+            amt = -0.14 + 0.72 * k * k;                      // the lunge
+          } else {
+            amt = 0.58 * (1 - sstep(0, 1, (sw - 0.4) / 0.6)); // settle back
+          }
+          tool.position.copy(restPos).addScaledVector(_swingV, amt);
+          tool.quaternion.copy(mountQ);
+          body.rotation.y += Math.sin(sw * Math.PI) * -0.1; // tighter torso twist
         } else {
-          const k = sstep(0, 1, (sw - 0.4) / 0.6);
-          tool.position.z = restZ + 0.58 * (1 - k);      // settle back
-          tool.rotation.x = base - 0.04 * (1 - k);
+          // chop arc around the mount's guard axis — wind up behind the head,
+          // strike forward-down, settle back to the natural grip (deltas are
+          // the same sweep the old base-anchored euler arc traced)
+          let th: number;
+          if (sw < 0.12) {
+            th = -2.05 * (sw / 0.12);                 // wind up behind the head
+          } else if (sw < 0.35) {
+            const k = (sw - 0.12) / 0.23;
+            th = -2.05 + 3.65 * k * k;                // the strike
+          } else {
+            th = 1.6 * (1 - sstep(0, 1, (sw - 0.35) / 0.65)); // settle back
+          }
+          tool.quaternion.copy(mountQ).multiply(_swingQ.setFromAxisAngle(_X_AXIS, th));
+          tool.position.copy(restPos);
+          body.rotation.y += Math.sin(sw * Math.PI) * -0.18; // torso twist substitute
         }
-        body.rotation.y += Math.sin(sw * Math.PI) * -0.1; // tighter torso twist
       } else {
-        let ax: number;
-        if (sw < 0.12) {
-          ax = base + (-2.55 - base) * (sw / 0.12); // wind up behind the head
-        } else if (sw < 0.35) {
-          const k = (sw - 0.12) / 0.23;
-          ax = -2.55 + (1.1 + 2.55) * k * k;        // the strike
-        } else {
-          const k = sstep(0, 1, (sw - 0.35) / 0.65);
-          ax = 1.1 + (base - 1.1) * k;              // settle back
-        }
-        tool.rotation.x = ax;
-        body.rotation.y += Math.sin(sw * Math.PI) * -0.18; // torso twist substitute
+        tool.quaternion.copy(mountQ); // the author-calibrated ready grip
+        tool.position.copy(restPos);
       }
-    } else {
-      tool.rotation.x = base;
-      if (thrust) tool.position.z = (tool.userData.baseZ as number | undefined) ?? tool.position.z;
     }
   }
 }
