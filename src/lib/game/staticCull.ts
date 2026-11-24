@@ -102,9 +102,17 @@ function collect(obj: THREE.Object3D, dynamic: boolean): void {
       _size.set(_box.max.x - _box.min.x, _box.max.y - _box.min.y, _box.max.z - _box.min.z);
       const r = _size.length() * 0.5;
       if (r <= MAX_R) {
-        o.getWorldPosition(_c);
+        // cluster center = the WORLD BBOX CENTER — never getWorldPosition().
+        // The kit bakes (railway stock & station, construction sites, …) merge
+        // their ABSOLUTE world coordinates into the vertices and leave the
+        // mesh origin at (0,0,0): measuring the distance to the origin put
+        // every baked cluster "at the town centre" — the 15:07 vanished when
+        // the player stood ON it and the station house hid at its platform.
         clusters.push({
-          obj: o, cx: _c.x, cz: _c.z, r,
+          obj: o,
+          cx: (_box.min.x + _box.max.x) * 0.5,
+          cz: (_box.min.z + _box.max.z) * 0.5,
+          r,
           h: _size.y,
           dynamic,
           shown: o.visible,

@@ -19,24 +19,25 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { RAILKIT } from "@/lib/game/worldgen";
 import {
-  bakeRailwayModel, onRailwayModelsReady, preloadRailwayModels, spawnRailwayModel,
+  bakeRailwayModel, onRailwayModelsReady, preloadRailwayModels, railwayAllSettled, spawnRailwayModel,
   type RailwayKind,
 } from "@/lib/game/railwayModels";
 import type { GameEngine } from "@/lib/game/engine";
 
 /** spawn once per component + re-render when the GLBs land */
-function useBakedRail(): THREE.Mesh[] {
-  const [meshes, setMeshes] = useState<THREE.Mesh[]>(() => bakeAll());
+function useBakedRail(): THREE.Object3D[] {
+  // first paint bakes whatever is already cached (a Fast-Refresh remount may
+  // catch a PARTIAL cache — the station GLB is the biggest and often still in
+  // flight); the settle callback re-bakes the missing kinds as they arrive
+  const [meshes, setMeshes] = useState<THREE.Object3D[]>(() => bakeAll());
+  const settled = railwayAllSettled();
   useEffect(() => {
-    if (meshes.length > 0) return;
+    if (settled) return;
     return onRailwayModelsReady(() => setMeshes(bakeAll()));
     // RAILKIT placements are module-level constants — stable across renders
-  }, [meshes.length]);
+  }, [settled]);
   useEffect(() => () => {
-    for (const m of meshes) {
-      m.geometry.dispose();
-      (m.material as THREE.Material).dispose();
-    }
+    for (const m of meshes) disposeBakedRail(m);
   }, [meshes]);
   return meshes;
 }
@@ -58,18 +59,46 @@ const BAKE_ORDER: RailwayKind[] = [
   "flatWagon", "hopperWagon", "tankWagon", "guardsVan", "shunter", "handcar", "railbus",
 ];
 
-/** gather every placement of one kind and bake them into one mesh */
-function bakeKind(kind: RailwayKind): THREE.Mesh | null {
-  const placements = RAILKIT.props[kind] ?? [];
-  if (placements.length === 0) return null;
-  return bakeRailwayModel(kind, placements);
+/** free one baked result — a merged Mesh or a Group of InstancedMeshes.
+ *  Each bake owns its geometries; the Lambert material is shared per bake, so
+ *  it disposes once per group member (double-dispose is a safe no-op). */
+function disposeBakedRail(obj: THREE.Object3D): void {
+  obj.traverse((o) => {
+    const im = o as THREE.InstancedMesh;
+    if (im.isInstancedMesh) im.dispose(); // releases the instance buffer
+    const mesh = o as THREE.Mesh;
+    if (mesh.isMesh) {
+      mesh.geometry.dispose();
+      const mat = mesh.material;
+      if (Array.isArray(mat)) mat.forEach((mm) => mm.dispose());
+      else (mat as THREE.Material).dispose();
+    }
+  });
 }
 
-function bakeAll(): THREE.Mesh[] {
-  const out: THREE.Mesh[] = [];
+/** gather every placement of one kind and bake them into one result.
+ *  kind names ride each result's `name` (the __vcRail debug handle reads them). */
+function bakeKind(kind: RailwayKind): THREE.Object3D | null {
+  const placements = RAILKIT.props[kind] ?? [];
+  if (placements.length === 0) return null;
+  const m = bakeRailwayModel(kind, placements);
+  if (m) m.name = kind;
+  return m;
+}
+
+function bakeAll(): THREE.Object3D[] {
+  const out: THREE.Object3D[] = [];
   for (const kind of BAKE_ORDER) {
     const m = bakeKind(kind);
     if (m) out.push(m);
+  }
+  // 🔧 kit diagnostic handle — matches the __vc pattern: which kinds baked,
+  // how many draw calls, and each result's world extent
+  if (typeof window !== "undefined") {
+    (window as unknown as { __vcRail?: unknown }).__vcRail = {
+      kinds: out.map((m) => m.name),
+      list: out,
+    };
   }
   return out;
 }

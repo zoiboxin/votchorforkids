@@ -79,11 +79,15 @@ export interface ConstructionRig {
 const cache = new Map<ConstructionKind, ConstructionRig>();
 let started = false;
 let readyCount = 0;
+let failedCount = 0;
 const readyCbs: (() => void)[] = [];
 
 function notify() {
-  readyCount = cache.size;
-  if (readyCount >= Object.keys(FILES).length) {
+  // settle = loaded OR failed — one dead URL must never hold the whole
+  // construction district hostage (the ready callback would wait forever
+  // and the sites would never bake)
+  const settled = cache.size + failedCount;
+  if (settled >= Object.keys(FILES).length) {
     for (const cb of readyCbs.splice(0)) cb();
   }
 }
@@ -122,12 +126,16 @@ export function preloadConstructionModels(): void {
         notify();
       },
       undefined,
-      () => { /* a failed model just means that prop is skipped — never crash the game */ console.error("[construction-kit] GLB failed to load:", FILES[kind]); },
+      () => { failedCount++; /* a failed model just means that prop is skipped — never crash the game */ console.error("[construction-kit] GLB failed to load:", FILES[kind]); notify(); },
     );
   }
 }
 
 export const constructionProgress = () => ({ ready: readyCount, total: Object.keys(FILES).length });
+
+/** true once every model has SETTLED (loaded or failed) — the caller can
+ *  stop waiting for further rebakes (failed kinds bake as nothing). */
+export const constructionAllSettled = (): boolean => cache.size + failedCount >= Object.keys(FILES).length;
 
 /** True once this kind's GLB has been parsed and normalized. */
 export const isConstructionModelReady = (kind: string): boolean =>
@@ -207,10 +215,11 @@ export function constructionGroundY(kind: ConstructionKind): number {
   return cache.get(kind)?.groundY ?? 0;
 }
 
-/** Fire the callback when every construction model is in (or immediately if so).
- *  Returns an unsubscribe fn — the caller's cleanup must always be callable. */
+/** Fire the callback when every construction model has SETTLED (loaded or
+ *  failed; fires immediately if so). Returns an unsubscribe fn — the caller's
+ *  cleanup must always be callable. */
 export function onConstructionModelsReady(cb: () => void): () => void {
-  if (readyCount >= Object.keys(FILES).length) { cb(); return () => {}; }
+  if (constructionAllSettled()) { cb(); return () => {}; }
   readyCbs.push(cb);
   return () => {
     const i = readyCbs.indexOf(cb);

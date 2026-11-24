@@ -115,11 +115,15 @@ export interface RailwayRig {
 const cache = new Map<RailwayKind, RailwayRig>();
 let started = false;
 let readyCount = 0;
+let failedCount = 0;
 const readyCbs: (() => void)[] = [];
 
 function notify() {
-  readyCount = cache.size;
-  if (readyCount >= Object.keys(FILES).length) {
+  // settle = loaded OR failed — one dead URL must never hold the whole
+  // railway hostage (the "station never shows" bug when a single GLB 404s
+  // on a cold preview host: the ready callback waited forever)
+  const settled = cache.size + failedCount;
+  if (settled >= Object.keys(FILES).length) {
     for (const cb of readyCbs.splice(0)) cb();
   }
 }
@@ -156,12 +160,16 @@ export function preloadRailwayModels(): void {
         notify();
       },
       undefined,
-      () => { /* a failed model just means that prop is skipped — never crash the game */ console.error("[railway-kit] GLB failed to load:", FILES[kind]); },
+      () => { failedCount++; /* a failed model just means that prop is skipped — never crash the game */ console.error("[railway-kit] GLB failed to load:", FILES[kind]); notify(); },
     );
   }
 }
 
 export const railwayProgress = () => ({ ready: readyCount, total: Object.keys(FILES).length });
+
+/** true once every model has SETTLED (loaded or failed) — the caller can
+ *  stop waiting for further rebakes (failed kinds bake as nothing). */
+export const railwayAllSettled = (): boolean => cache.size + failedCount >= Object.keys(FILES).length;
 
 /** True once this kind's GLB has been parsed and normalized. */
 export const isRailwayModelReady = (kind: string): boolean =>
@@ -190,19 +198,26 @@ export interface RailwayPlacement {
   s?: number;
 }
 
+/** kinds whose placement count explodes (the 465 track sections + the pole
+ *  runs) render as InstancedMeshes — geometry stored ONCE, one 64-byte matrix
+ *  per instance. The old clone-per-section merge built ~1 800 m of track by
+ *  copying every vertex 465× synchronously on world mount: seconds of frozen
+ *  main thread and a giant buffer that OOM-crashed the tab (the
+ *  "Application error: a client-side exception" report). */
+const INSTANCED_THRESHOLD = 24;
+
 /**
- * Bake MANY placements of one kit kind into a single merged mesh — the ~465
- * straight-track sections carrying the whole branch line collapse into ONE
- * draw call, as do the pole runs, fences and everything repeated. All
- * Countryside-Railway models are vertex-coloured, so one vertexColors Lambert
- * material carries every baked instance.
+ * Bake MANY placements of one kit kind. Small counts merge into a single
+ * vertex-coloured mesh; big counts return a Group of per-part InstancedMeshes
+ * (same look, ~zero build cost). All Countryside-Railway models are
+ * vertex-coloured, so one vertexColors Lambert material carries everything.
  * Returns null while still loading.
  */
-export function bakeRailwayModel(kind: RailwayKind, placements: RailwayPlacement[]): THREE.Mesh | null {
+export function bakeRailwayModel(kind: RailwayKind, placements: RailwayPlacement[]): THREE.Object3D | null {
   const rig = cache.get(kind);
   if (!rig || placements.length === 0) return null;
-  const parts: { geo: THREE.BufferGeometry; rel: THREE.Matrix4 }[] = [];
   rig.template.updateMatrixWorld(true);
+  const parts: { geo: THREE.BufferGeometry; rel: THREE.Matrix4 }[] = [];
   rig.template.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (!mesh.isMesh) return;
@@ -215,11 +230,42 @@ export function bakeRailwayModel(kind: RailwayKind, placements: RailwayPlacement
       .premultiply(rig.template.matrixWorld.clone().invert()); // node → template-root space
     parts.push({ geo: mesh.geometry.clone(), rel });
   });
-  const geos: THREE.BufferGeometry[] = [];
+  if (parts.length === 0) return null;
+  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   const m = new THREE.Matrix4();
   const q = new THREE.Quaternion();
   const e = new THREE.Euler();
   const one = new THREE.Vector3(1, 1, 1);
+
+  /* ---- big kinds: one InstancedMesh per part — build cost is trivial ---- */
+  if (placements.length >= INSTANCED_THRESHOLD) {
+    const group = new THREE.Group();
+    for (const { geo, rel } of parts) {
+      const g = geo.clone().applyMatrix4(rel);
+      if (!g.attributes.color) {
+        // kit models are vertex-coloured; a stray uncoloured part gets white
+        const n = g.attributes.position.count;
+        g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(n * 3).fill(1), 3));
+      }
+      const inst = new THREE.InstancedMesh(g, mat, placements.length);
+      inst.castShadow = true;
+      for (let i = 0; i < placements.length; i++) {
+        const p = placements[i];
+        const s = p.s ?? 1;
+        e.set(0, p.rot ?? 0, 0);
+        q.setFromEuler(e);
+        m.compose(new THREE.Vector3(p.x, p.y ?? 0, p.z), q, one.clone().multiplyScalar(s));
+        inst.setMatrixAt(i, m);
+      }
+      inst.instanceMatrix.needsUpdate = true;
+      inst.computeBoundingSphere();
+      group.add(inst);
+    }
+    return group;
+  }
+
+  /* ---- small kinds: the classic single merged mesh ---- */
+  const geos: THREE.BufferGeometry[] = [];
   for (const p of placements) {
     const s = p.s ?? 1;
     e.set(0, p.rot ?? 0, 0);
@@ -228,7 +274,6 @@ export function bakeRailwayModel(kind: RailwayKind, placements: RailwayPlacement
     for (const { geo, rel } of parts) {
       const g = geo.clone().applyMatrix4(rel).applyMatrix4(m);
       if (!g.attributes.color) {
-        // kit models are vertex-coloured; a stray uncoloured part gets white
         const n = g.attributes.position.count;
         g.setAttribute("color", new THREE.BufferAttribute(new Float32Array(n * 3).fill(1), 3));
       }
@@ -239,16 +284,16 @@ export function bakeRailwayModel(kind: RailwayKind, placements: RailwayPlacement
   const merged = mergeGeometries(geos, false);
   if (!merged) return null;
   geos.forEach((g) => g.dispose());
-  const mat = new THREE.MeshLambertMaterial({ vertexColors: true });
   const mesh = new THREE.Mesh(merged, mat);
   mesh.castShadow = true;
   return mesh;
 }
 
-/** Fire the callback when every railway model is in (or immediately if so).
- *  Returns an unsubscribe fn — the caller's cleanup must always be callable. */
+/** Fire the callback when every railway model has SETTLED (loaded or failed;
+ *  fires immediately if so). Returns an unsubscribe fn — the caller's cleanup
+ *  must always be callable. */
 export function onRailwayModelsReady(cb: () => void): () => void {
-  if (readyCount >= Object.keys(FILES).length) { cb(); return () => {}; }
+  if (railwayAllSettled()) { cb(); return () => {}; }
   readyCbs.push(cb);
   return () => {
     const i = readyCbs.indexOf(cb);

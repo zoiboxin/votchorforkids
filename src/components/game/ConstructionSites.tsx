@@ -23,7 +23,7 @@ import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { DIGS, SITEKIT, digDown, type ConSiteDef } from "@/lib/game/worldgen";
 import {
-  bakeConstructionModel, cloneConstructionModel, constructionGroundY, onConstructionModelsReady,
+  bakeConstructionModel, cloneConstructionModel, constructionAllSettled, constructionGroundY, onConstructionModelsReady,
   preloadConstructionModels,
   type ConstructionKind,
 } from "@/lib/game/constructionModels";
@@ -32,12 +32,15 @@ import type { GameEngine } from "@/lib/game/engine";
 
 /** spawn once per component + re-render when the GLBs land */
 function useBakedSite(): THREE.Mesh[] {
+  // first paint bakes whatever is already cached (a Fast-Refresh remount may
+  // catch a PARTIAL cache); the settle callback re-bakes the missing kinds
   const [meshes, setMeshes] = useState<THREE.Mesh[]>(() => bakeAll());
+  const settled = constructionAllSettled();
   useEffect(() => {
-    if (meshes.length > 0) return;
+    if (settled) return;
     return onConstructionModelsReady(() => setMeshes(bakeAll()));
     // SITEKIT placements are module-level constants — stable across renders
-  }, [meshes.length]);
+  }, [settled]);
   useEffect(() => () => {
     for (const m of meshes) {
       m.geometry.dispose();
@@ -162,6 +165,7 @@ function CraneTops() {
         // air" bug)
         g.position.set(p.x, (p.y ?? 0) + constructionGroundY("craneTop"), p.z);
         g.rotation.y = p.rot ?? 0;
+        g.name = `crane-top-${out.length}`; // 🏗️ named for headless verification
         out.push(g);
       }
       setTops(out);
