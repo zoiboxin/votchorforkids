@@ -119,7 +119,10 @@ function DigGround() {
       g.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
       g.setIndex(idx);
       g.computeVertexNormals();
-      const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true }));
+      // DoubleSide: the terraced walls read edge-on from the ramp and the rim,
+      // and the grid's culling subtleties must never let the pit floor vanish
+      // (verified in-game: FrontSide dropped the whole patch against the sky)
+      const m = new THREE.Mesh(g, new THREE.MeshLambertMaterial({ vertexColors: true, side: THREE.DoubleSide }));
       m.receiveShadow = true;
       m.name = `digground-${d.id}`;
       out.push(m);

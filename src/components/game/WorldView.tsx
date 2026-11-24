@@ -5022,6 +5022,12 @@ function StaticCuller({ staticRef, fleetRef }: {
 export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObject<number>; engine: GameEngine }) {
   const staticRoot = useRef<THREE.Group>(null);
   const fleetRoot = useRef<THREE.Group>(null);
+  // 🧪 dev diagnostic — the scene handle for headless verification (harmless)
+  const __scene = useThree((s) => s.scene);
+  useEffect(() => {
+    (window as unknown as { __scene?: THREE.Scene }).__scene = __scene;
+    return () => { (window as unknown as { __scene?: THREE.Scene }).__scene = undefined; };
+  }, [__scene]);
   return (
     <>
       <Env clockRef={clockRef} />
