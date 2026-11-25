@@ -30,6 +30,8 @@ export interface ShopItem {
   power?: PowerKind;
   snack?: { def: number; count: number };
   presetId?: string;
+  /** 🎭 Shop Cast hero slug — owning this item unlocks WEARING that rigged GLB character */
+  char?: string;
   license?: boolean;
   /** hero bundle — owning this unlocks the hero kit(s) listed in its tip */
   heroBundle?: true;
@@ -139,6 +141,38 @@ export const SHOP_ITEMS: readonly ShopItem[] = [
       id: `style-${p.id}`, name: p.label, emoji: p.emoji, kind: "style",
       price: PRESET_PRICE[p.id] ?? 100, presetId: p.id,
       tip: "Cosmetic outfit — wear it from here or the locker once purchased.",
+    }),
+  ),
+
+  /* ---------- 🎭 SHOP CAST — one-off Polyfork characters, priced 1 coin per
+   * triangle ----------
+   * Every entry is a rigged, animated GLB on the shared cast skeleton
+   * (Idle/Walk/Run embedded) served straight from polyfork.dev — the price is
+   * the asset's exact triangle count, as listed on its catalog page. Owning
+   * one unlocks wearing that hero from here or the Locker's Hero tab. */
+  ...([
+    ["santa-base", "Santa", "🎅", 3766],
+    ["elf-carrying-presents-base", "Gift Elf", "🎁", 3904],
+    ["kid-witch-01c770", "Kid Witch", "🔮", 4929],
+    ["kid-in-a-bedsheet-f9c403", "Bedsheet Ghost Kid", "👻", 4343],
+    ["court-jester-base", "Court Jester", "🃏", 4840],
+    ["choral-star-girl-base", "Choral Star Girl", "🌟", 4912],
+    ["cheerleader-90875e", "Cheerleader", "📣", 4833],
+    ["tapati-dancer-5557aa", "Tapati Dancer", "💃", 4905],
+    ["opera-baritone-base", "Opera Baritone", "🎭", 4941],
+    ["balloon-seller-base", "Balloon Seller", "🎈", 4986],
+    ["child-at-the-fun-fair-base", "Fun Fair Kid", "🎡", 4946],
+    ["spear-soldier-base", "Spear Soldier", "💂", 4962],
+    ["general-base", "General", "🎖️", 5000],
+    ["zeus-base", "Zeus", "⚡", 4880],
+    ["gnome-mage-base", "Gnome Mage", "🧙", 5618],
+    ["halfling-monk-base", "Halfling Monk", "🧘", 5476],
+    ["dryad-hunter-base", "Dryad Hunter", "🌿", 5559],
+    ["human-assassin-base", "Human Assassin", "🗡️", 5485],
+  ] as const).map(
+    ([slug, name, emoji, tris]): ShopItem => ({
+      id: `char-${slug}`, name, emoji, kind: "style", price: tris, char: slug,
+      tip: `Rigged Polyfork character — exactly ${tris.toLocaleString()} triangles, priced 1 💰 per triangle. Wear it from here or the Locker once purchased.`,
     }),
   ),
 ];

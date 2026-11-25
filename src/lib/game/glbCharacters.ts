@@ -378,11 +378,43 @@ export const MYTHIC_HEROES: readonly GlbCharacterDef[] = [
   { slug: "orc-warrior-bffa73", name: "Orc Warrior", emoji: "👹", url: "/models/heroes/orc-warrior-bffa73.glb", area: MYTHIC_AREA_ID },
 ];
 
+/* 🎭 SHOP CAST — one-off Polyfork characters sold INDIVIDUALLY in the Item
+ * Shop, each priced 1 coin per triangle (polyfork.dev/asset/<slug>). Same
+ * shared Mixamo-style skeleton + Idle/Walk/Run clips as every other cast
+ * member, shipped LOCALLY (public/models/heroes) so purchases work offline.
+ * Per-hero ownership: owning shop item `char-<slug>` unlocks wearing it
+ * (Item Shop wear button + Locker's Hero tab). */
+export const SHOP_CAST_AREA_ID = "shopcast";
+export const SHOP_CAST_HEROES: readonly GlbCharacterDef[] = [
+  { slug: "santa-base", name: "Santa", emoji: "🎅", url: "/models/heroes/santa-base.glb", area: SHOP_CAST_AREA_ID },
+  { slug: "elf-carrying-presents-base", name: "Gift Elf", emoji: "🎁", url: "/models/heroes/elf-carrying-presents-base.glb", area: SHOP_CAST_AREA_ID },
+  { slug: "kid-witch-01c770", name: "Kid Witch", emoji: "🔮", url: "/models/heroes/kid-witch-01c770.glb", area: SHOP_CAST_AREA_ID },
+  { slug: "kid-in-a-bedsheet-f9c403", name: "Bedsheet Ghost Kid", emoji: "👻", url: "/models/heroes/kid-in-a-bedsheet-f9c403.glb", area: SHOP_CAST_AREA_ID },
+  { slug: "court-jester-base", name: "Court Jester", emoji: "🃏", url: "/models/heroes/court-jester-base.glb", area: SHOP_CAST_AREA_ID },
+  { slug: "choral-star-girl-base", name: "Choral Star Girl", emoji: "🌟", url: "/models/heroes/choral-star-girl-base.glb", area: SHOP_CAST_AREA_ID },
+  { slug: "cheerleader-90875e", name: "Cheerleader", emoji: "📣", url: "/models/heroes/cheerleader-90875e.glb", area: SHOP_CAST_AREA_ID },
+  { slug: "tapati-dancer-5557aa", name: "Tapati Dancer", emoji: "💃", url: "/models/heroes/tapati-dancer-5557aa.glb", area: SHOP_CAST_AREA_ID },
+  { slug: "opera-baritone-base", name: "Opera Baritone", emoji: "🎭", url: "/models/heroes/opera-baritone-base.glb", area: SHOP_CAST_AREA_ID },
+  { slug: "balloon-seller-base", name: "Balloon Seller", emoji: "🎈", url: "/models/heroes/balloon-seller-base.glb", area: SHOP_CAST_AREA_ID },
+  { slug: "child-at-the-fun-fair-base", name: "Fun Fair Kid", emoji: "🎡", url: "/models/heroes/child-at-the-fun-fair-base.glb", area: SHOP_CAST_AREA_ID },
+  { slug: "spear-soldier-base", name: "Spear Soldier", emoji: "💂", url: "/models/heroes/spear-soldier-base.glb", area: SHOP_CAST_AREA_ID },
+  { slug: "general-base", name: "General", emoji: "🎖️", url: "/models/heroes/general-base.glb", area: SHOP_CAST_AREA_ID },
+  { slug: "zeus-base", name: "Zeus", emoji: "⚡", url: "/models/heroes/zeus-base.glb", area: SHOP_CAST_AREA_ID },
+  { slug: "gnome-mage-base", name: "Gnome Mage", emoji: "🧙", url: "/models/heroes/gnome-mage-base.glb", area: SHOP_CAST_AREA_ID },
+  { slug: "halfling-monk-base", name: "Halfling Monk", emoji: "🧘", url: "/models/heroes/halfling-monk-base.glb", area: SHOP_CAST_AREA_ID },
+  { slug: "dryad-hunter-base", name: "Dryad Hunter", emoji: "🌿", url: "/models/heroes/dryad-hunter-base.glb", area: SHOP_CAST_AREA_ID },
+  { slug: "human-assassin-base", name: "Human Assassin", emoji: "🗡️", url: "/models/heroes/human-assassin-base.glb", area: SHOP_CAST_AREA_ID },
+];
+
+/** shop item id that unlocks a Shop Cast hero (single source of truth) */
+export const shopCastItemId = (slug: string): string => `char-${slug}`;
+
 /** Dropdown areas in order: Town Cast, then every Polyfork kit area. */
 export const GLB_AREAS: readonly GlbAreaDef[] = [
   { id: TOWN_AREA_ID, name: "Town Cast", emoji: "🌙", chars: [...GLB_CHARACTERS, POLICE_CHAR_DEF] },
   ...CATALOG_AREAS.map((a) => ({ ...a, chars: GLB_CATALOG.filter((c) => c.area === a.id) })),
   { id: MYTHIC_AREA_ID, name: "Mythic Vault", emoji: "🐉", chars: MYTHIC_HEROES },
+  { id: SHOP_CAST_AREA_ID, name: "Shop Costumes", emoji: "🎭", chars: SHOP_CAST_HEROES },
 ];
 
 /** Every selectable citizen (catalog first, then any cast-only extras, then
@@ -390,7 +422,7 @@ export const GLB_AREAS: readonly GlbAreaDef[] = [
 const ALL_CHARS: readonly GlbCharacterDef[] = (() => {
   const seen = new Set<string>();
   const out: GlbCharacterDef[] = [];
-  for (const c of [...GLB_CATALOG, ...GLB_AREAS[0].chars, ...MYTHIC_HEROES]) {
+  for (const c of [...GLB_CATALOG, ...GLB_AREAS[0].chars, ...MYTHIC_HEROES, ...SHOP_CAST_HEROES]) {
     if (seen.has(c.slug)) continue;
     seen.add(c.slug);
     out.push(c);
@@ -411,10 +443,13 @@ export const GLB_CHAR_COUNT = ALL_CHARS.length;
  *  Vault heroes — Random picks should use RANDOM_POOL below instead. */
 export const ALL_GLB_CHARS: readonly GlbCharacterDef[] = ALL_CHARS;
 
-/** Random-button pool — everything EXCEPT the purchasable Mythic Vault.
- *  Creator.tsx's Random button should read this so a free reroll can never
- *  land on a hero the player hasn't bought. */
-export const RANDOM_POOL: readonly GlbCharacterDef[] = ALL_CHARS.filter((c) => c.area !== MYTHIC_AREA_ID);
+/** Random-button pool — everything EXCEPT the purchasable Mythic Vault and
+ *  the individually-sold Shop Costumes. Creator.tsx's Random button should
+ *  read this so a free reroll can never land on a hero the player hasn't
+ *  bought. */
+export const RANDOM_POOL: readonly GlbCharacterDef[] = ALL_CHARS.filter(
+  (c) => c.area !== MYTHIC_AREA_ID && c.area !== SHOP_CAST_AREA_ID,
+);
 
 /* ---------------- template loading (one shared rig per character) ---------------- */
 

@@ -3339,6 +3339,12 @@ const NIGHT = new THREE.Color(0x070a1c); // 7Nights — colder, darker nights
 
 function Env({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
   const { scene } = useThree();
+  // 🔧 expose the live scene on the __vc debug handle — headless verification
+  // can traverse named nodes (crane-top-*, baked kits, …) without a build step
+  useEffect(() => {
+    const vc = (window as unknown as { __vc?: Record<string, unknown> }).__vc;
+    if (vc) vc.scene = scene;
+  }, [scene]);
   const hemi = useRef<THREE.HemisphereLight>(null!);
   const sun = useRef<THREE.DirectionalLight>(null!);
   const sky = useMemo(() => new THREE.Color(), []);

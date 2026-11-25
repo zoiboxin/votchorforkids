@@ -28,7 +28,7 @@ import { Button } from "@/components/ui/button";
 import {
   outfitPreset, RPG_VAULT_ITEM_ID, SHOP_ITEMS, SHOP_KINDS, shopItem, type ShopItem,
 } from "@/lib/game/shop";
-import { MYTHIC_HEROES } from "@/lib/game/glbCharacters";
+import { MYTHIC_HEROES, glbCharDef } from "@/lib/game/glbCharacters";
 import type { Appearance } from "@/lib/game/constants";
 import { sfx } from "@/lib/game/audio";
 import { useGame } from "./store";
@@ -65,14 +65,24 @@ export function ShopPage() {
   /** 👕 wear a purchased outfit preset straight from the shop */
   const wearPreset = (it: ShopItem) => {
     const p = outfitPreset(it.presetId);
-    if (!p) return;
-    sfx.pickup();
-    setLook(p.look);
+    if (p) {
+      sfx.pickup();
+      setLook(p.look);
+      return;
+    }
+    /* 🎭 Shop Cast character — wearing swaps the rigged GLB hero itself */
+    if (it.char) {
+      const hero = glbCharDef(it.char);
+      sfx.pickup();
+      setLook({ char: it.char });
+      pushToast(`${hero?.emoji ?? it.emoji} Wearing ${hero?.name ?? it.name} — looking sharp!`, "good");
+    }
   };
 
-  /** worn state = the preset's every look field matches the current look */
+  /** worn state = the preset's every look field matches, or the char slug does */
   const isWorn = (it: ShopItem) => {
     if (it.kind !== "style") return false;
+    if (it.char) return look.char === it.char;
     const p = outfitPreset(it.presetId);
     return !!p && (Object.entries(p.look) as [keyof Appearance, unknown][]).every(([k, v]) => look[k] === v);
   };

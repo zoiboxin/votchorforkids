@@ -124,3 +124,30 @@ and concrete mixer truck — three building sites in the city
 
 Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
 (https://creativecommons.org/licenses/by/4.0/)
+
+`heroes/` 🎭 Shop Cast — individually-sold characters (polyfork.dev/asset/<slug>),
+each priced in-game at its exact triangle count:
+
+| File | Model | Triangles |
+| --- | --- | --- |
+| `santa-base.glb` | Santa | 3,766 |
+| `elf-carrying-presents-base.glb` | Elf carrying presents | 3,904 |
+| `kid-witch-01c770.glb` | Kid Witch | 4,929 |
+| `kid-in-a-bedsheet-f9c403.glb` | Kid in a Bedsheet Ghost Costume | 4,343 |
+| `court-jester-base.glb` | Court Jester | 4,840 |
+| `choral-star-girl-base.glb` | Choral Star Girl | 4,912 |
+| `cheerleader-90875e.glb` | Cheerleader | 4,833 |
+| `tapati-dancer-5557aa.glb` | Tapati Dancer | 4,905 |
+| `opera-baritone-base.glb` | Opera Baritone | 4,941 |
+| `balloon-seller-base.glb` | Balloon Seller | 4,986 |
+| `child-at-the-fun-fair-base.glb` | Child at the Fun Fair | 4,946 |
+| `spear-soldier-base.glb` | Spear Soldier | 4,962 |
+| `general-base.glb` | General | 5,000 |
+| `zeus-base.glb` | Zeus | 4,880 |
+| `gnome-mage-base.glb` | Gnome Mage | 5,618 |
+| `halfling-monk-base.glb` | Halfling Monk | 5,476 |
+| `dryad-hunter-base.glb` | Dryad Hunter | 5,559 |
+| `human-assassin-base.glb` | Human Assassin | 5,485 |
+
+Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
+(https://creativecommons.org/licenses/by/4.0/)

@@ -40,7 +40,8 @@ import {
 } from "@/lib/game/constants";
 import { poseCharacter } from "@/lib/game/character";
 import {
-  RANDOM_POOL, GLB_AREAS, GLB_CHAR_COUNT, MYTHIC_AREA_ID, TOWN_AREA_ID, ensureGlbArea,
+  RANDOM_POOL, GLB_AREAS, GLB_CHAR_COUNT, MYTHIC_AREA_ID, SHOP_CAST_AREA_ID, shopCastItemId,
+  TOWN_AREA_ID, ensureGlbArea,
   glbAreaStatus, glbCharDef, glbCharFailed, glbTemplate, glbThumb,
   loadGlbTemplate, makeGlbInstance, preloadGlbCharacters,
   useGlbAreaState, useGlbThumbs,
@@ -393,7 +394,10 @@ function HeroPicker({ value, onChange }: { value: string; onChange: (slug: strin
             const thumb = glbThumb(h.slug);
             const dead = glbCharFailed(h.slug);
             // 🐉 Mythic Vault heroes — purchasable in the Item Shop, locked until owned
-            const locked = h.area === MYTHIC_AREA_ID && !owned.includes(RPG_VAULT_ITEM_ID);
+            // 🎭 Shop Costumes — sold individually (char-<slug> items), locked until owned
+            const locked =
+              (h.area === MYTHIC_AREA_ID && !owned.includes(RPG_VAULT_ITEM_ID)) ||
+              (h.area === SHOP_CAST_AREA_ID && !owned.includes(shopCastItemId(h.slug)));
             return (
               <button
                 key={h.slug}
@@ -403,7 +407,13 @@ function HeroPicker({ value, onChange }: { value: string; onChange: (slug: strin
                 disabled={dead}
                 onClick={() => {
                   sfx.click();
-                  if (locked) pushToast("🐉 The Mythic Vault is locked — purchase it in the Item Shop!", "bad");
+                  if (locked)
+                    pushToast(
+                      h.area === MYTHIC_AREA_ID
+                        ? "🐉 The Mythic Vault is locked — purchase it in the Item Shop!"
+                        : `🎭 ${h.name} is locked — purchase this costume in the Item Shop!`,
+                      "bad",
+                    );
                   else onChange(h.slug);
                 }}
                 className={`relative rounded-xl border-2 p-1.5 text-center transition-all ${
@@ -495,7 +505,7 @@ function LockerItems() {
       case "gear": return "🎒 wheel";
       case "power": return "✨ wheel";
       case "support": return it.snack ? "1–8 hotbar" : "🪪 auto";
-      case "style": return it.presetId ? "👕 outfit" : "🐉 heroes";
+      case "style": return it.char ? "🎭 costume" : it.presetId ? "👕 outfit" : "🐉 heroes";
     }
   };
 
