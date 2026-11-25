@@ -134,6 +134,10 @@ export const SHOP_ITEMS: readonly ShopItem[] = [
     id: "perk-license", name: "VIP License", emoji: "🪪", kind: "support", price: 300, license: true,
     tip: "Start EVERY run already licensed — drive any parked car, no 🪪 card hunt.",
   },
+  {
+    id: "bp-premium", name: "BP Premium", emoji: "🎫", kind: "support", price: 999,
+    tip: "Unlock the Season Pass PREMIUM track — 50 gold reward tiers, double milestone jackpots, gold flair skins.",
+  },
 
   /* ---------- 🏪 GARAGE — the polyfork vehicle fleet, priced 1 coin per
    * triangle ----------
