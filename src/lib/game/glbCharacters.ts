@@ -896,6 +896,16 @@ export const GRIMLIGHT_DENIZENS: readonly GlbCharacterDef[] = [
   { slug: "sea-ghost-f9d362", name: "Mist-Bound Sea Ghost", emoji: "👻", url: cdn("sea-ghost-f9d362"), area: "grimlight" },
   { slug: "shrouded-martyr-5bff35", name: "Nail-Haloed Martyr", emoji: "🪦", url: cdn("shrouded-martyr-5bff35"), area: "grimlight" },
   { slug: "fungus-host-22004a", name: "Pit-Eyed Fungus Host", emoji: "🍄", url: cdn("fungus-host-22004a"), area: "grimlight" },
+  /* --- second wave: the golems, beasts & outlanders join the dark --- */
+  { slug: "morbex-base", name: "Morbex, the Embalmer King", emoji: "⚱️", url: cdn("morbex-base"), area: "grimlight" },
+  { slug: "furnace-golem-base", name: "Furnace-Mouthed Lava Golem", emoji: "🔥", url: cdn("furnace-golem-base"), area: "grimlight" },
+  { slug: "mud-colossus-base", name: "Bone-Studded Mud Colossus", emoji: "🦴", url: cdn("mud-colossus-base"), area: "grimlight" },
+  { slug: "iridescent-treegolem-base", name: "Star-Barked Tree Golem", emoji: "🌳", url: cdn("iridescent-treegolem-base"), area: "grimlight" },
+  { slug: "volcano-barbarian-base", name: "Bucket-Horned Scrap Barbarian", emoji: "🪓", url: cdn("volcano-barbarian-base"), area: "grimlight" },
+  { slug: "the-drowned-behemoth-base", name: "The Drowned Behemoth", emoji: "🐋", url: cdn("the-drowned-behemoth-base"), area: "grimlight" },
+  { slug: "dragonborn-berserker-base", name: "Dragonborn Berserker", emoji: "🐉", url: cdn("dragonborn-berserker-base"), area: "grimlight" },
+  { slug: "bell-warden-838915", name: "Bell-Helmed Warden", emoji: "🔔", url: cdn("bell-warden-838915"), area: "grimlight" },
+  { slug: "mushroom-druid-base", name: "Mushroom Druid", emoji: "🍄‍🟫", url: cdn("mushroom-druid-base"), area: "grimlight" },
 ];
 
 let grimStarted = false;
@@ -1086,11 +1096,14 @@ export function ensureGlbArea(areaId: string): void {
 let preloadStarted = false;
 /** Streams the town cast in: bots, the living city & police all wear these.
  *  Catalog areas beyond it load on demand from the creator dropdown.
- *  🧟 the Grimlight denizen pool trails in behind the cast (6s) — dusk needs
- *  its zombie skins dressed before the first sunset. */
+ *  🧟 the Grimlight denizen pool is NOT pre-warmed — every zombie skin
+ *  streams lazily the moment a rig actually needs it (attachGlbBody →
+ *  loadGlbTemplate). Pre-loading all 39 templates up front pinned several
+ *  hundred MB of resident skinned scenes and OOM-crashed the renderer on
+ *  modest machines before the first night even started; the cartoon
+ *  stand-in covers the few seconds a skin takes to arrive. */
 export function preloadGlbCharacters(): void {
   if (preloadStarted) return;
   preloadStarted = true;
   ensureGlbArea(TOWN_AREA_ID);
-  if (typeof window !== "undefined") setTimeout(ensureGrimlightDenizens, 6000);
 }

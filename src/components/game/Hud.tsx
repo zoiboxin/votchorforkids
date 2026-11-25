@@ -532,6 +532,7 @@ function NightStrip() {
   const dawnR = useGame((s) => s.hud.dawnR);
   const souls = crewAlive + remotesAlive; // crew bots (minus freed seats) + other real players
   const youPossessed = useGame((s) => s.hud.youPossessed);
+  const youFed = useGame((s) => s.hud.youFed ?? 0);
   const beastCount = useGame((s) => s.hud.beastCount);
   const beast = youPossessed && phase === "night";
   const secs = Math.max(0, Math.ceil(phaseLeft));
@@ -542,7 +543,7 @@ function NightStrip() {
   // beyond the circle the wall will SHRINK to: the strip itself starts yelling
   const dawnSoon = dawnLeft > 0 && dawnOutside;
   const label = beast
-    ? "🔪 YOU ARE A BEAST — F to claw"
+    ? youFed > 0 ? `🔪 YOU ARE A BEAST — F to claw · 🩸 FED ${youFed}` : "🔪 YOU ARE A BEAST — F to claw · 🩸 FEED BEFORE DAWN OR CRUMBLE!"
     : dawnSoon ? `🌅 SUNRISE IN ${Math.ceil(dawnLeft)}s — WALL SHRINKS TO ${dawnR}u`
     : phase === "dusk" ? `⚠️ NIGHT FALLS IN ${secs}s`
     : phase === "night" ? `🌑 NIGHT ${nightNo} — ${beastCount > 0 ? `${beastCount} ZOMBIES HUNT YOU` : "THE HUNTED WALK"}`

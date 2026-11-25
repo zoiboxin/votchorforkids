@@ -21,6 +21,7 @@ import {
   MONEY_PER_PILE, CASH_RESPAWN_S, CREW_PURSE, CIV_PURSE, ZOMBIE_PURSE, POINTS_LOOT, POLICE_CREW,
   POLICE_OUTFITS,
   CIV_PANIC_R, CREW_PANIC_R, ZOMBIE_HUNT_R, ZOMBIE_SNIFF, ZOMBIE_SWARM_CAP,
+  COP_HP, POSSESS_PLAYER_CHANCE, PLAYER_NIGHTS,
   TREE_FALL_S, TREE_WOBBLE_S, ROCK_BREAK_S,
   CREW_SEEK_R, CREW_EAT_R, CREW_BOOST_S, CREW_BOOST_MULT,
   CRIME_SEE_R, CRIME_CIV_SEE_R, CRIME_REPORT_RANGE, CRIME_REPORT_T, WARRANT_DETECT, CRIME_STAR_MURDER, CRIME_STAR_MINOR,
@@ -163,7 +164,7 @@ export interface Zombie extends SteerMemory {
   /* 🎯 prey latch — the horde used to re-pick the NEAREST soul every frame, so
    * fifty hunters funneled onto one victim and butchered the lobby in a pile.
    * Now each hunter STICKS with its prey until it dies / is walled / too far. */
-  preyId?: number; preyKind?: "crew" | "civ" | "you" | "remote"; preySlot?: number;
+  preyId?: number; preyKind?: "crew" | "civ" | "you" | "remote" | "cop"; preySlot?: number;
   /** ⏱️ attention-recheck cooldown — a closer soul can steal a latched hunter,
    * but the steal roll runs on this cadence so chases don't thrash every frame */
   pickT?: number;
@@ -226,7 +227,7 @@ export interface Crew extends SteerMemory {
   cKills?: number;
   /* 🎯 prey latch (possessed hunters) — same anti-funnel fix as the shamblers:
    * stick with your victim instead of re-funneling onto the pack's nearest one */
-  preyId?: number; preyKind?: "crew" | "civ" | "you" | "remote"; preySlot?: number;
+  preyId?: number; preyKind?: "crew" | "civ" | "you" | "remote" | "cop"; preySlot?: number;
   /* --- 🤖 human-like day jobs — bots behave like real players now ---
    * chop/mine (harvest), duel (hit another player & loot the drop),
    * license (hunt a 🪪 card), drive (joyride a stolen car). While no job is
@@ -462,6 +463,8 @@ export interface HudData {
   held: number;
   /** true while YOU are the possessed beast */
   youPossessed: boolean;
+  /** 🩸 souls YOU fed on tonight while possessed — 0 by dawn = you crumble */
+  youFed: number;
   /** how many beasts stalk the night — possessed crew (alive) + you if possessed */
   beastCount: number;
   /** survivors still breathing (crew only — you make crewAlive + 1) */
@@ -837,6 +840,8 @@ export class GameEngine {
   /** who the spirit possessed THIS night (crew indices — a PACK hunts at night) */
   possessed: number[] = [];
   youPossessed = false;
+  /** 🩸 souls the possessed PLAYER fed on tonight (crew/civ/cop kills) — 0 by dawn = crumble */
+  youFed = 0;
   /** who was possessed LAST night — the accusation pool (empty = you were one) */
   lastPossessed: number[] = [];
   /** last clue learned from a body — HUD chip */
@@ -1151,7 +1156,7 @@ export class GameEngine {
     // police — keep clear of the player's spawn so nobody gets spotted on frame one
     for (let i = 0; i < POLICE_COUNT; i++) {
       const p = this.safeCopSpot();
-      this.cops.push({ id: this.nid(), kind: "police", x: p.x, z: p.z, vx: 0, vz: 0, face: 0, mode: "patrol", tx: p.x, tz: p.z, timer: 0, phase: Math.random() * 6, name: "Police", speed: POLICE_SPEED * 0.6, alertT: 0, copCd: 0 });
+      this.cops.push({ id: this.nid(), kind: "police", x: p.x, z: p.z, vx: 0, vz: 0, face: 0, mode: "patrol", tx: p.x, tz: p.z, timer: 0, phase: Math.random() * 6, name: "Police", speed: POLICE_SPEED * 0.6, alertT: 0, copCd: 0, hp: COP_HP });
     }
     // civilians — soft Poisson-disc scatter: every bot keeps a minimum gap from its
     // neighbours, so no more “all 94 spawned in one neighbourhood” clumping.
@@ -3946,6 +3951,19 @@ export class GameEngine {
     for (let i = pool.length - 1; i > 0; i--) { const j = Math.floor(this.rnd() * (i + 1)); [pool[i], pool[j]] = [pool[j], pool[i]]; }
     this.possessed = pool.slice(0, want); // tonight's TURNED roster (crew indices)
     for (const i of this.possessed) { const c = this.crew[i]; c.zombieTonight = true; c.fed = 0; }
+    // 🌙 THE SPIRIT CHOOSES AT RANDOM — bots AND the real soul both wear the
+    // hunger now. Most nights it's a 40% roll… but nights 3 & 6 it NEVER
+    // misses you. A possessed player hunts with claws and must FEED before
+    // dawn like any other husk — or crumble with the sunrise. (🌐 solo only:
+    // the MP lobby draws its real-player beasts on the wire.)
+    this.youFed = 0;
+    if (!this.mp && !this.lost && aliveAll > 1
+      && (PLAYER_NIGHTS.includes(this.nightNo) || this.rnd() < POSSESS_PLAYER_CHANCE)) {
+      this.youPossessed = true;
+      this.held = -1; // the beast's hands are its weapons
+      this.toast("🌙 THE SPIRIT CHOSE YOU — tonight YOU are the beast. FEED on the living before dawn… or crumble with it.", "bad");
+      this.trace(`🌙 dusk n${this.nightNo}: the PLAYER turns tonight (${PLAYER_NIGHTS.includes(this.nightNo) ? "destined night" : "random roll"})`);
+    }
     sfx.howl();
     if (want > 0) this.toast(`🌙 DUSK — ${want} of ${aliveAll} survivors are TURNING. They must FEED before dawn… or crumble.`, "bad");
     this.trace(`🌙 dusk n${this.nightNo}: roster ${this.possessed.length} turned of ${aliveAll} alive (${aliveIdx.length} bots + ${this.remotes.filter((r) => r.alive).length} remote + ${this.lost ? 0 : 1} you); nightDeaths cleared`);
@@ -3967,6 +3985,12 @@ export class GameEngine {
     if (zc > 0) {
       sfx.scream();
       this.toast(`🌑 NIGHT ${this.nightNo} — ${zc} rise${zc > 1 ? "" : "s"} from the dirt where they stood. They HUNT you. FIGHT (F) or RUN!`, "bad");
+    }
+    // 🩸 the hunger wakes IN YOU — the beast rises where YOU stand: claw (F)
+    // the living, FEED before dawn, or crumble with the sunrise
+    if (!this.mp && this.youPossessed && !this.lost) {
+      sfx.howl();
+      this.toast("🌑 THE HUNGER WAKES IN YOU — claw (F) the living and FEED before dawn. The pack will not spare you… the sun will not either!", "bad");
     }
     // 🐕‍🦺 the dark takes the strays too — every dog in town turns into a
     // rotting hound. Faster than any shambler, but frail: 3 punches ends one.
@@ -4013,10 +4037,27 @@ export class GameEngine {
       if (c.alive && (c.fed ?? 0) <= 0) { this.killCrew(i, false, -1, true); crumbled++; } // the hunger won
       c.zombieTonight = false; c.fed = 0;
     }
+    // 🩸 the possessed PLAYER must feed too — no kill before sunrise and the
+    // dawn light crumbles you like any other unfed husk
+    const youWereBeast = this.youPossessed;
+    if (!this.mp && youWereBeast && !this.lost) {
+      if (this.youFed <= 0) {
+        this.toast("🩸 You never FEED — the sunrise crumbles you to dust. The night claims its own…", "bad");
+        this.die();
+      } else {
+        this.toast(`🩸 You fed on ${this.youFed} — the hunger sleeps. You wake HUMAN again.`, "good");
+      }
+    }
     this.possessed = [];
     this.youPossessed = false;
+    this.youFed = 0;
     this.mpBeastSlots = [];
     for (const r of this.remotes) r.beast = false;
+    // 🩸 the last soul standing while the pack owned the night — the beast wins
+    if (!this.mp && youWereBeast && !this.lost && !this.won) {
+      const souls = this.crew.filter((c) => c.alive).length + this.remotes.filter((r) => r.alive).length;
+      if (souls === 0) this.winGame("beast");
+    }
     // 🌅 the beast forms dissolve with the light — every purse they swallowed
     // spills back where they stand, crumbled or fed: the night's takings return
     for (const zb of this.zombies) {
@@ -4055,7 +4096,8 @@ export class GameEngine {
         if (n > pile) { pile = n; px = d.x; pz = d.z; }
       }
       const civNight = this.nightDeaths.filter((d) => d.cause === "civ").length;
-      this.trace(`🌅 dawn n${this.nightNo}: ${this.nightDeaths.length - civNight} contestants + ${civNight} townsfolk died tonight; biggest single pile = ${pile} bodies within 15u @ (${px.toFixed(0)},${pz.toFixed(0)})${pile >= 5 ? "  ⚠️ still clustered" : " ✓ spread"}`);
+      const copNight = this.nightDeaths.filter((d) => d.cause === "cop").length;
+      this.trace(`🌅 dawn n${this.nightNo}: ${this.nightDeaths.length - civNight - copNight} contestants + ${civNight} townsfolk + ${copNight} officers died tonight; biggest single pile = ${pile} bodies within 15u @ (${px.toFixed(0)},${pz.toFixed(0)})${pile >= 5 ? "  ⚠️ still clustered" : " ✓ spread"}`);
     }
     // 🧱 dawn after night N — the transparent wall slams down one ring tighter
     this.shrinkZone();
@@ -4124,6 +4166,25 @@ export class GameEngine {
     }
     if (revived > 0) this.toast(`🌤️ Dawn light… ${revived} fresh face${revived > 1 ? "s" : ""} wander${revived > 1 ? "" : "s"} back into town (and 💰 loot may still lie where the fallen did).`, "info");
     else if (deadCivs.length > 0 && this.nightNo >= 5) this.toast(`🏚️ The streets stay empty — after night ${this.nightNo}, nobody dares wander back into town.`, "info");
+    // 🚔 the station refills — fresh officers take the morning shift while the
+    // town still believes in law (same curve as the town: nights 5+ stay dark)
+    let copRevived = 0;
+    const deadCops = this.cops.filter((c) => c.dead);
+    const copQuota = Math.floor(deadCops.length * revShare);
+    for (const c of deadCops) {
+      if (copRevived >= copQuota) break;
+      const t = this.safeCopSpot();
+      c.x = t.x; c.z = t.z; c.tx = t.x; c.tz = t.z;
+      c.vx = 0; c.vz = 0;
+      c.dead = false; c.deadT = 0;
+      c.mode = "patrol"; c.timer = 0; c.alertT = 0;
+      c.targetCiv = undefined; c.targetCrew = undefined; c.copCd = 2;
+      c.panicT = 0; c.fearX = undefined; c.fearZ = undefined;
+      c.hp = COP_HP;
+      copRevived++;
+    }
+    if (copRevived > 0) this.toast(`🚔 Dawn shift… ${copRevived} fresh officer${copRevived > 1 ? "s" : ""} clock${copRevived > 1 ? "" : "s"} in — the morning beat resumes.`, "info");
+    else if (deadCops.length > 0 && this.nightNo >= 5) this.toast("🚳 The station stays dark — no officer dares walk the morning beat anymore.", "info");
     this.civsLostTonight = 0;
     stopDrone(); stopInsects(); // 🦗 the chorus falls silent with the light
     sfx.bell();
@@ -4238,22 +4299,29 @@ export class GameEngine {
         }
         if (c.drive) this.endBotDrive(c); // 🚗 the turning never finishes a joyride
         c.attackAnimT = Math.max(0, c.attackAnimT - dt);
-        // nearest-prey scan (crew → townsfolk → real players)
-        let bx = p.x, bz = p.z, bd = d2p, bVictim = -1, bCiv: Npc | null = null, bRemote: RemotePlayer | null = null;
+        // nearest-prey scan (crew → townsfolk → real players → the law)
+        let bx = p.x, bz = p.z, bd = d2p, bVictim = -1, bCiv: Npc | null = null, bRemote: RemotePlayer | null = null, bCop: Npc | null = null;
         if (this.detainedT > 0 || this.drive) { bd = Infinity; } // can't reach you in the van / the car
         for (let j = 0; j < this.crew.length; j++) {
           const o = this.crew[j];
           if (j === i || !o.alive || o.mode === "possessed") continue; // the pack never turns on itself
           if (c.avoidT > 0 && o.id === c.avoidId) continue;            // 🧱 that soul is walled in — hunt reachable prey
           const d = dist2(c.x, c.z, o.x, o.z);
-          if (d < bd) { bd = d; bx = o.x; bz = o.z; bVictim = j; bCiv = null; bRemote = null; }
+          if (d < bd) { bd = d; bx = o.x; bz = o.z; bVictim = j; bCiv = null; bRemote = null; bCop = null; }
         }
         // 💀 townsfolk caught out in the dark are prey too
         for (const cv of this.civs) {
           if (cv.dead) continue;
           if (c.avoidT > 0 && cv.id === c.avoidId) continue; // 🧱 skipped — can't be reached
           const d = dist2(c.x, c.z, cv.x, cv.z);
-          if (d < bd) { bd = d; bx = cv.x; bz = cv.z; bVictim = -1; bCiv = cv; bRemote = null; }
+          if (d < bd) { bd = d; bx = cv.x; bz = cv.z; bVictim = -1; bCiv = cv; bRemote = null; bCop = null; }
+        }
+        // 👮 officers out on the night beat are prey too
+        for (const cp of this.cops) {
+          if (cp.dead) continue;
+          if (c.avoidT > 0 && cp.id === c.avoidId) continue;
+          const d = dist2(c.x, c.z, cp.x, cp.z);
+          if (d < bd) { bd = d; bx = cp.x; bz = cp.z; bVictim = -1; bCiv = null; bRemote = null; bCop = cp; }
         }
         // 🌐 real players are prey too — the pack SWOOPS on their avatars (the
         // drama is shared; the actual HP hit lands from the hunter inside THEIR
@@ -4267,7 +4335,7 @@ export class GameEngine {
         // nearest soul every frame, stampeding fifty beasts into one butchering
         // pile. Now each beast sticks with its marked victim until it dies,
         // is walled, or someone else gets 2.8× closer.
-        let tx = bx, tz = bz, td = bd, victim = bVictim, victimCiv = bCiv, remoteVictim = bRemote;
+        let tx = bx, tz = bz, td = bd, victim = bVictim, victimCiv = bCiv, remoteVictim = bRemote, copVictim = bCop;
         let latched = false;
         if (c.preyKind === "crew" && c.preyId !== undefined) {
           const vi = this.crew.findIndex((o) => o.id === c.preyId);
@@ -4298,23 +4366,27 @@ export class GameEngine {
           const pick = this.pickDiversePrey(c, {
             avoidId: c.avoidId, avoidT: c.avoidT, excludeCi: i,
             includeYou: this.detainedT <= 0 && !this.drive && !this.ride,
-            includeCivs: true, includeRemotes: true,
+            includeCivs: true, includeRemotes: true, includeCops: true,
             sniff: 70, cap: ZOMBIE_SWARM_CAP, farHunt: false,
           });
           if (pick && pick.kind === "remote") {
             const r = this.remotes.find((o) => o.slot === pick.slot);
-            if (r) { c.preyKind = "remote"; c.preySlot = pick.slot; c.preyId = undefined; remoteVictim = r; victimCiv = null; victim = -1; tx = r.x; tz = r.z; td = dist2(c.x, c.z, tx, tz); }
+            if (r) { c.preyKind = "remote"; c.preySlot = pick.slot; c.preyId = undefined; remoteVictim = r; victimCiv = null; victim = -1; copVictim = null; tx = r.x; tz = r.z; td = dist2(c.x, c.z, tx, tz); }
           } else if (pick && pick.kind === "civ" && pick.civ) {
             c.preyKind = "civ"; c.preyId = pick.civ.id; c.preySlot = undefined;
-            victim = -1; victimCiv = pick.civ; remoteVictim = null;
+            victim = -1; victimCiv = pick.civ; remoteVictim = null; copVictim = null;
+            tx = pick.civ.x; tz = pick.civ.z; td = dist2(c.x, c.z, tx, tz);
+          } else if (pick && pick.kind === "cop" && pick.civ) {
+            c.preyKind = "cop"; c.preyId = pick.civ.id; c.preySlot = undefined;
+            victim = -1; victimCiv = null; remoteVictim = null; copVictim = pick.civ;
             tx = pick.civ.x; tz = pick.civ.z; td = dist2(c.x, c.z, tx, tz);
           } else if (pick && pick.kind === "crew") {
             c.preyKind = "crew"; c.preyId = this.crew[pick.ci].id; c.preySlot = undefined;
-            victim = pick.ci; victimCiv = null; remoteVictim = null;
+            victim = pick.ci; victimCiv = null; remoteVictim = null; copVictim = null;
             tx = this.crew[pick.ci].x; tz = this.crew[pick.ci].z; td = dist2(c.x, c.z, tx, tz);
           } else if (pick) {
             c.preyKind = "you"; c.preyId = undefined; c.preySlot = undefined;
-            victim = -1; victimCiv = null; remoteVictim = null;
+            victim = -1; victimCiv = null; remoteVictim = null; copVictim = null;
             tx = p.x; tz = p.z; td = dist2(c.x, c.z, tx, tz);
           }
         }
@@ -4330,7 +4402,7 @@ export class GameEngine {
         const fire = this.nearFire(c.x, c.z);
         if (fire && dist2(fire.x, fire.z, c.x, c.z) < CAMPFIRE_R * CAMPFIRE_R) {
           const dx = c.x - fire.x, dz = c.z - fire.z, dl = Math.hypot(dx, dz) || 1;
-          tx = c.x + (dx / dl) * 12; tz = c.z + (dz / dl) * 12; victim = -1; victimCiv = null; remoteVictim = null;
+          tx = c.x + (dx / dl) * 12; tz = c.z + (dz / dl) * 12; victim = -1; victimCiv = null; remoteVictim = null; copVictim = null;
         }
         stepNpc(c, tx, tz, HUNTER_SPEED, dt, this.world);
         // maul barricades that block the path
@@ -4368,6 +4440,13 @@ export class GameEngine {
             c.touchCd = HUNTER_TOUCH_CD;
             c.attackAnimT = 0.45;
             this.killCiv(victimCiv, "beast");
+          } else if (copVictim && td < 1.5 * 1.5) {
+            // 👮 the pack brings the law down too
+            c.touchCd = HUNTER_TOUCH_CD;
+            c.attackAnimT = 0.45;
+            copVictim.hp = (copVictim.hp ?? COP_HP) - HUNTER_DMG;
+            copVictim.panicT = 3;
+            if (copVictim.hp <= 0) this.killCop(copVictim, "beast");
           }
         }
         if (this.groanT <= 0 && d2p < 24 * 24) { this.groanT = range(this.rnd, 2.5, 5); sfx.groan(); }
@@ -5145,6 +5224,30 @@ export class GameEngine {
     }
   }
 
+  /** 👮 an officer falls — the same dirt choreography as the townsfolk; the
+   *  station refills at dawn while the town still believes in law. The horde,
+   *  the beast-you and any other night horror can bring the law down now. */
+  private killCop(cop: Npc, by: "zombie" | "beast" | "hound") {
+    if (cop.dead) return;
+    cop.dead = true;
+    cop.deadT = 0; // ⏱️ fall → lie → sink → gone (the dawn shift refills)
+    cop.mode = "return"; // frozen while dead — the renderer lays the body down
+    cop.vx = 0; cop.vz = 0;
+    cop.targetCiv = undefined;
+    cop.targetCrew = undefined;
+    cop.panicT = 0;
+    sfx.scream();
+    this.fxQueue.push({ type: "confetti", x: cop.x, y: 1.2, z: cop.z, hue: 0.58 });
+    this.nightDeaths.push({ x: cop.x, z: cop.z, name: "Police", cause: "cop" });
+    // 💰 the duty belt spills — hazard pay for whoever dares the streets
+    this.dropLoot(cop.x, cop.z, Math.round(range(this.rnd, 18, 42)), "the officer's belt");
+    if (dist2(this.player.x, this.player.z, cop.x, cop.z) < 34 * 34) {
+      this.toast(by === "beast"
+        ? "🩸 YOU brought down an OFFICER — the law is prey tonight!"
+        : "🚨 The night brought down an OFFICER — no badge can save them now!", "bad");
+    }
+  }
+
   /** 📉 announce an alive-count milestone ONCE per threshold, descending —
    *  the required contest beats that survive every toast throttle. */
   private maybeMilestone(alive: number) {
@@ -5232,7 +5335,7 @@ export class GameEngine {
     }
     // 🌐 real souls still breathing? Then nobody is the last survivor yet
     if (alive === 0 && !this.mpOthersAlive()) {
-      if (this.youPossessed && this.phase === "night") this.winGame("beast");
+      if (this.youPossessed && (this.phase === "night" || this.phase === "dusk")) this.winGame("beast");
       else if (!this.youPossessed) this.winGame("solo");
     }
   }
@@ -5293,7 +5396,7 @@ export class GameEngine {
     this.breakEmote();
     const p = this.player;
     this.attackCd = ATTACK_CD;
-    // 🩸 possessed player = the beast: claws tear the crew
+    // 🩸 possessed player = the beast: claws tear the crew, the townsfolk & the law
     if (this.youPossessed && this.phase === "night") {
       // 🌐 the claw crosses the wire — anyone within reach on THEIR screen bleeds
       if (this.mp) this.netEmit?.({ t: "claw", x: p.x, z: p.z });
@@ -5304,12 +5407,47 @@ export class GameEngine {
         const d = dist2(p.x, p.z, c.x, c.z);
         if (d < bd) { bd = d; bi = i; }
       }
-      if (bi >= 0) {
+      // 👮 the law falls like anyone else — officers are prey to the beast too
+      let copHit: Npc | null = null;
+      for (const cop of this.cops) {
+        if (cop.dead) continue;
+        const d = dist2(p.x, p.z, cop.x, cop.z);
+        if (d < bd) { bd = d; bi = -1; copHit = cop; }
+      }
+      // 💀 townsfolk caught in the beast's path feed it too
+      let civHit: Npc | null = null;
+      for (const cv of this.civs) {
+        if (cv.dead) continue;
+        const d = dist2(p.x, p.z, cv.x, cv.z);
+        if (d < bd) { bd = d; bi = -1; copHit = null; civHit = cv; }
+      }
+      if (copHit) {
+        copHit.hp = (copHit.hp ?? COP_HP) - CLAW_DMG;
+        copHit.panicT = 4; copHit.fearX = p.x; copHit.fearZ = p.z;
+        sfx.stab();
+        this.fxQueue.push({ type: "confetti", x: copHit.x, y: 1.2, z: copHit.z, hue: 0.98 });
+        if (copHit.hp <= 0) {
+          this.killCop(copHit, "beast");
+          this.youFed++; // 🩸 feeding on the law counts too
+        }
+      } else if (civHit) {
+        civHit.hp = (civHit.hp ?? 30) - CLAW_DMG;
+        civHit.panicT = 4; civHit.fearX = p.x; civHit.fearZ = p.z;
+        sfx.stab();
+        this.fxQueue.push({ type: "confetti", x: civHit.x, y: 1.2, z: civHit.z, hue: 0.98 });
+        if (civHit.hp <= 0) {
+          this.killCiv(civHit, "beast");
+          this.youFed++; // 🩸 a meal is a meal
+        }
+      } else if (bi >= 0) {
         const c = this.crew[bi];
         c.hp -= CLAW_DMG;
         sfx.stab();
         this.fxQueue.push({ type: "confetti", x: c.x, y: 1.2, z: c.z, hue: 0.98 });
-        if (c.hp <= 0) this.killCrew(bi, false, -1, false, true); // 🩸 YOU are the beast — your kills announce themselves
+        if (c.hp <= 0) {
+          this.killCrew(bi, false, -1, false, true); // 🩸 YOU are the beast — your kills announce themselves
+          this.youFed++; // 🩸 a kill is a feed — this beast lives to see dawn
+        }
       } else {
         sfx.swing();
       }
@@ -5589,8 +5727,13 @@ export class GameEngine {
   private rebuildPreyLoad() {
     this.preyLoad.clear();
     for (const zb of this.zombies) {
-      if (zb.dead || zb.preyKind !== "crew" || zb.preyId === undefined) continue;
-      this.preyLoad.set(zb.preyId, (this.preyLoad.get(zb.preyId) ?? 0) + 1);
+      if (zb.dead) continue;
+      if (zb.preyKind === "crew" && zb.preyId !== undefined) {
+        this.preyLoad.set(zb.preyId, (this.preyLoad.get(zb.preyId) ?? 0) + 1);
+      } else if (zb.preyKind === "cop" && zb.preyId !== undefined) {
+        // 👮 latched officers count too — the swarm cap spreads the pack evenly
+        this.preyLoad.set(zb.preyId, (this.preyLoad.get(zb.preyId) ?? 0) + 1);
+      }
     }
     for (const c of this.crew) {
       if (!c.alive || c.mode !== "possessed") continue;
@@ -5620,16 +5763,16 @@ export class GameEngine {
     o: {
       avoidId?: number; avoidT?: number;
       excludeCi?: number;                                  // the pack never hunts itself
-      includeYou: boolean; includeCivs: boolean; includeRemotes: boolean;
+      includeYou: boolean; includeCivs: boolean; includeRemotes: boolean; includeCops?: boolean;
       sniff: number;                                       // pick radius (0 = whole map)
       cap: number;                                         // swarm cap before a soul is discounted
       farHunt: boolean;                                    // may catch a far scent?
     },
-  ): { kind: "crew" | "civ" | "remote" | "you"; ci: number; civ: Npc | null; slot: number } | null {
+  ): { kind: "crew" | "civ" | "remote" | "you" | "cop"; ci: number; civ: Npc | null; slot: number } | null {
     const avoid = (o.avoidT ?? 0) > 0 ? o.avoidId : undefined;
     const far = o.farHunt && this.rnd() < 0.17;
     const sniff2 = far ? Infinity : o.sniff * o.sniff;
-    const cands: { kind: "crew" | "civ" | "remote" | "you"; ci: number; civ: Npc | null; slot: number; w: number }[] = [];
+    const cands: { kind: "crew" | "civ" | "remote" | "you" | "cop"; ci: number; civ: Npc | null; slot: number; w: number }[] = [];
     for (let ci = 0; ci < this.crew.length; ci++) {
       const c = this.crew[ci];
       if (ci === o.excludeCi || !c.alive || c.zombieTonight || c.mode === "possessed") continue;
@@ -5655,6 +5798,19 @@ export class GameEngine {
         const d2 = dist2(self.x, self.z, r.x, r.z);
         if (d2 > sniff2) continue;
         cands.push({ kind: "remote", ci: -1, civ: null, slot: r.slot, w: 1 / (Math.sqrt(d2) + 8) });
+      }
+    }
+    if (o.includeCops) {
+      // 👮 the law is prey tonight — officers smell like anyone else (a touch
+      // lighter: body armor, flashlights, and they run fast when spooked)
+      for (const cp of this.cops) {
+        if (cp.dead) continue;
+        if (avoid !== undefined && cp.id === avoid) continue;
+        const d2 = dist2(self.x, self.z, cp.x, cp.z);
+        if (d2 > sniff2) continue;
+        let w = 0.6 / (Math.sqrt(d2) + 8);
+        if ((this.preyLoad.get(cp.id) ?? 0) >= o.cap) w *= 0.05; // swarmed — look elsewhere
+        cands.push({ kind: "cop", ci: -1, civ: cp, slot: -1, w });
       }
     }
     if (o.includeYou) {
@@ -6402,9 +6558,31 @@ export class GameEngine {
     const carrying = this.carriedVotes.length;
     const detect = DETECT_BASE + carrying * DETECT_CARRY_BONUS + this.stars * DETECT_STAR_BONUS;
     for (const cop of this.cops) {
+      if (cop.dead) { cop.deadT = (cop.deadT ?? 0) + dt; continue; } // 🪦 fallen — the renderer lays the body down; the dawn shift may refill
       cop.phase += dt;
       cop.copCd = Math.max(0, (cop.copCd ?? 0) - dt);
+      cop.panicT = Math.max(0, (cop.panicT ?? 0) - dt);
       const d2p = dist2(cop.x, cop.z, p.x, p.z);
+      // 🧟 night has no law — officers flee the shamblers (and the beast-you)
+      // like every other soul. Badges don't stop teeth; running might.
+      if (this.phase === "night" && cop.mode !== "chase") {
+        let zx = 0, zz = 0, zd2 = Infinity;
+        for (const zb of this.zombies) {
+          if (zb.dead) continue;
+          const d = dist2(cop.x, cop.z, zb.x, zb.z);
+          if (d < zd2) { zd2 = d; zx = zb.x; zz = zb.z; }
+        }
+        if (this.youPossessed) {
+          const d = d2p;
+          if (d < zd2) { zd2 = d; zx = p.x; zz = p.z; }
+        }
+        if (zd2 < 10 * 10) {
+          cop.panicT = 1.5;
+          const dx = cop.x - zx, dz = cop.z - zz, dl = Math.hypot(dx, dz) || 1;
+          stepNpc(cop, cop.x + (dx / dl) * 12, cop.z + (dz / dl) * 12, POLICE_SPEED * 1.35, dt, this.world);
+          continue;
+        }
+      }
       switch (cop.mode) {
         case "patrol": {
           // 🧱 THE WALL — officers on beat walk back inside the shrinking circle
@@ -6774,6 +6952,7 @@ export class GameEngine {
         const scared = !!fire && dist2(fire.x, fire.z, zb.x, zb.z) < CAMPFIRE_R * CAMPFIRE_R;
         const beastYou = this.youPossessed && this.phase === "night"; // monsters don't fight monsters
         let remoteVictim: RemotePlayer | null = null; // 🌐 real players are prey too (latched in the hunt below)
+        let copVictim: Npc | null = null; // 👮 the law is prey tonight
         if (scared) {
           // fire wins — the zombie stumbles away from the flames
           const dx = zb.x - fire!.x, dz = zb.z - fire!.z, dl = Math.hypot(dx, dz) || 1;
@@ -6806,6 +6985,13 @@ export class GameEngine {
             }
           } else if (zb.preyKind === "you" && !beastYou && this.detainedT <= 0 && !this.drive && !this.ride) {
             if (d2p < 95 * 95) { tx = p.x; tz = p.z; td = d2p; victimCrew = -1; latched = true; }
+          } else if (zb.preyKind === "cop" && zb.preyId !== undefined) {
+            // 👮 latched on an officer — badges don't stop teeth
+            const cp = this.cops.find((o) => o.id === zb.preyId);
+            if (cp && !cp.dead) {
+              const d = dist2(zb.x, zb.z, cp.x, cp.z);
+              if (d < 95 * 95) { tx = cp.x; tz = cp.z; td = d; victimCrew = -1; remoteVictim = null; copVictim = cp; latched = true; }
+            }
           }
           // 👀 a much closer soul can steal a latched hunter's attention — but
           // only an under-swarmed one, and only every 0.6s (cheap, no thrash)
@@ -6814,7 +7000,7 @@ export class GameEngine {
             zb.pickT = 0.6;
             const steal = this.pickDiversePrey(zb, {
               avoidId: zb.avoidV, avoidT: zb.avoidT,
-              includeYou: true, includeCivs: false, includeRemotes: true,
+              includeYou: true, includeCivs: false, includeRemotes: true, includeCops: true,
               sniff: 13, cap: ZOMBIE_SWARM_CAP, farHunt: false,
             });
             if (steal) {
@@ -6830,8 +7016,13 @@ export class GameEngine {
                   zb.preyKind = "remote"; zb.preySlot = steal.slot; zb.preyId = undefined;
                   tx = r.x; tz = r.z; td = dist2(zb.x, zb.z, tx, tz);
                 }
+              } else if (steal.kind === "cop" && steal.civ) {
+                victimCrew = -1; remoteVictim = null; copVictim = steal.civ;
+                zb.preyKind = "cop"; zb.preyId = steal.civ.id; zb.preySlot = undefined;
+                tx = steal.civ.x; tz = steal.civ.z;
+                td = dist2(zb.x, zb.z, tx, tz);
               } else {
-                victimCrew = -1;
+                victimCrew = -1; remoteVictim = null; copVictim = null;
                 zb.preyKind = "you"; zb.preyId = undefined;
                 tx = p.x; tz = p.z; td = d2p;
               }
@@ -6844,7 +7035,7 @@ export class GameEngine {
             const pick = this.pickDiversePrey(zb, {
               avoidId: zb.avoidV, avoidT: zb.avoidT,
               includeYou: !beastYou && this.detainedT <= 0 && !this.drive && !this.ride,
-              includeCivs: false, includeRemotes: true,
+              includeCivs: false, includeRemotes: true, includeCops: true,
               sniff: ZOMBIE_SNIFF, cap: ZOMBIE_SWARM_CAP, farHunt: true,
             });
             if (pick) {
@@ -6860,13 +7051,19 @@ export class GameEngine {
                   victimCrew = -1; remoteVictim = r;
                   tx = r.x; tz = r.z; td = dist2(zb.x, zb.z, tx, tz);
                 } else { zb.preyKind = undefined; zb.preyId = undefined; }
+              } else if (pick.kind === "cop" && pick.civ) {
+                zb.preyKind = "cop"; zb.preyId = pick.civ.id; zb.preySlot = undefined;
+                victimCrew = -1; remoteVictim = null; copVictim = pick.civ;
+                tx = pick.civ.x; tz = pick.civ.z;
+                td = dist2(zb.x, zb.z, tx, tz);
               } else {
                 zb.preyKind = "you"; zb.preyId = undefined;
-                victimCrew = -1; tx = p.x; tz = p.z; td = d2p;
+                victimCrew = -1; remoteVictim = null; copVictim = null; tx = p.x; tz = p.z; td = d2p;
               }
               latched = true;
             } else {
-              zb.preyKind = undefined; zb.preyId = undefined;
+              zb.preyKind = undefined; zb.preyId = undefined; zb.preySlot = undefined;
+              copVictim = null;
             }
           }
           if (td < ZOMBIE_HUNT_R * ZOMBIE_HUNT_R || latched) {
@@ -6907,6 +7104,19 @@ export class GameEngine {
               zb.touchCd = ZOMBIE_TOUCH_CD;
               zb.attackT = 0.5; // 🧟 the lunge-bite animation
               this.netEmit?.({ t: "dmg", target: remoteVictim.slot, amount: ZOMBIE_DMG });
+            }
+            // 👮 caught an officer — the law bleeds too, and feeding on it counts
+            else if (copVictim && zb.touchCd <= 0 && td < 1.5 * 1.5) {
+              zb.touchCd = ZOMBIE_TOUCH_CD;
+              zb.attackT = 0.5; // 🧟 the lunge-bite animation
+              copVictim.hp = (copVictim.hp ?? COP_HP) - ZOMBIE_CREW_DMG;
+              copVictim.panicT = 3; copVictim.fearX = zb.x; copVictim.fearZ = zb.z;
+              sfx.zombie();
+              if (copVictim.hp <= 0) {
+                this.killCop(copVictim, "zombie");
+                const owner = this.crew.find((cc) => cc.id === zb.owner);
+                if (owner) owner.fed = (owner.fed ?? 0) + 1; // the law counts as a meal
+              }
             }
           } else {
             // 🌙 no soul within sniff range — prowl the night streets near HERE.
@@ -7619,6 +7829,7 @@ export class GameEngine {
       tools: this.tools.map((s) => ({ kind: s.kind, count: s.count })),
       held: this.held,
       youPossessed: this.youPossessed,
+      youFed: this.youFed,
       beastCount: this.zombies.filter((z) => !z.dead).length, // contest: how many risen hunters roam
       kills: this.kills,
       crewAlive: this.crew.filter((c) => c.alive).length,
@@ -7764,7 +7975,7 @@ export class GameEngine {
       }
     }
     if (this.crew.every((x) => !x.alive) && !this.mpOthersAlive()) {
-      if (this.youPossessed && this.phase === "night") this.winGame("beast");
+      if (this.youPossessed && (this.phase === "night" || this.phase === "dusk")) this.winGame("beast");
       else if (!this.youPossessed) this.winGame("solo");
     }
   }

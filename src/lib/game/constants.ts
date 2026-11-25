@@ -439,6 +439,7 @@ export const DROP_SCATTER = 3.2;
 export const POLICE_COUNT = 22; // more police for the bigger 9×9 city
 export const POLICE_SPEED = 5.9;
 export const POLICE_SPRINT = 7.6;
+export const COP_HP = 42; // 👮 officers are killable — the horde & the beast CAN bring the law down
 export const DETECT_BASE = 13;
 export const DETECT_CARRY_BONUS = 9;
 export const DETECT_STAR_BONUS = 2.2;

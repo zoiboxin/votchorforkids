@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
@@ -566,10 +566,37 @@ export function Zombies({ engine }: { engine: GameEngine }) {
   // skins back and the survivors walk in their own selected bodies again.
   // Each body starts as the cartoon zombie stand-in, then the denizen GLB
   // streams in, takes a light graveyard wash and takes over.
+  //
+  // 🧠 LAZY RIGS — the horde can be FIFTY bodies on night 1; building every
+  // rig up-front spiked the renderer's heap (OOM crash the moment the sun
+  // set on low-memory machines). Now a rig is only built when its zombie
+  // first comes near the camera, and at most 2 rigs per frame — the pack
+  // dresses itself as you actually MEET it, not all at once.
+  const RIG_NEAR_SQ = 110 * 110;
   const cacheRef = useRef(new Map<string, THREE.Group>());
   const [rev, setRev] = useState(engine.zRev);
+  const [rigVer, setRigVer] = useState(0);
   const revRef = useRef(engine.zRev);
   const nightNo = engine.nightNo;
+  const buildRig = useCallback((z: { owner?: number; x: number; z: number }): THREE.Group | null => {
+    if (z.owner == null) return null;
+    const key = `${z.owner}:${nightNo}`;
+    const hit = cacheRef.current.get(key);
+    if (hit) return hit;
+    const owner = engine.crew.find((c) => c.id === z.owner);
+    const v = ZOMBIE_VARIANTS[Math.abs(z.owner) % ZOMBIE_VARIANTS.length];
+    const g = buildCharacter(
+      owner?.look ?? { fac: "protester", outfit: "", skin: v.skin, shirt: v.shirt, pants: v.pants, shoe: "#3a3a2a", hair: v.hair, hairStyle: v.hairStyle, cap: false, capColor: "#3a4a2a", glasses: false, age: v.age, girl: false },
+      { zombie: true, keepShirt: true },
+    );
+    // 🧟 the risen body — a random GRIMLIGHT DENIZEN (seed = owner+night,
+    // identical on every client), with a light rot wash so the kit's own
+    // graveyard palette keeps its identity under the night lights
+    attachGlbBody(g, grimlightPick(z.owner * 31 + nightNo * 101), { zombieSeed: z.owner, tintMix: 0.22 });
+    g.scale.setScalar(0.92 + (Math.abs(z.owner) % 5) * 0.035); // deterministic per-contestant jitter
+    cacheRef.current.set(key, g);
+    return g;
+  }, [engine, nightNo]);
   const views = useMemo(() => {
     const map = new Map<number, THREE.Group>();
     const wanted = new Set<string>();
@@ -578,22 +605,10 @@ export function Zombies({ engine }: { engine: GameEngine }) {
       // the cache is keyed per (owner, night) — a new night re-deals skins
       const key = `${z.owner}:${nightNo}`;
       wanted.add(key);
-      let g = cacheRef.current.get(key);
-      if (!g) {
-        const owner = engine.crew.find((c) => c.id === z.owner);
-        const v = ZOMBIE_VARIANTS[Math.abs(z.owner) % ZOMBIE_VARIANTS.length];
-        g = buildCharacter(
-          owner?.look ?? { fac: "protester", outfit: "", skin: v.skin, shirt: v.shirt, pants: v.pants, shoe: "#3a3a2a", hair: v.hair, hairStyle: v.hairStyle, cap: false, capColor: "#3a4a2a", glasses: false, age: v.age, girl: false },
-          { zombie: true, keepShirt: true },
-        );
-        // 🧟 the risen body — a random GRIMLIGHT DENIZEN (seed = owner+night,
-        // identical on every client), with a light rot wash so the kit's own
-        // graveyard palette keeps its identity under the night lights
-        attachGlbBody(g, grimlightPick(z.owner * 31 + nightNo * 101), { zombieSeed: z.owner, tintMix: 0.22 });
-        g.scale.setScalar(0.92 + (Math.abs(z.owner) % 5) * 0.035); // deterministic per-contestant jitter
-        cacheRef.current.set(key, g);
-      }
-      map.set(z.id, g);
+      // 🧠 near zombies only — far ones rig lazily in useFrame as they close in
+      if ((z.x - engine.player.x) * (z.x - engine.player.x) + (z.z - engine.player.z) * (z.z - engine.player.z) > RIG_NEAR_SQ) continue;
+      const g = buildRig(z);
+      if (g) map.set(z.id, g);
     }
     // 🌅 dawn housekeeping — release the stale skins' cartoon stand-ins
     // (the attached denizen GLBs share template geometry — never disposed)
@@ -601,7 +616,7 @@ export function Zombies({ engine }: { engine: GameEngine }) {
       if (!wanted.has(k)) { disposeCartoonOnly(g); cacheRef.current.delete(k); }
     }
     return map;
-  }, [engine, rev, nightNo]);
+  }, [engine, rev, nightNo, rigVer, buildRig]);
   // run over → release the cartoon stand-ins (never the shared GLB buffers)
   useEffect(() => () => {
     for (const g of cacheRef.current.values()) disposeCartoonOnly(g);
@@ -609,6 +624,27 @@ export function Zombies({ engine }: { engine: GameEngine }) {
   }, []);
   useFrame((s) => {
     if (engine.zRev !== revRef.current) { revRef.current = engine.zRev; setRev(engine.zRev); }
+    // 🧠 lazy rig budget — at most 2 new rigs per frame, nearest first, only
+    // for living zombies that came within RIG_NEAR_SQ of the camera. Bumping
+    // rigVer re-renders the primitive list so the new body actually mounts.
+    let built = 0;
+    const p0 = engine.player;
+    const pending: { z: typeof engine.zombies[number]; d2: number }[] = [];
+    for (const z of engine.zombies) {
+      if (z.dead || z.owner == null) continue;
+      const key = `${z.owner}:${nightNo}`;
+      if (cacheRef.current.has(key)) continue;
+      const d2 = (z.x - p0.x) * (z.x - p0.x) + (z.z - p0.z) * (z.z - p0.z);
+      if (d2 <= RIG_NEAR_SQ) pending.push({ z, d2 });
+    }
+    if (pending.length > 0) {
+      pending.sort((a, b) => a.d2 - b.d2);
+      for (const c of pending) {
+        if (built >= 2) break;
+        if (buildRig(c.z)) built++;
+      }
+      if (built > 0) setRigVer((v) => v + 1);
+    }
     const night = nightFactor(engine.clock);
     const t = s.clock.elapsedTime;
     const cam = s.camera.position;
