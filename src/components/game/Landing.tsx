@@ -29,15 +29,16 @@ import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { io, type Socket } from "socket.io-client";
 import {
-  BarChart3, CalendarDays, Check, ChevronRight, Cloud, CloudOff, CloudUpload, Crown, Flame, History as HistoryIcon, Info,
-  Lock, MessageSquare, Newspaper, Pencil, Play, Send, Settings, Sparkles, Star, Trophy, User, Users, X, Zap,
+  CalendarDays, ChevronRight, Cloud, CloudOff, CloudUpload, Crown, Flame,
+  Info, MessageSquare, Pencil, Play, Send, Settings, Sparkles, Star, Trophy,
+  Users, X, Zap,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { DAILY_TASK_POOL, ALL_DONE_BONUS } from "@/lib/game/daily";
 import {
-  NAME_SUGGESTIONS, NIGHT_TICKER,
+  NAME_SUGGESTIONS,
   type Appearance,
 } from "@/lib/game/constants";
 import { RANKS, rankFor } from "@/lib/game/ranks";
@@ -389,11 +390,6 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
   const pullProfile = useGame((s) => s.pullProfile);
   const daily = useGame((s) => s.daily);
   const ensureDailyToday = useGame((s) => s.ensureDailyToday);
-  const runsPlayed = useGame((s) => s.runsPlayed);
-  const bestScore = useGame((s) => s.bestScore);
-  const wins = useGame((s) => s.wins);
-  const lifeRescues = useGame((s) => s.lifeRescues);
-  const playtimeMs = useGame((s) => s.playtimeMs);
 
   /* 🗂️ lobby tab lives in the store so any panel can deep-link straight into
      a tab (locker → "Open the Item Shop" now lands on the full shop page) */
@@ -437,12 +433,16 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
     return () => { clearTimeout(first); clearInterval(id); };
   }, [ensureDailyToday]);
 
-  /* 🛒 the Item Shop is its own full page now — an old deep-link that still
-     asks for the "store" tab lands on the shop page instead (panel is gone) */
+  /* 🗂️ every non-lobby tab is a DEDICATED FULL PAGE now (the Item-Shop pattern):
+     old deep-links that still ask for a "battlepass"/"challenges"/"career"/
+     "news"/"store" tab land on their page instead (the panel is gone) */
   useEffect(() => {
     if (landingTab === "store") {
       setLandingTabStore("lobby");
       setScreen("shop");
+    } else if (landingTab === "battlepass" || landingTab === "challenges" || landingTab === "career" || landingTab === "news") {
+      setLandingTabStore("lobby");
+      setScreen(landingTab);
     }
   }, [landingTab, setLandingTabStore, setScreen]);
 
@@ -456,9 +456,9 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
         case "p": sfx.click(); setScreen("profile"); break;
         case "l": sfx.click(); setScreen("creator"); break;
         case "s": sfx.click(); setScreen("shop"); break;
-        case "c": sfx.click(); setTab("challenges"); break;
-        case "b": sfx.click(); setTab("battlepass"); break;
-        case "n": sfx.click(); setTab("news"); break;
+        case "c": sfx.click(); setScreen("challenges"); break;
+        case "b": sfx.click(); setScreen("battlepass"); break;
+        case "n": sfx.click(); setScreen("news"); break;
         case "h": sfx.click(); setHelp(true); break;
       }
     };
@@ -479,7 +479,15 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
     else setScreen("creator");
   };
 
-  const openTab = (id: Tab) => { sfx.click(); setTab(id); };
+  /** tab rail — every non-lobby tab is a dedicated full page (Item Shop pattern):
+      the store stays a tab so the rail reads like the big BR games, but it
+      navigates away instead of swapping the panel under the 3D stage */
+  const openTab = (id: Tab) => {
+    sfx.click();
+    if (id === "lobby") { setTab("lobby"); return; }
+    setLandingTabStore("lobby"); // the lobby dashboard owns the tab rail again on return
+    setScreen(id === "store" ? "shop" : id);
+  };
 
   /** left-rail icons — open exactly ONE lobby card (Season / Suggested / Daily);
    *  clicking the active icon closes it, clicking another swaps the panel */
@@ -780,156 +788,6 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
                 </Panel>
             )}
 
-            {/* ---------- BATTLE PASS tab: the rank ladder ---------- */}
-            {tab === "battlepass" && (
-              <Panel>
-                <Strip right={<span className="text-[10px] font-black text-slate-800">{careerXp.toLocaleString()} career XP</span>}>
-                  Battle pass · Night legend ladder
-                </Strip>
-                <div className="space-y-1.5 p-2.5">
-                  <div className="flex items-center gap-2.5 rounded border border-yellow-300/40 bg-yellow-400/10 px-2.5 py-2">
-                    <RankBadge xp={careerXp} size={40} />
-                    <div className="min-w-0 flex-1">
-                      <div className={`text-xs font-black ${rank.text}`}>{rank.name}</div>
-                      <div className="mb-1 text-[10px] font-bold text-white/55">
-                        {next ? `${toNext.toLocaleString()} XP → ${next.emoji} ${next.name}` : "Top rank — you are a 7Nights legend!"}
-                      </div>
-                      <XpBar pct={progress} bar={rank.bar} h="h-1.5" />
-                    </div>
-                  </div>
-                  {RANKS.map((r) => {
-                    const reached = careerXp >= r.min;
-                    const current = r.id === rank.id;
-                    return (
-                      <div
-                        key={r.id}
-                        className={`flex items-center gap-2.5 rounded border px-2.5 py-2 ${
-                          current ? "border-yellow-300/50 bg-yellow-400/10" : reached ? "border-white/10 bg-white/5" : "border-white/10 opacity-55"
-                        }`}
-                      >
-                        <span aria-hidden className="w-7 text-center text-lg">{reached ? r.emoji : "🔒"}</span>
-                        <div className="min-w-0 flex-1">
-                          <div className={`text-xs font-black ${current ? "text-yellow-200" : "text-white/85"}`}>
-                            {r.name}
-                            {current && <span className="ml-1.5 rounded-full bg-yellow-400 px-1.5 py-0.5 text-[9px] font-black uppercase text-slate-950">You</span>}
-                          </div>
-                          <div className="text-[10px] font-bold text-white/45">{r.min.toLocaleString()} career XP</div>
-                        </div>
-                        {reached ? <Check size={15} className="shrink-0 text-emerald-300" /> : <Lock size={13} className="shrink-0 text-white/40" />}
-                      </div>
-                    );
-                  })}
-                  <p className="px-1 pt-0.5 text-[10px] font-bold leading-relaxed text-white/45">
-                    XP = every point you bank, forever. Daily task bonuses count too — never resets.
-                  </p>
-                </div>
-              </Panel>
-            )}
-
-            {/* ---------- CHALLENGES tab: the full daily board ---------- */}
-            {tab === "challenges" && (
-              <Panel>
-                <Strip right={<span className="flex items-center gap-1 text-[10px] font-black text-white/85"><Flame size={11} /> {daily.streak}-day streak</span>}>
-                  Daily challenges
-                </Strip>
-                <div className="space-y-1.5 p-2.5">
-                  {daily.tasks.map((t) => {
-                    const def = DAILY_TASK_POOL.find((d) => d.id === t.id);
-                    const pct = Math.min(1, t.progress / t.target);
-                    return (
-                      <div key={t.id} className={`rounded border px-2.5 py-2 ${t.done ? "border-emerald-300/40 bg-emerald-400/10" : "border-white/10 bg-white/5"}`}>
-                        <div className="flex items-center gap-2 text-[11px] font-bold text-white/90">
-                          <span aria-hidden className="text-base leading-none">{t.done ? "✅" : (def?.emoji ?? "🎯")}</span>
-                          <span className="min-w-0 flex-1">{def?.label(t.target) ?? t.id}</span>
-                          <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${t.done ? "bg-emerald-400/25 text-emerald-200" : "bg-yellow-300/15 text-yellow-200"}`}>
-                            {t.done ? "done" : `+${t.xp} XP`}
-                          </span>
-                        </div>
-                        <div className="mt-1.5 flex items-center gap-2">
-                          <XpBar pct={t.done ? 1 : pct} bar="from-emerald-400 to-yellow-300" h="h-1.5" />
-                          <span className="w-16 shrink-0 text-right text-[10px] font-black tabular-nums text-white/55">
-                            {Math.min(Math.floor(t.progress), t.target)}/{t.target}
-                          </span>
-                        </div>
-                      </div>
-                    );
-                  })}
-                  <div className={`rounded border px-2.5 py-2 text-[11px] font-bold ${doneCount === daily.tasks.length ? "border-fuchsia-300/40 bg-fuchsia-400/10 text-fuchsia-200" : "border-white/10 bg-white/5 text-white/60"}`}>
-                    {doneCount === daily.tasks.length
-                      ? "🎉 All 3 done — the +100 XP bonus is paid. See you tomorrow!"
-                      : `Finish all 3 for a +${ALL_DONE_BONUS} XP bonus · resets in ${countdown || "…"}`}
-                  </div>
-                </div>
-              </Panel>
-            )}
-
-            {/* ---------- CAREER tab: quick stats → full profile ---------- */}
-            {tab === "career" && (
-              <Panel>
-                <Strip>Career · {playerName || "Unnamed survivor"}</Strip>
-                <div className="space-y-2.5 p-3">
-                  <div className="grid grid-cols-3 gap-1.5 text-center">
-                    {[
-                      ["Runs", String(runsPlayed)],
-                      ["Best", bestScore.toLocaleString()],
-                      ["Wins", String(wins)],
-                      ["Rescues", String(lifeRescues)],
-                      ["XP", careerXp.toLocaleString()],
-                      ["Playtime", `${Math.max(1, Math.round(playtimeMs / 60_000))}m`],
-                    ].map(([label, value]) => (
-                      <div key={label} className="rounded border border-white/10 bg-white/5 px-1 py-2">
-                        <div className="truncate text-sm font-black text-white">{value}</div>
-                        <div className="text-[9px] font-bold uppercase tracking-wide text-white/50">{label}</div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="grid grid-cols-1 gap-1.5">
-                    <Button
-                      onClick={() => { sfx.click(); setScreen("profile"); }}
-                      className="h-10 w-full rounded-md bg-white/10 font-black text-white ring-1 ring-white/20 hover:bg-white/20"
-                    >
-                      <User size={15} className="mr-1.5" /> Manage profile
-                    </Button>
-                    <div className="grid grid-cols-2 gap-1.5">
-                      <Button
-                        onClick={() => { sfx.click(); setStatsOpen(true); }}
-                        className="h-9 rounded-md border-white/20 bg-black/40 text-xs font-black text-white hover:bg-black/60"
-                        variant="outline"
-                      >
-                        <BarChart3 size={14} className="mr-1" /> Stats
-                      </Button>
-                      <Button
-                        onClick={() => { sfx.click(); setHistoryOpen(true); }}
-                        className="h-9 rounded-md border-white/20 bg-black/40 text-xs font-black text-white hover:bg-black/60"
-                        variant="outline"
-                      >
-                        <HistoryIcon size={14} className="mr-1" /> History
-                      </Button>
-                    </div>
-                  </div>
-                </div>
-              </Panel>
-            )}
-
-            {/* ---------- NEWS tab ---------- */}
-            {tab === "news" && (
-              <Panel>
-                <Strip>Night line news</Strip>
-                <div className="space-y-1.5 p-2.5">
-                  {NIGHT_TICKER.slice(0, 6).map((l, i) => (
-                    <div key={i} className="flex items-start gap-2 rounded border border-white/10 bg-white/5 px-2.5 py-2 text-[11px] font-bold leading-snug text-white/80">
-                      <Newspaper size={13} className="mt-0.5 shrink-0 text-red-300" />
-                      <span>{l}</span>
-                    </div>
-                  ))}
-                  <div className="rounded border border-yellow-300/35 bg-yellow-400/10 px-2.5 py-2 text-[11px] font-bold leading-snug text-yellow-100">
-                    <b className="uppercase">Patch notes — lobby update:</b> a Fortnite-style PC dashboard, item shop with
-                    free outfit presets, battle-pass rank ladder and lobby chat. PLAY now queues straight into the
-                    100-soul match lobby.
-                  </div>
-                </div>
-              </Panel>
-            )}
             </motion.div>
           </div>
         </aside>

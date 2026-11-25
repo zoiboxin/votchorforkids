@@ -18,6 +18,10 @@ import { Creator } from "./Creator";
 import { Landing } from "./Landing";
 import { Profile } from "./Profile";
 import { ShopPage } from "./ShopPage";
+import { BattlePassPage } from "./BattlePassPage";
+import { ChallengesPage } from "./ChallengesPage";
+import { CareerPage } from "./CareerPage";
+import { NewsPage } from "./NewsPage";
 import { VictoryModal } from "./VictoryModal";
 import { Multiplayer } from "./Multiplayer";
 import { MatchLobby } from "./MatchLobby";
@@ -451,6 +455,18 @@ export function GameRoot() {
 
       {/* 🛒 full-page item shop — the lobby's store tab navigates here */}
       {screen === "shop" && <ShopPage />}
+
+      {/* 🎫 full-page battle pass — season reward track */}
+      {screen === "battlepass" && <BattlePassPage />}
+
+      {/* 🎯 full-page challenges hub — dailies, season quests, streaks */}
+      {screen === "challenges" && <ChallengesPage />}
+
+      {/* 📊 full-page career hub — stats, history, hall of fame */}
+      {screen === "career" && <CareerPage />}
+
+      {/* 📰 full-page newsroom — features, patch notes, ticker */}
+      {screen === "news" && <NewsPage />}
 
       {/* 7Nights: no side selection — everyone joins as a survivor (screen kept for legacy saves) */}
       {screen === "select" && <Creator onStart={startMatchLobby} />}
