@@ -362,8 +362,13 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
 
   on("crewDeath", (ev) => engine.netCrewDeath(ev.idx, ev.clue, ev.slain, ev.loot));
 
-  on("dmg", (ev) => {
-    if (ev.target === slot) engine.netTakeDmg(ev.amount, ev.x, ev.z, ev.pvp === true, ev.from);
+  on("dmg", (ev, from) => {
+    if (ev.target === slot) engine.netTakeDmg(ev.amount, ev.x, ev.z, ev.pvp === true, ev.from, from);
+  });
+  // 🥊 the victim's client announces WHO floored them for good — the killer's
+  // HUD scores it exactly like a bot kill (points, kills, finisher, toast)
+  on("pvpkill", (ev) => {
+    if (ev.toSlot === slot) engine.netPvpKill(ev.from);
   });
   on("claw", (ev) => engine.netClawHit(ev.x, ev.z));
 

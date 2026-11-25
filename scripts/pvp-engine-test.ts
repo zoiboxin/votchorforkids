@@ -38,13 +38,16 @@ const ok = (name: string, cond: boolean, extra = "") => {
 };
 const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
-/** the dmg routing attachNet installs — `ev.target === mySlot` is THE gate */
+/** the dmg routing attachNet installs — `ev.target === mySlot` is THE gate;
+ * pvpkill rides back to the killer exactly like engineNet's handler does */
 function wire(a: GameEngine, aSlot: number, b: GameEngine, bSlot: number) {
   a.netEmit = (ev) => {
-    if (ev.t === "dmg" && ev.target === bSlot) b.netTakeDmg(ev.amount, ev.x, ev.z, ev.pvp === true, ev.from);
+    if (ev.t === "dmg" && ev.target === bSlot) b.netTakeDmg(ev.amount, ev.x, ev.z, ev.pvp === true, ev.from, aSlot);
+    if (ev.t === "pvpkill" && ev.toSlot === bSlot) b.netPvpKill(ev.from);
   };
   b.netEmit = (ev) => {
-    if (ev.t === "dmg" && ev.target === aSlot) a.netTakeDmg(ev.amount, ev.x, ev.z, ev.pvp === true, ev.from);
+    if (ev.t === "dmg" && ev.target === aSlot) a.netTakeDmg(ev.amount, ev.x, ev.z, ev.pvp === true, ev.from, bSlot);
+    if (ev.t === "pvpkill" && ev.toSlot === aSlot) a.netPvpKill(ev.from);
   };
 }
 
@@ -67,6 +70,14 @@ function boot(seat: number) {
   eng.start();
   tick(eng, 256); // ~8.5 s of live play — the 8 s spawn grace decays like a real match
   return eng;
+}
+
+function bootRaw(seat: number) {
+  const world = generateWorld();
+  const eng = new GameEngine(world, LOOK, () => {}, sessionSeed("TEST"), seat);
+  eng.reset(LOOK);
+  eng.start();
+  return eng; // spawn grace INTACT — for shield-scene tests
 }
 
 /** stand both souls side by side (they mirror each other like the live stream) */
@@ -152,6 +163,47 @@ async function main() {
   mirror(A2, B2);
   console.log(`   Alice after 2 s lying: downT=${A2.downT.toFixed(2)} getupT=${A2.getupT.toFixed(2)} hp=${A2.hp.toFixed(1)}`);
   ok("Alice's down clock ran", true);
+
+  console.log("\n=== SCENE 4 — the KO credits the killer like a bot kill ===");
+  // fresh pair: Bob's lethal ends Alice AND Bob's HUD scores +150 & the kill
+  const A3 = boot(0); // Alice (victim)
+  const B3 = boot(1); // Bob (killer)
+  wire(A3, 0, B3, 1);
+  A3.syncRemotes([{ sid: "b", slot: 1, name: "Bob", look: null }], "a");
+  B3.syncRemotes([{ sid: "a", slot: 0, name: "Alice", look: null }], "b");
+  faceTogether(A3, B3);
+  // drain Alice to a one-hit KO range legitimately (no mercy cheat — she has
+  // her mercy floor: first lethal floored, second lands true). Punch her down
+  // to <=10 hp with hard swings, let the floor pass, then the kill blow.
+  for (let i = 0; i < 30 && !A3.lost; i++) { B3.attack(); tick(A3, 14); tick(B3, 14); faceTogether(A3, B3); }
+  console.log(`   duel end: A hp=${A3.hp.toFixed(1)} lost=${A3.lost} B kills=${B3.kills} B points=${B3.points}`);
+  ok("the run ended with a real KO", A3.lost && A3.hp <= 0);
+  ok("killer's kill counter went up", B3.kills >= 1, `kills=${B3.kills}`);
+  ok("killer scored the PvP payout", B3.points >= 150, `points=${B3.points}`);
+
+  console.log("\n=== SCENE 5 — spawn shield announces PvP bounces (never silent) ===");
+  const A4 = bootRaw(0); // fresh — invulnT untouched (no warmup ticks)
+  const B4 = bootRaw(1);
+  wire(A4, 0, B4, 1);
+  A4.syncRemotes([{ sid: "b", slot: 1, name: "Bob", look: null }], "a");
+  B4.syncRemotes([{ sid: "a", slot: 0, name: "Alice", look: null }], "b");
+  faceTogether(A4, B4);
+  console.log(`   A4 invulnT=${A4.invulnT.toFixed(1)}`);
+  ok("fresh soul still wears the spawn shield", A4.invulnT > 0, `invuln=${A4.invulnT.toFixed(1)}`);
+  const hpShielded = A4.hp;
+  B4.attack(); // Bob swings at the shielded Alice — no silent absorb
+  tick(A4, 5); tick(B4, 5);
+  ok("shielded soul takes ZERO damage", A4.hp === hpShielded, `hp ${hpShielded} -> ${A4.hp}`);
+  ok("shield bounce is announced on the victim", A4.lastToastMsg.includes("spawn shield"), `"${A4.lastToastMsg}"`);
+  // and once the shield drains, the SAME blow lands normally
+  tick(A4, 300); // > 8 s — shield gone
+  console.log(`   [dbg] A4 invuln=${A4.invulnT.toFixed(1)} detained=${A4.detainedT.toFixed(1)} hp=${A4.hp.toFixed(1)} @(${A4.player.x.toFixed(0)},${A4.player.z.toFixed(0)})`);
+  faceTogether(A4, B4); // re-pin positions (10 s of physics may have drifted them)
+  tick(B4, 14); // the first swing's 0.45 s cooldown fully recovers
+  const hpBare = A4.hp;
+  B4.attack();
+  tick(A4, 5); tick(B4, 5);
+  ok("post-shield the blow lands for real", A4.hp < hpBare, `hp ${hpBare.toFixed(1)} -> ${A4.hp.toFixed(1)} invuln=${A4.invulnT.toFixed(1)} detained=${A4.detainedT.toFixed(1)}`);
 
   console.log(fails === 0 ? "\n✅ ALL ENGINE-LEVEL PvP CHECKS PASSED" : `\n❌ ${fails} CHECK(S) FAILED`);
   process.exit(fails === 0 ? 0 : 1);

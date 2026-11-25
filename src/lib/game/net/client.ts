@@ -71,6 +71,7 @@ export type MpEvent =
       pvp?: boolean;
       /** 🥊 PvP — the attacker's name, for the victim's toast */
       from?: string }
+  | { t: "pvpkill"; from: string; toSlot: number }
   | { t: "claw"; x: number; z: number }
   | { t: "loot"; x: number; z: number; amt: number; label: string }
   | { t: "pickup"; kind: "item" | "loot" | "tool" | "power" | "vote"; id: number; x?: number; z?: number }

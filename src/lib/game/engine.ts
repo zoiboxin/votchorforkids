@@ -14,7 +14,7 @@ import {
   ACCUSE_RADIUS, ATTACK_CD, ATTACK_RANGE, BARRICADE_COST, BARRICADE_HP, CAMPFIRE_COST, CAMPFIRE_R, CLAW_DMG,
   CREW_COLORS, CREW_COLOR_NAMES, CREW_COUNT, CREW_HP, CREW_NAMES, CREW_SPEED, HANDS_DMG, HUNTER_DMG, HUNTER_HP, HUNTER_SPEED,
   HUNTER_TOUCH_CD, NIGHTS_TOTAL, PHASE_DAY_S, PHASE_DAWN_S, PHASE_DUSK_S, PHASE_NIGHT_S,
-  POINTS_BUILD, POINTS_HARVEST, POINTS_KILL_BEAST, POINTS_KILL_GUARD, POINTS_KILL_ZOMBIE, POINTS_HEARSE_BONUS, POINTS_NIGHT, POINTS_RIGHT_ACCUSE,
+  POINTS_BUILD, POINTS_HARVEST, POINTS_KILL_BEAST, POINTS_KILL_GUARD, POINTS_KILL_PLAYER, POINTS_KILL_ZOMBIE, POINTS_HEARSE_BONUS, POINTS_NIGHT, POINTS_RIGHT_ACCUSE,
   POINTS_WRONG_ACCUSE, ROCK_HITS, ROCK_PER_BOULDER, TOOL_PICKUP_R, TOOL_SPAWN, TOOLS,
   TREE_HITS, WOOD_PER_TREE, WIN_BONUS, PLAYERS_TOTAL, ZOMBIE_CREW_DMG, ZOMBIE_HP,
   ZONE_DRAIN_BASE, ZONE_DRAIN_STEP, ZONE_GRACE_S, ZONE_RADII, DAWN_ALIVE_CAP, DAWN_WARN_S,
@@ -8573,10 +8573,18 @@ export class GameEngine {
   /** Wire damage addressed to US — beast mauls from the host's mirrored pack,
    *  AND 🥊 rival punches (PvP): the blow carries the attacker's position so we
    *  knock back the right way, and a fist that would END us floors us instead
-   *  (mercy knockdown — fights have rounds; the SECOND one can finish it). */
-  netTakeDmg(amount: number, fromX?: number, fromZ?: number, pvp = false, fromName?: string) {
+   *  (mercy knockdown — fights have rounds; the SECOND one can finish it).
+   *  `fromSlot` rides along so our KO can credit the killer's scoreboard. */
+  netTakeDmg(amount: number, fromX?: number, fromZ?: number, pvp = false, fromName?: string, fromSlot?: number) {
     if (!this.running || this.lost || this.won) return;
-    if (this.detainedT > 0 || this.drive || this.invulnT > 0) return;
+    if (this.detainedT > 0 || this.drive) return;
+    if (this.invulnT > 0) {
+      // 🥊 a rival's blow through the spawn grace must NEVER be silent — silence
+      // here is exactly what reads as "players can't hit each other". Beasts &
+      // cops keep the quiet shield; punches announce the bounce.
+      if (pvp) this.toast(`🛡️ ${fromName ?? "A rival"}'s punch bounced off your spawn shield!`, "info");
+      return;
+    }
     const dx = fromX !== undefined ? this.player.x - fromX : 0;
     const dz = fromZ !== undefined ? this.player.z - fromZ : 0;
     const dl = Math.hypot(dx, dz) || 1;
@@ -8599,7 +8607,13 @@ export class GameEngine {
       // hp ≤ 0 → the blow ENDED the run — die NOW (the async wire blow lands
       // between frames; waiting for the tick's check let the heal surge raise
       // hp off zero first — the heal-dodge race)
-      if (this.hp <= 0) this.die();
+      if (this.hp <= 0) {
+        // 🥊 announce the KO so the killer's HUD scores it like a bot kill
+        if (fromSlot !== undefined && fromSlot >= 0) {
+          this.netEmit?.({ t: "pvpkill", from: this.playerName, toSlot: fromSlot });
+        }
+        this.die();
+      }
       return;
     }
     this.addShake(0.45); // 💥 MEDIUM
@@ -8609,6 +8623,19 @@ export class GameEngine {
     sfx.scream();
     this.toast("🩸 A BEAST TORE INTO YOU! RUN!", "bad");
     if (this.hp <= 0) this.die(); // the mirrored pack's verdict is final — die now
+  }
+
+  /** 🥊 our blow knocked a REAL rival OUT for good — score it exactly like a
+   *  bot kill: points, the kill counter, the finisher spin & the shout. */
+  netPvpKill(victimName: string) {
+    if (!this.running || this.lost || this.won) return;
+    this.kills++;
+    this.points += POINTS_KILL_PLAYER;
+    this.finisherT = FINISHER_S; // ⚔️ the spin-slash finisher plays
+    this.addShake(0.42); // 💥 MEDIUM — a rival fell
+    sfx.scream();
+    this.toast(`⚔️ You knocked out ${victimName}! +${POINTS_KILL_PLAYER}`, "good");
+    botBrain.record("kill"); // 🧠 the bots study your ruthlessness too
   }
 
   /** A teammate built something — grow the same wall in our world. */

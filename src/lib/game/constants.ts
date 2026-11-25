@@ -955,6 +955,7 @@ export const ACCUSE_RADIUS = 3.4;
 export const POINTS_NIGHT = 80;
 export const POINTS_KILL_BEAST = 200;
 export const POINTS_KILL_ZOMBIE = 40;
+export const POINTS_KILL_PLAYER = 150; // 🥊 a real rival's knockout — duels pay big
 export const POINTS_RIGHT_ACCUSE = 200;
 export const POINTS_WRONG_ACCUSE = -60;
 export const POINTS_BUILD = 30;

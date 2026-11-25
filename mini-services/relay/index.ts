@@ -231,9 +231,12 @@ io.on("connection", (sock) => {
    * "is that client's socket REALLY in the socket.io room?" (the silent-ghost
    * class of bug: relay roster says seated, broadcasts never arrive). */
   sock.on("mp:debug", (_p: unknown, ack?: (r: unknown) => void) => {
+    const adapterRooms: Record<string, string[]> = {};
+    for (const [room, sids] of io.sockets.adapter.rooms) adapterRooms[room] = [...sids];
     ack?.({
       ok: true,
       sockets: [...io.sockets.sockets.keys()],
+      adapterRooms,
       rooms: [...rooms.values()].map((r) => ({
         code: r.code, phase: r.phase, host: r.hostSid,
         members: [...r.members.values()].map((m) => ({
