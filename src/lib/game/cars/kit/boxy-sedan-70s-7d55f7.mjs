@@ -144,7 +144,7 @@ const MAT = new THREE.MeshStandardMaterial({
 
 const parts = [];
 function bake(geo, color, cull = null) {
-  geo = geo.toNonIndexed();
+  if (geo.index) geo = geo.toNonIndexed();
   geo.deleteAttribute('uv');
   geo.deleteAttribute('normal');
   const pos = geo.attributes.position;
