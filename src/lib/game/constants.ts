@@ -796,6 +796,11 @@ export const CAR_COAST_FRICTION = 2.1;    // 1/s rolling drag — exp decay, a 2
 export const CAR_SLIDE_FRICTION = 4.5;    // 1/s lateral tyre grip — side hits skid, then the tyres bite
 export const CAR_SPIN_FRICTION = 3.2;     // 1/s yaw decay on an off-centre hit twist
 
+/* 🧍 platform physics — cars are furniture you can JUMP ON: every car's roof is a
+ * standable surface at this height above the local terrain (bonnet → boot walk,
+ * roof-sitting stakeouts, jumping roof-to-roof in a parking lot) */
+export const CAR_ROOF_TOP = 1.42;
+
 /* ---------- Scoring ---------- */
 export const POINTS_DELIVER = 120;
 export const POINTS_PICKUP = 10;

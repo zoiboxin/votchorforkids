@@ -1,12 +1,18 @@
 /**
  * 7Nights net protocol — compact binary player-state packets.
  *
- * Every client publishes ONLY its own survivor @ ~12 Hz as an 11-byte packet:
+ * Every client publishes ONLY its own survivor @ ~12 Hz as a 12-byte packet:
  *
- *   ┌──────┬────────┬────────┬─────┬───────┬────┬───────┬──────┐
- *   │ slot │ x      │ z      │ y   │ yaw   │ hp │ flags │ ci   │
- *   │ u8   │ i16×10 │ i16×10 │ u8×8│ u8    │ u8 │ u8    │ u16  │
- *   └──────┴────────┴────────┴─────┴───────┴────┴───────┴──────┘
+ *   ┌──────┬────────┬────────┬─────┬───────┬────┬───────┬──────┬──────┐
+ *   │ slot │ x      │ z      │ y   │ yaw   │ hp │ flags │ ci   │ down │
+ *   │ u8   │ i16×10 │ i16×10 │ u8×8│ u8    │ u8 │ u8    │ u16  │ u8   │
+ *   └──────┴────────┴────────┴─────┴───────┴────┴───────┴──────┴──────┘
+ *
+ *   `down` — 🥊 the floored/get-up clock (added for cross-wire PvP: when a
+ *   rival's punch FLOORS you, every peer's mirror plays the fall + push-off):
+ *     0        = standing
+ *     1..120   = floored — downT seconds remaining = byte / 40
+ *     121..240 = getting up — getupT seconds remaining = (byte − 121) / 40
  *
  * flags bits: 0 sprint · 1 airborne · 2 beast · 3 dead · 4 driving · 5 attackAnim
  *                        · 6 riding (passenger — inside a car someone else drives)
@@ -43,7 +49,24 @@
  * treats it as a native binary attachment) and on the Bun/Node relay.
  */
 
-export const STATE_BYTES = 11;
+export const STATE_BYTES = 12;
+
+/** Encode the local floored/get-up clocks into one state byte (0 = standing).
+ *  Down clock decays in 1/40 s steps (a ~0.94 s lie → byte ≈ 38); the get-up
+ *  push-off runs 1 → 0 over ~1.05 s → byte ≈ 161. Both fit their slots with
+ *  headroom for a longer lie. */
+export function packDown(downT: number, getupT: number): number {
+  if (downT > 0) return Math.max(1, Math.min(120, Math.round(downT * 40)));
+  if (getupT > 0) return Math.max(121, Math.min(240, 121 + Math.round(getupT * 40)));
+  return 0;
+}
+
+/** Decode a state byte back into { downT, getupT } — 0 = standing. */
+export function unpackDown(b: number): { downT: number; getupT: number } {
+  if (b >= 1 && b <= 120) return { downT: b / 40, getupT: 0 };
+  if (b >= 121 && b <= 240) return { downT: 0, getupT: (b - 121) / 40 };
+  return { downT: 0, getupT: 0 };
+}
 
 /** car index meaning "on foot" (no drive / no ride) in the state packet */
 export const CARIDX_NONE = 0xffff;
@@ -172,6 +195,8 @@ export interface NetState {
   paused: boolean;
   /** 🚗 car index they occupy (drive or ride) — CARIDX_NONE when on foot */
   ci: number;
+  /** 🥊 floored/get-up clock byte (0 = standing — see packDown/unpackDown) */
+  down: number;
   /** receive timestamp (ms, performance.now) — interpolation bookkeeping */
   t: number;
 }
@@ -185,6 +210,8 @@ export function packState(s: {
   paused?: boolean;
   /** 🚗 car index they occupy (drive / ride) — CARIDX_NONE on foot */
   ci?: number;
+  /** 🥊 floored/get-up clock byte (0 = standing — see packDown) */
+  down?: number;
 }): ArrayBuffer {
   const buf = new ArrayBuffer(STATE_BYTES);
   const v = new DataView(buf);
@@ -205,6 +232,7 @@ export function packState(s: {
   if (s.paused) f |= FLAG_PAUSE;
   v.setUint8(8, f);
   v.setUint16(9, Math.max(0, Math.min(0xffff, Math.round(s.ci ?? CARIDX_NONE))), true);
+  v.setUint8(11, Math.max(0, Math.min(255, Math.round(s.down ?? 0))));
   return buf;
 }
 
@@ -270,6 +298,8 @@ export function unpackState(data: BinSrc, t = 0): NetState | null {
     paused: !!(f & FLAG_PAUSE),
     // 🚗 seat index (legacy 9-byte peers never carried one → treat as on foot)
     ci: v.byteLength >= STATE_BYTES ? v.getUint16(9, true) : CARIDX_NONE,
+    // 🥊 floored/get-up clock (legacy packets read as standing)
+    down: v.byteLength >= 12 ? v.getUint8(11) : 0,
     t,
   };
 }

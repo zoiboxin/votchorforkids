@@ -1,9 +1,9 @@
-import { AIRPORT, BUILD_POOL, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, HEARSE_TYPE, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, PREHISTORIC, ROCK_COUNT, TAXI_TYPE, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_POOL, WALL_RADIUS, WORLD_SEED, inPrehistoricValley, pickVehicle, stationCage, stationGate } from "./constants";
+import { AIRPORT, BUILD_POOL, CAR_ROOF_TOP, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, HEARSE_TYPE, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, PREHISTORIC, ROCK_COUNT, TAXI_TYPE, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_POOL, WALL_RADIUS, WORLD_SEED, inPrehistoricValley, pickVehicle, stationCage, stationGate } from "./constants";
 import { PREHISTORIC_LAYOUT, prehistoricColliders } from "./prehistoric";
 import { mulberry32, range } from "./rng";
 
-export interface BoxCollider { x: number; z: number; w: number; d: number; /** building height (top y) — lets the chase camera ignore roofs above it */ h?: number } // half extents
-export interface CircleCollider { x: number; z: number; r: number; /** set for the two axle circles of a parked car — lets a DRIVEN car skip its own colliders */ car?: number; /** set on the ✈️ fuselage discs that follow a grounded plane (index into engine.planes) */ plane?: number; /** plane discs fold away once the plane climbs — false while grounded/taxiing */ air?: boolean; /** index inside world.circles — lets a DRIVEN car refresh its grid cells on every move */ idx?: number; /** set on the 🔨 breakable boulder this circle belongs to (index into world.rocks) */ rock?: number; /** set on the 🧱 builder pool circles — they MOVE onto built spots via moveCircle */ build?: number }
+export interface BoxCollider { x: number; z: number; w: number; d: number; /** building height (top y) — lets the chase camera ignore roofs above it */ h?: number; /** 🧍 standable surface height (absolute y) — a body whose feet are at/above this stands ON TOP instead of being pushed out (crates, low walls, scaffolds…) */ top?: number } // half extents
+export interface CircleCollider { x: number; z: number; r: number; /** set for the two axle circles of a parked car — lets a DRIVEN car skip its own colliders */ car?: number; /** set on the ✈️ fuselage discs that follow a grounded plane (index into engine.planes) */ plane?: number; /** plane discs fold away once the plane climbs — false while grounded/taxiing */ air?: boolean; /** index inside world.circles — lets a DRIVEN car refresh its grid cells on every move */ idx?: number; /** set on the 🔨 breakable boulder this circle belongs to (index into world.rocks) */ rock?: number; /** set on the 🧱 builder pool circles — they MOVE onto built spots via moveCircle */ build?: number; /** 🧍 standable surface height (absolute y) — boulders, crates, hay bales, CAR ROOFS: jump on and stand (see standTopAt) */ top?: number }
 
 /**
  * 🗺️ Spatial hash over every collider — the old resolve() scanned ALL ~1,424 boxes
@@ -1072,7 +1072,9 @@ function runRow(x: number, z: number, n: number, step: number, rot: number): Con
   return out;
 }
 
-const conCol = (x: number, z: number, r: number) => ({ x, z, r });
+/** 🚧 construction-site collider — optional standable top (precast stacks,
+ *  spoil heaps, pallets, scaffold bays and cones are all climbable furniture) */
+const conCol = (x: number, z: number, r: number, top?: number) => (top === undefined ? { x, z, r } : { x, z, r, top });
 
 export const SITEKIT = (() => {
   /* ---- Site A · LAKESHORE TOWERS — west midtown block (-168.75, 33.75) ----
@@ -1126,12 +1128,12 @@ export const SITEKIT = (() => {
       conCol(-177, 42, 1.5), conCol(-155.5, 25, 1.4), conCol(-158.5, 21.5, 1.2), // spoil heaps
       conCol(-190.5, 50, 0.9), conCol(-183, 48, 1.2),            // light tower + generator
       conCol(-181.5, 52.5, 0.8), conCol(-179.5, 52.5, 0.8),      // portable toilets
-      conCol(-153, 52, 0.7), conCol(-151, 49, 0.7),              // pallets
-      conCol(-150, 46, 2.1), conCol(-150, 50, 2.1),              // precast stacks
+      conCol(-153, 52, 0.7, 0.55), conCol(-151, 49, 0.7, 0.55),  // pallets — steppable stacks
+      conCol(-150, 46, 2.1, 1.25), conCol(-150, 50, 2.1, 1.25),  // precast stacks — climbable
       conCol(-157, 52.5, 1.1),                                   // rebar cage
-      conCol(-147, 22, 1.7),                                     // skip
+      conCol(-147, 22, 1.7, 1.45),                               // skip — hop on the rim
       conCol(-193.6, 33.5, 0.6), conCol(-160, 12.6, 0.6),        // arrow + sign boards
-      conCol(-152, 34, 1.8), conCol(-152, 38.5, 1.8),            // scaffold bays
+      conCol(-152, 34, 1.8, 2.3), conCol(-152, 38.5, 1.8, 2.3),  // scaffold bays — jump platforms
     ],
     boxes: [{ x: -186, z: 44, w: 4.4, d: 8.4, h: 3.4 }],         // site cabin
   };
@@ -1184,12 +1186,12 @@ export const SITEKIT = (() => {
       conCol(230.5, -90.5, 2.6), conCol(257.5, -95, 2.6),        // excavators (pit + yard)
       conCol(228, -104, 2.5), conCol(244.5, -81, 2.7),           // dump trucks (pit + ramp top)
       conCol(232, -110, 2.4), conCol(236, -111.5, 2.4),          // trench bays on the floor
-      conCol(216, -92, 1.5), conCol(219, -86.5, 1.2), conCol(256, -102, 1.6), conCol(252.5, -108.5, 1.3), // rim spoil heaps
+      conCol(216, -92, 1.5, 1.35), conCol(219, -86.5, 1.2, 1.15), conCol(256, -102, 1.6, 1.45), conCol(252.5, -108.5, 1.3, 1.2), // rim spoil heaps — climbable mounds
       conCol(228.5, -72.6, 0.55), conCol(244.5, -72.6, 0.55),    // traffic lights
       conCol(216.5, -80.5, 0.9), conCol(256.5, -97, 1.2),        // light tower + generator
       conCol(249.5, -83.2, 0.8), conCol(251.5, -83.2, 0.8),      // loos
-      conCol(259.5, -88, 0.7), conCol(257.5, -85.5, 0.7),        // pallets
-      conCol(256, -112, 1.1), conCol(214.5, -104, 1.7),          // rebar + skip
+      conCol(259.5, -88, 0.7, 0.55), conCol(257.5, -85.5, 0.7, 0.55), // pallets — steppable
+      conCol(256, -112, 1.1), conCol(214.5, -104, 1.7, 1.45),    // rebar + skip
       conCol(218.5, -79.5, 0.6), conCol(214, -127, 0.6),         // sign + arrow boards
     ],
     boxes: [{ x: 254, z: -90, w: 8.4, d: 4.4, h: 3.4 }],         // site cabin (rot −π/2 → length along x)
@@ -1243,11 +1245,11 @@ export const SITEKIT = (() => {
       conCol(27.5, 176.5, 2.5),                                  // excavator (pit floor)
       conCol(14.5, 162, 2.7), conCol(12, 178, 2.3), conCol(30, 197.5, 2.4), // mixer, backhoe, roller
       conCol(44, 184, 2.5),                                      // dump truck
-      conCol(50, 168, 1.8), conCol(50, 172.5, 1.8),              // scaffold bays
-      conCol(50, 182, 2.1), conCol(50, 178, 2.1),                // precast stacks
-      conCol(44, 176, 0.7), conCol(42, 178.5, 0.7),              // pallets
+      conCol(50, 168, 1.8, 2.3), conCol(50, 172.5, 1.8, 2.3),    // scaffold bays — jump platforms
+      conCol(50, 182, 2.1, 1.25), conCol(50, 178, 2.1, 1.25),    // precast stacks — climbable
+      conCol(44, 176, 0.7, 0.55), conCol(42, 178.5, 0.7, 0.55),  // pallets — steppable
       conCol(38, 188, 1.1),                                      // rebar cage
-      conCol(56, 168, 1.7),                                      // skip
+      conCol(56, 168, 1.7, 1.45),                                // skip — hop on the rim
       conCol(46, 147, 0.8), conCol(44, 147, 0.8),                // loos
       conCol(54.5, 158, 1.2), conCol(12.5, 150.5, 0.9),          // generator + light tower
       conCol(14.5, 160, 0.6), conCol(44, 196.5, 0.6), conCol(20, 196.5, 0.55), conCol(48, 196.5, 0.55), // boards + lights
@@ -2375,8 +2377,10 @@ export function generateWorld(seed = WORLD_SEED): World {
   cars.forEach((c, ci) => {
     const fx = Math.sin(c.rot), fz = Math.cos(c.rot);
     const ax = VEHICLE_AXLE[c.t] ?? 1.25, rr = VEHICLE_AXLE_R[c.t] ?? 1.16;
-    circles.push({ x: c.x - fx * ax, z: c.z - fz * ax, r: rr, car: ci });
-    circles.push({ x: c.x + fx * ax, z: c.z + fz * ax, r: rr, car: ci });
+    // 🧍 every car is FURNITURE — its roof is a standable platform (jump on, sit,
+    // hop roof-to-roof across a parking lot). The axle discs carry the top height.
+    circles.push({ x: c.x - fx * ax, z: c.z - fz * ax, r: rr, car: ci, top: terrainHeight(c.x - fx * ax, c.z - fz * ax) + CAR_ROOF_TOP });
+    circles.push({ x: c.x + fx * ax, z: c.z + fz * ax, r: rr, car: ci, top: terrainHeight(c.x + fx * ax, c.z + fz * ax) + CAR_ROOF_TOP });
   });
   for (const s of silos) circles.push({ x: s.x, z: s.z, r: 3.3 });
   for (const w of windmills) circles.push({ x: w.x, z: w.z, r: 0.8 });
@@ -2386,7 +2390,7 @@ export function generateWorld(seed = WORLD_SEED): World {
   for (const cp of camps) {
     circles.push({ x: cp.x, z: cp.z, r: 0.95 }); // fire pit — don't walk into the flames
     for (const t of cp.tents) circles.push({ x: cp.x + t.dx, z: cp.z + t.dz, r: 1.55 });
-    for (const cr of cp.crates) circles.push({ x: cp.x + cr.dx, z: cp.z + cr.dz, r: 0.55 });
+    for (const cr of cp.crates) circles.push({ x: cp.x + cr.dx, z: cp.z + cr.dz, r: 0.55, top: terrainHeight(cp.x + cr.dx, cp.z + cr.dz) + 0.9 });
     if (cp.pole) circles.push({ x: cp.x + cp.pole.dx, z: cp.z + cp.pole.dz, r: 0.3 });
   }
   /* ---- 🦕 prehistoric valley carve-out — the shared RNG stream never feels
@@ -2408,7 +2412,8 @@ export function generateWorld(seed = WORLD_SEED): World {
   // shrink it to rubble when it finally cracks.
   rocks.forEach((rk, i) => {
     rockCi.push(circles.length);
-    circles.push({ x: rk.x, z: rk.z, r: 0.8 * rk.s, rock: i });
+    // 🪨 boulders are climbable — hop on top and use them as watch perches
+    circles.push({ x: rk.x, z: rk.z, r: 0.8 * rk.s, rock: i, top: terrainHeight(rk.x, rk.z) + 0.85 * rk.s });
   });
   // 🧱 builder pool — dormant circles parked under the museum podium (r≈0 never
   // collides). moveCircle() teleports one onto a build spot; reset() brings it back.
@@ -2416,11 +2421,11 @@ export function generateWorld(seed = WORLD_SEED): World {
   /* ---- 🚂 countryside railway — the kit furniture is solid (the track bed stays walkable) ---- */
   for (const c of RAILKIT.cols) circles.push(c);
   /* ---- 🚜 cozy farm kit — the barnyard is solid ---- */
-  for (const hb of FARMKIT.bales) circles.push({ x: hb.x, z: hb.z, r: 1.05 });            // hay bales
+  for (const hb of FARMKIT.bales) circles.push({ x: hb.x, z: hb.z, r: 1.05, top: terrainHeight(hb.x, hb.z) + 1.05 });  // hay bales — big soft stepping stones
   for (const sc of FARMKIT.scarecrows) circles.push({ x: sc.x, z: sc.z, r: 0.4 });        // scarecrow posts
-  for (const cp of FARMKIT.coops) circles.push({ x: cp.x, z: cp.z, r: 1.6 });             // chicken coops
-  circles.push({ x: FARMKIT.tractor.x, z: FARMKIT.tractor.z, r: 1.5 });                   // parked tractor
-  circles.push({ x: FARMKIT.well.x, z: FARMKIT.well.z, r: 1.2 });                         // stone well
+  for (const cp of FARMKIT.coops) circles.push({ x: cp.x, z: cp.z, r: 1.6, top: terrainHeight(cp.x, cp.z) + 1.35 });          // chicken coops
+  circles.push({ x: FARMKIT.tractor.x, z: FARMKIT.tractor.z, r: 1.5, top: terrainHeight(FARMKIT.tractor.x, FARMKIT.tractor.z) + 1.55 }); // parked tractor
+  circles.push({ x: FARMKIT.well.x, z: FARMKIT.well.z, r: 1.2, top: terrainHeight(FARMKIT.well.x, FARMKIT.well.z) + 1.25 });               // stone well
   /* ---- 🎃 graveyard estate — fenced all around, one real gate ---- */
   boxes.push({ x: GRAVEKIT.house.x, z: GRAVEKIT.house.z, w: 10, d: 10, h: 13 });          // haunted Victorian house (kit, 12u footprint)
   boxes.push({ x: GRAVEKIT.mausoleum.x, z: GRAVEKIT.mausoleum.z, w: 3.4, d: 3.4, h: 5 }); // family mausoleum (kit)
@@ -2598,6 +2603,9 @@ export function moveCircle(world: World, gi: number, x: number, z: number, r: nu
 
 /** Push a point out of every collider it overlaps. skipCar: while driving car #n,
  *  that car's own axle circles are skipped so the body doesn't shove itself.
+ *  feetY (optional): the body's foot height — colliders with a standable `top`
+ *  the feet are already at/above don't push sideways anymore (the body is ON
+ *  that platform). This is what lets a kid climb crates, boulders & car roofs.
  *  Uses the spatial hash (a handful of neighbouring colliders) instead of the
  *  old full-world scan — the single biggest frame-time win, especially while
  *  driving, where the car spends up to 16 resolve calls per frame. Colliders are
@@ -2605,7 +2613,7 @@ export function moveCircle(world: World, gi: number, x: number, z: number, r: nu
  *  old scan's order) and the pass repeats until stable, so a push that slides the
  *  point into a collider one cell over is still caught. */
 const resolveScratch: number[] = [];
-export function resolve(p: { x: number; z: number }, radius: number, world: World, skipCar = -1): void {
+export function resolve(p: { x: number; z: number }, radius: number, world: World, skipCar = -1, feetY?: number): void {
   const g = world.grid;
   const boxes = world.boxes, circles = world.circles;
   if (g) {
@@ -2631,6 +2639,8 @@ export function resolve(p: { x: number; z: number }, radius: number, world: Worl
         const idx = resolveScratch[k];
         if (idx < g.nb) {
           const b = boxes[idx];
+          // 🧍 standing on a climbable box (crate stack, low wall) — no side push
+          if (b.top !== undefined && feetY !== undefined && feetY >= b.top - 0.55) continue;
           const dx = p.x - b.x, dz = p.z - b.z;
           const ox = b.w + radius - Math.abs(dx), oz = b.d + radius - Math.abs(dz);
           if (ox > 0 && oz > 0) {
@@ -2641,6 +2651,9 @@ export function resolve(p: { x: number; z: number }, radius: number, world: Worl
         } else {
           const c = circles[idx - g.nb];
           if (skipCar >= 0 && c.car === skipCar) continue;
+          // 🧍 feet at/above a climbable top (boulder, crate, CAR ROOF) — the
+          // body is standing ON it, so no sideways shove (walking across works)
+          if (c.top !== undefined && feetY !== undefined && feetY >= c.top - 0.55) continue;
           const dx = p.x - c.x, dz = p.z - c.z;
           const rr = c.r + radius;
           if (Math.abs(dx) > rr || Math.abs(dz) > rr) continue;
@@ -2661,6 +2674,7 @@ export function resolve(p: { x: number; z: number }, radius: number, world: Worl
     return;
   }
   for (const b of boxes) {
+    if (b.top !== undefined && feetY !== undefined && feetY >= b.top - 0.55) continue;
     const dx = p.x - b.x, dz = p.z - b.z;
     const ox = b.w + radius - Math.abs(dx), oz = b.d + radius - Math.abs(dz);
     if (ox > 0 && oz > 0) {
@@ -2670,6 +2684,7 @@ export function resolve(p: { x: number; z: number }, radius: number, world: Worl
   }
   for (const c of circles) {
     if (skipCar >= 0 && c.car === skipCar) continue;
+    if (c.top !== undefined && feetY !== undefined && feetY >= c.top - 0.55) continue;
     const dx = p.x - c.x, dz = p.z - c.z;
     const rr = c.r + radius;
     if (Math.abs(dx) > rr || Math.abs(dz) > rr) continue;
@@ -2681,6 +2696,56 @@ export function resolve(p: { x: number; z: number }, radius: number, world: Worl
       p.z = c.z + (dz / d) * rr;
     }
   }
+}
+
+/** 🧍 the highest STANDABLE surface at (x, z) the feet can rest on — cars' roofs,
+ *  boulders, crates, hay bales, scaffold bays, precast stacks… Only colliders
+ *  tagged with a `top` count, and only ones whose surface is at or below
+ *  `feetY + gate` (the gate = how far a step-up can lift you: 0.02 while
+ *  falling → you land ON it; 0.55 while walking → low bricks step up like ramps).
+ *  Returns 0 when nothing standable is underfoot (plain terrain). */
+export function standTopAt(world: World, x: number, z: number, feetY: number, gate = 0.02): number {
+  const g = world.grid;
+  const boxes = world.boxes, circles = world.circles;
+  let best = 0;
+  const probe = (bx: number, bz: number) => {
+    // gather the handful of colliders around the point straight from the grid
+    if (!g) {
+      for (const b of boxes) {
+        if (b.top !== undefined && b.top <= feetY + gate
+          && Math.abs(bx - b.x) <= b.w + 0.12 && Math.abs(bz - b.z) <= b.d + 0.12 && b.top > best) best = b.top;
+      }
+      for (const c of circles) {
+        const dx = bx - c.x, dz = bz - c.z;
+        if (c.top !== undefined && c.top <= feetY + gate && dx * dx + dz * dz <= (c.r + 0.3) * (c.r + 0.3) && c.top > best) best = c.top;
+      }
+      return;
+    }
+    const gx0 = Math.max(0, Math.floor((bx - 1 - g.x0) / g.cs));
+    const gx1 = Math.min(g.cols - 1, Math.floor((bx + 1 - g.x0) / g.cs));
+    const gz0 = Math.max(0, Math.floor((bz - 1 - g.z0) / g.cs));
+    const gz1 = Math.min(g.rows - 1, Math.floor((bz + 1 - g.z0) / g.cs));
+    for (let gz = gz0; gz <= gz1; gz++) {
+      for (let gx = gx0; gx <= gx1; gx++) {
+        const cell = g.cells[gz * g.cols + gx];
+        for (let k = 0; k < cell.length; k++) {
+          const idx = cell[k];
+          if (idx < g.nb) {
+            const b = boxes[idx];
+            if (b.top === undefined || b.top > feetY + gate) continue;
+            if (Math.abs(bx - b.x) <= b.w + 0.12 && Math.abs(bz - b.z) <= b.d + 0.12 && b.top > best) best = b.top;
+          } else {
+            const c = circles[idx - g.nb];
+            if (c.top === undefined || c.top > feetY + gate) continue;
+            const dx = bx - c.x, dz = bz - c.z;
+            if (dx * dx + dz * dz <= (c.r + 0.3) * (c.r + 0.3) && c.top > best) best = c.top;
+          }
+        }
+      }
+    }
+  };
+  probe(x, z);
+  return best;
 }
 
 /** All boxes overlapping the disk (x, z, r) — fed by the spatial hash. */

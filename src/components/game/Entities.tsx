@@ -9,7 +9,7 @@ import {
 } from "@/lib/game/constants";
 import { preloadModels, onModelsReady, spawnModel } from "@/lib/game/models";
 import type { GameEngine } from "@/lib/game/engine";
-import { FALL_S, FINISHER_S, CORPSE_LIE_S, CORPSE_SINK_S } from "@/lib/game/engine";
+import { FALL_S, FINISHER_S, CORPSE_LIE_S, CORPSE_SINK_S, PED_DOWN_S, PED_GETUP_S } from "@/lib/game/engine";
 import { nightFactor } from "@/lib/game/sim";
 import { mulberry32 } from "@/lib/game/rng";
 import {
@@ -190,6 +190,16 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     let d = p.face - mesh.rotation.y;
     d = Math.atan2(Math.sin(d), Math.cos(d));
     mesh.rotation.y += d * Math.min(1, dt * 14);
+    // 🚗 KNOCKED FLAT — a car strike (or a heavy punch) puts the body DOWN:
+    // fall to the dirt over ~0.5 s, lie there while downT runs, then the
+    // wasDown get-up tips the root back up (death-style collapse, but the
+    // survivor always rises — no sinking, no corpse)
+    let downEz = 0;
+    if (engine.downT > 0) {
+      const el = PED_DOWN_S * 0.82 - engine.downT;
+      const f = Math.min(1, el / 0.5);
+      downEz = f * f * (3 - 2 * f);
+    }
     poseCharacter(mesh, Math.hypot(p.vx, p.vz), performance.now() / 1000, {
       airborne: p.y > 0.12,
       detained: engine.detainedT > 0,
@@ -205,7 +215,7 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       // 🏍️ on the bike the body plays the astride Ride pose, not the car sit
       bike: !!(engine.drive && engine.drive.t === BIKE_TYPE),
       getup: engine.getupT > 0 ? engine.getupT : 0,
-      death: engine.lost ? Math.min(1, engine.deathT / 0.85) : 0,
+      death: engine.lost ? Math.min(1, engine.deathT / 0.85) : downEz,
       // 🎬 clip-library extras — the real Knockback / Eating / Pick up one-shots
       hurt: engine.hurtT > 0.25,
       eat: Date.now() - engine.lastGain.at < 1150,
@@ -213,7 +223,15 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     });
     // 🚗 the visible driver — the body glues to the car's seat and plays the
     // Drive pose (open-top rides only: a sealed sedan would clip the roof)
-    if (engine.drive) {
+    if (engine.downT > 0) {
+      // 🚗 KNOCKED FLAT — the body lies where it fell
+      mesh.position.set(p.x, p.y * (1 - downEz) + 0.36 * downEz, p.z);
+      mesh.rotation.x = -downEz * Math.PI / 2.05;
+    } else if (engine.wasDown && engine.getupT > 0) {
+      // 🪫 the push-off — the root unfolds from flat to standing
+      mesh.position.set(p.x, p.y, p.z);
+      mesh.rotation.x = -engine.getupT * Math.PI / 2.05;
+    } else if (engine.drive) {
       const dv = engine.drive;
       const seat = DRIVE_SEAT[dv.t % DRIVE_SEAT.length] ?? null;
       if (seat && !engine.lost) {
@@ -519,6 +537,25 @@ export function Npcs({ engine }: { engine: GameEngine }) {
           v.mesh.position.set(n.x, 0.34 * ez - 2.0 * sinkD, n.z);
           v.mesh.rotation.x = -ez * Math.PI / 2.1;
           poseCharacter(v.mesh, 0, t, { phase: n.phase, detained: true });
+          if (v.bubble) v.bubble.visible = false;
+          if (v.tag) v.tag.visible = false;
+          continue;
+        }
+        // 🚗 KNOCKED FLAT — a car strike / mercy blow floors them: fall → lie →
+        // push back up. Same collapse pose as a corpse, but they always RISE.
+        if ((n.downT ?? 0) > 0 || (n.getupT ?? 0) > 0) {
+          const lying = (n.downT ?? 0) > 0;
+          const el = lying ? PED_DOWN_S - (n.downT ?? 0) : PED_DOWN_S;
+          const f = Math.min(1, el / 0.5);
+          const ez = f * f * (3 - 2 * f);
+          v.mesh.visible = true;
+          v.mesh.position.set(n.x, 0.36 * ez, n.z);
+          v.mesh.rotation.x = lying ? -ez * Math.PI / 2.1 : -(n.getupT ?? 0) * Math.PI / 2.1;
+          poseCharacter(v.mesh, 0, t, {
+            phase: n.phase,
+            death: lying ? ez : 0,
+            getup: lying ? 0 : (n.getupT ?? 0),
+          });
           if (v.bubble) v.bubble.visible = false;
           if (v.tag) v.tag.visible = false;
           continue;
@@ -1564,6 +1601,23 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
       }
       v.mesh.visible = true;
       if (c.alive) {
+        // 🚗 KNOCKED FLAT — floored by a car / mercy blow: fall → lie → push up
+        if ((c.downT ?? 0) > 0 || (c.getupT ?? 0) > 0) {
+          const lying = (c.downT ?? 0) > 0;
+          const el = lying ? PED_DOWN_S - (c.downT ?? 0) : PED_DOWN_S;
+          const f = Math.min(1, el / 0.5);
+          const ez = f * f * (3 - 2 * f);
+          v.mesh.position.set(c.x, 0.36 * ez, c.z);
+          v.mesh.rotation.x = lying ? -ez * Math.PI / 2.1 : -(c.getupT ?? 0) * Math.PI / 2.1;
+          v.mesh.rotation.z = 0;
+          poseCharacter(v.mesh, 0, t, {
+            phase: c.phase,
+            death: lying ? ez : 0,
+            getup: lying ? 0 : (c.getupT ?? 0),
+          });
+          if (v.tag) v.tag.visible = d2 < DETAIL_SQ && !namesHidden;
+          return;
+        }
         v.mesh.position.set(c.x, 0, c.z);
         let dd = c.face - v.mesh.rotation.y;
         dd = Math.atan2(Math.sin(dd), Math.cos(dd));
@@ -2018,13 +2072,34 @@ export function RemotesView({ engine }: { engine: GameEngine }) {
       body.rotation.y += dd * 0.22;
       body.rotation.x = 0;
       body.rotation.z = 0;
+      // 🥊 FLOORED BY A RIVAL — the state packet streams their floored/get-up
+      // clock, so the mirrored body plays the SAME fall + push-off choreography
+      // as the local body (fall ~0.5 s → lie while downT runs → rise unfolds)
+      const dnT = r.downT ?? 0;
+      const guT = r.getupT ?? 0;
+      let downEz = 0;
+      if (dnT > 0) {
+        const el = PED_DOWN_S * 0.82 - dnT;
+        const f = Math.min(1, Math.max(0, el) / 0.5);
+        downEz = f * f * (3 - 2 * f);
+      }
       const speed = Math.hypot(r.vx, r.vz);
       poseCharacter(body, speed, t, {
         phase: r.slot * 1.7,
         airborne: r.air,
         zombie: beast,
         swing: r.attackT > 0 ? 1 - r.attackT / 0.35 : 0,
+        getup: guT > 0 ? guT : 0,
+        death: downEz, // loose limbs while the root tips over (knockdown reuse)
       });
+      if (dnT > 0) {
+        // lying flat where the punch sent them
+        body.position.set(r.x, (gy + r.y) * (1 - downEz) + 0.36 * downEz, r.z);
+        body.rotation.x = -downEz * Math.PI / 2.05;
+      } else if (guT > 0) {
+        // the push-off — the root unfolds from flat back to standing
+        body.rotation.x = -guT * Math.PI / 2.05;
+      }
       if (r.attackT > 0) r.attackT = Math.max(0, r.attackT - 1 / 60);
       const close = d2 < DETAIL_SQ;
       const rig = body.userData.rig as { lids: THREE.Object3D[]; brows: THREE.Object3D[] } | undefined;

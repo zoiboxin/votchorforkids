@@ -64,7 +64,13 @@ export type MpEvent =
    *  instead of each shrinking on a private, drifting clock. */
   | { t: "zone"; level: number; nightNo: number }
   | { t: "crewDeath"; idx: number; clue: string; slain: boolean; loot?: { x: number; z: number; amt: number; label: string } }
-  | { t: "dmg"; target: number; amount: number }
+  | { t: "dmg"; target: number; amount: number;
+      /** 🥊 PvP — where the swing came from (the victim's knockback direction) */
+      x?: number; z?: number;
+      /** 🥊 PvP — true when the blow was a real rival's fist/blade (mercy floor + named toast) */
+      pvp?: boolean;
+      /** 🥊 PvP — the attacker's name, for the victim's toast */
+      from?: string }
   | { t: "claw"; x: number; z: number }
   | { t: "loot"; x: number; z: number; amt: number; label: string }
   | { t: "pickup"; kind: "item" | "loot" | "tool" | "power" | "vote"; id: number; x?: number; z?: number }

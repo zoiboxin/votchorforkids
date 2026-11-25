@@ -11,7 +11,7 @@
 import type { GameEngine } from "../engine";
 import type { Appearance } from "../constants";
 import { mulberry32 } from "../rng";
-import { AIKIND_HOUND, AIKIND_HUNTER, AIKIND_ZOMBIE, AIKIND_CREW, CARIDX_NONE, packAi, packState, packCar, type AiEntry } from "./protocol";
+import { AIKIND_HOUND, AIKIND_HUNTER, AIKIND_ZOMBIE, AIKIND_CREW, CARIDX_NONE, packAi, packState, packCar, packDown, unpackDown, type AiEntry } from "./protocol";
 import { net, sessionSeed, type LobbyPlayer, type MpEvent } from "./client";
 
 export interface AttachNetOpts {
@@ -122,6 +122,9 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       // 🚗 WHICH car we occupy — peers seat us on the open-top styles and
       // glue us to the exact vehicle instead of guessing
       ci: engine.drive ? engine.drive.ci : engine.ride ? engine.ride.ci : CARIDX_NONE,
+      // 🥊 our floored/get-up clock — a rival's punch that FLOORS us plays the
+      // fall + push-off on every peer's screen, not just our own
+      down: packDown(engine.downT, engine.getupT),
     }),
   );
 
@@ -222,6 +225,11 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       r.carCi = s.ci !== CARIDX_NONE && s.ci !== undefined ? s.ci : undefined;
       r.paused = s.paused && !s.dead; // a dead soul isn't "paused", they're gone
       if (s.attack) r.attackT = 0.35;
+      // 🥊 their floored/get-up clock — the renderer plays the fall + push-off
+      // choreography on their mirrored body (same clocks the local body uses)
+      const dn = unpackDown(s.down);
+      r.downT = dn.downT;
+      r.getupT = dn.getupT;
       // 🚗 their car stream — mirror pose + headlights so the vehicle MOVES on
       // our world (and its lamps BLAZE at night) exactly like it does on theirs.
       // Only FRESH packets keep the mirror alive — a driver who parked lets the
@@ -355,7 +363,7 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
   on("crewDeath", (ev) => engine.netCrewDeath(ev.idx, ev.clue, ev.slain, ev.loot));
 
   on("dmg", (ev) => {
-    if (ev.target === slot) engine.netTakeDmg(ev.amount);
+    if (ev.target === slot) engine.netTakeDmg(ev.amount, ev.x, ev.z, ev.pvp === true, ev.from);
   });
   on("claw", (ev) => engine.netClawHit(ev.x, ev.z));
 

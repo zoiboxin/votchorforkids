@@ -1,6 +1,6 @@
 import { AGE_STATS, COYOTE_S, DAY_SECONDS, DOUBLE_JUMP_VY, GRAVITY, MOUNTAIN_INNER, MOUNTAIN_OUTER, SPRINT_MULT, WALL_RADIUS, type AgeGroup } from "./constants";
 import { clamp } from "./rng";
-import { resolve, terrainHeight, type World } from "./worldgen";
+import { resolve, standTopAt, terrainHeight, type World } from "./worldgen";
 
 export interface Body {
   x: number; y: number; z: number; vx: number; vy: number; vz: number;
@@ -8,8 +8,9 @@ export interface Body {
   jumps: number;      // 0 grounded · 1 after ground/coyote jump · 2 after double jump
   jumpLatch: boolean; // one press = one jump (prevents hold-to-double-jump)
   airT: number;       // seconds since last grounded (coyote-time window)
+  onGround: boolean;  // 🧍 true while resting on the terrain OR on a platform top
 }
-export const newBody = (x: number, z: number): Body => ({ x, y: 0, z, vx: 0, vy: 0, vz: 0, stamina: 100, face: 0, sprinting: false, jumps: 0, jumpLatch: false, airT: 0 });
+export const newBody = (x: number, z: number): Body => ({ x, y: 0, z, vx: 0, vy: 0, vz: 0, stamina: 100, face: 0, sprinting: false, jumps: 0, jumpLatch: false, airT: 0, onGround: true });
 
 export interface MoveInput { f: number; r: number; sprint: boolean; jump: boolean }
 
@@ -63,12 +64,19 @@ export function stepBody(
   // ---- jump / double jump (edge-detected via latch) ----
   // ⛰️ "ground" is the terrain height in the mountain band — hills are jumpable,
   // and walking up a slope pops you onto it like a ramp
+  // 🧍 PLATFORMS: cars' roofs, boulders, crates, hay bales, scaffold bays — jump
+  // on and STAND. While resting on something the ground probe lifts 0.55u so low
+  // bricks step up like ramps; while falling the probe is tight so you land ON
+  // the platform instead of getting magnetised to it from the side.
   // 🐛 the coyote window used to swallow the DOUBLE JUMP: airT also runs fresh
   // right after a real jump, so a quick tap-tap re-entered this branch as a
   // second FULL-POWER "ground" jump (jumps stayed 1 — no flip, no jump2 sfx).
   // Coyote forgiveness now applies only to a body that hasn't jumped yet
   // (stepping off a ledge keeps jumps=0; a real jump sets jumps=1).
-  const ground = terrainHeight(b.x, b.z);
+  const terr = terrainHeight(b.x, b.z);
+  const stepGate = b.onGround && b.vy <= 0.01 ? 0.55 : 0.02; // walking step-up vs falling landing
+  const plat = standTopAt(world, b.x, b.z, b.y, stepGate);
+  const ground = Math.max(terr, plat);
   if (inp.jump && !b.jumpLatch) {
     const js = opts.jumpScale ?? 1;
     b.jumpLatch = true;
@@ -85,16 +93,22 @@ export function stepBody(
 
   b.vy -= GRAVITY * dt;
   b.y += b.vy * dt;
-  if (b.y <= ground) {
-    b.y = ground;      // landed (or the hill rose to meet us)
+  // 🧍 re-probe the platform with a landing gate — after this frame's fall the
+  // feet may now be low enough to rest on a roof/boulder edge
+  const landPlat = standTopAt(world, b.x, b.z, b.y + Math.max(0, -b.vy * dt) + 0.04, 0.04);
+  const landGround = Math.max(terrainHeight(b.x, b.z), landPlat);
+  if (b.y <= landGround) {
+    b.y = landGround;      // landed (or the hill / a platform rose to meet us)
     b.vy = 0;
     b.jumps = 0;
     b.airT = 0;
+    b.onGround = true;
   } else {
     b.airT += dt;
+    b.onGround = false;
   }
   b.x += b.vx * dt; b.z += b.vz * dt;
-  resolve(b, 0.45, world);
+  resolve(b, 0.45, world, -1, b.y); // 🧍 feet height skips climbable tops we stand on
   const rr = Math.hypot(b.x, b.z);
   if (rr > WALL_RADIUS) { b.x *= WALL_RADIUS / rr; b.z *= WALL_RADIUS / rr; }
   if (moving) b.face = Math.atan2(b.vx, b.vz);

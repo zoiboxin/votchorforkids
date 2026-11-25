@@ -1,8 +1,8 @@
 import {
-  AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, BUST_CARRY_BONUS, BUST_POINTS, BUST_TARGET, CARRY_RADIUS, CAR_ACCEL, CAR_BRAKE, CAR_COAST, CAR_COAST_FRICTION, CAR_ENTER_R, CAR_HIT_CD, CAR_HIT_DMG, CAR_HIT_MIN_CLOSING, CAR_HIT_TRANSFER, CAR_REV_SPEED, CAR_SLIDE_FRICTION, CAR_SPIN_FRICTION, CAR_STEER, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
+  AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, BUST_CARRY_BONUS, BUST_POINTS, BUST_TARGET, CARRY_RADIUS, CAR_ACCEL, CAR_BRAKE, CAR_COAST, CAR_COAST_FRICTION, CAR_ENTER_R, CAR_HIT_CD, CAR_HIT_MIN_CLOSING, CAR_HIT_TRANSFER, CAR_REV_SPEED, CAR_ROOF_TOP, CAR_SLIDE_FRICTION, CAR_SPIN_FRICTION, CAR_STEER, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
   CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, CONFISCATE_FINE, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
-  ESCAPE_LOST_S, FARM_RADIUS, FAINT_S, FLIP_S, GRAVEYARD, HAUL_CAMP_R, HEARSE_GUARD_COUNT_MAX, HEARSE_GUARD_COUNT_MIN, HEARSE_GUARD_DMG, HEARSE_GUARD_HP, HEARSE_GUARD_HOME_R, HEARSE_GUARD_LEASH, HEARSE_GUARD_SPEED, HEARSE_HOARD, HEARSE_TYPE, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
+  ESCAPE_LOST_S, FARM_RADIUS, FLIP_S, GRAVEYARD, HAUL_CAMP_R, HEARSE_GUARD_COUNT_MAX, HEARSE_GUARD_COUNT_MIN, HEARSE_GUARD_DMG, HEARSE_GUARD_HP, HEARSE_GUARD_HOME_R, HEARSE_GUARD_LEASH, HEARSE_GUARD_SPEED, HEARSE_HOARD, HEARSE_TYPE, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
   DEEP_JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER,
   ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_BUFFER_S, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
@@ -32,6 +32,7 @@ import { clamp, mulberry32, range } from "./rng";
 import type { OwnedGear } from "./shop";
 import { addDynamicCircle, freeSpot, lineClear, refreshCarCircle, resolve, ringTrafficPoint, RING_R, ROADS, scatterSpots, spotNear, terrainHeight, TOWN_SQUARE, type Car, type CircleCollider, type World } from "./worldgen";
 import { nightFactor, newBody, stepBody, stepNpc, type Body, type SteerMemory } from "./sim";
+import { botBrain } from "./botBrain";
 import { sfx, startDrone, stopDrone, setInsects, stopInsects } from "./audio";
 import { preloadModels } from "./models";
 import { preloadVehicles } from "./glbVehicles";
@@ -143,6 +144,19 @@ export interface Npc extends SteerMemory {
   atkCd?: number;
   /** ⏱️ punch swing animation timer (0.5 s decay — renderer maps it to the arm swing) */
   attackT?: number;
+  /* --- 🚗 knockdown state (cars floor pedestrians; punches floor the beaten) --- */
+  /** seconds left lying flat after a knockdown (fall → lie → push back up) */
+  downT?: number;
+  /** get-up clock (runs 1 → 0 once downT expires — the push-off animation) */
+  getupT?: number;
+  /** brief invulnerability while down / rising — no chain-bonk deaths */
+  invulnT?: number;
+  /** 🩹 how many times this bot has been knocked DOWN instead of killed (mercy rule) */
+  downs?: number;
+  /** 😤 true when they were floored BY YOU and (brave) want payback on rising */
+  angry?: boolean;
+  /** 🧠 personal xp — lands punches on you / survives your car → gets sharper */
+  xp?: number;
 }
 export interface Zombie extends SteerMemory {
   id: number; x: number; z: number; vx: number; vz: number; face: number; phase: number; touchCd: number; hp?: number; dead?: boolean;
@@ -254,6 +268,19 @@ export interface Crew extends SteerMemory {
   atkCd?: number;
   /** ⏱️ punch swing animation timer (0.5 s decay — renderer maps it to the arm swing) */
   attackT?: number;
+  /* --- 🚗 knockdown state (cars floor pedestrians; punches floor the beaten) --- */
+  /** seconds left lying flat after a knockdown (fall → lie → push back up) */
+  downT?: number;
+  /** get-up clock (runs 1 → 0 once downT expires — the push-off animation) */
+  getupT?: number;
+  /** brief invulnerability while down / rising — no chain-bonk deaths */
+  invulnT?: number;
+  /** 🩹 how many times this bot has been knocked DOWN instead of killed (mercy rule) */
+  downs?: number;
+  /** 😤 true when they were floored BY YOU and (brave) want payback on rising */
+  angry?: boolean;
+  /** 🧠 personal xp — lands punches on you / survives your car → gets sharper */
+  xp?: number;
 }
 
 /** A daylight "human player" activity a contestant bot can be doing. */
@@ -295,6 +322,11 @@ export interface RemotePlayer {
   paused?: boolean;
   /** points reported by their client (HUD scoreboard) */
   points: number; kills: number; money: number;
+  /** 🥊 their floored clock (streams in the state packet) — the renderer plays
+   *  the fall while > 0; a rival's punch knocked them flat on their screen */
+  downT?: number;
+  /** 🥊 their get-up push-off clock (1 → 0 — the rise unfolds renderer-side) */
+  getupT?: number;
   lastSeen: number;
 }
 export interface ToolSlot { kind: ToolKind; count: number }
@@ -383,9 +415,20 @@ export interface CoastCar {
  *  burst that plays when a beast of the night is CUT DOWN (the kill finisher) */
 export interface Fx { type: "confetti" | "soul"; x: number; y: number; z: number; hue: number }
 
+/** 🚗🚶 the fields any walkable soul carries into the shared knockdown system —
+ *  Crew, townsfolk & officers all satisfy this structurally (see knockPedDown). */
+export interface Ped {
+  x: number; z: number; vx: number; vz: number; face: number; hp?: number;
+  downT?: number; getupT?: number; invulnT?: number; downs?: number; angry?: boolean; brave?: boolean;
+  retaliateT?: number; fearT?: number; fearX?: number; fearZ?: number; panicT?: number; attackT?: number; xp?: number;
+}
+
 /** A car cruising the ring highway — the engine owns the position, the renderer just reads it. */
 export interface TrafficCar {
   a: number; r: number; dir: 1 | -1; sp: number;  // lane angle, radius, direction, angular speed
+  /** 🚦 current cruise speed (rad/s) — BRAKES to 0 when a wreck/jam blocks the lane,
+   *  recovers back to `sp` when the road clears (traffic never ploughs through metal) */
+  spCur?: number;
   c: number; t: number;                            // colour + body style (see placeCar)
   x: number; z: number; rot: number;               // derived each step — solid for collision
 }
@@ -519,6 +562,17 @@ const BOT_PUNCH_CIV = 6;            // townsfolk punch damage
 const BOT_PUNCH_CREW = 8;           // contestant punch damage
 const BOT_PUNCH_RANGE_SQ = 1.7 * 1.7;
 const BOT_PUNCH_CD = 1.15;
+
+/* 🚗🚶 vehicle-vs-pedestrian KNOCKDOWN choreography — a bumper strike knocks the
+ *  victim FLAT (fall → lie → push back up with a shield), it doesn't delete them.
+ *  Only a truly brutal hit (huge closing speed, already-downed victim) can kill. */
+export const PED_DOWN_S = 1.15;     // seconds flat on the ground
+export const PED_GETUP_S = 0.95;    // the push-off animation
+const CAR_PED_DMG = 9;              // base bumper-strike damage
+const CAR_PED_DMG_PER_SPD = 1.0;    // extra damage per u/s of closing speed
+const CAR_PED_KILL_SPD = 17;        // closing speed above which a strike CAN be lethal
+const PED_DOWN_FLOOR = 8;           // strike damage floors the victim here — DOWN, not dead
+const PED_HIT_MIN_SPD = 2.4;        // u/s — below this cars just nudge people aside
 
 /** 👀 free cam: seconds before the camera drifts to another living soul */
 const SPEC_SWAP_S = 12;
@@ -707,12 +761,20 @@ export class GameEngine {
   }
 
   faintT = 0;   // >0 while the world spins after a car bonk — input is ignored, stars orbit
+  downT = 0;    // 🚗 >0 while knocked FLAT by a vehicle (or a heavy punch) — the body lies where it fell
+  wasDown = false; // 🪫 the get-up after a knockdown plays from flat (renderer tips the root back up)
+  /** 🥊 PvP mercy counter — the first rival blow that would kill us floors us;
+   *  1+ means we've already used our knockdown and the next lethal lands true */
+  pvpDowns = 0;
+  calmT = 99;   // 🩹 seconds since the last hit — drives the out-of-combat heal surge
   /* --- 🎭 emotes — dance (toggle), wave (one-shot), get-up recovery --- */
   danceOn = false; // 🕺 party shimmy loops until you move / fight / hop in a car
   waveT = 0;       // 👋 hello-wave plays out over ~2.4 s
   getupT = 0;      // 🪫 runs 1 → 0 after a dizzy spell — the crouched push-off
   cheerT = 0;      // 🙌 victory hop loop — fires the moment the match is won
   carHitCd = 0; // old-game hitCd — no double-bonks from the same bumper
+  /** 🧠 bot-brain autosave cadence — the learning memory flushes every 30 s */
+  private brainFlushT = 30;
 
   /* --- 💥 game-feel: trauma screen shake --- */
   /** screen-shake trauma 0..1 — hits ADD, the value decays every frame, and the
@@ -1795,7 +1857,10 @@ export class GameEngine {
     this.inv = []; this.hurtT = 0; this.pickupT = 0; this.exhaustedAnnounced = false; this.pocketFullT = 0; this.powerFullT = 0;
     this.invOnceT = 0; this.toolOnceT = 0; this.botDriven.clear();
     this.flipT = 0; this.squashT = 0; this.faintT = 0; this.carHitCd = 0;
+    this.downT = 0; this.wasDown = false; this.calmT = 99; // 🚗 knockdown state rewinds too
+    this.pvpDowns = 0; // 🥊 the mercy knockdown re-arms on every fresh run
     this.danceOn = false; this.waveT = 0; this.getupT = 0; this.wasFaint = false; this.cheerT = 0; // 🎭 emotes rewind too
+    botBrain.session(); // 🧠 fresh observation window — the cross-session memory persists
     this.activePower = null; this.powerT = 0; this.powerPockets = []; this.morphKind = null; this.blinkCd = 0;
     for (const pw of this.powers) { pw.active = true; pw.respawn = 0; }
     this.carriedVotes = []; this.delivered = 0; this.points = 0; this.rescues = 0; this.caughtCount = 0;
@@ -2509,6 +2574,11 @@ export class GameEngine {
     const fx = Math.sin(d.rot), fz = Math.cos(d.rot);
     pair[0].x = d.x - fx * ax; pair[0].z = d.z - fz * ax;
     pair[1].x = d.x + fx * ax; pair[1].z = d.z + fz * ax;
+    // 🧍 the roof is a MOVABLE platform — wherever the car rolls, its standable
+    // top follows (jump onto a slow car and hitch a ride; it drives out from
+    // under you and you drop off the back — physics does the comedy)
+    const roofY = terrainHeight(d.x, d.z) + CAR_ROOF_TOP;
+    pair[0].top = roofY; pair[1].top = roofY;
     if (pair[0].idx !== undefined) refreshCarCircle(this.world, pair[0].idx);
     if (pair[1].idx !== undefined) refreshCarCircle(this.world, pair[1].idx);
   }
@@ -2599,6 +2669,11 @@ export class GameEngine {
       if (closing > 3 && this.carCrashCd <= 0 && dist2(a.x, a.z, this.player.x, this.player.z) < 42 * 42) {
         this.carCrashCd = 0.35; sfx.bonk();
       }
+      // 💥 a HARD crash throws sparks + a bigger beat — the accident should READ
+      if (closing > 6) {
+        this.fxQueue.push({ type: "confetti", x: cx, y: 0.9, z: cz, hue: 0.08 }); // orange spark burst
+        if (closing > 9) this.addShake(Math.min(0.5, 0.2 + closing * 0.02));
+      }
       // 🧑‍✈️ the struck car has a LIVE driver (you or a bot joyrider) — hand the
       // impulse to THEIR drive speed (projected on their heading: rear-ended →
       // lurches forward, head-on → knocked backward) + a squash beat. Their own
@@ -2607,6 +2682,11 @@ export class GameEngine {
         const dd = this.drive;
         dd.v += jImp * (nx * Math.sin(dd.rot) + nz * Math.cos(dd.rot));
         dd.hitT = 0.35;
+        // 🚗💥 a big T-bone SPINS the struck car — real accidents yaw the shell
+        if (closing > 6) {
+          const sideJolt = (cx - dd.x) * nz - (cz - dd.z) * nx;
+          dd.rot += Math.max(-0.35, Math.min(0.35, sideJolt * closing * 0.012));
+        }
         if (closing > 3) this.addShake(Math.min(0.6, 0.15 + jImp * 0.04));
         return { j: jImp, nx, nz };
       }
@@ -2615,13 +2695,19 @@ export class GameEngine {
         const bd = botDriver.drive;
         bd.v += jImp * (nx * Math.sin(bd.rot) + nz * Math.cos(bd.rot));
         bd.hitT = 0.35;
+        if (closing > 6) {
+          const sideJolt = (cx - bd.x) * nz - (cz - bd.z) * nx;
+          bd.rot += Math.max(-0.35, Math.min(0.35, sideJolt * closing * 0.012));
+          botDriver.driveStuck = 0; // shaken, not stalled — they keep the wheel
+        }
         return { j: jImp, nx, nz };
       }
       // driverless metal — shoved ALONG the contact normal with a little twist
-      // from the off-centre hit: r × impulse (contact point vs their centre)
+      // from the off-centre hit: r × impulse (contact point vs their centre).
+      // 🚗💥 stronger twist + yaw-jolt for the striker = accident-like pirouettes
       const rx = cx - o.x, rz = cz - o.z;
-      const twist = Math.max(-2, Math.min(2, (rx * nz - rz * nx) * closing * 0.55));
-      if (oc) { oc.vx += nx * jImp; oc.vz += nz * jImp; oc.w = Math.max(-2, Math.min(2, oc.w + twist)); }
+      const twist = Math.max(-2.6, Math.min(2.6, (rx * nz - rz * nx) * closing * 0.85));
+      if (oc) { oc.vx += nx * jImp; oc.vz += nz * jImp; oc.w = Math.max(-2.6, Math.min(2.6, oc.w + twist)); }
       else this.carCoast.set(j, { ci: j, x: o.x, z: o.z, rot: o.rot, t: o.t, vx: nx * jImp, vz: nz * jImp, w: twist });
       return { j: jImp, nx, nz };
     }
@@ -4287,6 +4373,7 @@ export class GameEngine {
   private winGame(reason: "dawn" | "solo" | "beast") {
     if (this.won || this.lost) return;
     this.won = true;
+    botBrain.flush(); // 🧠 a win makes the town study you HARDER next match
     this.cheerT = 8; // 🙌 victory — arms up, little hops
     this.wonAt = this.elapsed;
     if (reason === "dawn") this.nightsSurvived = NIGHTS_TOTAL;
@@ -4302,6 +4389,7 @@ export class GameEngine {
   private die() {
     if (this.won || this.lost) return;
     this.lost = true;
+    botBrain.flush(); // 🧠 even a loss teaches the town something about you
     // 🚗 die at the wheel → the car PARKS right here and its pose stream stops:
     // every peer's mirror releases it within a beat, so another LICENSED soul
     // can walk up and claim it (a dead owner never keeps a car hostage — that
@@ -4347,8 +4435,35 @@ export class GameEngine {
       c.touchCd = Math.max(0, c.touchCd - dt);
       c.boostT = Math.max(0, (c.boostT ?? 0) - dt); // ⚡ gem rush decays in real time
       c.fearT = Math.max(0, (c.fearT ?? 0) - dt);   // 🫨 crime-scene terror decays
+      c.invulnT = Math.max(0, (c.invulnT ?? 0) - dt);
       if (c.seekBlock) { c.seekBlock.t -= dt; if (c.seekBlock.t <= 0) c.seekBlock = null; } // 🧱 unreachable-goodie blacklist decays
       c.avoidT = Math.max(0, (c.avoidT ?? 0) - dt);              // 🧱 beast prey-avoid decays
+      // 🚗 KNOCKDOWN — floored by a car or a mercy blow: lie there, then push up.
+      // While down the world keeps moving around them (they're not dead!)
+      if ((c.downT ?? 0) > 0) {
+        c.downT = (c.downT ?? 0) - dt;
+        c.vx *= Math.exp(-dt * 6); c.vz *= Math.exp(-dt * 6);
+        if ((c.downT ?? 0) <= 0) {
+          c.getupT = 1; // the rise unfolds (renderer plays the push-off)
+          // 🧠 RISING DECISION — run or fight back: brave souls floored by YOUR
+          // car/blade chase the attacker with a hot grudge, the rest flee & heal
+          if (c.angry && !this.drive && !this.ride) {
+            c.angry = false;
+            c.retaliateT = RETALIATE_S + 5; // payback grudge — chase the driver!
+            c.fearT = 0;
+            if (dist2(c.x, c.z, p.x, p.z) < 26 * 26) this.toast(`😤 ${c.name} is back up — and they want PAYBACK!`, "bad");
+          } else {
+            c.fearT = 4.5; c.fearX = p.x; c.fearZ = p.z; c.seek = null;
+          }
+        }
+        continue;
+      }
+      if ((c.getupT ?? 0) > 0) { c.getupT = Math.max(0, (c.getupT ?? 0) - dt / PED_GETUP_S); continue; }
+      // 🩹 out-of-combat healing — a bot that fled a fight (and isn't being
+      // chased) slowly patches up, so fleeing is a REAL strategy, not a delay
+      if ((c.fearT ?? 0) > 0 && (c.retaliateT ?? 0) <= 0 && c.hp < CREW_HP) {
+        c.hp = Math.min(CREW_HP, c.hp + 5 * dt);
+      }
       // 🤖 THE HOST'S BOT TOWN IS THE TRUTH — once the crew mirror is live the
       // guest's private forage/hide/joyride brains park for good (a private
       // brain would fight the mirrored poses and every screen would grow its
@@ -4522,7 +4637,7 @@ export class GameEngine {
             c.touchCd = HUNTER_TOUCH_CD;
             c.attackAnimT = 0.45;
             sfx.scream();
-            this.netEmit?.({ t: "dmg", target: remoteVictim.slot, amount: HUNTER_DMG });
+            this.netEmit?.({ t: "dmg", target: remoteVictim.slot, amount: HUNTER_DMG, x: c.x, z: c.z });
           } else if (victim >= 0 && td < 1.7 * 1.7) {
             c.touchCd = HUNTER_TOUCH_CD;
             c.attackAnimT = 0.45;
@@ -5109,6 +5224,26 @@ export class GameEngine {
     if (scrape > 0.004 && !botCarHit) { d.v *= Math.exp(-dt * 12); d.hitT = 0.35; }
     const rr = Math.hypot(d.x, d.z);
     if (rr > WALL_RADIUS) { d.x *= WALL_RADIUS / rr; d.z *= WALL_RADIUS / rr; }
+    // 🚦 ring-road traffic & police vans are solid for BOT drivers too — a joyrider
+    // can never ghost through oncoming metal (the player's car already gets this)
+    const bti = d.t % VEHICLE_AXLE_R.length;
+    for (const t of this.traffic) {
+      const tr = VEHICLE_AXLE_R[t.t % VEHICLE_AXLE_R.length] + VEHICLE_AXLE_R[bti] + 0.12;
+      const tdx = d.x - t.x, tdz = d.z - t.z, td2 = tdx * tdx + tdz * tdz;
+      if (td2 < tr * tr && td2 > 0.0001) {
+        const td = Math.sqrt(td2);
+        d.x = t.x + (tdx / td) * tr; d.z = t.z + (tdz / td) * tr;
+        d.v *= Math.exp(-dt * 17); d.hitT = 0.35;
+      }
+    }
+    for (const van of this.vans) {
+      const vdx = d.x - van.x, vdz = d.z - van.z, vd2 = vdx * vdx + vdz * vdz;
+      if (vd2 < 3.2 * 3.2 && vd2 > 0.0001) {
+        const vd = Math.sqrt(vd2);
+        d.x = van.x + (vdx / vd) * 3.2; d.z = van.z + (vdz / vd) * 3.2;
+        d.v *= Math.exp(-dt * 17); d.hitT = 0.35;
+      }
+    }
     // 🧱 walled in while crawling? 3s of going-nowhere parks the joyride
     c.driveStuck = sp < 1.2 && !done ? (c.driveStuck ?? 0) + dt : 0;
     if ((c.driveStuck ?? 0) > 3) { this.endBotDrive(c); return; }
@@ -5240,6 +5375,208 @@ export class GameEngine {
   /* 🥊 shared retaliation brain — a brave bot marches at the player and
    * swings; it breaks off (and flees) when badly hurt, when the player
    * escapes in a car or gets far away, or when a night horror closes in. */
+  /* ---------------- 🚗🚶 vehicle-vs-pedestrian knockdown system ---------------- */
+
+  /** 🚗 a strike floors this pedestrian: fling, lie flat, then push back up with a
+   *  shield. MERCY RULE: the FIRST "lethal" blow never kills — it knocks them
+   *  DOWN at a sliver of hp instead (run or fight back or get up — the fight has
+   *  rounds). Only a SECOND finisher, or a truly brutal closing speed, kills.
+   *  Returns true = they're down & alive · false = this strike was lethal. */
+  private knockPedDown(b: Ped, flx: number, flz: number, dmg: number, closing: number, byYou: boolean): boolean {
+    b.vx = flx; b.vz = flz;
+    b.downT = PED_DOWN_S;
+    b.getupT = 0;
+    b.invulnT = PED_DOWN_S + 1.7; // shield while down + rising — no chain-bonk
+    b.retaliateT = 0;
+    b.attackT = 0;
+    const hp = b.hp ?? 30;
+    const lethal = closing > CAR_PED_KILL_SPD && (b.downs ?? 0) >= 1; // mercy: first strike NEVER kills
+    if (!lethal) {
+      b.hp = Math.max(PED_DOWN_FLOOR, hp - dmg);
+      b.downs = (b.downs ?? 0) + 1;
+      b.angry = byYou && (b.brave ?? false); // brave souls floored by YOUR car want payback
+      b.xp = (b.xp ?? 0) + 1; // 🧠 surviving your car is a lesson learned
+    } else {
+      b.hp = 0;
+    }
+    return !lethal;
+  }
+
+  /** 👊 the player gets knocked flat — same choreography the bots get, with a
+   *  shorter lie + a shield while rising so fights always have a next round. */
+  private knockPlayerDown(flx: number, flz: number, dmg: number): void {
+    const p = this.player;
+    const preHp = this.hp;
+    this.hp = Math.max(1, this.hp - dmg); // never lethal — cars & fists FLOOR you
+    p.vx = flx; p.vz = flz;
+    p.vy = 3.4; // a small tumble hop — the fall reads on screen
+    this.downT = PED_DOWN_S * 0.82;
+    this.wasDown = true;
+    this.faintT = 0.85; // a brief dizzy stagger after the rise
+    this.getupT = 0;
+    this.invulnT = Math.max(this.invulnT, PED_DOWN_S + 2.3); // getting up is protected
+    this.hurtT = HURT_FLASH_S;
+    this.stamina = Math.max(0, this.stamina - 10);
+    this.addShake(0.62);
+    sfx.bonk();
+    botBrain.record("down");
+    botBrain.record("taken");
+    if (preHp > 30) {
+      const FLOORS = [
+        "🚗 FLOORED! Lie there a second — breathe, then get up and run or swing back!",
+        "💫 That one put you DOWN. You're not out — the shield while you rise lets you recover.",
+        "🥊 Knocked flat! Fights have rounds now — get up and pick: run or fight back.",
+      ];
+      this.toast(FLOORS[Math.floor(this.rnd() * FLOORS.length)], "bad");
+    }
+  }
+
+  /** 🚗🚶 EVERY moving vehicle is dangerous metal for pedestrians. Overlap at
+   *  speed → the strike KNOCKS them FLAT (fall → lie → get up), flings them
+   *  clear, and hurts — but the mercy rule keeps accidents survivable. Covers:
+ *  your car, bot joyriders, driverless coasters, ring traffic. Vans stay
+ *  gentle (police don't ram kids). Zombies just take damage + fall (they die
+ *  like normal when hp runs out — the car is a weapon against the horde). */
+  private carVsPeds(dt: number) {
+    const p = this.player;
+    // collect every moving vehicle: pose + world velocity
+    type Mv = { x: number; z: number; rot: number; t: number; vx: number; vz: number; you: boolean };
+    const moving: Mv[] = [];
+    if (this.drive && Math.abs(this.drive.v) > 0.5) {
+      const d = this.drive;
+      moving.push({ x: d.x, z: d.z, rot: d.rot, t: d.t, vx: Math.sin(d.rot) * d.v, vz: Math.cos(d.rot) * d.v, you: true });
+    }
+    for (const c of this.crew) {
+      if (!c.alive || !c.drive || Math.abs(c.drive.v) < 0.5) continue;
+      const d = c.drive;
+      moving.push({ x: d.x, z: d.z, rot: d.rot, t: d.t, vx: Math.sin(d.rot) * d.v, vz: Math.cos(d.rot) * d.v, you: false });
+    }
+    for (const ph of this.carCoast.values()) {
+      const sp = Math.hypot(ph.vx, ph.vz);
+      if (sp < PED_HIT_MIN_SPD) continue;
+      moving.push({ x: ph.x, z: ph.z, rot: ph.rot, t: ph.t, vx: ph.vx, vz: ph.vz, you: false });
+    }
+    for (const t of this.traffic) {
+      const ang = t.spCur ?? t.sp;
+      if (ang * t.r < PED_HIT_MIN_SPD) continue;
+      const fx = Math.sin(t.rot), fz = Math.cos(t.rot);
+      moving.push({ x: t.x, z: t.z, rot: t.rot, t: t.t, vx: fx * ang * t.r, vz: fz * ang * t.r, you: false });
+    }
+    if (!moving.length) return;
+    for (const mv of moving) {
+      const ax = VEHICLE_AXLE[mv.t % VEHICLE_AXLE.length];
+      const axR = VEHICLE_AXLE_R[mv.t % VEHICLE_AXLE_R.length];
+      const spd = Math.hypot(mv.vx, mv.vz);
+      if (spd < PED_HIT_MIN_SPD) continue;
+      const fx = Math.sin(mv.rot), fz = Math.cos(mv.rot);
+      const strike = (b: Ped, pr: number): boolean => {
+        if ((b.downT ?? 0) > 0 || (b.getupT ?? 0) > 0 || (b.invulnT ?? 0) > 0) return true;
+        for (const off of [ax, -ax]) {
+          const cx = mv.x + fx * off, cz = mv.z + fz * off;
+          const dx = b.x - cx, dz = b.z - cz, rr = axR + pr;
+          const d2 = dx * dx + dz * dz;
+          if (d2 >= rr * rr) continue;
+          const d = Math.sqrt(d2) || 0.01;
+          // shove them out of the footprint so nobody clips inside the shell
+          b.x = cx + (dx / d) * rr;
+          b.z = cz + (dz / d) * rr;
+          // closing speed = how hard the metal caught them
+          const closing = -(mv.vx * (dx / d) + mv.vz * (dz / d)) - (b.vx * (dx / d) + b.vz * (dz / d)) * 0.2;
+          const eff = Math.max(2, closing);
+          const fling = Math.min(11, eff * 0.62);
+          const dmg = CAR_PED_DMG + eff * CAR_PED_DMG_PER_SPD;
+          const alive = this.knockPedDown(b, fx * fling + (dx / d) * 2.4, fz * fling + (dz / d) * 2.4, dmg, eff, mv.you);
+          if (mv.you) {
+            botBrain.record("hit"); // the player's bumper connected
+            if (dist2(b.x, b.z, p.x, p.z) < 30 * 30) {
+              const YELLS = [
+                `🚗 THUMP! Your car sent them flying — they're down but NOT out.`,
+                `🚙 You clipped a pedestrian — they're getting up... angry or scared, pick your moment!`,
+              ];
+              if (this.rnd() < 0.4) this.toast(YELLS[Math.floor(this.rnd() * YELLS.length)], "bad");
+            }
+          }
+          sfx.bonk();
+          this.addShake(Math.min(0.45, 0.18 + eff * 0.02));
+          this.fxQueue.push({ type: "confetti", x: b.x, y: 1.0, z: b.z, hue: 0.08 });
+          return alive;
+        }
+        return true;
+      };
+      // the player on foot (never while driving / riding / detained)
+      if (!this.drive && !this.ride && this.detainedT <= 0 && this.downT <= 0 && this.invulnT <= 0) {
+        const dpx = p.x - mv.x, dpz = p.z - mv.z;
+        if (dpx * dpx + dpz * dpz < 9 * 9) {
+          for (const off of [ax, -ax]) {
+            const cx = mv.x + fx * off, cz = mv.z + fz * off;
+            const dx = p.x - cx, dz = p.z - cz, rr = axR + 0.55;
+            const d2 = dx * dx + dz * dz;
+            if (d2 >= rr * rr) continue;
+            const d = Math.sqrt(d2) || 0.01;
+            p.x = cx + (dx / d) * rr; p.z = cz + (dz / d) * rr;
+            const closing = -(mv.vx * (dx / d) + mv.vz * (dz / d));
+            const eff = Math.max(3, closing);
+            this.knockPlayerDown(fx * Math.min(9, eff * 0.6) + (dx / d) * 2.6, fz * Math.min(9, eff * 0.6) + (dz / d) * 2.6, CAR_PED_DMG + eff * CAR_PED_DMG_PER_SPD);
+            break;
+          }
+        }
+      }
+      // contestants (never the one driving — the cab protects its driver)
+      for (let ci = 0; ci < this.crew.length; ci++) {
+        const c = this.crew[ci];
+        if (!c.alive || c.drive || (c.downT ?? 0) > 0) continue;
+        if (dist2(c.x, c.z, mv.x, mv.z) < 10 * 10) {
+          const alive = strike(c, 0.5);
+          if (!alive) { this.killCrew(ci, false, -1, false, mv.you); this.reportCrime("murder", c.x, c.z); }
+        }
+      }
+      // townsfolk
+      for (const c of this.civs) {
+        if (c.dead || (c.downT ?? 0) > 0) continue;
+        if (dist2(c.x, c.z, mv.x, mv.z) < 10 * 10) {
+          const alive = strike(c, 0.5);
+          if (!alive) this.killCiv(c, "car");
+        }
+      }
+      // the law — even officers scatter when a ton of steel arrives
+      for (const cop of this.cops) {
+        if (cop.dead || (cop.downT ?? 0) > 0) continue;
+        if (dist2(cop.x, cop.z, mv.x, mv.z) < 10 * 10) {
+          const alive = strike(cop, 0.5);
+          if (!alive) this.killCop(cop, "car");
+        }
+      }
+      // 🧟 the horde is NOT exempt — a fast car is a zombie-sweeper (no mercy floor:
+      // they die via the normal death choreography when hp runs out)
+      for (const zb of this.zombies) {
+        if (zb.dead) continue;
+        if (dist2(zb.x, zb.z, mv.x, mv.z) > 10 * 10) continue;
+        for (const off of [ax, -ax]) {
+          const cx = mv.x + fx * off, cz = mv.z + fz * off;
+          const dx = zb.x - cx, dz = zb.z - cz, rr = axR + 0.5;
+          const d2 = dx * dx + dz * dz;
+          if (d2 >= rr * rr) continue;
+          const d = Math.sqrt(d2) || 0.01;
+          zb.x = cx + (dx / d) * rr; zb.z = cz + (dz / d) * rr;
+          const closing = -(mv.vx * (dx / d) + mv.vz * (dz / d));
+          const eff = Math.max(3, closing);
+          zb.vx = fx * Math.min(10, eff * 0.6) + (dx / d) * 2.2;
+          zb.vz = fz * Math.min(10, eff * 0.6) + (dz / d) * 2.2;
+          zb.hp = (zb.hp ?? ZOMBIE_HP) - (CAR_PED_DMG + eff);
+          zb.attackT = 0;
+          sfx.bonk();
+          this.fxQueue.push({ type: "confetti", x: zb.x, y: 1.0, z: zb.z, hue: 0.35 });
+          if (zb.hp <= 0) {
+            zb.dead = true; zb.deadT = 0;
+            if (zb.hoard) { this.dropLoot(zb.x, zb.z, zb.hoard, "a zombie's swallowed hoard"); zb.hoard = 0; }
+            this.points += POINTS_KILL_ZOMBIE;
+          }
+          break;
+        }
+      }
+    }
+  }
+
   private stepBotRetaliate(c: Npc | Crew, dt: number, punchDmg: number, spd: number): void {
     const p = this.player;
     c.retaliateT = Math.max(0, (c.retaliateT ?? 0) - dt);
@@ -5247,9 +5584,15 @@ export class GameEngine {
     c.attackT = Math.max(0, (c.attackT ?? 0) - dt);
     // ⏱️ grudge expired → back to normal life
     if (c.retaliateT <= 0) return;
+    // 🚗 knocked flat / still rising — no street fight while face-down
+    if ((c.downT ?? 0) > 0 || (c.getupT ?? 0) > 0) return;
     const d2 = dist2(c.x, c.z, p.x, p.z);
+    // 🧠 how dangerous does this bot think you are? skilled players get hunted
+    // harder, chased further, and dodged more — the bots LEARN from real players
+    const skill = botBrain.skill();
+    const chaseR = botBrain.chaseRange();
     // 🚗 the player roared off in a car / is being carried — no street fight with traffic
-    if (this.drive || this.ride || d2 > 26 * 26) {
+    if (this.drive || this.ride || d2 > chaseR * chaseR) {
       c.retaliateT = 0;
       c.fearX = p.x; c.fearZ = p.z;
       if ("fearT" in c) { c.fearT = 3; } else if ("panicT" in c) { c.panicT = 2.5; } // crew flees via fearT, townsfolk via panicT
@@ -5267,33 +5610,52 @@ export class GameEngine {
         return;
       }
     }
-    // 🩸 too hurt to keep swinging — cut losses and bolt
+    // 🩸 too hurt to keep swinging — cut losses and bolt (sharp bots last longer)
     const hp = (c.hp ?? 30);
-    if (hp < 12) {
+    if (hp < botBrain.fleeHp()) {
       c.retaliateT = 0;
       c.fearX = p.x; c.fearZ = p.z;
       if ("fearT" in c) { c.fearT = 3; } else if ("panicT" in c) { c.panicT = 3; }
       return;
     }
-    // 🥊 march at the attacker and swing
-    stepNpc(c, p.x, p.z, spd, dt, this.world);
+    // 🌀 skilled bots DODGE: while your swing is still winding up they sidestep
+    // (reusing the anti-stuck sidestep memory — a quick perpendicular slip)
+    if (this.attackCd > 0.2 && d2 < 3.4 * 3.4 && (c.sideT ?? 0) <= 0 && this.rnd() < botBrain.dodgeP() * dt * 60) {
+      const px = -(p.z - c.z), pz = p.x - c.x;
+      const pl = Math.hypot(px, pz) || 1;
+      const side = this.rnd() < 0.5 ? 1 : -1;
+      c.sideT = 0.38; c.sideDx = (px / pl) * side; c.sideDz = (pz / pl) * side;
+    }
+    // 🥊 march at the attacker and swing — pursuit is PREDICTIVE (aim-lead) and
+    // sharp bots are faster on their feet (xp + global skill both feed in)
+    const lead = 0.24;
+    const pursuit = spd * (1 + Math.min(0.24, (c.xp ?? 0) * 0.05)) * (0.92 + 0.2 * skill);
+    stepNpc(c, p.x + p.vx * lead, p.z + p.vz * lead, pursuit, dt, this.world);
     if (d2 < BOT_PUNCH_RANGE_SQ && (c.atkCd ?? 0) <= 0 && this.detainedT <= 0) {
-      c.atkCd = BOT_PUNCH_CD;
+      c.atkCd = BOT_PUNCH_CD * botBrain.punchCdMult();
       c.attackT = 0.5;
       if (this.invulnT <= 0) {
-        this.hp = Math.max(0, this.hp - punchDmg);
+        const preHp = this.hp;
+        this.hp = Math.max(1, this.hp - punchDmg); // 🩹 bots can't punch you OUT — floored at a sliver
         this.hurtT = HURT_FLASH_S;
         this.addShake(0.28); // 💥 SMALL-MEDIUM — a bot's punch landed
         const dx = p.x - c.x, dz = p.z - c.z, dl = Math.hypot(dx, dz) || 1;
         p.vx = (dx / dl) * 6.5; p.vz = (dz / dl) * 6.5; // shove back — you feel it
         sfx.stab();
+        botBrain.record("taken");
+        c.xp = (c.xp ?? 0) + 1; // 🧠 this bot just landed one on you — it learns
+        // 🥊 a punch that would floor you KNOCKS YOU DOWN instead of finishing —
+        // get up with a shield and pick: run or fight back
+        if (preHp > 1 && this.hp < 26 && this.downT <= 0 && this.detainedT <= 0) {
+          this.knockPlayerDown((dx / dl) * 5.5, (dz / dl) * 5.5, 0);
+        }
       }
     }
   }
 
   /** 🧟 a townsfolk is caught by the dark — they fall, their purse drops,
    *  and the town quietly refills them at dawn (the city stays alive). */
-  private killCiv(c: Npc, by: "zombie" | "beast" | "player" | "wall") {
+  private killCiv(c: Npc, by: "zombie" | "beast" | "player" | "wall" | "car") {
     if (c.dead) return;
     c.dead = true;
     c.deadT = 0; // ⏱️ fall → lie → sink → gone
@@ -5311,14 +5673,16 @@ export class GameEngine {
         by === "zombie" ? `🧟 The zombies got ${c.name}! Their 💰 purse dropped — grab it!`
         : by === "beast" ? `🩸 A beast tore ${c.name} apart! Their 💰 dropped — run for it!`
         : by === "wall" ? `☠️ ${c.name} withered beyond the WALL! Their 💰 purse dropped.`
+        : by === "car" ? `🚗 ${c.name} was struck down in the road! Their 💰 purse dropped.`
         : `🩸 You killed ${c.name}! Their 💰 purse dropped — inspect the body (E) to salvage their gear!`, "bad");
     }
   }
 
   /** 👮 an officer falls — the same dirt choreography as the townsfolk; the
    *  station refills at dawn while the town still believes in law. The horde,
-   *  the beast-you and any other night horror can bring the law down now. */
-  private killCop(cop: Npc, by: "zombie" | "beast" | "hound") {
+   *  the beast-you, any other night horror or a speeding car can bring the
+   *  law down now. */
+  private killCop(cop: Npc, by: "zombie" | "beast" | "hound" | "car") {
     if (cop.dead) return;
     cop.dead = true;
     cop.deadT = 0; // ⏱️ fall → lie → sink → gone (the dawn shift refills)
@@ -5335,6 +5699,7 @@ export class GameEngine {
     if (dist2(this.player.x, this.player.z, cop.x, cop.z) < 34 * 34) {
       this.toast(by === "beast"
         ? "🩸 YOU brought down an OFFICER — the law is prey tonight!"
+        : by === "car" ? "🚗 A car strike brought down an OFFICER — traffic bows to nobody!"
         : "🚨 The night brought down an OFFICER — no badge can save them now!", "bad");
     }
   }
@@ -5487,6 +5852,7 @@ export class GameEngine {
     this.breakEmote();
     const p = this.player;
     this.attackCd = ATTACK_CD;
+    botBrain.record("attack"); // 🧠 the learning brain counts every swing (whiffs too)
     // 🩸 possessed player = the beast: claws tear the crew, the townsfolk & the law
     if (this.youPossessed && this.phase === "night") {
       // 🌐 the claw crosses the wire — anyone within reach on THEIR screen bleeds
@@ -5550,6 +5916,26 @@ export class GameEngine {
     const dmg = tdef?.dmg ?? HANDS_DMG;
     const reach = tdef?.reach ?? 1; // 📏 spear thrusts far, dagger is short
     if (tdef?.cd) this.attackCd = tdef.cd; // ⏱️ per-weapon swing speed (dagger double-fast)
+    // 0) 🌐 other REAL souls — fist & blade duels cross the wire (PvP!). Every
+    // client is authoritative over its own survivor, so the blow travels as a
+    // dmg event: the victim's client bleeds, floors & knocks back — and the
+    // state packet's down byte plays the fall on EVERY screen.
+    let rv: RemotePlayer | null = null, rd = 2.3 * reach * (2.3 * reach);
+    for (const r of this.remotes) {
+      if (!r.alive || r.drive || r.ride) continue; // sealed inside a car — the metal takes the hit
+      const d = dist2(p.x, p.z, r.x, r.z);
+      if (d < rd) { rd = d; rv = r; }
+    }
+    if (rv) {
+      rv.attackT = 0.35; // the flinch mirrors on our screen the instant the blow lands
+      this.netEmit?.({ t: "dmg", target: rv.slot, amount: dmg, x: p.x, z: p.z, pvp: true, from: this.playerName });
+      sfx.stab();
+      this.fxQueue.push({ type: "confetti", x: rv.x, y: 1.2, z: rv.z, hue: 0.98 });
+      this.addShake(0.22); // 💥 LIGHT — flesh met flesh
+      botBrain.record("hit"); // 🧠 the bots study your accuracy & aggression
+      this.toast(`🥊 You hit ${rv.name}!`, "good");
+      return;
+    }
     // 1) the possessed pack — slay them ALL to end the night early!
     let hi = -1, hd = ATTACK_RANGE * reach * (ATTACK_RANGE * reach);
     for (let i = 0; i < this.crew.length; i++) {
@@ -5668,8 +6054,10 @@ export class GameEngine {
       civHit.hp = (civHit.hp ?? 30) - dmg;
       sfx.stab();
       this.fxQueue.push({ type: "confetti", x: civHit.x, y: 1.2, z: civHit.z, hue: 0.98 });
+      botBrain.record("hit"); // 🧠 landed one — the bots sharpen against you
       // 🥊 roll the bot's nerve ONCE — the brave ones square up, the rest bolt
-      if (civHit.brave === undefined) civHit.brave = this.rnd() < RETALIATE_CHANCE_CIV;
+      // (bots LEARN: brave rolls climb with how dangerous you actually are)
+      if (civHit.brave === undefined) civHit.brave = this.rnd() < RETALIATE_CHANCE_CIV + botBrain.braveBonus();
       if (civHit.brave) {
         if ((civHit.retaliateT ?? 0) <= 0) this.toast(`🥊 ${civHit.name} had enough — FIGHTS BACK!`, "bad");
         civHit.retaliateT = RETALIATE_S; // every extra hit refreshes the grudge
@@ -5677,9 +6065,19 @@ export class GameEngine {
       } else {
         civHit.panicT = 3; civHit.fearX = p.x; civHit.fearZ = p.z; // flee the attacker
       }
-      if (civHit.hp <= 0) {
+      if (civHit.hp <= 0 && (civHit.downs ?? 0) >= 1) {
+        // already floored once — this finisher is fair
         this.killCiv(civHit, "player");
         this.reportCrime("murder", civHit.x, civHit.z);
+      } else if (civHit.hp <= 0) {
+        // 🥊 MERCY KNOCKDOWN — the first "lethal" blow FLOORS them instead:
+        // they lie there, get up, then run for it or (brave) square back up
+        civHit.downs = (civHit.downs ?? 0) + 1;
+        civHit.hp = 14;
+        civHit.fearX = p.x; civHit.fearZ = p.z;
+        this.knockPedDown(civHit, (civHit.x - p.x) * 2.2, (civHit.z - p.z) * 2.2, 0, 0, true);
+        this.addShake(0.3);
+        this.reportCrime("assault", civHit.x, civHit.z);
       } else {
         this.reportCrime("assault", civHit.x, civHit.z);
       }
@@ -5698,8 +6096,10 @@ export class GameEngine {
       c.hp -= dmg;
       sfx.stab();
       this.fxQueue.push({ type: "confetti", x: c.x, y: 1.2, z: c.z, hue: 0.98 });
+      botBrain.record("hit"); // 🧠 the bots study your accuracy & aggression
       // 🥊 contestants are street-tough — nearly half of them swing back
-      if (c.brave === undefined) c.brave = this.rnd() < RETALIATE_CHANCE_CREW;
+      // (and the share climbs as the bots learn how dangerous you are)
+      if (c.brave === undefined) c.brave = this.rnd() < RETALIATE_CHANCE_CREW + botBrain.braveBonus();
       if (c.brave) {
         if ((c.retaliateT ?? 0) <= 0) this.toast(`⚔️ ${c.name} fights back — watch out!`, "bad");
         c.retaliateT = RETALIATE_S; // every extra hit refreshes the grudge
@@ -5709,9 +6109,20 @@ export class GameEngine {
         c.attackAnimT = 0.45; // flinch
         c.fearT = 4; c.fearX = p.x; c.fearZ = p.z; c.seek = null; // flee the attacker
       }
-      if (c.hp <= 0) {
+      if (c.hp <= 0 && (c.downs ?? 0) >= 1) {
+        // already floored once — a second finisher ends it
         this.killCrew(innHit, false, -1, false, true);
         this.reportCrime("murder", c.x, c.z);
+      } else if (c.hp <= 0) {
+        // 🥊 MERCY KNOCKDOWN — floored at a sliver instead of dead: they get up
+        // and RUN or FIGHT BACK (brave ones chase YOU for hitting them)
+        c.downs = (c.downs ?? 0) + 1;
+        c.hp = 16;
+        this.knockPedDown(c, (c.x - p.x) * 2.2, (c.z - p.z) * 2.2, 0, 0, true);
+        c.fearT = 0;
+        if (c.brave) { c.angry = true; c.retaliateT = RETALIATE_S + 4; } // payback mode
+        this.addShake(0.3);
+        this.reportCrime("assault", c.x, c.z);
       } else {
         this.reportCrime("assault", c.x, c.z);
       }
@@ -6182,6 +6593,9 @@ export class GameEngine {
     if (!this.running) return;
     const dt = Math.min(0.05, dt0);
     this.elapsed += dt;
+    botBrain.tick(dt); // 🧠 the bots are always watching — observation clock runs
+    this.brainFlushT -= dt;
+    if (this.brainFlushT <= 0) { botBrain.flush(); this.brainFlushT = 30; } // 🧠 commit the lesson periodically
     this.stepPhase(dt); // 🌙 7Nights — the story drives the sky clock now
     const night = nightFactor(this.clock);
     const p = this.player;
@@ -6267,6 +6681,14 @@ export class GameEngine {
     this.faintT = Math.max(0, this.faintT - dt);
     if (this.faintT === 0 && this.getupT <= 0 && (this.wasFaint as boolean)) { this.getupT = 1; this.wasFaint = false; } // 🪫 shake it off — stand back up
     else if (this.faintT > 0) this.wasFaint = true;
+    // 🚗 the knockdown choreography — lie flat while downT runs, then the
+    // wasDown get-up tips the root back up (renderer reads downT / wasDown)
+    if (this.downT > 0) {
+      this.downT = Math.max(0, this.downT - dt);
+      if (this.downT === 0 && this.getupT <= 0) this.getupT = 1; // hand off to the rise
+    } else if (this.wasDown && this.getupT <= 0) {
+      this.wasDown = false; // fully back on their feet
+    }
     this.waveT = Math.max(0, this.waveT - dt);
     this.getupT = Math.max(0, this.getupT - dt * (1 / 1.05)); // the push-off unfolds over ~1 s
     this.cheerT = Math.max(0, this.cheerT - dt); // 🙌 the victory dance rides out the confetti
@@ -6339,8 +6761,9 @@ export class GameEngine {
       const prevJumps = p.jumps;
       const staminaBefore = this.stamina;
       p.stamina = this.stamina; // engine stamina is the single source of truth
-      // while dizzy from a car bonk the legs don't answer — momentum carries the tumble
-      const faint = this.faintT > 0;
+      // while dizzy from a car bonk — or KNOCKED FLAT by one — the legs don't answer;
+      // momentum carries the tumble until the rise finishes
+      const faint = this.faintT > 0 || this.downT > 0;
       // ⏱️ jump buffer — the fresh Space tap banks in game time and waits for
       // this sim frame; a laggy frame mid-sprint can no longer swallow it
       const wantJump = this.jumpBufT > 0;
@@ -6382,19 +6805,42 @@ export class GameEngine {
         this.toast("😮‍💨 Exhausted! Walk a little to catch your breath, or eat something.", "info");
       } else if (this.stamina > 25) this.exhaustedAnnounced = false;
     }
-    this.hp = Math.min(100, this.hp + 1.2 * dt * AGE_STATS[this.look.age].regen);
+    // 🩹 out-of-combat healing: a body that hasn't been hit for 5 s heals at
+    // ~2.3× the trickle rate — after a knockdown you get your next round back
+    this.calmT = this.hurtT > 0 ? 0 : this.calmT + dt;
+    const healRate = this.calmT > 5 ? 2.8 : 1.2;
+    this.hp = Math.min(100, this.hp + healRate * dt * AGE_STATS[this.look.age].regen);
     // 🚗 driverless cars coast & decelerate; car-meets-car crunch cooldown ticks
     this.stepCarPhysics(dt);
     this.stepRemoteCars(dt); // 🌐 remote-driven cars mirror their real driver
     this.carCrashCd = Math.max(0, this.carCrashCd - dt);
+    // 🚗🚶 every moving vehicle floors pedestrians it catches — fall → lie → get up
+    this.carVsPeds(dt);
     // 🧱 THE WALL — outside the safe circle your life drains away (PUBG blue-zone)
     this.stepZone(dt);
 
-    /* --- ring-road traffic: solid cars that bonk careless runners ---
+    /* --- ring-road traffic: solid cars that FLOOR careless runners ---
      * ✈️ ringTrafficPoint swings cars around the airport's NW corner on the
-     * bypass chord — the highway never crosses the airport plot. */
+     * bypass chord — the highway never crosses the airport plot.
+     * 🚦 JAM BRAKING — every car looks ahead along its lane: a stalled, wrecked
+     * or parked vehicle on the road makes it BRAKE to a stop (a real jam) and
+     * recover to cruise speed once the lane clears. Traffic can never plough
+     * straight through metal, so two vehicles can never overlap or cross. */
     for (const t of this.traffic) {
-      t.a += t.sp * t.dir * dt;
+      const look = ringTrafficPoint(t.a + t.dir * (7.4 / Math.max(24, t.r)), t.r, t.dir);
+      let blocked = false;
+      for (const o of this.world.cars) {
+        if (dist2(o.x, o.z, look.x, look.z) < 3.2 * 3.2) { blocked = true; break; }
+      }
+      if (!blocked) for (const o of this.traffic) {
+        if (o === t) continue;
+        if (dist2(o.x, o.z, look.x, look.z) < 4.6 * 4.6) { blocked = true; break; }
+      }
+      if (!blocked) for (const v of this.vans) {
+        if (dist2(v.x, v.z, look.x, look.z) < 3.6 * 3.6) { blocked = true; break; }
+      }
+      t.spCur = Math.min(t.sp, Math.max(0, (t.spCur ?? t.sp) + (blocked ? -5.5 : 2.2) * dt));
+      t.a += t.spCur * t.dir * dt;
       const pt = ringTrafficPoint(t.a, t.r, t.dir);
       t.x = pt.x; t.z = pt.z; t.rot = pt.rot;
       if (this.detainedT > 0 || this.drive || this.ride) continue; // sitting out detention / safe inside a vehicle — traffic can't touch you
@@ -6410,28 +6856,38 @@ export class GameEngine {
         // solid — shove the player out of the footprint so nobody clips through
         p.x = cx + (dx / d) * rr;
         p.z = cz + (dz / d) * rr;
-        // cartoon bonk — old-game hurt(): damage + cooldown + a silly message
-        if (this.carHitCd <= 0 && this.faintT <= 0) {
-          this.carHitCd = CAR_HIT_CD;
-          this.faintT = FAINT_S;
-          const push = Math.min(9, t.sp * t.r * 0.72);
-          p.vx = fx * push + (dx / d) * 2.6;
-          p.vz = fz * push + (dz / d) * 2.6;
-          p.vy = 4.6; // little cartoon hop
-          this.hp = Math.max(1, this.hp - CAR_HIT_DMG); // cars never detain — floored at 1
-          this.stamina = Math.max(0, this.stamina - 8);
-          this.hurtT = HURT_FLASH_S;
-          this.addShake(0.7); // 💥 LARGE — the whole world should reel from a bumper strike
-          sfx.bonk();
-          const BONKS = [
-            "🚕 BONK! A car sent you flying — everything is spinning…",
-            "🚌 Ow! Traffic: 1, you: 0. Shake it off, champ!",
-            "🚗 Wham! The car won that round — up you get, runner!",
-            "🛺 Oof! Watch the ring road — cars don't brake for anyone.",
-          ];
-          this.toast(BONKS[Math.floor(this.rnd() * BONKS.length)], "bad");
-        }
         break; // one axle circle is enough — the other overlaps too
+      }
+      // 🚶 the strike itself (knockdown + damage + fling) lives in carVsPeds —
+      // it runs for the player AND every bot, at any traffic speed
+      // 🧱 bots are solid for traffic too: shove slow/stopped cars' pedestrians
+      // out of the footprint so nobody stands inside the shell (fast strikes
+      // already knock them flat via carVsPeds)
+      if (t.spCur * t.r < PED_HIT_MIN_SPD) {
+        for (const c of this.crew) {
+          if (!c.alive || c.drive) continue;
+          for (const off of [tax, -tax]) {
+            const cx = t.x + fx * off, cz = t.z + fz * off;
+            const dx = c.x - cx, dz = c.z - cz, rr = taxR + 0.45;
+            const d2 = dx * dx + dz * dz;
+            if (d2 >= rr * rr) continue;
+            const d = Math.sqrt(d2) || 0.01;
+            c.x = cx + (dx / d) * rr; c.z = cz + (dz / d) * rr;
+            break;
+          }
+        }
+        for (const c of this.civs) {
+          if (c.dead) continue;
+          for (const off of [tax, -tax]) {
+            const cx = t.x + fx * off, cz = t.z + fz * off;
+            const dx = c.x - cx, dz = c.z - cz, rr = taxR + 0.45;
+            const d2 = dx * dx + dz * dz;
+            if (d2 >= rr * rr) continue;
+            const d = Math.sqrt(d2) || 0.01;
+            c.x = cx + (dx / d) * rr; c.z = cz + (dz / d) * rr;
+            break;
+          }
+        }
       }
     }
 
@@ -6653,6 +7109,16 @@ export class GameEngine {
       cop.phase += dt;
       cop.copCd = Math.max(0, (cop.copCd ?? 0) - dt);
       cop.panicT = Math.max(0, (cop.panicT ?? 0) - dt);
+      cop.invulnT = Math.max(0, (cop.invulnT ?? 0) - dt);
+      // 🚗 KNOCKDOWN — a car strike or beast blow floors the officer too: lie flat,
+      // push back up, dust off, resume the beat (or the chase if the suspect's near)
+      if ((cop.downT ?? 0) > 0) {
+        cop.downT = (cop.downT ?? 0) - dt;
+        cop.vx *= Math.exp(-dt * 6); cop.vz *= Math.exp(-dt * 6);
+        if ((cop.downT ?? 0) <= 0) cop.getupT = 1;
+        continue;
+      }
+      if ((cop.getupT ?? 0) > 0) { cop.getupT = Math.max(0, (cop.getupT ?? 0) - dt / PED_GETUP_S); continue; }
       const d2p = dist2(cop.x, cop.z, p.x, p.z);
       // 🧟 night has no law — officers flee the shamblers (and the beast-you)
       // like every other soul. Badges don't stop teeth; running might.
@@ -6838,7 +7304,22 @@ export class GameEngine {
       c.phase += dt;
       // 🧟💀 a fallen townsfolk lies still until dawn refills the town
       if (c.dead) { c.deadT = (c.deadT ?? 0) + dt; continue; } // ⏱️ the corpse choreography clock runs
+      c.invulnT = Math.max(0, (c.invulnT ?? 0) - dt);
+      // 🚗 KNOCKDOWN — floored by a car / mercy blow: lie flat, then push back up
+      if ((c.downT ?? 0) > 0) {
+        c.downT = (c.downT ?? 0) - dt;
+        c.vx *= Math.exp(-dt * 6); c.vz *= Math.exp(-dt * 6);
+        if ((c.downT ?? 0) <= 0) {
+          c.getupT = 1;
+          if (c.angry && !this.drive && !this.ride) { c.angry = false; c.retaliateT = RETALIATE_S + 4; }
+          else { c.panicT = 3.5; c.fearX = p.x; c.fearZ = p.z; }
+        }
+        continue;
+      }
+      if ((c.getupT ?? 0) > 0) { c.getupT = Math.max(0, (c.getupT ?? 0) - dt / PED_GETUP_S); continue; }
       if ((c.panicT ?? 0) > 0) c.panicT = (c.panicT ?? 0) - dt;
+      // 🩹 a fleeing townsfolk patches up while running — survive first, gossip later
+      if ((c.panicT ?? 0) > 0 && c.hp !== undefined && c.hp < 30) c.hp = Math.min(30, c.hp + 4 * dt);
       // 🥊 brave townsfolk fighting the player back — overrides every other job
       if ((c.retaliateT ?? 0) > 0) { this.stepBotRetaliate(c, dt, BOT_PUNCH_CIV, c.speed * 1.25); continue; }
       if ((c.attackT ?? 0) > 0) c.attackT = Math.max(0, (c.attackT ?? 0) - dt); // finish the swing anim
@@ -7194,7 +7675,7 @@ export class GameEngine {
             else if (remoteVictim && zb.touchCd <= 0 && td < 1.6 * 1.6) {
               zb.touchCd = ZOMBIE_TOUCH_CD;
               zb.attackT = 0.5; // 🧟 the lunge-bite animation
-              this.netEmit?.({ t: "dmg", target: remoteVictim.slot, amount: ZOMBIE_DMG });
+              this.netEmit?.({ t: "dmg", target: remoteVictim.slot, amount: ZOMBIE_DMG, x: zb.x, z: zb.z });
             }
             // 👮 caught an officer — the law bleeds too, and feeding on it counts
             else if (copVictim && zb.touchCd <= 0 && td < 1.5 * 1.5) {
@@ -7248,7 +7729,7 @@ export class GameEngine {
         } else if (remoteVictim && d2p < 1.6 * 1.6 && zb.touchCd <= 0) {
           // 🌐 the pack caught a REAL player standing right here — their client bleeds
           zb.touchCd = ZOMBIE_TOUCH_CD;
-          this.netEmit?.({ t: "dmg", target: remoteVictim.slot, amount: ZOMBIE_DMG });
+          this.netEmit?.({ t: "dmg", target: remoteVictim.slot, amount: ZOMBIE_DMG, x: zb.x, z: zb.z });
         }
         if (this.groanT <= 0 && d2p < 20 * 20) { this.groanT = range(this.rnd, 2, 6); sfx.zombie(); }
       }
@@ -7440,7 +7921,7 @@ export class GameEngine {
               } else if (remoteVictim) {
                 // 🌐 the pack caught a REAL player — their own client bleeds for it
                 an.touchCd = ZOMDOG_TOUCH_CD;
-                this.netEmit?.({ t: "dmg", target: remoteVictim.slot, amount: ZOMDOG_DMG });
+                this.netEmit?.({ t: "dmg", target: remoteVictim.slot, amount: ZOMDOG_DMG, x: an.x, z: an.z });
               } else if (victimCiv) {
                 an.touchCd = ZOMDOG_TOUCH_CD;
                 victimCiv.hp = (victimCiv.hp ?? 30) - ZOMDOG_DMG;
@@ -7475,7 +7956,7 @@ export class GameEngine {
               if (!r.alive) continue;
               if (dist2(an.x, an.z, r.x, r.z) < 1.5 * 1.5 && (an.touchCd ?? 0) <= 0) {
                 an.touchCd = ZOMDOG_TOUCH_CD;
-                this.netEmit?.({ t: "dmg", target: r.slot, amount: ZOMDOG_DMG });
+                this.netEmit?.({ t: "dmg", target: r.slot, amount: ZOMDOG_DMG, x: an.x, z: an.z });
               }
             }
           }
@@ -8087,13 +8568,39 @@ export class GameEngine {
     this.toast("🩸 A BEAST TORE INTO YOU! RUN!", "bad");
   }
 
-  /** Wire damage addressed to US (a mirrored pack caught our avatar elsewhere). */
-  netTakeDmg(amount: number) {
+  /** Wire damage addressed to US — beast mauls from the host's mirrored pack,
+   *  AND 🥊 rival punches (PvP): the blow carries the attacker's position so we
+   *  knock back the right way, and a fist that would END us floors us instead
+   *  (mercy knockdown — fights have rounds; the SECOND one can finish it). */
+  netTakeDmg(amount: number, fromX?: number, fromZ?: number, pvp = false, fromName?: string) {
     if (!this.running || this.lost || this.won) return;
     if (this.detainedT > 0 || this.drive || this.invulnT > 0) return;
+    const dx = fromX !== undefined ? this.player.x - fromX : 0;
+    const dz = fromZ !== undefined ? this.player.z - fromZ : 0;
+    const dl = Math.hypot(dx, dz) || 1;
+    const nx = dx / dl, nz = dz / dl;
+    // 🥊 MERCY KNOCKDOWN — the first PvP blow that would take us out FLOORS us:
+    // lie there, get up protected, then run or swing back
+    if (pvp && this.hp - amount <= 0 && this.pvpDowns < 1) {
+      this.pvpDowns++;
+      this.knockPlayerDown(nx * 9, nz * 9, amount);
+      this.toast(`🥊 ${fromName ?? "A rival"} FLOORED you! Get up and get even — or get gone.`, "bad");
+      return;
+    }
     this.hp = Math.max(0, this.hp - amount);
     this.hurtT = HURT_FLASH_S;
+    if (pvp) {
+      this.player.vx += nx * 6.5; this.player.vz += nz * 6.5; // shove — duels keep their distance
+      this.addShake(0.32);
+      sfx.stab();
+      this.toast(`🥊 ${fromName ?? "A rival"} hit you — swing back (F) or bolt!`, "bad");
+      // hp ≤ 0 → the run ends via the tick's die() check (second lethal lands)
+      return;
+    }
     this.addShake(0.45); // 💥 MEDIUM
+    if (dl > 0.5 && dx === dx) {
+      this.player.vx = nx * 9; this.player.vz = nz * 9; // the beast's lunge shoves too
+    }
     sfx.scream();
     this.toast("🩸 A BEAST TORE INTO YOU! RUN!", "bad");
   }
