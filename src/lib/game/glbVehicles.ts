@@ -1,12 +1,14 @@
 /**
- * 🚓 Polyfork GLB vehicles — the police cruiser & the yellow cab.
+ * 🚓 Polyfork GLB vehicles — the police cruiser, the yellow cab & the 🏪 SHOP
+ * GARAGE fleet (10 purchasable rides, priced 1 coin per triangle in the shop).
  *
  * Static prop models from the polyfork catalog (https://polyfork.dev,
  * CC BY 4.0 — see public/models/CREDITS.md), served locally like the wildlife:
- *   public/models/police-cruiser-a2d25e.glb  — 4.81u long, roof light bar
- *   public/models/yellow-cab-8df4a0.glb      — 4.62u long, roof TAXI sign
+ *   public/models/police-cruiser-a2d25e.glb          — 4.81u long, roof light bar
+ *   public/models/yellow-cab-8df4a0.glb              — 4.62u long, roof TAXI sign
+ *   public/models/vehicles/<slug>.glb                — the shop garage fleet
  *
- * Both ship at real-world scale with +Z = nose (same forward axis the game's
+ * All ship at real-world scale with +Z = nose (same forward axis the game's
  * placeCar/kit fleet uses — no rotation fix-up). Loading normalizes only the
  * ground contact (min.y → 0) and centers x/z; clones are cached per instance
  * and the four wheel meshes (the small round ones) spin around their own axle
@@ -18,11 +20,22 @@ import { useSyncExternalStore } from "react";
 import { enableGlbCulling } from "@/lib/game/glbCull";
 
 /** Game vehicle type ids that render from these GLB bodies live in constants.ts
- *  (TAXI_TYPE = 10 — the yellow cab). This module only owns the model loading. */
+ *  (TAXI_TYPE = 10 — the yellow cab; the 🏪 garage fleet maps 12–21 via
+ *  VEHICLE_GLB). This module only owns the model loading. */
 
 const FILES = {
   cruiser: "/models/police-cruiser-a2d25e.glb",
   cab: "/models/yellow-cab-8df4a0.glb",
+  "jackpot-prize-convertible-81bca8": "/models/vehicles/jackpot-prize-convertible-81bca8.glb",
+  "stretch-limousine-284b73": "/models/vehicles/stretch-limousine-284b73.glb",
+  "model-of-a-gt3-32b70d": "/models/vehicles/model-of-a-gt3-32b70d.glb",
+  "touring-motorcycle-3b1ad3": "/models/vehicles/touring-motorcycle-3b1ad3.glb",
+  "ranger-pickup-truck-97057d": "/models/vehicles/ranger-pickup-truck-97057d.glb",
+  "follow-me-car-b3c6a5": "/models/vehicles/follow-me-car-b3c6a5.glb",
+  "compact-tractor-35b84b": "/models/vehicles/compact-tractor-35b84b.glb",
+  "three-wheeled-delivery-mini-744094": "/models/vehicles/three-wheeled-delivery-mini-744094.glb",
+  "pickup-truck-a34bf2": "/models/vehicles/pickup-truck-a34bf2.glb",
+  "semi-tractor-e9455c": "/models/vehicles/semi-tractor-e9455c.glb",
 } as const;
 
 export type VehicleKind = keyof typeof FILES;
@@ -70,17 +83,40 @@ function register(kind: VehicleKind, gltf: { scene: THREE.Object3D }): VehicleTe
   const wrap = new THREE.Group();
   scene.position.set(-center.x, -box.min.y, -center.z);
   wrap.add(scene);
-  // wheels = the small meshes (body mesh spans the full width, wheels don't)
+  // wheels — polyfork vehicles NAME their wheels (wheel-fr / tyre-fl /
+  // wheel-f-mesh, always with steer-* siblings), so collect the top-most
+  // wheel-named nodes and spin those. The old small-round-mesh heuristic
+  // stays as the fallback: on narrow bodies (the motorcycle!) it grabbed
+  // forks & saddlebags too, and the drive-spin twirled the whole bike over.
+  const isWheelName = (n: string) => /^wheel|^tyre/i.test(n);
   const wheels: THREE.Object3D[] = [];
   let wheelR = 0.34;
   scene.traverse((o) => {
-    const m = o as THREE.Mesh;
-    if (!m.isMesh) return;
-    const bb = new THREE.Box3().setFromObject(m);
-    const h = bb.max.y - bb.min.y;
-    const w = bb.max.x - bb.min.x;
-    if (h < 1.0 && h * 2.2 > w) { wheels.push(m); wheelR = h / 2; }
+    if (!isWheelName(o.name)) return;
+    if (o.parent && isWheelName(o.parent.name)) return; // wheel-fr-mesh inside wheel-fr — spin the parent only
+    wheels.push(o);
   });
+  if (wheels.length) {
+    let bestD = 0;
+    for (const w of wheels) {
+      w.traverse((m) => {
+        const mm = m as THREE.Mesh;
+        if (!mm.isMesh) return;
+        const bb = new THREE.Box3().setFromObject(mm);
+        const d = bb.max.y - bb.min.y;
+        if (d > bestD && d < 1.6) { bestD = d; wheelR = d / 2; }
+      });
+    }
+  } else {
+    scene.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      const bb = new THREE.Box3().setFromObject(m);
+      const h = bb.max.y - bb.min.y;
+      const w = bb.max.x - bb.min.x;
+      if (h < 1.0 && h * 2.2 > w) { wheels.push(m); wheelR = h / 2; }
+    });
+  }
   const tpl: VehicleTemplate = { scene: wrap, wheels, wheelR };
   cache.set(kind, tpl);
   pending.delete(kind);
@@ -88,23 +124,37 @@ function register(kind: VehicleKind, gltf: { scene: THREE.Object3D }): VehicleTe
   return tpl;
 }
 
-/** Begin the background preload (safe to call repeatedly; no-op on the server). */
+/** Load ONE vehicle kind (cache-friendly): resolves from cache when ready,
+ *  rejects for good on failure. The shop stage + garage thumbs await this;
+ *  the world renderer polls vehicleReady(). */
+export function loadVehicle(kind: VehicleKind): Promise<VehicleTemplate> {
+  const tpl = cache.get(kind);
+  if (tpl) return Promise.resolve(tpl);
+  if (failed.has(kind)) return Promise.reject(new Error(`vehicle ${kind} failed earlier`));
+  const inflight = pending.get(kind);
+  if (inflight) return inflight;
+  const p = new Promise<VehicleTemplate>((resolve, reject) => {
+    loader.load(
+      FILES[kind],
+      (gltf) => {
+        try { resolve(register(kind, gltf)); }
+        catch (e) { failed.add(kind); pending.delete(kind); bump(); reject(e); }
+      },
+      undefined,
+      (err) => { failed.add(kind); pending.delete(kind); bump(); reject(err); },
+    );
+  });
+  pending.set(kind, p);
+  return p;
+}
+
+/** Begin the background preload (safe to call repeatedly; no-op on the server).
+ *  Loads the world-fleet kinds (cruiser + cab); garage/vehicle thumbs call
+ *  loadVehicle(kind) for their own files on demand. */
 export function preloadVehicles(): void {
   if (typeof window === "undefined") return;
-  for (const kind of Object.keys(FILES) as VehicleKind[]) {
-    if (cache.has(kind) || failed.has(kind) || pending.has(kind)) continue;
-    const p = new Promise<VehicleTemplate>((resolve, reject) => {
-      loader.load(
-        FILES[kind],
-        (gltf) => {
-          try { resolve(register(kind, gltf)); }
-          catch (e) { failed.add(kind); pending.delete(kind); bump(); reject(e); }
-        },
-        undefined,
-        (err) => { failed.add(kind); pending.delete(kind); bump(); reject(err); },
-      );
-    });
-    pending.set(kind, p);
+  for (const kind of ["cruiser", "cab"] as VehicleKind[]) {
+    void loadVehicle(kind).catch(() => { /* failed set keeps the emoji stand-in */ });
   }
 }
 
@@ -121,10 +171,16 @@ export function spawnVehicle(kind: VehicleKind): { root: THREE.Group; wheels: TH
     const m = o as THREE.Mesh;
     if (m.isMesh) enableGlbCulling(o, 1.1, 0.25); // clones share the inflated sphere
   });
-  // re-collect the wheel meshes by position (clones keep names — mesh_1..4)
+  // re-collect the wheel nodes by name (clones keep names — wheel-fr, wheel-f-mesh…).
+  // Named polyfork wheels may be GROUPS (wheel-fr) wrapping the tyre mesh, so the
+  // isMesh filter is dropped — the top-most wheel node is what gets spun.
   const wheels = tpl.wheels.map((w) => {
     let out: THREE.Object3D | undefined;
-    root.traverse((o) => { if (!out && o.name === w.name && (o as THREE.Mesh).isMesh) out = o; });
+    root.traverse((o) => {
+      if (out || o.name !== w.name) return;
+      if (o.parent && tpl.wheels.some((pw) => pw !== w && pw.name === o.parent!.name)) return;
+      out = o;
+    });
     return out;
   }).filter(Boolean) as THREE.Object3D[];
   return { root, wheels, wheelR: tpl.wheelR };

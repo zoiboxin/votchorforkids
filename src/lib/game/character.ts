@@ -739,7 +739,7 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
   // priority chain — the first state that claims the body owns the slot
   let claimed = false;
   if (!CLIPS_OFF) {
-  if (o.drive || o.death) {
+  if (o.drive || o.bike || o.death) {
     if (actN) glbStopAct(st); // hard poses keep their procedural ownership
     gs.airSwap = null;
   } else if ((o.getup ?? 0) > 0 || actN === CLIPS.getUp) {
@@ -828,7 +828,7 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
   // the activity weight so an owning clip eases the legs out underneath;
   // while a hard pose owns the body (drive / death / get-up) the legs keep
   // feeding the mixer but the overlay slerps over them, so transitions stay smooth
-  setGlbLocomotion(st, o.drive || o.death || o.getup ? Math.min(speed, 0.3) : speed, {
+  setGlbLocomotion(st, o.drive || o.bike || o.death || o.getup ? Math.min(speed, 0.3) : speed, {
     damp: actW,
     ...(o.zombie && zReady ? { idleClip: CLIPS.zombieIdle, walkClip: CLIPS.zombieWalk, runClip: CLIPS.zombieWalk }
       : gs.airSwap ? { walkClip: gs.airSwap, runClip: gs.airSwap } : {}),
@@ -903,6 +903,27 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
     glbApplyBone(st, "RightArm", -1.14, 0, -0.22, amt);
     glbApplyBone(st, "LeftForeArm", -0.38, 0, 0, amt);
     glbApplyBone(st, "RightForeArm", -0.34, 0, 0, amt);
+  }
+
+  // 🏍️ RIDE — astride the bike: knees grip the tank, shins tuck back, arms
+  // reach forward-down to the handlebars, torso leans into the wind. A
+  // static hold like the Drive pose — the machine does the moving.
+  if (o.bike) {
+    const amt = glbOvEase(st, "bike", 1, dt);
+    glbHipsTo(st, 0.62, amt);
+    glbApplyBone(st, "Spine", 0.34, 0, 0, amt);
+    glbApplyBone(st, "Spine1", 0.12, 0, 0, amt);
+    glbApplyBone(st, "Head", -0.18, 0, 0, amt); // eyes up — the spine lean tips the head down
+    glbApplyBone(st, "LeftUpLeg", -1.15, 0, 0.42, amt);
+    glbApplyBone(st, "RightUpLeg", -1.1, 0, -0.44, amt);
+    glbApplyBone(st, "LeftLeg", 0.92, 0, 0.06, amt);
+    glbApplyBone(st, "RightLeg", 0.9, 0, -0.06, amt);
+    glbApplyBone(st, "LeftFoot", -0.32, 0, 0, amt);
+    glbApplyBone(st, "RightFoot", -0.3, 0, 0, amt);
+    glbApplyBone(st, "LeftArm", -1.42, 0, 0.5, amt);
+    glbApplyBone(st, "RightArm", -1.38, 0, -0.52, amt);
+    glbApplyBone(st, "LeftForeArm", -0.2, 0, 0.1, amt);
+    glbApplyBone(st, "RightForeArm", -0.18, 0, -0.1, amt);
   }
 
   // 🕺 DANCE — the real Dance clip owns the body when streamed; the
@@ -1116,7 +1137,7 @@ function poseGlbCharacter(g: THREE.Object3D, st: GlbInstance, speed: number, t: 
 /* ------------------------------------------------------------------ */
 /* Posing — walk / run / jump / idle / sit + auto-blink & expressions  */
 /* ------------------------------------------------------------------ */
-export interface PoseOpts { phase?: number; airborne?: boolean; detained?: boolean; zombie?: boolean; /** 🧟 1 → 0 lunge-bite countdown — plays the zombie ATTACK overlay while > 0 */ attack?: number; /** 😱 fleeing a horror — arms thrown up, flailing, glancing over the shoulder */ panic?: boolean; vy?: number; flip?: number; squash?: number; faint?: number; /** 0..1 progress of an arm swing (axe chop / sword slash / beast claw) — 0 = none */ swing?: number; /** 🕺 emotes — dance loops until canceled, wave says hello, cheer celebrates */ dance?: boolean; wave?: boolean; cheer?: boolean; /** 🚗 seated at the wheel (rigged bodies only — the car hides cartoon sit poses) */ drive?: boolean; /** ☠️ 0..1 death collapse progress — limbs go loose while the root tips over */ death?: number; /** 🪫 get-up timer (1 → 0): crouched push-off unfolding to standing */ getup?: number; /** 🎬 clip-library extras (GLB bodies): 🩸 fresh damage flash → Knockback one-shot */ hurt?: boolean; /** 🍽 fresh lastGain window → Eating one-shot */ eat?: boolean; /** 🧰 world tool just pocketed → Pick up one-shot */ pickup?: boolean; }
+export interface PoseOpts { phase?: number; airborne?: boolean; detained?: boolean; zombie?: boolean; /** 🧟 1 → 0 lunge-bite countdown — plays the zombie ATTACK overlay while > 0 */ attack?: number; /** 😱 fleeing a horror — arms thrown up, flailing, glancing over the shoulder */ panic?: boolean; vy?: number; flip?: number; squash?: number; faint?: number; /** 0..1 progress of an arm swing (axe chop / sword slash / beast claw) — 0 = none */ swing?: number; /** 🕺 emotes — dance loops until canceled, wave says hello, cheer celebrates */ dance?: boolean; wave?: boolean; cheer?: boolean; /** 🚗 seated at the wheel (rigged bodies only — the car hides cartoon sit poses) */ drive?: boolean; /** 🏍️ astride the bike — knees in, arms to the bars, torso leaning */ bike?: boolean; /** ☠️ 0..1 death collapse progress — limbs go loose while the root tips over */ death?: number; /** 🪫 get-up timer (1 → 0): crouched push-off unfolding to standing */ getup?: number; /** 🎬 clip-library extras (GLB bodies): 🩸 fresh damage flash → Knockback one-shot */ hurt?: boolean; /** 🍽 fresh lastGain window → Eating one-shot */ eat?: boolean; /** 🧰 world tool just pocketed → Pick up one-shot */ pickup?: boolean; }
 
 /** All channels poseCharacter drives — computed as targets, blended, then applied. */
 interface PoseCh {
@@ -1238,6 +1259,25 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
     head.position.y = HEAD_Y;
     head.rotation.set(0, 0, 0);
     body.scale.set(0.96, 1.05, 0.96);
+    return;
+  }
+
+  // 🏍️ RIDE — astride the bike (cartoon cast): sink the whole body (legs ride
+  // INSIDE the body group) so the hips land on the saddle, knees grip the
+  // tank, arms reach the bars, torso leans in. The cartoon bodies never play
+  // the car Drive pose (sealed roofs hide them), but a bike is fully open —
+  // an invisible or floating rider would both read as broken.
+  if (o.bike) {
+    body.position.y = -0.78;
+    body.position.z = 0.12;
+    body.rotation.set(0.3, 0, 0);
+    body.scale.set(1, 1, 1);
+    head.position.y = HEAD_Y;
+    head.rotation.set(0.08, 0, 0);
+    legs[0].rotation.x = -1.15; legs[1].rotation.x = -1.05;
+    legs[0].rotation.z = 0.34; legs[1].rotation.z = -0.36; // knees hugging the tank
+    arms[0].rotation.x = -1.32; arms[1].rotation.x = -1.28;
+    arms[0].rotation.z = 0.28; arms[1].rotation.z = -0.3;  // hands to the bars
     return;
   }
 

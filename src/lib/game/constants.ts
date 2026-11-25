@@ -707,14 +707,21 @@ export const CAR_ACCEL = 14;           // u/s² on W
 export const CAR_BRAKE = 30;           // u/s² on S while rolling forward
 export const CAR_COAST = 9;            // u/s² natural drag when no pedal
 export const CAR_STEER = 1.75;         // rad/s at full lock
-/* ---------- Vehicle fleet — 10 body styles shared by parked cars & ring traffic ----------
+/* ---------- Vehicle fleet — 22 body styles shared by parked cars & ring traffic ----------
  * 0 sedan · 1 hatchback · 2 van · 3 pickup truck · 4 city bus · 5 jeep
  * 6 muscle car · 7 convertible · 8 station wagon · 9 sports coupe  ← polyfork Retro Cars Kit
- * (types 4 & 5 keep the classic procedural bodies — the kit ships no bus/jeep) */
+ * (types 4 & 5 keep the classic procedural bodies — the kit ships no bus/jeep)
+ * 10 yellow cab (GLB) · 11 phantom hearse (GLB)
+ * 12–21 🏪 SHOP GARAGE — the purchasable polyfork vehicle fleet (GLB bodies):
+ * every one renders from its real model and spawns parked beside you each run
+ * once bought. Prices = each asset's exact triangle count (1 💰 per triangle). */
 export const VEHICLE_LABELS = [
   "🚗 Car", "🚗 Hatchback", "🚐 Van", "🛻 Pickup truck", "🚌 City bus", "🚙 Jeep",
   "🏁 Muscle car", "🚙 Convertible", "🚗 Station wagon", "🏎️ Sports coupe", "🚕 Yellow cab",
   "⚰️ Phantom hearse",
+  "🏆 Jackpot convertible", "🚓 Stretch limousine", "🏎️ GT3 racer", "🏍️ Touring motorcycle",
+  "🛻 Ranger pickup", "🛩️ Follow-me car", "🚜 Compact tractor", "🛺 Delivery mini",
+  "🛻 Pickup truck GT", "🚚 Semi tractor",
 ];
 /** 🚕 the GLB yellow cab (polyfork yellow-cab-8df4a0) — a taxi rank by the mall
  *  plus a few cruising the ring: rendered by GlbCars from the real model. */
@@ -726,21 +733,57 @@ export const TAXI_TYPE = 10;
  *  but it's the FASTEST ride on the map — a real prize for the survivor who
  *  dares the graveyard. Rendered from the vintage-hearse Halloween-kit GLB. */
 export const HEARSE_TYPE = 11;
+/** 🏍️ THE TOURING MOTORCYCLE — the garage's bike (type 15). Riders don't sit
+ *  like car drivers: the body plays the astride RIDE pose (knees gripping the
+ *  tank, arms reaching the handlebars) instead of the seated Drive pose. */
+export const BIKE_TYPE = 15;
+export const isBikeType = (t: number): boolean => t === BIKE_TYPE;
+/** 🏪 SHOP GARAGE — game vehicle type → the polyfork GLB that renders it
+ *  (each file lives in /models/vehicles/<slug>.glb, loaded by glbVehicles.ts).
+ *  Types 12–21 are purchasable from the Item Shop's Garage category. */
+export const VEHICLE_GLB: Record<number, string> = {
+  12: "jackpot-prize-convertible-81bca8",
+  13: "stretch-limousine-284b73",
+  14: "model-of-a-gt3-32b70d",
+  15: "touring-motorcycle-3b1ad3",
+  16: "ranger-pickup-truck-97057d",
+  17: "follow-me-car-b3c6a5",
+  18: "compact-tractor-35b84b",
+  19: "three-wheeled-delivery-mini-744094",
+  20: "pickup-truck-a34bf2",
+  21: "semi-tractor-e9455c",
+};
+/** the garage types in shop-display order (12–21). */
+export const SHOP_VEHICLE_TYPES: readonly number[] = [12, 13, 14, 15, 16, 17, 18, 19, 20, 21];
 /** Weighted body-style pool — sedans/hatches/vans fill the streets, buses stay rare,
  *  and the four retro-kit specials cruise in as mid-rarity finds. */
 export const VEHICLE_POOL: readonly number[] = [0, 0, 1, 1, 2, 2, 2, 3, 3, 4, 5, 6, 6, 7, 7, 8, 8, 9, 9, 0, 1];
 export const pickVehicle = (r: () => number): number => VEHICLE_POOL[Math.floor(r() * VEHICLE_POOL.length)];
 /** Per body-style collision dims: the driven body collides as its two axle discs —
  *  the SAME offset/radius pair the parked cars use as colliders, so a moving vehicle
- *  can never overlap a building deeper than a parked one. Longer bodies (bus, pickup)
- *  spread their axles further apart so the nose & tail stay protected. */
-export const VEHICLE_AXLE: readonly number[] = [1.25, 1.02, 1.5, 1.78, 2.35, 1.12, 1.45, 1.35, 1.42, 1.28, 1.28, 1.5];
-export const VEHICLE_AXLE_R: readonly number[] = [1.16, 1.12, 1.26, 1.3, 1.42, 1.2, 1.18, 1.12, 1.18, 1.08, 1.14, 1.35];
+ *  can never overlap a building deeper than a parked one. Longer bodies (bus, pickup,
+ *  limousine, semi) spread their axles further apart so the nose & tail stay protected;
+ *  the motorcycle rides on a tight little pair. */
+export const VEHICLE_AXLE: readonly number[] = [
+  1.25, 1.02, 1.5, 1.78, 2.35, 1.12, 1.45, 1.35, 1.42, 1.28, 1.28, 1.5,
+  1.35, 2.3, 1.32, 0.72, 1.68, 1.12, 1.18, 1.1, 1.68, 1.95,
+];
+export const VEHICLE_AXLE_R: readonly number[] = [
+  1.16, 1.12, 1.26, 1.3, 1.42, 1.2, 1.18, 1.12, 1.18, 1.08, 1.14, 1.35,
+  1.14, 1.1, 1.12, 0.58, 1.28, 1.02, 1.05, 0.95, 1.28, 1.22,
+];
 /** Per body-style driving feel: top speed (u/s) and steering grip multiplier —
  *  a loaded bus shouldn't corner like a go-kart. The muscle car & coupe are the
- *  fastest rides in town; the convertible & wagon cruise like the sedans. */
-export const VEHICLE_TOP: readonly number[] = [26, 24, 24, 23, 19, 25, 28, 24, 24, 29, 26, 31];
-export const VEHICLE_STEER: readonly number[] = [1, 1, 0.92, 0.85, 0.7, 1, 0.94, 1, 0.95, 1.04, 1, 1];
+ *  fastest rides in town; the GT3 edges them all, the tractor crawls, and the
+ *  bike threads traffic with the sharpest steering of the fleet. */
+export const VEHICLE_TOP: readonly number[] = [
+  26, 24, 24, 23, 19, 25, 28, 24, 24, 29, 26, 31,
+  25, 26, 33, 27, 24, 22, 14, 20, 24, 23,
+];
+export const VEHICLE_STEER: readonly number[] = [
+  1, 1, 0.92, 0.85, 0.7, 1, 0.94, 1, 0.95, 1.04, 1, 1,
+  1.02, 0.72, 1.06, 1.22, 0.9, 1.05, 0.85, 1.05, 0.9, 0.7,
+];
 /* ---------- Car-meets-car physics — momentum transfer & driverless coasting ----------
  * When a driven car rams another car, the struck car is shoved ALONG the contact
  * normal (rear-end → lurches forward, head-on → knocked backward, T-bone → skids

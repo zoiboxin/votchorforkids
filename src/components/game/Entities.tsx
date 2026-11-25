@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  ANIMAL_SET, ATTACK_CD, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, ROCK_BREAK_S, SHIRT_COLORS, SKIN_TONES, TOOLS,
+  ANIMAL_SET, ATTACK_CD, BIKE_TYPE, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, ROCK_BREAK_S, SHIRT_COLORS, SKIN_TONES, TOOLS,
   TOTAL_VOTES, TREE_FALL_S, ZONE_WALL_H, FARM_RADIUS, JUNGLE_RADIUS, WILDLIFE, normalizeAppearance, type AnimalKind, type Appearance,
 } from "@/lib/game/constants";
 import { preloadModels, onModelsReady, spawnModel } from "@/lib/game/models";
@@ -27,7 +27,10 @@ export type ClockRef = { current: number };
 
 /* 🚗 per-body-style driver seat offsets — (x = side, z = forward of the nose
  * axis, y = floor height above ground). `null` = sealed body style, the
- * driver stays hidden (a head through a roof reads as a bug, not a mod). */
+ * driver stays hidden (a head through a roof reads as a bug, not a mod).
+ * Indexed by vehicle type — 0-9 procedural/kit fleet, 10 taxi, 11 hearse,
+ * 12-21 the 🏪 shop garage fleet (open tops get a seat; the bike sits the
+ * rider CENTERED so the astride pose straddles the saddle). */
 const DRIVE_SEAT: ({ x: number; z: number; y: number } | null)[] = [
   null,               // 0 sedan — sealed roof
   null,               // 1 hatchback — sealed roof
@@ -39,6 +42,18 @@ const DRIVE_SEAT: ({ x: number; z: number; y: number } | null)[] = [
   { x: -0.36, z: 0.05, y: 0.16 }, // 7 convertible — top down, of course
   null,               // 8 station wagon — sealed roof
   null,               // 9 sports coupe — sealed roof
+  null,               // 10 yellow cab — sealed roof
+  null,               // 11 phantom hearse — sealed cab
+  { x: -0.36, z: 0.05, y: 0.16 }, // 12 jackpot convertible — top down
+  null,               // 13 stretch limousine — sealed cabin
+  null,               // 14 GT3 racer — sealed cockpit
+  { x: 0, z: -0.12, y: 0.62 },    // 15 touring motorcycle — astride the saddle
+  null,               // 16 ranger pickup — sealed cab
+  { x: -0.3, z: 0.25, y: 0.4 },   // 17 follow-me car — open airport runabout
+  { x: -0.24, z: -0.42, y: 0.82 }, // 18 compact tractor — tall saddle seat
+  { x: -0.28, z: 0.3, y: 0.52 },  // 19 delivery mini — open cab sides
+  null,               // 20 pickup truck GT — sealed cab
+  null,               // 21 semi tractor — sealed sleeper cab
 ];
 
 /* ------------------------------------------------------------------ */
@@ -187,6 +202,8 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       wave: engine.waveT > 0,
       cheer: engine.cheerT > 0,
       drive: !!(engine.drive || (engine.ride && rideSeat)),
+      // 🏍️ on the bike the body plays the astride Ride pose, not the car sit
+      bike: !!(engine.drive && engine.drive.t === BIKE_TYPE),
       getup: engine.getupT > 0 ? engine.getupT : 0,
       death: engine.lost ? Math.min(1, engine.deathT / 0.85) : 0,
       // 🎬 clip-library extras — the real Knockback / Eating / Pick up one-shots
@@ -1975,7 +1992,7 @@ export function RemotesView({ engine }: { engine: GameEngine }) {
           body.position.set(car.x + sin * seat.z + cos * px, seat.y, car.z + cos * seat.z - sin * px);
           body.rotation.set(0, car.rot, 0);
           if (body.scale.x !== 1) body.scale.setScalar(1);
-          poseCharacter(body, 0, t, { phase: r.slot * 1.7, drive: true });
+          poseCharacter(body, 0, t, { phase: r.slot * 1.7, drive: true, bike: car.t === BIKE_TYPE });
           const closeCar = d2 < DETAIL_SQ;
           if (v.tag) v.tag.visible = closeCar; // 🌐 real players keep their names — even mid-ride
           if (v.btag) v.btag.visible = false;

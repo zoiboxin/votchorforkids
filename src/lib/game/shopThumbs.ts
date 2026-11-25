@@ -12,6 +12,7 @@
 import * as THREE from "three";
 import { useSyncExternalStore } from "react";
 import { loadWeaponTemplate, type WeaponKind } from "./weapons";
+import { loadVehicle, type VehicleKind } from "./glbVehicles";
 
 /* ---------------- tiny external store (one version bump per portrait) ---- */
 
@@ -99,3 +100,28 @@ export function ensureWeaponThumb(kind: WeaponKind): void {
 /** Cached weapon portrait data-URL (undefined while rendering / failed). */
 export const weaponThumb = (kind: WeaponKind): string | undefined =>
   weaponThumbs.get(kind);
+
+/* ---------------- 🏪 garage vehicle portraits ------------------------------ */
+
+const vehicleThumbs = new Map<string, string>();
+const vehiclePending = new Set<string>();
+
+/** Queue a garage vehicle portrait (cosmetic — failures are fine, the emoji
+ *  stand-in keeps the tile presentable). `kind` is the polyfork slug key of
+ *  the vehicle GLB (see glbVehicles.FILES / constants.VEHICLE_GLB). */
+export function ensureVehicleThumb(kind: string): void {
+  if (vehicleThumbs.has(kind) || vehiclePending.has(kind)) return;
+  vehiclePending.add(kind);
+  void loadVehicle(kind as VehicleKind)
+    .then((tpl) => {
+      const inst = tpl.scene.clone(true);
+      vehicleThumbs.set(kind, renderObjectThumb(inst));
+      bump();
+    })
+    .catch(() => { /* portraits are decoration */ })
+    .finally(() => { vehiclePending.delete(kind); });
+}
+
+/** Cached garage vehicle portrait data-URL (undefined while rendering / failed). */
+export const vehicleThumb = (kind: string): string | undefined =>
+  vehicleThumbs.get(kind);

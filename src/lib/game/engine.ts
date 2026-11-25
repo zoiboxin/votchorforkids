@@ -6,7 +6,7 @@ import {
   DEEP_JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER,
   ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_BUFFER_S, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
-  RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SCAVENGER_COUNT, SCAVENGER_SENSE_R, SPAWN, SONIC_MULT, STAR_DECAY_S, TAXI_TYPE, TOTAL_VOTES, TRAFFIC_COUNT, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_LABELS, VEHICLE_POOL, VEHICLE_STEER, VEHICLE_TOP, VAN_AXLE, VAN_LOAD_S, VAN_PATROL_GATE_S, VAN_PATROL_WAIT_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
+  RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SCAVENGER_COUNT, SCAVENGER_SENSE_R, SPAWN, SONIC_MULT, STAR_DECAY_S, TAXI_TYPE, TOTAL_VOTES, TRAFFIC_COUNT, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_GLB, VEHICLE_LABELS, VEHICLE_POOL, VEHICLE_STEER, VEHICLE_TOP, VAN_AXLE, VAN_LOAD_S, VAN_PATROL_GATE_S, VAN_PATROL_WAIT_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
   AIRPORT, PLANE_COUNT, POWER_CARRY,
   WALL_RADIUS, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
   ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, DOG_SPEED, ZOMDOG_DMG, ZOMDOG_HP, ZOMDOG_SENSE, ZOMDOG_SPEED, ZOMDOG_TOUCH_CD, POINTS_KILL_ZOMDOG, BOT_SPAWN_GAP, policeOutfitOf, randomAppearance, stationCage, stationGate,
@@ -634,6 +634,13 @@ export class GameEngine {
    *  the Licenses renderer rebuilds its 3D views when this ticks up */
   licRev = 0;
   fxQueue: Fx[] = [];
+
+  /* --- 🏪 the SHOP GARAGE — rides purchased in the Item Shop ---
+   * world.cars indices of the garage cars WE appended (parked beside the
+   * player every run). The town's parked fleet comes from worldgen; these
+   * are the shop-purchased extras — indices stay stable for the session so
+   * renderers & net keys never shuffle. */
+  garageCi: number[] = [];
 
   /* --- GTA-style driving (license-gated) --- */
   /** collected 🪪 card — without it the driver's seat stays locked */
@@ -1870,6 +1877,9 @@ export class GameEngine {
     // 🎒 locker gear — everything PURCHASED in the Item Shop spawns with you:
     // belt tools, pocketed gems, hotbar snacks and the VIP license
     if (gear) this.grantLockerGear(gear);
+    // 🏪 the garage — every PURCHASED vehicle re-parks beside the fresh drop
+    // spot (walk up + press E; the 🪪 license still gates the ignition)
+    this.spawnGarageCars(gear);
     // 📸 rebuild the cached HUD snapshot NOW — getHud() returns the constructor-era
     // copy until the loop's next 0.1 s rebuild, so a fresh run's first frames
     // would otherwise hide the 🪪 license badge (and every other granted perk)
@@ -1902,6 +1912,87 @@ export class GameEngine {
       else if (this.inv.length < INV_SLOTS) this.inv.push({ def: s.def, count: s.count });
     }
     if (gear.license) this.hasLicense = true;
+  }
+
+  /* ---------------- 🏪 the SHOP GARAGE — your purchased rides ----------------
+   * Every vehicle bought in the Item Shop spawns PARKED BESIDE YOU at the
+   * start of every run — walk up, press E and drive (the 🪪 license gates
+   * the ignition exactly like every other car in town). The first reset
+   * appends the car entries + their two axle colliders; later resets just
+   * re-park them at the new drop spot (indices stay stable, so the GLB
+   * renderers, the minimap and any net keys never shuffle). */
+
+  /** A clear parking spot on a ring around the player spawn — angle sweep,
+   *  both axle discs resolve-tested against the town (walls, trees, parked
+   *  cars), plus pushed clear of the already-placed garage spots. */
+  private garageSlot(k: number, avoid: { x: number; z: number }[]): { x: number; z: number; rot: number } {
+    const sp = this.playerSpawn;
+    const t = k < this.garageCi.length && this.world.cars[this.garageCi[k]]
+      ? this.world.cars[this.garageCi[k]].t : 12;
+    const ax = VEHICLE_AXLE[t % VEHICLE_AXLE.length], rr = VEHICLE_AXLE_R[t % VEHICLE_AXLE_R.length];
+    for (let i = 0; i < 16; i++) {
+      const a = (i / 16) * Math.PI * 2 + k * 0.9;   // stagger per vehicle so a fleet fans out
+      const d = 4.4 + (i % 4) * 1.7;
+      const x = sp.x + Math.cos(a) * d, z = sp.z + Math.sin(a) * d;
+      const rot = a + Math.PI / 2;                   // nose tangent to the spawn ring
+      if (avoid.some((v) => Math.hypot(x - v.x, z - v.z) < 5.2)) continue;
+      const fx = Math.sin(rot), fz = Math.cos(rot);
+      let ok = true;
+      for (const s of [-1, 1]) {
+        const disc = { x: x + fx * ax * s, z: z + fz * ax * s };
+        const bx = disc.x, bz = disc.z;
+        resolve(disc, rr, this.world);
+        if (Math.hypot(disc.x - bx, disc.z - bz) > 0.05) { ok = false; break; }
+      }
+      if (ok) return { x, z, rot };
+    }
+    // nowhere clear on the ring — fall back to a resolve-nudged south spot
+    const p = { x: sp.x + 5.5, z: sp.z + 5.5 + k * 3.4 };
+    resolve(p, 1.3, this.world);
+    return { x: p.x, z: p.z, rot: 0 };
+  }
+
+  /** 🏪 grow the fleet to match the wallet, then re-park every garage car
+   *  beside the fresh player spawn (the shop promise: it spawns with you
+   *  EVERY run — a joyride parked across town doesn't strand the owner). */
+  private spawnGarageCars(gear?: OwnedGear) {
+    const types = (gear?.vehicles ?? []).filter((t) => VEHICLE_GLB[t] !== undefined);
+    if (types.length === 0 && this.garageCi.length === 0) return;
+    // plan the whole fleet's parking FIRST (spots test against each other)
+    const placed: { x: number; z: number }[] = [];
+    const spots = types.map((_, k) => {
+      const s = this.garageSlot(k, placed);
+      placed.push(s);
+      return s;
+    });
+    // grow the fleet for purchases made since the last reset
+    while (this.garageCi.length < types.length) {
+      const k = this.garageCi.length;
+      const t = types[k];
+      const s = spots[k];
+      const car: Car = { x: s.x, z: s.z, rot: s.rot, c: (k * 2 + 1) % 3, t };
+      this.world.cars.push(car);
+      const ci = this.world.cars.length - 1;
+      const fx = Math.sin(s.rot), fz = Math.cos(s.rot);
+      const ax = VEHICLE_AXLE[t % VEHICLE_AXLE.length], rr = VEHICLE_AXLE_R[t % VEHICLE_AXLE_R.length];
+      // rear axle first, front second — the pair order syncCarColliders expects
+      const rear = addDynamicCircle(this.world, { x: s.x - fx * ax, z: s.z - fz * ax, r: rr, car: ci });
+      const front = addDynamicCircle(this.world, { x: s.x + fx * ax, z: s.z + fz * ax, r: rr, car: ci });
+      this.carAxles.set(ci, [this.world.circles[rear], this.world.circles[front]]);
+      this.garageCi.push(ci);
+    }
+    // every fresh run re-parks the fleet around the NEW drop spot
+    for (let k = 0; k < this.garageCi.length; k++) {
+      const ci = this.garageCi[k];
+      const car = this.world.cars[ci];
+      if (!car) continue;
+      car.t = types[k] ?? car.t;
+      car.c = (k * 2 + 1) % 3;
+      const s = spots[k];
+      this.carCoast.delete(ci);                 // a coasting ride parks itself now
+      this.botDriven.delete(ci);                // no bot keeps the wheel over a rewind
+      this.syncCarColliders({ ci, x: s.x, z: s.z, rot: s.rot, t: car.t });
+    }
   }
 
   /* ---------------- interactions ---------------- */

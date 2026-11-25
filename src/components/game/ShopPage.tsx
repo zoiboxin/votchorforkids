@@ -41,17 +41,19 @@ import {
   type GlbCharacterDef, type GlbInstance,
 } from "@/lib/game/glbCharacters";
 import { isWeaponKind, loadWeaponTemplate, makeWeaponInstance, type WeaponKind } from "@/lib/game/weapons";
-import { ensureWeaponThumb, useShopThumbs, weaponThumb } from "@/lib/game/shopThumbs";
+import { ensureVehicleThumb, ensureWeaponThumb, useShopThumbs, vehicleThumb, weaponThumb } from "@/lib/game/shopThumbs";
+import { loadVehicle, spawnVehicle, type VehicleKind } from "@/lib/game/glbVehicles";
 import { poseCharacter } from "@/lib/game/character";
-import { randomAppearance, type Appearance } from "@/lib/game/constants";
+import { VEHICLE_GLB, randomAppearance, type Appearance } from "@/lib/game/constants";
 import { sfx } from "@/lib/game/audio";
 import { useGame } from "./store";
 
 /* ============================ category dropdown ============================ */
 
-type CatId = "style" | "vault" | "gear" | "power" | "support" | "all";
+type CatId = "style" | "vault" | "garage" | "gear" | "power" | "support" | "all";
 
 const CATS: readonly { id: CatId; label: string; emoji: string }[] = [
+  { id: "garage", label: "Vehicles", emoji: "🏍️" },
   { id: "style", label: "Style & Shop Cast", emoji: "👕" },
   { id: "vault", label: "Mythic Vault", emoji: "🐉" },
   { id: "gear", label: "Gear & Weapons", emoji: "⚔️" },
@@ -281,6 +283,61 @@ function WeaponSpinner({ inst }: { inst: THREE.Group }) {
   );
 }
 
+/** 🏪 vehicle stage — the shop garage rides turntable on a wet-look asphalt
+ *  podium. The real GLB streams in (loadVehicle → spawnVehicle), the camera
+ *  frames the whole ride, and a slow spin shows every angle. */
+function VehicleStage({ kind, name }: { kind: string; name: string }) {
+  const [inst, setInst] = useState<THREE.Group | null>(null);
+  useEffect(() => {
+    let live = true;
+    loadVehicle(kind as VehicleKind)
+      .then(() => { if (live) setInst(spawnVehicle(kind as VehicleKind)?.root ?? null); })
+      .catch(() => { /* the emoji chip stays; never crash the shop */ });
+    return () => { live = false; };
+  }, [kind]);
+
+  const fit = useMemo(() => {
+    if (!inst) return null;
+    const box = new THREE.Box3().setFromObject(inst);
+    const size = box.getSize(new THREE.Vector3());
+    const center = box.getCenter(new THREE.Vector3());
+    return { center, dist: Math.max(0.05, size.x, size.y, size.z) };
+  }, [inst]);
+
+  return (
+    <div
+      className="relative h-full w-full cursor-grab active:cursor-grabbing"
+      role="img"
+      aria-label={`3D preview of ${name}`}
+    >
+      <Canvas camera={{ fov: 35, position: [0.9, 1.0, 2.6] }} dpr={[1, 1.75]} gl={{ alpha: true, antialias: true }}>
+        <ambientLight intensity={0.75} />
+        <directionalLight position={[4, 6, 6]} intensity={1.1} color="#fff2d0" />
+        <directionalLight position={[-5, 3, -4]} intensity={0.45} color="#ffd9a8" />
+        <directionalLight position={[0, -2, -6]} intensity={0.25} color="#7dd3fc" />
+        <FitCamera fit={fit} />
+        {/* asphalt pool + shop spotlight pool under the ride */}
+        <mesh rotation-x={-Math.PI / 2} position-y={0.02}>
+          <circleGeometry args={[1, 64]} />
+          <meshBasicMaterial color="#0c3a2a" transparent opacity={0.22} />
+        </mesh>
+        <mesh rotation-x={-Math.PI / 2} position-y={0.035}>
+          <ringGeometry args={[0.9, 1, 64]} />
+          <meshBasicMaterial color="#38bdf8" transparent opacity={0.55} />
+        </mesh>
+        {inst && <WeaponSpinner inst={inst} />}
+      </Canvas>
+      {!inst && (
+        <div className="pointer-events-none absolute inset-x-0 bottom-4 flex justify-center">
+          <div className="flex items-center gap-2 rounded-full bg-slate-950/80 px-3.5 py-1.5 text-[11px] font-black uppercase tracking-[0.14em] text-white/80 ring-1 ring-white/20 backdrop-blur">
+            <Loader2 size={13} className="animate-spin text-yellow-300" /> streaming your ride…
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 function FitCamera({ fit }: { fit: { center: THREE.Vector3; dist: number } | null }) {
   const { camera } = useThree();
   useEffect(() => {
@@ -321,6 +378,7 @@ const KIND_TILE: Record<ShopKind, string> = {
   power: "from-amber-400/30 to-yellow-200/10",
   support: "from-emerald-500/30 to-teal-300/10",
   style: "from-fuchsia-500/30 to-rose-300/10",
+  garage: "from-cyan-500/30 to-sky-300/10",
 };
 
 /** portrait tile for a rigged cast hero (emoji stands in until it lands) */
@@ -355,11 +413,24 @@ function WeaponTileArt({ kind }: { kind: WeaponKind }) {
   return <Loader2 size={20} className="animate-spin text-white/40" />;
 }
 
+/** 🏪 portrait tile for a garage ride — the REAL vehicle GLB snapped in the
+ *  offscreen thumb studio (same pipeline as the weapon steel). */
+function VehicleTileArt({ kind, emoji }: { kind: string; emoji: string }) {
+  useShopThumbs();
+  useEffect(() => { ensureVehicleThumb(kind); }, [kind]);
+  const t = vehicleThumb(kind);
+  if (t) {
+    return <img src={t} alt="" width={160} height={160} className="h-full w-full object-contain p-1" loading="lazy" />;
+  }
+  return <span aria-hidden className="text-4xl leading-none drop-shadow">{emoji}</span>;
+}
+
 function TileArt({ sel }: { sel: Sel }) {
   if (sel.t === "hero") return <HeroTileArt slug={sel.hero.slug} emoji={sel.hero.emoji} />;
   const it = sel.item;
   if (it.char) return <CharTileArt slug={it.char} emoji={it.emoji} />;
   if (isWeaponKind(it.tool ?? "")) return <WeaponTileArt kind={it.tool as WeaponKind} />;
+  if (it.veh != null) return <VehicleTileArt kind={VEHICLE_GLB[it.veh] ?? ""} emoji={it.emoji} />;
   /* vault tile gets the legendary treatment, everything else a kind gradient */
   if (it.heroBundle) {
     return (
@@ -394,8 +465,20 @@ interface Promo {
 
 const PROMOS: readonly Promo[] = [
   {
+    id: "garage",
+    badge: "FRESH DROP · 10 NEW VEHICLES",
+    title: "THE GARAGE — 1 COIN PER TRIANGLE",
+    sub: "Limo, GT3 racer, touring bike, tractors & pickups — every ride spawns parked beside you every run. Price = exact triangle count.",
+    emoji: "🏍️",
+    grad: "from-cyan-600/95 via-sky-600/85 to-indigo-600/80",
+    glow: "rgba(56,189,248,0.5)",
+    goCat: "garage",
+    goItem: "veh-touring-motorcycle-3b1ad3",
+    fresh: true,
+  },
+  {
     id: "cast",
-    badge: "FRESH DROP · 18 NEW CHARACTERS",
+    badge: "SHOP CAST · 18 CHARACTERS",
     title: "SHOP CAST — 1 COIN PER TRIANGLE",
     sub: "Santa, Zeus, Kid Witch & 15 more rigged heroes — every price is that hero's exact triangle count.",
     emoji: "🎭",
@@ -403,7 +486,6 @@ const PROMOS: readonly Promo[] = [
     glow: "rgba(251,113,133,0.5)",
     goCat: "style",
     goItem: "char-santa-base",
-    fresh: true,
   },
   {
     id: "vault",
@@ -537,8 +619,8 @@ export function ShopPage() {
   const vault = shopItem(RPG_VAULT_ITEM_ID);
   const vaultOwned = !!vault && owned.includes(vault.id);
 
-  const [cat, setCat] = useState<CatId>("style");
-  const [selKeyState, setSelKey] = useState<string>("char-santa-base");
+  const [cat, setCat] = useState<CatId>("garage");
+  const [selKeyState, setSelKey] = useState<string>("veh-touring-motorcycle-3b1ad3");
 
   const entries = useMemo(() => buildEntries(cat, vaultOwned), [cat, vaultOwned]);
   /* the selected key may fall out of a category when the dropdown changes —
@@ -561,9 +643,11 @@ export function ShopPage() {
     if (buyItem(it.id)) {
       sfx.pickup();
       pushToast(
-        it.kind === "style"
-          ? `${it.emoji} ${it.name} purchased — wear it from the shop or the locker!`
-          : `${it.emoji} ${it.name} purchased — it spawns with you every run (🎒 wheel: G / right-click)!`,
+        it.kind === "garage"
+          ? `${it.emoji} ${it.name} purchased — it spawns parked beside you every run (🪪 license + E to drive)!`
+          : it.kind === "style"
+            ? `${it.emoji} ${it.name} purchased — wear it from the shop or the locker!`
+            : `${it.emoji} ${it.name} purchased — it spawns with you every run (🎒 wheel: G / right-click)!`,
         "good",
       );
     } else {
@@ -617,6 +701,8 @@ export function ShopPage() {
       stage = <HeroStage slug={sel.item.char} />;
     } else if (isWeaponKind(sel.item.tool ?? "")) {
       stage = <WeaponStage kind={sel.item.tool as WeaponKind} />;
+    } else if (sel.item.veh != null) {
+      stage = <VehicleStage kind={VEHICLE_GLB[sel.item.veh] ?? ""} name={sel.item.name} />;
     } else {
       stage = <EmojiStage item={sel.item} />;
     }
@@ -690,7 +776,9 @@ export function ShopPage() {
               if (p.goItem) {
                 const it = shopItem(p.goItem);
                 if (it) {
-                  setCat(it.kind === "style" && it.id !== RPG_VAULT_ITEM_ID ? "style" : cat === "all" ? cat : (it.kind as CatId));
+                  setCat(it.kind === "style" && it.id !== RPG_VAULT_ITEM_ID ? "style"
+                    : it.kind === "garage" ? "garage"
+                    : cat === "all" ? cat : (it.kind as CatId));
                   setSelKey(it.id);
                 }
               }

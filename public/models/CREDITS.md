@@ -151,3 +151,23 @@ each priced in-game at its exact triangle count:
 
 Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
 (https://creativecommons.org/licenses/by/4.0/)
+
+`vehicles/` 🏪 Shop Garage — individually-sold vehicles (polyfork.dev/asset/<slug>),
+each priced in-game at its exact triangle count; every purchased ride spawns
+parked beside the player at the start of every run:
+
+| File | Model | Triangles |
+| --- | --- | --- |
+| `jackpot-prize-convertible-81bca8.glb` | Jackpot Prize Convertible | 3,448 |
+| `stretch-limousine-284b73.glb` | Stretch Limousine | 2,690 |
+| `model-of-a-gt3-32b70d.glb` | Model of a GT3 | 2,802 |
+| `touring-motorcycle-3b1ad3.glb` | Touring Motorcycle | 3,340 |
+| `ranger-pickup-truck-97057d.glb` | Ranger Pickup Truck | 4,580 |
+| `follow-me-car-b3c6a5.glb` | Follow-Me Car | 3,010 |
+| `compact-tractor-35b84b.glb` | Compact Tractor | 3,034 |
+| `three-wheeled-delivery-mini-744094.glb` | Three-Wheeled Delivery Mini | 3,266 |
+| `pickup-truck-a34bf2.glb` | Pickup Truck | 3,383 |
+| `semi-tractor-e9455c.glb` | Semi Tractor | 3,719 |
+
+Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
+(https://creativecommons.org/licenses/by/4.0/)

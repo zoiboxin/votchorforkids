@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  AIRPORT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, HEARSE_TYPE, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, TAXI_TYPE, TREE_FALL_S, TREE_WOBBLE_S, WALL_RADIUS, inPrehistoricValley, stationCage, stationGate,
+  AIRPORT, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, HEARSE_TYPE, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, TAXI_TYPE, TREE_FALL_S, TREE_WOBBLE_S, VEHICLE_GLB, WALL_RADIUS, inPrehistoricValley, stationCage, stationGate,
   WILDLIFE_ENABLED,
 } from "@/lib/game/constants";
 import {
@@ -17,7 +17,7 @@ import { loadInsectKit, spawnInsectKit, type InsectKitKind } from "@/lib/game/in
 import { mulberry32, range } from "@/lib/game/rng";
 import { nightFactor } from "@/lib/game/sim";
 import { isKitType, kitWheelR, makeKitCar } from "@/lib/game/cars/kit";
-import { preloadVehicles, spawnVehicle, useVehicles, vehicleReady } from "@/lib/game/glbVehicles";
+import { loadVehicle, preloadVehicles, spawnVehicle, useVehicles, vehicleReady, type VehicleKind } from "@/lib/game/glbVehicles";
 import { createAsset as createTruck } from "@/lib/game/cars/kit/ranger-pickup-truck-97057d.mjs";
 import type { GameEngine } from "@/lib/game/engine";
 import {
@@ -37,7 +37,7 @@ export const WORLD: World = generateWorld();
 /** 🚕🚓⚰️ body types that render from a real polyfork GLB (yellow cab + the
  *  graveyard's phantom hearse) — skipped by the boxy instanced part set
  *  exactly like the retro-kit cars. */
-const skipProceduralCar = (t: number) => isKitType(t) || t === TAXI_TYPE || t === HEARSE_TYPE;
+const skipProceduralCar = (t: number) => isKitType(t) || t >= TAXI_TYPE; // 🏁🚕🏪 kit & GLB bodies cruise in KitCars/GlbCars (taxi 10, hearse 11, 🏪 garage 12-21)
 const tmp = new THREE.Object3D();
 tmp.rotation.order = "YXZ"; // lets placeCar rake the windshield around the car's own side axis
 const col = new THREE.Color();
@@ -864,6 +864,18 @@ const CAR_TYPES: CarType[] = [
   { L: 5.3, W: 2.18, bodyH: 0.82, cabL: 1.5, cabOff: 0.1, cabH: 0.5, wheelR: 0.34, axF: 1.35, wsTilt: 0.52, rgTilt: 0.44, kind: 0 },      // 🚙 convertible
   { L: 5.08, W: 2.01, bodyH: 0.95, cabL: 2.6, cabOff: -0.5, cabH: 0.66, wheelR: 0.3315, axF: 1.42, wsTilt: 0.38, rgTilt: 0.2, kind: 0 },  // 🚗 station wagon
   { L: 4.47, W: 1.98, bodyH: 0.82, cabL: 1.5, cabOff: -0.1, cabH: 0.52, wheelR: 0.3315, axF: 1.28, wsTilt: 0.6, rgTilt: 0.5, kind: 0 },   // 🏎️ sports coupe
+  // 🏪 shop garage fleet — GLB bodies (GlbCars renders the real models); only
+  // the wheelR feeds the rolling-spin math, the rest documents the body.
+  { L: 4.9, W: 2.0, bodyH: 0.82, cabL: 1.5, cabOff: 0.1, cabH: 0.5, wheelR: 0.34, axF: 1.35, wsTilt: 0.52, rgTilt: 0.44, kind: 0 },   // 🏆 jackpot convertible
+  { L: 7.2, W: 2.0, bodyH: 0.9, cabL: 3.0, cabOff: -0.6, cabH: 0.6, wheelR: 0.36, axF: 2.3, wsTilt: 0.4, rgTilt: 0.3, kind: 0 },     // 🚓 stretch limousine
+  { L: 4.6, W: 2.0, bodyH: 0.86, cabL: 1.6, cabOff: -0.1, cabH: 0.55, wheelR: 0.36, axF: 1.32, wsTilt: 0.6, rgTilt: 0.5, kind: 0 },  // 🏎️ GT3 racer
+  { L: 2.3, W: 0.9, bodyH: 1.0, cabL: 1.0, cabOff: 0.1, cabH: 0.6, wheelR: 0.34, axF: 0.72, wsTilt: 0.5, rgTilt: 0.4, kind: 0 },     // 🏍️ touring motorcycle
+  { L: 5.3, W: 2.05, bodyH: 0.98, cabL: 1.75, cabOff: 1.32, cabH: 0.78, wheelR: 0.42, axF: 1.68, wsTilt: 0.34, rgTilt: 0.3, kind: 2 }, // 🛻 ranger pickup
+  { L: 3.4, W: 1.7, bodyH: 0.8, cabL: 1.4, cabOff: 0.2, cabH: 0.55, wheelR: 0.3, axF: 1.12, wsTilt: 0.5, rgTilt: 0.42, kind: 0 },    // 🛩️ follow-me car
+  { L: 3.4, W: 1.6, bodyH: 1.1, cabL: 1.2, cabOff: -0.2, cabH: 0.7, wheelR: 0.5, axF: 1.18, wsTilt: 0.3, rgTilt: 0.25, kind: 0 },    // 🚜 compact tractor
+  { L: 3.2, W: 1.5, bodyH: 1.0, cabL: 1.5, cabOff: 0.3, cabH: 0.65, wheelR: 0.3, axF: 1.1, wsTilt: 0.4, rgTilt: 0.35, kind: 1 },     // 🛺 delivery mini
+  { L: 5.4, W: 2.0, bodyH: 0.98, cabL: 1.75, cabOff: 1.32, cabH: 0.78, wheelR: 0.42, axF: 1.68, wsTilt: 0.34, rgTilt: 0.3, kind: 2 }, // 🛻 pickup truck GT
+  { L: 6.2, W: 2.2, bodyH: 1.15, cabL: 2.2, cabOff: 0.6, cabH: 0.85, wheelR: 0.46, axF: 1.95, wsTilt: 0.28, rgTilt: 0.22, kind: 2 },  // 🚚 semi tractor
 ];
 
 /**
@@ -2571,7 +2583,10 @@ function PoliceVans({ engine }: { engine: GameEngine }) {
  * Parked rank cars & ring-traffic taxis render from the real model (static
  * prop, wheels identified by the loader and spun by the distance covered).
  * Driver cases mirror KitCars: ours follows the smoothed drive pose, bot &
- * remote rides follow their world entries, coasting taxis keep rolling. */
+ * remote rides follow their world entries, coasting taxis keep rolling.
+ * 🏪 The SHOP GARAGE fleet renders here too — every purchased vehicle type
+ * (12–21) streams its own GLB the moment it lands, so your garage rides
+ * appear parked beside your spawn on every screen. */
 interface GlbCarRig {
   src: "park" | "traffic";
   i: number;
@@ -2590,10 +2605,25 @@ function GlbCars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mut
   // the fleet rebuild the moment the model lands (or re-renders after a miss)
   const [gyVer, setGyVer] = useState(isGraveyardModelReady("hearse") ? 1 : 0);
   useEffect(() => onGraveyardModelsReady(() => setGyVer(1)), []);
+  // 🏪 garage growth — a fresh purchase appends a car entry; the fleet
+  // rebuilds its rigs so the new ride renders without a remount
+  const fleetN = engine.garageCi.length;
+  // 🏪 stream the garage GLBs the fleet needs (mount + every fleet growth);
+  // loadVehicle dedupes, and each landed file bumps useVehicles → rebuild
+  useEffect(() => {
+    const kinds = new Set<string>();
+    for (const c of WORLD.cars) { const s = VEHICLE_GLB[c.t]; if (s) kinds.add(s); }
+    for (const ci of engine.garageCi) {
+      const car = engine.world.cars[ci];
+      const s = car ? VEHICLE_GLB[car.t] : undefined;
+      if (s) kinds.add(s);
+    }
+    for (const k of kinds) void loadVehicle(k as VehicleKind).catch(() => { /* the fleet just stays hidden */ });
+  }, [engine, fleetN]);
   const rigs = useMemo<GlbCarRig[]>(() => {
-    if (!vehicleReady("cab") && !isGraveyardModelReady("hearse")) return [];
+    if (!vehicleReady("cab") && !isGraveyardModelReady("hearse") && fleetN === 0) return [];
     const out: GlbCarRig[] = [];
-    const build = (kind: "cab" | "hearse", src: "park" | "traffic", i: number, x: number, z: number) => {
+    const build = (kind: string, src: "park" | "traffic", i: number, x: number, z: number) => {
       let root: THREE.Group | null = null;
       let wheels: THREE.Object3D[] = [];
       let wheelR = 0.34;
@@ -2601,7 +2631,7 @@ function GlbCars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mut
         const r = spawnVehicle("cab");
         if (!r) return;
         root = r.root; wheels = r.wheels; wheelR = r.wheelR;
-      } else {
+      } else if (kind === "hearse") {
         // ⚰️ the phantom hearse — the Halloween-kit vintage model, grounded
         // clone. Wheels are picked by the same small-round-mesh heuristic the
         // police cruiser & cab use (body spans the width, wheels don't).
@@ -2615,6 +2645,11 @@ function GlbCars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mut
           const w = bb.max.x - bb.min.x;
           if (h > 0.05 && h < 1.0 && h * 2.2 > w) { wheels.push(m); wheelR = h / 2; }
         });
+      } else {
+        // 🏪 a shop garage ride — its own polyfork GLB, same grounded clone
+        const r = spawnVehicle(kind as VehicleKind);
+        if (!r) return;
+        root = r.root; wheels = r.wheels; wheelR = r.wheelR;
       }
       // 🔆 two headlight cones poking from the nose — shared kit-fleet material
       const box = new THREE.Box3().setFromObject(root);
@@ -2632,11 +2667,15 @@ function GlbCars({ engine, clockRef }: { engine: GameEngine; clockRef: React.Mut
     };
     WORLD.cars.forEach((c, i) => {
       if (c.t === TAXI_TYPE) build("cab", "park", i, c.x, c.z);
-      if (c.t === HEARSE_TYPE) build("hearse", "park", i, c.x, c.z);
+      else if (c.t === HEARSE_TYPE) build("hearse", "park", i, c.x, c.z);
+      else {
+        const slug = VEHICLE_GLB[c.t];
+        if (slug && vehicleReady(slug as VehicleKind)) build(slug, "park", i, c.x, c.z);
+      }
     });
     engine.traffic.forEach((t, i) => { if (t.t === TAXI_TYPE) build("cab", "traffic", i, t.x, t.z); });
     return out;
-  }, [engine, vVer, gyVer]);
+  }, [engine, vVer, gyVer, fleetN]);
 
   useFrame((_, dtRaw) => {
     if (!rigs.length) return;

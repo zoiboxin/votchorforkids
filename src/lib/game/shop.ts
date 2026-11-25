@@ -11,12 +11,12 @@
  * license skips the 🪪 card hunt. Outfits are worn from the shop or locker.
  */
 
-import { ITEMS, OUTFIT_PRESETS, POWERS, TOOLS, type PowerKind, type ToolKind } from "./constants";
+import { ITEMS, OUTFIT_PRESETS, POWERS, TOOLS, VEHICLE_LABELS, type PowerKind, type ToolKind } from "./constants";
 
 /** 🐉 the Mythic Hero Vault bundle — unlocks every kit hero */
 export const RPG_VAULT_ITEM_ID = "kit-rpg-vault";
 
-export type ShopKind = "gear" | "power" | "support" | "style";
+export type ShopKind = "gear" | "power" | "support" | "style" | "garage";
 
 export interface ShopItem {
   id: string;
@@ -35,6 +35,10 @@ export interface ShopItem {
   license?: boolean;
   /** hero bundle — owning this unlocks the hero kit(s) listed in its tip */
   heroBundle?: true;
+  /** 🏪 garage vehicle type (constants.ts VEHICLE_GLB 12–21) — owning this
+   *  spawns that ride parked beside you at the start of EVERY run (license
+   *  still gates the ignition, exactly like every other car in town). */
+  veh?: number;
 }
 
 /* stable lookups into the shared catalogs */
@@ -131,6 +135,31 @@ export const SHOP_ITEMS: readonly ShopItem[] = [
     tip: "Start EVERY run already licensed — drive any parked car, no 🪪 card hunt.",
   },
 
+  /* ---------- 🏪 GARAGE — the polyfork vehicle fleet, priced 1 coin per
+   * triangle ----------
+   * Every ride renders from its real GLB and spawns parked beside you at the
+   * start of every run — walk up, press E and drive (the 🪪 license still
+   * gates the ignition like every other car in town). The bike plays the
+   * astride riding pose instead of the car seat. Price = the asset's exact
+   * triangle count, as listed on its polyfork.dev catalog page. */
+  ...([
+    ["jackpot-prize-convertible-81bca8", "Jackpot Convertible", "🏆", 12, 3448],
+    ["stretch-limousine-284b73", "Stretch Limousine", "🚓", 13, 2690],
+    ["model-of-a-gt3-32b70d", "GT3 Race Car", "🏎️", 14, 2802],
+    ["touring-motorcycle-3b1ad3", "Touring Motorcycle", "🏍️", 15, 3340],
+    ["ranger-pickup-truck-97057d", "Ranger Pickup", "🛻", 16, 4580],
+    ["follow-me-car-b3c6a5", "Follow-Me Car", "🛩️", 17, 3010],
+    ["compact-tractor-35b84b", "Compact Tractor", "🚜", 18, 3034],
+    ["three-wheeled-delivery-mini-744094", "Delivery Mini", "🛺", 19, 3266],
+    ["pickup-truck-a34bf2", "Pickup Truck GT", "🛻", 20, 3383],
+    ["semi-tractor-e9455c", "Semi Tractor", "🚚", 21, 3719],
+  ] as const).map(
+    ([slug, name, emoji, veh, tris]): ShopItem => ({
+      id: `veh-${slug}`, name, emoji, kind: "garage", price: tris, veh,
+      tip: `Real polyfork GLB vehicle — exactly ${tris.toLocaleString()} triangles, priced 1 💰 per triangle. It spawns parked beside you every run; buy the 🪪 license if you haven't, then press E to drive.`,
+    }),
+  ),
+
   /* ---------- 👕 STYLE — cosmetic outfits, worn from the shop or the locker ---------- */
   {
     id: RPG_VAULT_ITEM_ID, name: "Mythic Hero Vault", emoji: "🐉", kind: "style", price: 560, heroBundle: true,
@@ -183,6 +212,7 @@ export const SHOP_KINDS: readonly { id: ShopKind; label: string; emoji: string }
   { id: "power", label: "Powers", emoji: "✨" },
   { id: "support", label: "Support", emoji: "🎒" },
   { id: "style", label: "Style", emoji: "👕" },
+  { id: "garage", label: "Garage", emoji: "🚗" },
 ];
 
 export const shopItem = (id: string): ShopItem | undefined => SHOP_ITEMS.find((i) => i.id === id);
@@ -197,11 +227,14 @@ export interface OwnedGear {
   powers: PowerKind[];
   snacks: { def: number; count: number }[];
   license: boolean;
+  /** 🏪 owned garage vehicles (game vehicle types 12–21) — spawned parked
+   *  beside the player at the start of every run (see engine.spawnGarageCars) */
+  vehicles: number[];
 }
 
 /** Build the run-loadout from the player's purchased item ids. */
 export function ownedGear(owned: readonly string[]): OwnedGear {
-  const gear: OwnedGear = { tools: [], powers: [], snacks: [], license: false };
+  const gear: OwnedGear = { tools: [], powers: [], snacks: [], license: false, vehicles: [] };
   for (const id of owned) {
     const it = shopItem(id);
     if (!it) continue;
@@ -209,11 +242,12 @@ export function ownedGear(owned: readonly string[]): OwnedGear {
     else if (it.power) gear.powers.push(it.power);
     else if (it.snack) gear.snacks.push({ ...it.snack });
     else if (it.license) gear.license = true;
+    else if (it.veh != null && !gear.vehicles.includes(it.veh)) gear.vehicles.push(it.veh);
   }
   return gear;
 }
 
-/** One-line HUD toast of the granted loadout ("🪓 Axe · ⚡ Sonic gem · 🩹 Medkit ×2 · 🪪 License"). */
+/** One-line HUD toast of the granted loadout ("🪓 Axe · ⚡ Sonic gem · 🩹 Medkit ×2 · 🪪 License · 🏍️ Bike"). */
 export function gearSummary(gear: OwnedGear): string {
   const parts: string[] = [];
   for (const kind of gear.tools) {
@@ -229,5 +263,9 @@ export function gearSummary(gear: OwnedGear): string {
     if (d) parts.push(`${d.emoji} ${d.name} ×${s.count}`);
   }
   if (gear.license) parts.push("🪪 License");
+  for (const t of gear.vehicles) {
+    const label = VEHICLE_LABELS[t % VEHICLE_LABELS.length];
+    if (label) parts.push(label);
+  }
   return parts.join(" · ");
 }
