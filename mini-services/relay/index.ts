@@ -227,6 +227,23 @@ io.on("connection", (sock) => {
     });
   });
 
+  /* 🔍 deep debug — live socket inventory + per-room member liveness. Answers
+   * "is that client's socket REALLY in the socket.io room?" (the silent-ghost
+   * class of bug: relay roster says seated, broadcasts never arrive). */
+  sock.on("mp:debug", (_p: unknown, ack?: (r: unknown) => void) => {
+    ack?.({
+      ok: true,
+      sockets: [...io.sockets.sockets.keys()],
+      rooms: [...rooms.values()].map((r) => ({
+        code: r.code, phase: r.phase, host: r.hostSid,
+        members: [...r.members.values()].map((m) => ({
+          sid: m.sid, slot: m.slot, name: m.name,
+          socketAlive: io.sockets.sockets.has(m.sid),
+        })),
+      })),
+    });
+  });
+
   sock.on("mp:ready", (ready: boolean) => {
     const room = roomOf(sock.id);
     const m = room?.members.get(sock.id);

@@ -6807,9 +6807,11 @@ export class GameEngine {
     }
     // 🩹 out-of-combat healing: a body that hasn't been hit for 5 s heals at
     // ~2.3× the trickle rate — after a knockdown you get your next round back
+    // (never from ZERO — a lethal wire blow must not be healed back to life
+    // before the death check runs; that was the heal-dodge race)
     this.calmT = this.hurtT > 0 ? 0 : this.calmT + dt;
     const healRate = this.calmT > 5 ? 2.8 : 1.2;
-    this.hp = Math.min(100, this.hp + healRate * dt * AGE_STATS[this.look.age].regen);
+    if (this.hp > 0 && !this.lost) this.hp = Math.min(100, this.hp + healRate * dt * AGE_STATS[this.look.age].regen);
     // 🚗 driverless cars coast & decelerate; car-meets-car crunch cooldown ticks
     this.stepCarPhysics(dt);
     this.stepRemoteCars(dt); // 🌐 remote-driven cars mirror their real driver
@@ -8594,7 +8596,10 @@ export class GameEngine {
       this.addShake(0.32);
       sfx.stab();
       this.toast(`🥊 ${fromName ?? "A rival"} hit you — swing back (F) or bolt!`, "bad");
-      // hp ≤ 0 → the run ends via the tick's die() check (second lethal lands)
+      // hp ≤ 0 → the blow ENDED the run — die NOW (the async wire blow lands
+      // between frames; waiting for the tick's check let the heal surge raise
+      // hp off zero first — the heal-dodge race)
+      if (this.hp <= 0) this.die();
       return;
     }
     this.addShake(0.45); // 💥 MEDIUM
@@ -8603,6 +8608,7 @@ export class GameEngine {
     }
     sfx.scream();
     this.toast("🩸 A BEAST TORE INTO YOU! RUN!", "bad");
+    if (this.hp <= 0) this.die(); // the mirrored pack's verdict is final — die now
   }
 
   /** A teammate built something — grow the same wall in our world. */

@@ -151,7 +151,15 @@ export class NetClient {
     this.setState("connecting");
     return new Promise((resolve, reject) => {
       // relative URL + gateway port transform — NEVER an absolute localhost URL
-      const sock = io("/?XTransformPort=3030", {
+      // 🧪 dev fallback — on localhost/127.0.0.1 there IS no gateway to read the
+      // XTransformPort hint (that's a preview-host feature), so the handshake
+      // would die on Next's 308 forever. Talk to the relay directly there; the
+      // public preview host keeps the gateway transform untouched.
+      const relayUrl =
+        typeof location !== "undefined" && /^(localhost|127\.0\.0\.1)$/.test(location.hostname)
+          ? `http://${location.hostname}:3030`
+          : "/?XTransformPort=3030";
+      const sock = io(relayUrl, {
         transports: ["websocket", "polling"],
         // 🛡️ a stuttery main thread (heavy scene, GC pause, throttled tab) can
         // miss socket heartbeats for many seconds — the old 6-attempt cap left
