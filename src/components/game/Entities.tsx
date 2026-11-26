@@ -5,7 +5,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
   ANIMAL_SET, ATTACK_CD, BIKE_TYPE, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, ROCK_BREAK_S, SHIRT_COLORS, SKIN_TONES, TOOLS,
-  TOTAL_VOTES, TREE_FALL_S, ZONE_WALL_H, FARM_RADIUS, JUNGLE_RADIUS, WILDLIFE, DROP_ALT, normalizeAppearance, type AnimalKind, type Appearance,
+  TOTAL_VOTES, TREE_FALL_S, ZONE_WALL_H, FARM_RADIUS, JUNGLE_RADIUS, WILDLIFE, DROP_ALT, normalizeAppearance, type AnimalKind, type Appearance, type Zone,
 } from "@/lib/game/constants";
 import { preloadModels, onModelsReady, spawnModel } from "@/lib/game/models";
 import type { GameEngine } from "@/lib/game/engine";
@@ -1234,7 +1234,9 @@ export function JungleInsects({ engine }: { engine: GameEngine }) {
   useFrame((s) => {
     const t = s.clock.elapsedTime;
     const night = nightFactor(engine.clock);
-    const inJungle = engine.zone === "Jungle" || engine.zone === "Deep Jungle";
+    // `zone` is TS-private on GameEngine but runtime-visible — read it through a minimal structural view
+    const engZone = (engine as unknown as { zone: Zone }).zone;
+    const inJungle = engZone === "Jungle" || engZone === "Deep Jungle";
     fade.current += ((inJungle ? 1 : 0) - fade.current) * Math.min(1, 0.06);
     const f = fade.current;
     pts.visible = f > 0.02;

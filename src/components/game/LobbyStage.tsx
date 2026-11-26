@@ -236,12 +236,14 @@ function GhostActor({
   inst, cfg, mat,
 }: { inst: GlbInstance; cfg: GhostCfg; mat: THREE.MeshBasicMaterial }) {
   const g = useRef<THREE.Group>(null!);
-  const st = useRef({ x: cfg.x0, dir: cfg.dir, phase: "walk" as GhostPhase, t: 0 });
+  const st = useRef<{ x: number; dir: number; phase: GhostPhase; t: number }>({
+    x: cfg.x0, dir: cfg.dir, phase: "walk", t: 0,
+  });
   const reduced = useRef(
     typeof window !== "undefined" && window.matchMedia?.("(prefers-reduced-motion: reduce)").matches,
   );
 
-  useEffect(() => () => inst.mixer.stopAllAction(), [inst]);
+  useEffect(() => () => { inst.mixer.stopAllAction(); }, [inst]);
 
   useFrame((s, dt) => {
     const d = Math.min(0.1, Math.max(0, dt));

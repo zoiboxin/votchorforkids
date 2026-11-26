@@ -266,6 +266,7 @@ export function unpackCar(data: BinSrc): CarState | null {
     z: v.getInt16(4, true) / 10,
     rot: (v.getUint8(6) / 255) * Math.PI * 2,
     lights: !!(f & CARFLAG_LIGHTS),
+    t: 0, // the transport stamps the arrival time right after decode (client.ts)
   };
 }
 

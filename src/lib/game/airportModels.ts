@@ -114,7 +114,7 @@ export const isAirportModelReady = (kind: string): boolean =>
 /** A fresh independent clone of the kit model, or null while loading.
  *  The clone sits grounded at the origin — position/rotate/scale the returned
  *  group (or a parent) to place it. */
-export function spawnAirportModel(kind: string): { root: THREE.Group; mixer: THREE.AnimationMixer | null; clips: Record<string, THREE.AnimationClip> } | null {
+export function spawnAirportModel(kind: string): { root: THREE.Object3D; mixer: THREE.AnimationMixer | null; clips: Record<string, THREE.AnimationClip> } | null {
   const rig = cache.get(kind as AirportKind);
   if (!rig) return null;
   const root = rig.skinned ? skeletonClone(rig.template) : rig.template.clone(true);

@@ -343,6 +343,8 @@ export interface Build {
 export interface Animal { id: number; kind: AnimalKind; x: number; z: number; vx: number; vz: number; face: number; tx: number; tz: number; timer: number; phase: number; resting: boolean;
   /* 🐕 dogs: night turns every stray into a rotting hound */
   zombie?: boolean; hp?: number; barkT?: number; touchCd?: number; dead?: boolean; deadT?: number;
+  /* 🧱 stuck clock written by stepNpc's anti-stuck brain (see SteerMemory in sim.ts) */
+  blockT?: number;
   /* 🎨 coat variant index + 🍼 baby flag — every creature is an individual */
   variant?: number; baby?: boolean;
   /* 🐜 biting creepy-crawlies — biteCd gates the sting, attackT plays the lunge */
@@ -643,7 +645,7 @@ export class GameEngine {
   /** 🎲 where YOU dropped into the contest — random every match (see rollPlayerSpawn).
    *  Everything that used to orbit the old fixed SPAWN (cop spawns, dizzy respawn,
    *  the join bot) now orbits THIS point, so no two runs start in the same corner. */
-  playerSpawn = { x: SPAWN.x, z: SPAWN.z };
+  playerSpawn: { x: number; z: number } = { x: SPAWN.x, z: SPAWN.z };
   input = { f: 0, r: 0, sprint: false, jump: false, turn: 0, yaw: Math.PI, pitch: 0.32, mouseAt: 0 };
   touchMove = { active: false, sprint: false };
   hp = 100; stamina = 100;
@@ -1354,7 +1356,7 @@ export class GameEngine {
         }
         animalPool.push({
           id: this.nid(), kind: set.kind, x: p.x, z: p.z, vx: 0, vz: 0, face: 0, tx: p.x, tz: p.z,
-          timer: range(r, 0, 5), phase: Math.random() * 6, resting: false,
+          timer: range(r, 0, 5), phase: Math.random() * 6, resting: false, blockT: 0,
           variant: Math.floor(r() * 4), // 🎨 each creature picks its own coat
           // 🍼 some of the herd are babies — smaller, slower, twice as cute
           baby: !BUG_NO_BABY.has(set.kind) && r() < 0.24,
@@ -7959,7 +7961,7 @@ export class GameEngine {
             // The old drift dragged every idle shambler to ONE graveyard point,
             // milling the whole idle horde into a single blob across town.
             zb.roamT = (zb.roamT ?? 0) - dt;
-            if ((zb.blockT ?? 0) > 2 || zb.roamT <= 0 || (zb.roamX !== undefined && dist2(zb.x, zb.z, zb.roamX, zb.roamZ) < 1.6)) {
+            if ((zb.blockT ?? 0) > 2 || zb.roamT <= 0 || (zb.roamX !== undefined && zb.roamZ !== undefined && dist2(zb.x, zb.z, zb.roamX, zb.roamZ) < 1.6)) {
               // fresh wander pick — rarely near the graveyard's WIDE haunt area
               // (thematic flavor; the old 25% odds marched a third of the idle
               // horde into one blob across town every night)
@@ -8699,21 +8701,29 @@ export class GameEngine {
       deployPath: this.deployPath && this.deploy
         ? [this.deployPath.x0, this.deployPath.z0, this.deployPath.x1, this.deployPath.z1]
         : null,
-      netPlayers: [
-        ...(this.mp
-          ? [{
-              slot: this.mpSlot, name: this.playerName + (this.youPossessed && this.phase === "night" ? " 🐾" : ""),
-              points: this.points, kills: this.kills, money: this.money,
-              hp: Math.round(this.hp), alive: !this.lost, beast: this.youPossessed && this.phase === "night",
-              drive: !!this.drive, ride: !!this.ride, self: true,
-            }]
-          : []),
-        ...this.remotes.map((r) => ({
-          slot: r.slot, name: r.name + (r.beast ? " 🐾" : ""),
-          points: r.points, kills: r.kills, money: r.money,
-          hp: Math.round(r.hp), alive: r.alive, beast: r.beast, drive: r.drive, ride: !!r.ride, self: false,
-        })),
-      ].sort((a, b) => b.points - a.points),
+      netPlayers: (() => {
+        // 🧹 one row per seat — a ghost roster race (rejoin/reseat) can echo the
+        // same slot twice; dedupe by slot so the scoreboard never renders
+        // duplicate React keys (self's own seat always wins its row)
+        const rows = new Map<number, { slot: number; name: string; points: number; kills: number; money: number; hp: number; alive: boolean; beast: boolean; drive: boolean; ride: boolean; self: boolean }>();
+        if (this.mp) {
+          rows.set(this.mpSlot, {
+            slot: this.mpSlot, name: this.playerName + (this.youPossessed && this.phase === "night" ? " 🐾" : ""),
+            points: this.points, kills: this.kills, money: this.money,
+            hp: Math.round(this.hp), alive: !this.lost, beast: this.youPossessed && this.phase === "night",
+            drive: !!this.drive, ride: !!this.ride, self: true,
+          });
+        }
+        for (const r of this.remotes) {
+          if (rows.has(r.slot)) continue; // ghost echo of a re-seated soul — skip
+          rows.set(r.slot, {
+            slot: r.slot, name: r.name + (r.beast ? " 🐾" : ""),
+            points: r.points, kills: r.kills, money: r.money,
+            hp: Math.round(r.hp), alive: r.alive, beast: r.beast, drive: r.drive, ride: !!r.ride, self: false,
+          });
+        }
+        return [...rows.values()].sort((a, b) => b.points - a.points);
+      })(),
     };
   }
 

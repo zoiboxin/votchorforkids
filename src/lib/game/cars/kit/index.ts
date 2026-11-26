@@ -34,7 +34,9 @@ import { createAsset as buildWagon } from "./station-wagon-70s-11d67b.mjs";
 import { createAsset as buildCoupe } from "./wedge-coupe-80s-9f8b5e.mjs";
 
 export interface KitSpec {
-  build: (colorway?: string) => import("three").Group;
+  /** the kit's build entry — each plain-JS module's createAsset(opts) reads
+   *  `opts.colorway` (see polyfork-kit.d.ts), so callers pass an options bag */
+  build: (opts?: { colorway?: string }) => import("three").Group;
   /** the kit's own preset colorways — cycled by the car's paint index */
   colorways: string[];
   /** wheel radius for rolling-spin math (≈ AXLE_Y in each module) */

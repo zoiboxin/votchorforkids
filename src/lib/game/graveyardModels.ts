@@ -132,7 +132,7 @@ export interface GraveyardPlacement {
 export function bakeGraveyardModel(kind: GraveyardKind, placements: GraveyardPlacement[]): THREE.Mesh | null {
   const rig = cache.get(kind);
   if (!rig || placements.length === 0) return null;
-  const parts: THREE.BufferGeometry[] = [];
+  const parts: { geo: THREE.BufferGeometry; rel: THREE.Matrix4 }[] = [];
   rig.template.updateMatrixWorld(true);
   rig.template.traverse((o) => {
     const mesh = o as THREE.Mesh;

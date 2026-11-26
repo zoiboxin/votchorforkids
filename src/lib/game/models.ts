@@ -171,7 +171,10 @@ export const isModelReady = (kind: string): boolean => kind in FILES && cache.ha
 export function spawnModel(kind: string): { root: THREE.Group; mixer: THREE.AnimationMixer; clips: Record<string, THREE.AnimationClip> } | null {
   const rig = cache.get(kind as ModelKind);
   if (!rig) return null;
-  const root = skeletonClone(rig.template);
+  // SkeletonUtils.clone preserves node constructors — the cloned wrap Group is
+  // still a real Group at runtime, so the Group-typed contract holds for
+  // callers (tintRot / AnimalRig.obj type the root as THREE.Group).
+  const root = skeletonClone(rig.template) as THREE.Group;
   root.traverse((o) => {
     const mesh = o as THREE.Mesh;
     if (mesh.isMesh) enableGlbCulling(o, 1.2, 0.5); // clones share the inflated sphere

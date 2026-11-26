@@ -144,7 +144,7 @@ export const isPrehistoricModelReady = (kind: string): boolean =>
 /** A fresh independent clone of the kit model, or null while loading.
  *  Dinosaurs get a SkeletonUtils clone + a mixer the caller drives (so it can
  *  switch between Idle and Walk); statics get a plain clone. */
-export function spawnPrehistoricModel(kind: string): { root: THREE.Group; mixer: THREE.AnimationMixer | null; clips: Record<string, THREE.AnimationClip> } | null {
+export function spawnPrehistoricModel(kind: string): { root: THREE.Object3D; mixer: THREE.AnimationMixer | null; clips: Record<string, THREE.AnimationClip> } | null {
   const rig = cache.get(kind as PrehistoricKind);
   if (!rig) return null;
   const root = rig.skinned ? skeletonClone(rig.template) : rig.template.clone(true);

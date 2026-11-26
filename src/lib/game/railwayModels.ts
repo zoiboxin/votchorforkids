@@ -177,10 +177,10 @@ export const isRailwayModelReady = (kind: string): boolean =>
 
 /** A fresh independent clone of the kit model, or null while loading.
  *  Skinned characters get a SkeletonUtils clone + a playing Idle mixer. */
-export function spawnRailwayModel(kind: string): { root: THREE.Group; mixer: THREE.AnimationMixer | null; clips: Record<string, THREE.AnimationClip> } | null {
+export function spawnRailwayModel(kind: string): { root: THREE.Object3D; mixer: THREE.AnimationMixer | null; clips: Record<string, THREE.AnimationClip> } | null {
   const rig = cache.get(kind as RailwayKind);
   if (!rig) return null;
-  const root = rig.skinned ? SkeletonUtils.clone(rig.template) : rig.template.clone(true);
+  const root = rig.skinned ? skeletonClone(rig.template) : rig.template.clone(true);
   let mixer: THREE.AnimationMixer | null = null;
   if (rig.skinned) {
     mixer = new THREE.AnimationMixer(root);

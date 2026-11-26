@@ -11,7 +11,7 @@ import { lsGet, lsRemove, lsSet } from "@/lib/game/storage";
 export type Screen = "landing" | "profile" | "shop" | "battlepass" | "challenges" | "career" | "news" | "locker" | "select" | "outfit" | "creator" | "connecting" | "lobby" | "matchlobby" | "play";
 export interface Toast { msg: string; kind: "info" | "good" | "bad"; id: number }
 
-export interface ScoreRow { id: string; name: string; points: number; votes: number; rescues: number; won: boolean; timeMs: number; createdAt: string }
+export interface ScoreRow { id: string; name: string; points: number; votes: number; rescues: number; caught: number; won: boolean; timeMs: number; createdAt: string }
 
 export interface Settings {
   music: number; // 0..1
@@ -118,7 +118,7 @@ function profileStatsOf(s: {
 function cloudBlob(s: {
   playerName: string; look: Appearance; history: RunRecord[]; bonusXp: number; daily: DailyState;
   coins: number; owned: string[]; runsPlayed: number; bestScore: number; lifeVotes: number;
-  lifeRescues: number; wins: number; lifeCaught: number; careerXp: number; bonusXp: number; playtimeMs: number;
+  lifeRescues: number; wins: number; lifeCaught: number; careerXp: number; playtimeMs: number;
 }): string {
   return JSON.stringify({
     name: s.playerName,
@@ -394,7 +394,7 @@ export const emptyHud: HudData = {
   hasLicense: false, driving: false, riding: false, speed: 0,
   /* --- 7 Nights --- */
   nightNo: 1, phase: "day", phaseLeft: 0, wood: 0, rock: 0,
-  tools: [], held: -1, youPossessed: false, beastCount: 0, crewAlive: 99, crew: [],
+  tools: [], held: -1, youPossessed: false, youFed: 0, beastCount: 0, crewAlive: 99, crew: [],
   attackReady: true, clue: null,
   /* --- 🧱 THE WALL + 🌅 pre-dawn warning --- */
   zoneLevel: 0, zoneR: 712, outsideWall: false, dawnLeft: 0, dawnOutside: false, dawnR: 430,
@@ -455,7 +455,7 @@ export const useGame = create<GameStore>()((set, get) => ({
   owned: savedWallet.owned,
   loadout: loadLoadout(savedWallet.owned),
   toggleEquip: (id) => set((s) => {
-    if (!s.owned.includes(id)) return; // can't equip what you don't own
+    if (!s.owned.includes(id)) return {}; // can't equip what you don't own
     const loadout = s.loadout.includes(id) ? s.loadout.filter((x) => x !== id) : [...s.loadout, id];
     saveLoadout(loadout);
     scheduleCloudSave();
@@ -589,7 +589,7 @@ export const useGame = create<GameStore>()((set, get) => ({
       saveWallet(coins, mergedOwned);
       cloudDirty = false; // the adopted copy IS the cloud copy — no urgent push needed
       set({
-        look, stats, history, bonusXp, daily, owned: mergedOwned, coins, lifeMoney, loadout,
+        look, history, bonusXp, daily, owned: mergedOwned, coins, lifeMoney, loadout,
         careerXp: stats.totalScore + bonusXp,
         runsPlayed: stats.runs, bestScore: stats.best, lifeVotes: stats.votes,
         lifeRescues: stats.rescues, wins: stats.wins, lifeCaught: stats.caught,

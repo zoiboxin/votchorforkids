@@ -149,10 +149,10 @@ function toClip(raw: RawClip, name: string, st: GlbInstance): THREE.AnimationCli
 const PENDING = Symbol("clip-pending");
 const builtClips = new WeakMap<GlbInstance, Map<string, THREE.AnimationClip | typeof PENDING | null>>();
 
-function clipMap(st: GlbInstance): Map<THREE.AnimationClip | typeof PENDING | null> {
+function clipMap(st: GlbInstance): Map<string, THREE.AnimationClip | typeof PENDING | null> {
   let mine = builtClips.get(st);
   if (!mine) { mine = new Map(); builtClips.set(st, mine); }
-  return mine as Map<THREE.AnimationClip | typeof PENDING | null>;
+  return mine as Map<string, THREE.AnimationClip | typeof PENDING | null>;
 }
 
 /** Kick the one-time fetch+build for a clip (idempotent). */
@@ -183,7 +183,7 @@ interface ActState {
   /** combo cycle counter (punch jab → cross → hook, sword slashes) */
   cy: number;
   /** previous-frame inputs for rising-edge detection */
-  last: { swing: number; attack: number; getup: number; air: boolean; flip: number; eat: boolean; hurt: boolean };
+  last: { swing: number; attack: number; getup: number; air: boolean; flip: number; eat: boolean; hurt: boolean; pickup: boolean };
 }
 
 const actStates = new WeakMap<GlbInstance, ActState>();
@@ -191,7 +191,9 @@ const actStates = new WeakMap<GlbInstance, ActState>();
 function actOf(st: GlbInstance): ActState {
   let a = actStates.get(st);
   if (!a) {
-    a = { name: null, w: 0, t: 0, dur: Infinity, fade: 0.14, cy: 0, last: { swing: 0, attack: 0, getup: 0, air: false, flip: 0, eat: false, hurt: false } };
+    // "pickup" registered like the other edge keys — character.ts drives the
+    // Pick up one-shot (CLIPS.pickUp) from glbEdge(st, "pickup", …) at line 808
+    a = { name: null, w: 0, t: 0, dur: Infinity, fade: 0.14, cy: 0, last: { swing: 0, attack: 0, getup: 0, air: false, flip: 0, eat: false, hurt: false, pickup: false } };
     actStates.set(st, a);
   }
   return a;

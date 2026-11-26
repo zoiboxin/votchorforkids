@@ -351,12 +351,12 @@ export function LockerRoom() {
                 aria-hidden
                 className="flex h-11 w-11 items-center justify-center rounded-xl bg-white/8 text-2xl"
               >
-                {glbCharDef(look.char)?.emoji ?? "🧍"}
+                {glbCharDef(look.char ?? "")?.emoji ?? "🧍"}
               </span>
               <div className="min-w-0 flex-1">
                 <div className="truncate text-sm font-black text-white">{playerName || "Survivor"}</div>
                 <div className="truncate text-[11px] font-semibold text-white/55">
-                  {glbCharDef(look.char)?.name ?? "Custom survivor — edit the fit in the creator"}
+                  {glbCharDef(look.char ?? "")?.name ?? "Custom survivor — edit the fit in the creator"}
                 </div>
               </div>
               <Button

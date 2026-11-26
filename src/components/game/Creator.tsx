@@ -506,6 +506,7 @@ function LockerItems() {
       case "power": return "✨ wheel";
       case "support": return it.snack ? "1–8 hotbar" : "🪪 auto";
       case "style": return it.char ? "🎭 costume" : it.presetId ? "👕 outfit" : "🐉 heroes";
+      case "garage": return "🚗 garage";
     }
   };
 

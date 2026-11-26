@@ -122,7 +122,7 @@ export const isHospitalModelReady = (kind: string): boolean =>
  *  Skinned characters get a SkeletonUtils clone + a playing Idle mixer; the
  *  full clip table rides along so callers (the staff bots) can also play
  *  Walk/Run and crossfade between them. */
-export function spawnHospitalModel(kind: string): { root: THREE.Group; mixer: THREE.AnimationMixer | null; clips: Record<string, THREE.AnimationClip> } | null {
+export function spawnHospitalModel(kind: string): { root: THREE.Object3D; mixer: THREE.AnimationMixer | null; clips: Record<string, THREE.AnimationClip> } | null {
   const rig = cache.get(kind as HospitalKind);
   if (!rig) return null;
   const root = rig.skinned ? skeletonClone(rig.template) : rig.template.clone(true);

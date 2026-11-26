@@ -1437,9 +1437,14 @@ export function poseCharacter(g: THREE.Object3D, speed: number, t: number, o: Po
 /* ------------------------------------------------------------------ */
 export type AnimalKind3 = "cow" | "chicken" | "deer" | "monkey" | "dog";
 
+/** Dog/zombie-dog coat — fur + muzzle shading, optional saddle-back patch. */
+interface DogCoat { fur: string; muzzle: string; belly: string; saddle?: string }
+/** Cow/deer/chicken/monkey coat — base + dark accent, optional face patch. */
+interface QuadCoat { c: string; dark: string; belly: string; face?: string }
+
 /** 🐕 street-dog coat variants — every stray looks a little different
  *  (golden lab · shepherd saddle · dark stray · grey · patched white) */
-const DOG_COATS: { fur: string; muzzle: string; belly: string; saddle?: string }[] = [
+const DOG_COATS: DogCoat[] = [
   { fur: "#c99a4e", muzzle: "#e2c48a", belly: "#e2c48a" },                    // golden labrador
   { fur: "#8a6a48", muzzle: "#b59772", belly: "#c8b088", saddle: "#3d3428" }, // shepherd saddle
   { fur: "#6b4a30", muzzle: "#8a6a4a", belly: "#8a6a4a" },                    // dark brown stray
@@ -1450,7 +1455,7 @@ const DOG_COATS: { fur: string; muzzle: string; belly: string; saddle?: string }
  *  The first pass used near-black rot greens that vanished into the night
  *  fog (player: "can not see them") — these sit two steps lighter so the
  *  moonlit silhouette + red eyes read from a full street away.          */
-const ZOM_COATS: { fur: string; muzzle: string; belly: string }[] = [
+const ZOM_COATS: DogCoat[] = [
   { fur: "#8aa86a", muzzle: "#5e7345", belly: "#6d854f" },
   { fur: "#7d9a5f", muzzle: "#55683e", belly: "#64794a" },
   { fur: "#91a873", muzzle: "#627449", belly: "#6f8753" },
@@ -1461,7 +1466,7 @@ const ZOM_COATS: { fur: string; muzzle: string; belly: string }[] = [
 /** 🐄🦌🐔🐒 per-kind coat variants — the SAME per-animal variety the stray
  *  dogs got. The Animals renderer passes each creature's `variant` index, so
  *  no two herds look cloned: four cows, four hens, three deer, three monkeys. */
-const ANIMAL_COATS: Record<string, { c: string; dark: string; belly: string; face?: string }[]> = {
+const ANIMAL_COATS: Record<string, QuadCoat[]> = {
   cow: [
     { c: "#f7f2e8", dark: "#3a3a3a", belly: "#f7f2e8" },  // classic holstein — white + black patches
     { c: "#c98a4b", dark: "#7a4a26", belly: "#e0c8a8" },  // jersey brown
@@ -1494,20 +1499,26 @@ export function buildAnimal(kind: AnimalKind3, variant = 0, zom = false): THREE.
     legs: [], head: new THREE.Group(), body,
   };
 
-  const coat = kind === "dog"
+  // Split per branch so each side reads its own typed coat — the dog branch
+  // gets a DogCoat, every other kind a QuadCoat (same objects the old single
+  // `coat` union held for each kind; selection logic is unchanged).
+  const dogCoat = kind === "dog"
     ? (zom ? ZOM_COATS[variant % ZOM_COATS.length] : DOG_COATS[variant % DOG_COATS.length])
+    : null;
+  const quadCoat = kind === "dog"
+    ? null
     : ANIMAL_COATS[kind] ? ANIMAL_COATS[kind][variant % ANIMAL_COATS[kind].length] : null;
   // 🐕 the dog shape is built per-variant — non-dog kinds pick a coat variant
   const conf = kind === "dog"
-    ? { c: coat!.fur, s: 1.06, headY: 0.72, headZ: 0.92 }
+    ? { c: dogCoat!.fur, s: 1.06, headY: 0.72, headZ: 0.92 }
     : {
-        cow: { c: coat!.c, s: 1.7, headY: 0.95, headZ: 0.85 },
-        chicken: { c: coat!.c, s: 1.15, headY: 0.5, headZ: 0.4 }, // 📏 bumped — was ankle-height invisible next to survivors
-        deer: { c: coat!.c, s: 1.45, headY: 1.0, headZ: 0.8 },
-        monkey: { c: coat!.c, s: 1.2, headY: 0.75, headZ: 0.55 },
+        cow: { c: quadCoat!.c, s: 1.7, headY: 0.95, headZ: 0.85 },
+        chicken: { c: quadCoat!.c, s: 1.15, headY: 0.5, headZ: 0.4 }, // 📏 bumped — was ankle-height invisible next to survivors
+        deer: { c: quadCoat!.c, s: 1.45, headY: 1.0, headZ: 0.8 },
+        monkey: { c: quadCoat!.c, s: 1.2, headY: 0.75, headZ: 0.55 },
       }[kind];
-  const dark = kind === "dog" ? coat!.muzzle : coat!.dark;
-  const belly = kind === "dog" ? coat!.belly : coat!.belly;
+  const dark = kind === "dog" ? dogCoat!.muzzle : quadCoat!.dark;
+  const belly = kind === "dog" ? dogCoat!.belly : quadCoat!.belly;
 
   const bToon = new Bucket(), bUnlit = new Bucket();
   const legB: Bucket[] = [new Bucket(), new Bucket(), new Bucket(), new Bucket()];
@@ -1519,10 +1530,10 @@ export function buildAnimal(kind: AnimalKind3, variant = 0, zom = false): THREE.
     bToon.add(sphere(0.34, 10, 8), conf.c, false, 0, 0.68, 0.44, 0, 0, 0, 0.98, 0.92, 0.85);  // deep chest
     bToon.add(sphere(0.2, 8, 6), belly, false, 0, 0.48, 0.08, 0, 0, 0, 0.85, 0.5, 1.25);      // belly line
     bToon.add(sphere(0.26, 9, 7), conf.c, false, 0, 0.66, -0.5, 0, 0, 0, 0.8, 0.78, 0.7);     // rump
-    if (coat?.saddle) {
+    if (dogCoat?.saddle) {
       // shepherd saddle / brown patches lying over the back
-      bToon.add(sphere(0.3, 9, 7), coat.saddle, false, 0, 0.82, -0.06, 0, 0, 0, 0.78, 0.38, 1.2);
-      bToon.add(sphere(0.16, 7, 5), coat.saddle, false, 0, 0.78, 0.34, 0, 0, 0, 0.72, 0.38, 0.7);
+      bToon.add(sphere(0.3, 9, 7), dogCoat.saddle, false, 0, 0.82, -0.06, 0, 0, 0, 0.78, 0.38, 1.2);
+      bToon.add(sphere(0.16, 7, 5), dogCoat.saddle, false, 0, 0.78, 0.34, 0, 0, 0, 0.72, 0.38, 0.7);
     }
   } else {
     bToon.add(sphere(0.5, 10, 8), conf.c, false, 0, 0.62, 0, 0, 0, 0, 0.85, 0.75, 1.15);
@@ -1537,7 +1548,7 @@ export function buildAnimal(kind: AnimalKind3, variant = 0, zom = false): THREE.
   if (kind === "dog") {
     // 🐕 a real dog head: rounded skull + long muzzle + black nose
     hToon.add(sphere(0.26, 12, 9), conf.c, false, 0, 0, 0, 0, 0, 0, 0.94, 0.88, 0.92);
-    hToon.add(sphere(0.14, 9, 7), coat!.muzzle, false, 0, -0.07, 0.24, 0, 0, 0, 0.85, 0.72, 1.7);
+    hToon.add(sphere(0.14, 9, 7), dogCoat!.muzzle, false, 0, -0.07, 0.24, 0, 0, 0, 0.85, 0.72, 1.7);
     hToon.add(sphere(0.055, 7, 5), "#241d18", false, 0, -0.03, 0.47);                         // nose
     hUnlit.add(torus(0.05, 0.01, Math.PI), SMILE, true, 0, -0.19, 0.38, 0, 0, Math.PI);       // mouth
     if (zom) {
@@ -1591,14 +1602,14 @@ export function buildAnimal(kind: AnimalKind3, variant = 0, zom = false): THREE.
     // curved horns + soft ears
     for (const s of [-1, 1]) {
       hToon.add(cone(0.055, 0.17, 6), "#e8e0d0", false, s * 0.22, 0.27, 0, 0, 0, s * 0.85);
-      hToon.add(sphere(0.09, 6, 5), coat!.dark, false, s * 0.3, 0.06, -0.02, 0, 0, 0, 0.4, 0.85, 0.6);
+      hToon.add(sphere(0.09, 6, 5), quadCoat!.dark, false, s * 0.3, 0.06, -0.02, 0, 0, 0, 0.4, 0.85, 0.6);
     }
     // irregular hide spots — in the coat's own patch colour
     const spots: [number, number, number, number][] = [
       [0.28, 0.84, 0.18, 0.15], [-0.3, 0.76, -0.1, 0.17], [0.05, 0.88, -0.34, 0.13],
       [-0.18, 0.86, 0.3, 0.11], [0.22, 0.66, -0.28, 0.1], [-0.04, 0.62, 0.42, 0.09],
     ];
-    for (const [sx, sy, sz, r] of spots) bToon.add(sphere(r, 7, 5), coat!.dark, false, sx, sy, sz, 0, 0, 0, 1, 0.55, 1.1);
+    for (const [sx, sy, sz, r] of spots) bToon.add(sphere(r, 7, 5), quadCoat!.dark, false, sx, sy, sz, 0, 0, 0, 1, 0.55, 1.1);
     // party collar + bell
     bToon.add(torus(0.24, 0.045, Math.PI * 2), "#e0483a", false, 0, 0.72, 0.5, -Math.PI / 2, 0, 0);
     bToon.add(sphere(0.085, 8, 6), GOLD, false, 0, 0.5, 0.64);
@@ -1606,23 +1617,23 @@ export function buildAnimal(kind: AnimalKind3, variant = 0, zom = false): THREE.
   if (kind === "deer") {
     // branched antlers + long oval ears — antler shade follows the coat
     for (const s of [-1, 1]) {
-      hToon.add(cone(0.035, 0.34, 5), coat!.dark, false, s * 0.13, 0.44, -0.02, 0, 0, s * 0.4);
-      hToon.add(cone(0.024, 0.2, 5), coat!.dark, false, s * 0.21, 0.5, -0.04, -0.35, 0, s * 0.95);
-      hToon.add(sphere(0.09, 6, 5), coat!.dark, false, s * 0.27, 0.14, -0.04, 0, 0, 0, 0.4, 1.05, 0.55);
+      hToon.add(cone(0.035, 0.34, 5), quadCoat!.dark, false, s * 0.13, 0.44, -0.02, 0, 0, s * 0.4);
+      hToon.add(cone(0.024, 0.2, 5), quadCoat!.dark, false, s * 0.21, 0.5, -0.04, -0.35, 0, s * 0.95);
+      hToon.add(sphere(0.09, 6, 5), quadCoat!.dark, false, s * 0.27, 0.14, -0.04, 0, 0, 0, 0.4, 1.05, 0.55);
     }
     // fawn spots along the spine
     const dsp: [number, number, number][] = [[0.09, 0.9, 0.08], [-0.1, 0.92, -0.06], [0.12, 0.88, -0.22], [-0.14, 0.85, 0.14], [0.05, 0.93, -0.32]];
     for (const [sx, sy, sz] of dsp) bToon.add(sphere(0.055, 6, 5), "#fff6e8", false, sx, sy, sz, 0, 0, 0, 1, 0.55, 1.25);
   }
   if (kind === "monkey") {
-    hToon.add(sphere(0.18, 8, 6), coat!.face ?? "#d8b088", false, 0, 0, 0.18, 0, 0, 0, 0.8, 0.8, 0.6);
+    hToon.add(sphere(0.18, 8, 6), quadCoat!.face ?? "#d8b088", false, 0, 0, 0.18, 0, 0, 0, 0.8, 0.8, 0.6);
     // round saucer ears
     for (const s of [-1, 1]) {
       hToon.add(sphere(0.1, 6, 5), dark, false, s * 0.3, 0.04, -0.02, 0, 0, 0, 0.35, 0.95, 0.65);
-      hToon.add(sphere(0.05, 6, 5), coat!.face ?? "#d8b088", false, s * 0.33, 0.04, 0.03, 0, 0, 0, 0.35, 0.6, 0.5);
+      hToon.add(sphere(0.05, 6, 5), quadCoat!.face ?? "#d8b088", false, s * 0.33, 0.04, 0.03, 0, 0, 0, 0.35, 0.6, 0.5);
     }
     // warm belly patch
-    bToon.add(sphere(0.22, 8, 6), coat!.face ?? "#d8b088", false, 0, 0.56, 0.3, 0, 0, 0, 0.8, 0.95, 0.6);
+    bToon.add(sphere(0.22, 8, 6), quadCoat!.face ?? "#d8b088", false, 0, 0.56, 0.3, 0, 0, 0, 0.8, 0.95, 0.6);
   }
   if (kind === "chicken") {
     // comb now sits ON the head (three bumps), beak + wattle
@@ -1671,7 +1682,7 @@ export function buildAnimal(kind: AnimalKind3, variant = 0, zom = false): THREE.
     } else if (kind === "dog") {
       // raised, curved dog tail — a happy wag needs something to wag
       tB.add(capsule(0.042, 0.26), dark, false, 0, 0.1, -0.07, 0.85, 0, 0);
-      tB.add(sphere(0.055, 6, 5), coat!.muzzle, false, 0, 0.26, -0.14);
+      tB.add(sphere(0.055, 6, 5), dogCoat!.muzzle, false, 0, 0.26, -0.14);
       tail.position.set(0, 0.72, -0.52);
     } else {
       const pts: [number, number, number, number][] = [[0, 0.07, -0.06, 0.055], [0, 0.23, -0.1, 0.05], [0, 0.37, -0.06, 0.045], [0, 0.45, 0.06, 0.04], [0, 0.43, 0.18, 0.034]];

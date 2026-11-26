@@ -425,7 +425,7 @@ function Minimap({ engine, onOpen, pin }: { engine: GameEngine; onOpen: () => vo
 const BIG_MAP_S = 560; // 🗺️ the M-map went full-screen-ish — more room to read the world
 const MAP_LEGEND: [string, string][] = [
   ["#ffffff", "You (arrow = facing)"], ["#f7c948", "💰 Cash piles"], ["#ffd166", "Food"], ["#c084fc", "Power gems (rare!)"],
-  ["#38bdf8", "Driving license 🪪"], ["#6aa0ff", "Police"], ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ...(WILDLIFE_ENABLED ? [["#a97b4f", "Animals"]] : []), ["#c084fc", "Zombies · night"], ["#1d2a4a", "Police stn"],
+  ["#38bdf8", "Driving license 🪪"], ["#6aa0ff", "Police"], ["#ff4d4d", "Chasing!"], ["#ff8fa3", "Rescue"], ...(WILDLIFE_ENABLED ? ([["#a97b4f", "Animals"]] as [string, string][]) : []), ["#c084fc", "Zombies · night"], ["#1d2a4a", "Police stn"],
   ["#ffb020", "Loot runner (bright = carrying)"],
   ["#e2e8f0", "Crew survivors (each their color)"], ["#7f1d1d", "Fallen crew ✕"],
   ["#facc15", "Dropped arms"], ["#ffd447", "💰 Loot drops"], ["#92400e", "Barricade"], ["#fb923c", "Campfire"],
@@ -1934,7 +1934,7 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
               </div>
               <div className="max-h-36 overflow-y-auto px-1.5 py-1">
                 {hud.netPlayers.map((p) => (
-                  <div key={p.slot} className={`flex items-center gap-1.5 rounded-lg px-1.5 py-0.5 text-[11px] ${p.self ? "bg-white/10" : ""}`}>
+                  <div key={`${p.slot}|${p.name}`} className={`flex items-center gap-1.5 rounded-lg px-1.5 py-0.5 text-[11px] ${p.self ? "bg-white/10" : ""}`}>
                     <span className={`grid h-4 w-4 shrink-0 place-items-center rounded-full text-[8px] font-black text-slate-950 ${p.alive ? "" : "opacity-40 grayscale"}`} style={{ backgroundColor: SOUL_COLORS[p.slot % SOUL_COLORS.length] }}>
                       {p.slot + 1}
                     </span>
