@@ -4,8 +4,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
-  ANIMAL_SET, ATTACK_CD, BIKE_TYPE, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, ROCK_BREAK_S, SHIRT_COLORS, SKIN_TONES, TOOLS,
-  TOTAL_VOTES, TREE_FALL_S, ZONE_WALL_H, FARM_RADIUS, JUNGLE_RADIUS, WILDLIFE, DROP_ALT, normalizeAppearance, type AnimalKind, type Appearance, type Zone,
+  ANIMAL_SET, ATTACK_CD, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, ROCK_BREAK_S, SHIRT_COLORS, SKIN_TONES, TOOLS,
+  TOTAL_VOTES, TREE_FALL_S, ZONE_WALL_H, FARM_RADIUS, JUNGLE_RADIUS, WILDLIFE, DROP_ALT, isBikeType, normalizeAppearance, type AnimalKind, type Appearance, type Zone,
 } from "@/lib/game/constants";
 import { preloadModels, onModelsReady, spawnModel } from "@/lib/game/models";
 import type { GameEngine } from "@/lib/game/engine";
@@ -30,7 +30,7 @@ export type ClockRef = { current: number };
  * axis, y = floor height above ground). `null` = sealed body style, the
  * driver stays hidden (a head through a roof reads as a bug, not a mod).
  * Indexed by vehicle type — 0-9 procedural/kit fleet, 10 taxi, 11 hearse,
- * 12-21 the 🏪 shop garage fleet (open tops get a seat; the bike sits the
+ * 12-31 the 🏪 shop garage fleet (open tops get a seat; the bikes sit the
  * rider CENTERED so the astride pose straddles the saddle). */
 const DRIVE_SEAT: ({ x: number; z: number; y: number } | null)[] = [
   null,               // 0 sedan — sealed roof
@@ -55,6 +55,16 @@ const DRIVE_SEAT: ({ x: number; z: number; y: number } | null)[] = [
   { x: -0.28, z: 0.3, y: 0.52 },  // 19 delivery mini — open cab sides
   null,               // 20 pickup truck GT — sealed cab
   null,               // 21 semi tractor — sealed sleeper cab
+  { x: 0, z: -0.05, y: 0.52 },    // 22 rental scooter — astride the step-through saddle
+  { x: -0.7, z: 2.9, y: 1.05 },   // 23 campus shuttle — glass all around, high floor
+  { x: 0, z: -0.08, y: 0.58 },    // 24 freestyle BMX — astride the saddle
+  { x: 0, z: -0.18, y: 0.34 },    // 25 stunt scooter — standing astride the deck
+  null,               // 26 marigold pickup — sealed cab
+  { x: -0.38, z: 0.1, y: 0.48 },  // 27 scout jeep — flat-fendered open top
+  { x: -0.12, z: -0.1, y: 0.6 },  // 28 motorcycle & sidecar — astride, sidecar to the right
+  null,               // 29 medium tank — sealed hull
+  { x: -0.24, z: -0.35, y: 0.78 }, // 30 steam mule — open cab, tall boiler seat
+  { x: 0, z: -0.05, y: 0.56 },    // 31 delivery moped — astride the saddle
 ];
 
 /* ------------------------------------------------------------------ */
@@ -269,8 +279,8 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       wave: engine.waveT > 0,
       cheer: engine.cheerT > 0,
       drive: !!(engine.drive || (engine.ride && rideSeat)),
-      // 🏍️ on the bike the body plays the astride Ride pose, not the car sit
-      bike: !!(engine.drive && engine.drive.t === BIKE_TYPE),
+      // 🏍️ on a bike the body plays the astride Ride pose, not the car sit
+      bike: !!(engine.drive && isBikeType(engine.drive.t)),
       getup: engine.getupT > 0 ? engine.getupT : 0,
       death: engine.lost ? Math.min(1, engine.deathT / 0.85) : downEz,
       // 🎬 clip-library extras — the real Knockback / Eating / Pick up one-shots
@@ -2144,7 +2154,7 @@ export function RemotesView({ engine }: { engine: GameEngine }) {
           body.position.set(car.x + sin * seat.z + cos * px, seat.y, car.z + cos * seat.z - sin * px);
           body.rotation.set(0, car.rot, 0);
           if (body.scale.x !== 1) body.scale.setScalar(1);
-          poseCharacter(body, 0, t, { phase: r.slot * 1.7, drive: true, bike: car.t === BIKE_TYPE });
+          poseCharacter(body, 0, t, { phase: r.slot * 1.7, drive: true, bike: isBikeType(car.t) });
           const closeCar = d2 < DETAIL_SQ;
           if (v.tag) v.tag.visible = closeCar; // 🌐 real players keep their names — even mid-ride
           if (v.btag) v.btag.visible = false;

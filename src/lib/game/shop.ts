@@ -35,7 +35,7 @@ export interface ShopItem {
   license?: boolean;
   /** hero bundle — owning this unlocks the hero kit(s) listed in its tip */
   heroBundle?: true;
-  /** 🏪 garage vehicle type (constants.ts VEHICLE_GLB 12–21) — owning this
+  /** 🏪 garage vehicle type (constants.ts VEHICLE_GLB 12–31) — owning this
    *  spawns that ride parked beside you at the start of EVERY run (license
    *  still gates the ignition, exactly like every other car in town). */
   veh?: number;
@@ -157,6 +157,16 @@ export const SHOP_ITEMS: readonly ShopItem[] = [
     ["three-wheeled-delivery-mini-744094", "Delivery Mini", "🛺", 19, 3266],
     ["pickup-truck-a34bf2", "Pickup Truck GT", "🛻", 20, 3383],
     ["semi-tractor-e9455c", "Semi Tractor", "🚚", 21, 3719],
+    ["rental-scooter-031ee2", "Rental Scooter", "🛴", 22, 2872],
+    ["campus-shuttle-bus-27dcaa", "Campus Shuttle Bus", "🚌", 23, 2616],
+    ["freestyle-bmx-ad7d9a", "Freestyle BMX", "🚲", 24, 2754],
+    ["stunt-scooter-d98af3", "Stunt Scooter", "🛴", 25, 1850],
+    ["marigold-pickup-f4b6f9", "Marigold Pickup", "🛻", 26, 2770],
+    ["scout-jeep-c02efe", "Scout Jeep", "🚙", 27, 1772],
+    ["motorcycle-and-sidecar-7d39b8", "Motorcycle & Sidecar", "🏍️", 28, 2396],
+    ["medium-tank-65da6b", "Medium Tank", "🪖", 29, 2534],
+    ["steam-mule-tractor-00badc", "Steam Mule Tractor", "🚂", 30, 3000],
+    ["delivery-moped-1aa2ce", "Delivery Moped", "🛵", 31, 1752],
   ] as const).map(
     ([slug, name, emoji, veh, tris]): ShopItem => ({
       id: `veh-${slug}`, name, emoji, kind: "garage", price: tris, veh,
@@ -231,7 +241,7 @@ export interface OwnedGear {
   powers: PowerKind[];
   snacks: { def: number; count: number }[];
   license: boolean;
-  /** 🏪 owned garage vehicles (game vehicle types 12–21) — spawned parked
+  /** 🏪 owned garage vehicles (game vehicle types 12–31) — spawned parked
    *  beside the player at the start of every run (see engine.spawnGarageCars) */
   vehicles: number[];
 }

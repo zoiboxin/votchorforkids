@@ -1,6 +1,6 @@
 /**
  * 🚓 Polyfork GLB vehicles — the police cruiser, the yellow cab & the 🏪 SHOP
- * GARAGE fleet (10 purchasable rides, priced 1 coin per triangle in the shop).
+ * GARAGE fleet (20 purchasable rides, priced 1 coin per triangle in the shop).
  *
  * Static prop models from the polyfork catalog (https://polyfork.dev,
  * CC BY 4.0 — see public/models/CREDITS.md), served locally like the wildlife:
@@ -20,7 +20,7 @@ import { useSyncExternalStore } from "react";
 import { enableGlbCulling } from "@/lib/game/glbCull";
 
 /** Game vehicle type ids that render from these GLB bodies live in constants.ts
- *  (TAXI_TYPE = 10 — the yellow cab; the 🏪 garage fleet maps 12–21 via
+ *  (TAXI_TYPE = 10 — the yellow cab; the 🏪 garage fleet maps 12–31 via
  *  VEHICLE_GLB). This module only owns the model loading. */
 
 const FILES = {
@@ -36,6 +36,16 @@ const FILES = {
   "three-wheeled-delivery-mini-744094": "/models/vehicles/three-wheeled-delivery-mini-744094.glb",
   "pickup-truck-a34bf2": "/models/vehicles/pickup-truck-a34bf2.glb",
   "semi-tractor-e9455c": "/models/vehicles/semi-tractor-e9455c.glb",
+  "rental-scooter-031ee2": "/models/vehicles/rental-scooter-031ee2.glb",
+  "campus-shuttle-bus-27dcaa": "/models/vehicles/campus-shuttle-bus-27dcaa.glb",
+  "freestyle-bmx-ad7d9a": "/models/vehicles/freestyle-bmx-ad7d9a.glb",
+  "stunt-scooter-d98af3": "/models/vehicles/stunt-scooter-d98af3.glb",
+  "marigold-pickup-f4b6f9": "/models/vehicles/marigold-pickup-f4b6f9.glb",
+  "scout-jeep-c02efe": "/models/vehicles/scout-jeep-c02efe.glb",
+  "motorcycle-and-sidecar-7d39b8": "/models/vehicles/motorcycle-and-sidecar-7d39b8.glb",
+  "medium-tank-65da6b": "/models/vehicles/medium-tank-65da6b.glb",
+  "steam-mule-tractor-00badc": "/models/vehicles/steam-mule-tractor-00badc.glb",
+  "delivery-moped-1aa2ce": "/models/vehicles/delivery-moped-1aa2ce.glb",
 } as const;
 
 export type VehicleKind = keyof typeof FILES;

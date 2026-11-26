@@ -37,7 +37,7 @@ export const WORLD: World = generateWorld();
 /** 🚕🚓⚰️ body types that render from a real polyfork GLB (yellow cab + the
  *  graveyard's phantom hearse) — skipped by the boxy instanced part set
  *  exactly like the retro-kit cars. */
-const skipProceduralCar = (t: number) => isKitType(t) || t >= TAXI_TYPE; // 🏁🚕🏪 kit & GLB bodies cruise in KitCars/GlbCars (taxi 10, hearse 11, 🏪 garage 12-21)
+const skipProceduralCar = (t: number) => isKitType(t) || t >= TAXI_TYPE; // 🏁🚕🏪 kit & GLB bodies cruise in KitCars/GlbCars (taxi 10, hearse 11, 🏪 garage 12-31)
 const tmp = new THREE.Object3D();
 tmp.rotation.order = "YXZ"; // lets placeCar rake the windshield around the car's own side axis
 const col = new THREE.Color();
@@ -2585,7 +2585,7 @@ function PoliceVans({ engine }: { engine: GameEngine }) {
  * Driver cases mirror KitCars: ours follows the smoothed drive pose, bot &
  * remote rides follow their world entries, coasting taxis keep rolling.
  * 🏪 The SHOP GARAGE fleet renders here too — every purchased vehicle type
- * (12–21) streams its own GLB the moment it lands, so your garage rides
+ * (12–31) streams its own GLB the moment it lands, so your garage rides
  * appear parked beside your spawn on every screen. */
 interface GlbCarRig {
   src: "park" | "traffic";

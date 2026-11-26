@@ -168,6 +168,16 @@ parked beside the player at the start of every run:
 | `three-wheeled-delivery-mini-744094.glb` | Three-Wheeled Delivery Mini | 3,266 |
 | `pickup-truck-a34bf2.glb` | Pickup Truck | 3,383 |
 | `semi-tractor-e9455c.glb` | Semi Tractor | 3,719 |
+| `rental-scooter-031ee2.glb` | Rental Scooter | 2,872 |
+| `campus-shuttle-bus-27dcaa.glb` | Campus Shuttle Bus | 2,616 |
+| `freestyle-bmx-ad7d9a.glb` | Freestyle BMX | 2,754 |
+| `stunt-scooter-d98af3.glb` | Stunt Scooter | 1,850 |
+| `marigold-pickup-f4b6f9.glb` | Marigold Pickup | 2,770 |
+| `scout-jeep-c02efe.glb` | Scout Jeep | 1,772 |
+| `motorcycle-and-sidecar-7d39b8.glb` | Motorcycle And Sidecar | 2,396 |
+| `medium-tank-65da6b.glb` | Medium Tank | 2,534 |
+| `steam-mule-tractor-00badc.glb` | Steam Mule Tractor | 3,000 |
+| `delivery-moped-1aa2ce.glb` | Delivery Moped | 1,752 |
 
 Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
 (https://creativecommons.org/licenses/by/4.0/)
