@@ -91,6 +91,12 @@ function collect(obj: THREE.Object3D, dynamic: boolean): void {
   while (stack.length) {
     const { o, depth } = stack.pop()!;
     if (depth > 0) {
+      // 🚧 the construction district opts OUT entirely: it is ~58 merged
+      // single-draw meshes + the three dig-ground patches, so culling saves
+      // almost nothing — and a hidden dig patch once cost the whole pit (the
+      // ground read as a sky-blue hole). Exempt subtrees keep their owner's
+      // visibility state untouched forever.
+      if (o.name === "construction-district") continue;
       // owner-hidden and never culled by us → its visibility belongs to its
       // owner; do not register and do not descend (its children are hidden
       // with it, so there is nothing to gain)

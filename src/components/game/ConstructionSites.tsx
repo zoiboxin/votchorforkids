@@ -3,7 +3,11 @@
  *
  * Three REAL, DISTINCT building sites digging REAL walkable pits (DIGS in
  * worldgen — graded ramp down, terraced dirt walls, machines + kit crew on
- * the floor):
+ * the floor), composed to match the kit's official live-preview scene
+ * (polyfork.dev/kit/construction-site-9e40b0 — layout DNA: rising steel
+ * frame + metal-deck floors + concrete core, hoarding to the street with
+ * walkway tunnels & loading gantry at the gate, materials yards, welfare
+ * compound with smoking shelter & tool vault, machines fleet everywhere):
  *   A  "Lakeshore Towers"  — west midtown SKYSCRAPER job: 30m crane, tower
  *      rising out of its own deep foundation dig
  *   B  "Eastside Mega Dig" — east belt OPEN-PIT excavation: the rising
@@ -11,23 +15,29 @@
  *   C  "Northgate Works"   — north boulevard BLOCK BUILD with its own crane
  *      and the mixer pouring at the ramp gate (the x26/z125 site)
  *
- * Everything static bakes into ONE merged vertex-coloured mesh per kind — the
- * whole district renders as ~25 draw calls with zero per-frame logic. On top
- * of the bake three small live elements make the sites actually WORK:
- *   • <CraneTops>  — each slewing crane top is a live clone swinging slowly
- *   • <DigGround>  — one static dirt heightfield per site (walls/ramp/floor)
- *   • <SiteCrew>   — kit workers idling at their work spots (distance-gated)
+ * Everything static bakes into ONE merged vertex-coloured mesh per kind —
+ * the whole district renders as ~55 draw calls with zero per-frame logic.
+ * On top of the bake the live elements make the sites actually WORK:
+ *   • <CraneTops>   — each slewing crane top is a live clone swinging slowly
+ *                     (aviation beacon on the apex blinks after dark)
+ *   • <DigGround>   — one static dirt heightfield per site (walls/ramp/floor)
+ *   • <SiteCrew>    — kit workers idling at their work spots (distance-gated)
+ *   • <SiteLights>  — 🌙 NIGHT MODE: floodlight cones blaze under the light
+ *                     towers, traffic signals cycle, cabin windows glow
+ *                     (all additive materials driven by nightFactor — zero
+ *                     real lights, invisible by day)
  */
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
 import { DIGS, SITEKIT, digDown, type ConSiteDef } from "@/lib/game/worldgen";
 import {
-  bakeConstructionModel, cloneConstructionModel, constructionAllSettled, constructionGroundY, onConstructionModelsReady,
+  bakeConstructionModel, cloneConstructionModel, constructionAllSettled, constructionGroundY, constructionSize, onConstructionModelsReady,
   preloadConstructionModels,
   type ConstructionKind,
 } from "@/lib/game/constructionModels";
 import { loadGlbTemplate, makeGlbInstance } from "@/lib/game/glbCharacters";
+import { nightFactor } from "@/lib/game/sim";
 import type { GameEngine } from "@/lib/game/engine";
 
 /** spawn once per component + re-render when the GLBs land */
@@ -51,11 +61,21 @@ function useBakedSite(): THREE.Mesh[] {
 }
 
 const BAKE_ORDER: ConstructionKind[] = [
-  "craneMast", "steelFrame", "coreSection", "scaffold",
-  "hoarding", "meshFence", "cabin", "toilet", "lightTower", "generator",
-  "pallet", "precast", "rebar", "cone", "signBoard", "arrowBoard", "skip",
-  "excavator", "dumpTruck", "trench", "spoilHeap", "mudTile",
-  "crashBarrier", "trafficLight", "backhoe", "roadRoller", "mixerTruck", "brokenRoad",
+  // the rising structure + site edges (kit scene DNA: bays, deck floors, core)
+  "craneMast", "steelFrame", "metalDeck", "coreSection", "scaffold", "formwork",
+  "hoarding", "meshFence", "walkwayTunnel", "loadingGantry",
+  // welfare + materials yards
+  "cabin", "toilet", "smokingShelter", "toolVault", "lightTower", "generator",
+  "pallet", "precast", "rebar", "scaffoldStack", "dumpyBag", "signBoard", "arrowBoard", "skip",
+  "cementMixerStand", "airCompressor",
+  // the machine fleet
+  "excavator", "miniExcavator", "dumpTruck", "siteDumper", "wheeledLoader", "skidSteer",
+  "telehandler", "bulldozer", "backhoe", "roadRoller", "mixerTruck", "concretePump",
+  "flatbedLorry", "mobileCrane", "cherryPicker", "scissorLift", "trencher", "compactorPlate",
+  "waterBowser", "wheelWash",
+  // ground dressing + roadworks (tiles first, furniture last)
+  "trench", "trenchPlate", "spoilHeap", "mudTile", "brokenRoad", "slabTile", "hardcoreTile",
+  "crashBarrier", "trafficLight", "cone",
 ];
 // (craneTop is NOT baked — <CraneTops> swings each top live)
 
@@ -148,8 +168,14 @@ function DigGround() {
 /* ---------------- 🏗️ CraneTops — the cranes actually WORK ----------------
  * Each site's slewing top is a live clone of the kit model swinging on a slow
  * sine — three draw calls + three cheap updates per frame, no bake rebuild. */
-function CraneTops() {
+function CraneTops({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
   const [tops, setTops] = useState<THREE.Group[]>([]);
+  // 🌙 aviation beacon material — one shared blinking red lamp on each apex
+  const beaconMat = useMemo(
+    () => new THREE.MeshBasicMaterial({ color: "#ff5a4d", transparent: true, opacity: 0, depthWrite: false }),
+    [],
+  );
+  useEffect(() => () => beaconMat.dispose(), [beaconMat]);
   useEffect(() => {
     const build = () => {
       const out: THREE.Group[] = [];
@@ -166,6 +192,12 @@ function CraneTops() {
         g.position.set(p.x, (p.y ?? 0) + constructionGroundY("craneTop"), p.z);
         g.rotation.y = p.rot ?? 0;
         g.name = `crane-top-${out.length}`; // 🏗️ named for headless verification
+        // 🌙 aviation beacon on the tower-head apex (model top above its
+        // seating plane = authored size.y) — slews along with the top
+        const beacon = new THREE.Mesh(new THREE.SphereGeometry(0.42, 8, 6), beaconMat);
+        beacon.position.y = constructionSize("craneTop").y;
+        beacon.name = "crane-beacon";
+        g.add(beacon);
         out.push(g);
       }
       setTops(out);
@@ -173,13 +205,17 @@ function CraneTops() {
     if (tops.length > 0) return;
     return onConstructionModelsReady(build);
     // tops are module-level constants — rebuild only once
-  }, [tops.length]);
+  }, [tops.length, beaconMat]);
   useEffect(() => () => { for (const t of tops) t.clear(); }, [tops]);
   useFrame(({ clock }) => {
     for (let i = 0; i < tops.length; i++) {
       const p = SITEKIT.at[i]?.props.craneTop?.[0];
       if (p) tops[i].rotation.y = (p.rot ?? 0) + Math.sin(clock.elapsedTime * 0.14 + i * 2.1) * 1.15;
     }
+    // 🌙 beacon blink — aviation strobes blink day AND night (subtle by day,
+    // bright against the dark sky)
+    const nf = nightFactor(clockRef.current);
+    beaconMat.opacity = Math.sin(clock.elapsedTime * 3.4) > 0 ? 0.28 + nf * 0.72 : 0.05 + nf * 0.1;
   });
   return (
     <group>
@@ -230,17 +266,114 @@ function SiteCrew({ engine }: { engine: GameEngine }) {
   );
 }
 
-/** the whole construction district — mount inside WorldView's city group */
-export function ConstructionSites({ engine }: { engine: GameEngine }) {
+/* ---------------- 🌙 SiteLights — the sites light up after dark ----------------
+ * The kit preview has a day/night toggle — the game's day cycle does the same
+ * to the sites: each lighting tower blazes a warm floodlight cone onto the
+ * yard, the temporary traffic signals cycle, the site cabins get lit windows
+ * and (in <CraneTops>) the tower heads blink their aviation beacons. ALL of
+ * it is additive basic material driven by nightFactor — zero real lights (no
+ * shader recompiles), invisible by day, and ~25 tiny meshes for the whole
+ * district. */
+const LAMP_H = 9.26;          // measured: lighting-tower model, ground-lifted
+
+function SiteLights({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
+  const towers = useMemo(() => SITEKIT.at.flatMap((s) => s.props.lightTower ?? []), []);
+  const signals = useMemo(() => SITEKIT.at.flatMap((s) => s.props.trafficLight ?? []), []);
+  const cabins = useMemo(() => SITEKIT.at.flatMap((s) => s.props.cabin ?? []), []);
+
+  const floodMat = useMemo(() => new THREE.MeshBasicMaterial({
+    color: "#ffdf9e", transparent: true, opacity: 0, depthWrite: false,
+    blending: THREE.AdditiveBlending, side: THREE.DoubleSide,
+  }), []);
+  const poolMat = useMemo(() => new THREE.MeshBasicMaterial({
+    color: "#ffdf9e", transparent: true, opacity: 0, depthWrite: false,
+    blending: THREE.AdditiveBlending,
+  }), []);
+  const lampMat = useMemo(() => new THREE.MeshBasicMaterial({
+    color: "#ffd76a", transparent: true, opacity: 0, depthWrite: false,
+  }), []);
+  const signalMat = useMemo(() => new THREE.MeshBasicMaterial({
+    color: "#ff4d4d", transparent: true, opacity: 0, depthWrite: false,
+  }), []);
+  const windowMat = useMemo(() => new THREE.MeshBasicMaterial({
+    color: "#ffc966", transparent: true, opacity: 0, depthWrite: false,
+    side: THREE.DoubleSide,
+  }), []);
+  useEffect(() => () => {
+    for (const m of [floodMat, poolMat, lampMat, signalMat, windowMat]) m.dispose();
+  }, [floodMat, poolMat, lampMat, signalMat, windowMat]);
+
+  useFrame(({ clock }) => {
+    const nf = nightFactor(clockRef.current);
+    const on = Math.max(0, nf - 0.25);                       // lamps wake at dusk
+    const flick = 0.85 + Math.sin(clock.elapsedTime * 7.3) * 0.04 + Math.sin(clock.elapsedTime * 13.7) * 0.03;
+    floodMat.opacity = Math.min(0.42, on * 0.5 * flick);
+    poolMat.opacity = Math.min(0.16, on * 0.2 * flick);
+    lampMat.opacity = Math.min(1, on * 1.45 * flick);
+    // traffic signals cycle red → green → amber (kit styling: warm glow lens)
+    const ph = (clock.elapsedTime % 9) / 9;
+    signalMat.color.set(ph < 0.45 ? "#ff4d4d" : ph < 0.56 ? "#ffb347" : "#57e389");
+    signalMat.opacity = Math.min(1, on * 1.3);
+    windowMat.opacity = Math.min(0.9, on * 1.05);
+  });
+
+  return (
+    <group>
+      {/* 🔆 floodlight cones — apex at the tower's lamp head, spreading down */}
+      {towers.map((p, i) => (
+        <group key={`tw-${i}`} position={[p.x, p.y ?? 0, p.z]} rotation-y={p.rot ?? 0}>
+          <mesh material={floodMat} position-y={LAMP_H - LAMP_H / 2}>
+            <coneGeometry args={[5.8, LAMP_H, 14, 1, true]} />
+          </mesh>
+          {/* lit ground pool under the tower */}
+          <mesh material={poolMat} rotation-x={-Math.PI / 2} position-y={0.09}>
+            <circleGeometry args={[6.1, 20]} />
+          </mesh>
+          {/* the blazing lamp head */}
+          <mesh material={lampMat} position-y={LAMP_H - 0.35}>
+            <sphereGeometry args={[0.62, 8, 6]} />
+          </mesh>
+        </group>
+      ))}
+      {/* 🚦 temporary traffic signal lenses */}
+      {signals.map((p, i) => (
+        <mesh key={`sg-${i}`} material={signalMat} position={[p.x, (p.y ?? 0) + 1.98, p.z]}>
+          <sphereGeometry args={[0.3, 8, 6]} />
+        </mesh>
+      ))}
+      {/* 🪟 site cabin windows — a warm glow on both long faces */}
+      {cabins.map((p, i) => (
+        <group key={`cb-${i}`} position={[p.x, p.y ?? 0, p.z]} rotation-y={p.rot ?? 0}>
+          <mesh material={windowMat} position={[0, 2.08, 3.72]}>
+            <planeGeometry args={[1.5, 0.85]} />
+          </mesh>
+          <mesh material={windowMat} position={[0, 2.08, -3.72]} rotation-y={Math.PI}>
+            <planeGeometry args={[1.5, 0.85]} />
+          </mesh>
+        </group>
+      ))}
+    </group>
+  );
+}
+
+/** the whole construction district — mount inside WorldView's city group.
+ *  🚧 named "construction-district" so the static culler exempts it entirely
+ *  (see staticCull.ts): the merged bakes + dig patches are ~58 draws total and
+ *  must NEVER fold away — a culled dig patch once read as a sky-blue hole. */
+export function ConstructionSites({ engine, clockRef }: {
+  engine: GameEngine;
+  clockRef: React.MutableRefObject<number>;
+}) {
   useEffect(() => preloadConstructionModels(), []);
   const meshes = useBakedSite();
   return (
-    <group>
+    <group name="construction-district">
       <DigGround />
       {meshes.map((m, i) => (
         <primitive key={i} object={m} />
       ))}
-      <CraneTops />
+      <CraneTops clockRef={clockRef} />
+      <SiteLights clockRef={clockRef} />
       <SiteCrew engine={engine} />
     </group>
   );

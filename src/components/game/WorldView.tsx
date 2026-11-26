@@ -5104,7 +5104,7 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
         <NycDistrict />
         <Landmarks />
         <HospitalCampus engine={engine} />
-        <ConstructionSites engine={engine} />
+        <ConstructionSites engine={engine} clockRef={clockRef} />
         <RailwayKit engine={engine} />
         <PrehistoricValley engine={engine} />
         <Forest engine={engine} />

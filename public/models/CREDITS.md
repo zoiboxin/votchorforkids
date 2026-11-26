@@ -112,15 +112,23 @@ ribcage, trackway, nest, sauropod nest mound, loose egg clutch and hatching egg.
 Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
 (https://creativecommons.org/licenses/by/4.0/)
 
-`construction/` — Construction Site kit (https://polyfork.dev/kit/construction-site-9e40b0):
-tower crane (mast + slewing top), steel-frame bay, concrete core section, scaffold
-bay, site hoarding run, mesh site fence run, site cabin, portable toilet, site
-lighting tower, site safety sign board, traffic cone, material pallet, precast
-concrete stack, rebar assembly, site generator, tracked excavator, articulated
-dump truck, open trench bay, spoil heap, mud & rut tile, broken-out road tile,
-crash barrier run, temporary traffic light, backhoe loader, tandem road roller
-and concrete mixer truck — three building sites in the city
-(<ConstructionSites> in WorldView.tsx).
+`construction/` — Construction Site kit (https://polyfork.dev/kit/construction-site-9e40b0),
+composed to match the kit's official live-preview scene: tower crane (mast +
+slewing top), steel-frame bay, metal-deck floor plate, concrete core section,
+scaffold bay & material stack, formwork wall panel run, site hoarding run,
+mesh site fence run, site cabin, portable toilet, smoking shelter, site tool
+vault, site lighting tower, site safety sign board, traffic cone, material
+pallet, builder's dumpy bag, precast concrete stack, rebar assembly, site
+generator, cement mixer on a stand, towed air compressor, compactor plate,
+tracked excavator, mini excavator, articulated dump truck, rigid site dumper,
+wheeled loader, skid-steer loader, backhoe loader, telehandler, crawler
+bulldozer, tandem road roller, mobile crane, flatbed delivery lorry, concrete
+mixer truck, concrete pump, water bowser, chain trencher, cherry picker,
+scissor-lift platform, open trench bay & trench plate, spoil heap, mud & rut
+tile, broken-out road tile, compacted hardcore tile, fresh concrete slab tile,
+crash barrier run, temporary traffic light, pedestrian walkway tunnel, loading
+gantry and the wheel wash — three building sites in the city
+(<ConstructionSites> in WorldView.tsx; floodlit after dark by <SiteLights>).
 
 Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
 (https://creativecommons.org/licenses/by/4.0/)

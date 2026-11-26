@@ -5,17 +5,24 @@
  * Models from the polyfork construction-site kit
  * (https://polyfork.dev/kit/construction-site-9e40b0, CC BY 4.0 — see
  * public/models/CREDITS.md): tower crane (mast + slewing top), steel-frame
- * build bays, concrete core sections, scaffold bays, site hoarding & mesh
- * fence runs, site cabin, portable toilet, lighting tower, safety sign
- * board, traffic cones, material pallets, precast concrete stacks, rebar
- * assemblies, site generator, tracked excavator, articulated dump truck,
- * open trench bays, spoil heaps, mud & broken-road tiles, crash barrier
- * runs, temporary traffic light, backhoe loader, tandem road roller and
- * the concrete mixer truck.
+ * build bays with metal-deck floor plates, concrete core sections, scaffold
+ * bays & material stacks, formwork wall runs, site hoarding & mesh fence
+ * runs, site cabin, portable toilet, smoking shelter, site tool vault,
+ * lighting tower, safety sign board, traffic cones, material pallets,
+ * dumpy bags, precast concrete stacks, rebar assemblies, site generator,
+ * cement mixer stand, towed air compressor, site vehicles (tracked
+ * excavator, mini excavator, articulated dump truck, rigid site dumper,
+ * wheeled loader, skid-steer loader, backhoe loader, telehandler, crawler
+ * bulldozer, tandem road roller, mobile crane, flatbed delivery lorry,
+ * concrete mixer truck, concrete pump, water bowser, chain trencher,
+ * cherry picker, scissor-lift platform), open trench bays & trench plates,
+ * spoil heaps, mud & broken-road tiles, compacted hardcore & fresh-concrete
+ * slab tiles, crash barrier runs, temporary traffic light, pedestrian
+ * walkway tunnel, loading gantry and the wheel wash.
  *
  * Every model is vertex-coloured (one MeshStandardMaterial each), so ALL
  * repeated props bake into ONE merged mesh per kind — the whole three-site
- * district renders as ~20 draw calls total. Files preload in the
+ * district renders as ~55 draw calls total. Files preload in the
  * background; a failed model just skips that prop, never crashes.
  */
 import * as THREE from "three";
@@ -52,6 +59,35 @@ const FILES = {
   mixerTruck: "/models/construction/concrete-mixer-truck-4a8d94.glb",
   arrowBoard: "/models/construction/arrow-board-2eea6b.glb",
   skip: "/models/construction/builder-s-skip-191d35.glb",
+  // ── the rest of the kit (the official scene composition uses these too) ──
+  metalDeck: "/models/construction/metal-deck-floor-plate-6cdd1c.glb",
+  formwork: "/models/construction/formwork-wall-panel-run-52e9f5.glb",
+  scaffoldStack: "/models/construction/scaffold-material-stack-836dd2.glb",
+  dumpyBag: "/models/construction/builder-s-dumpy-bag-89fd1b.glb",
+  slabTile: "/models/construction/fresh-concrete-slab-tile-66b6a8.glb",
+  hardcoreTile: "/models/construction/compacted-hardcore-tile-a7a8ee.glb",
+  trenchPlate: "/models/construction/trench-plate-30c3a3.glb",
+  walkwayTunnel: "/models/construction/pedestrian-walkway-tunnel-0b194e.glb",
+  loadingGantry: "/models/construction/loading-gantry-34460f.glb",
+  smokingShelter: "/models/construction/smoking-shelter-7e149f.glb",
+  toolVault: "/models/construction/site-tool-vault-200e38.glb",
+  cementMixerStand: "/models/construction/cement-mixer-on-a-8fb979.glb",
+  airCompressor: "/models/construction/towed-air-compressor-11f9ea.glb",
+  compactorPlate: "/models/construction/compactor-plate-e76b28.glb",
+  waterBowser: "/models/construction/water-bowser-f6768c.glb",
+  wheelWash: "/models/construction/wheel-wash-d1ca0f.glb",
+  telehandler: "/models/construction/telehandler-88c668.glb",
+  siteDumper: "/models/construction/rigid-site-dumper-224eb0.glb",
+  skidSteer: "/models/construction/skid-steer-loader-268f4d.glb",
+  wheeledLoader: "/models/construction/wheeled-loader-29dc45.glb",
+  miniExcavator: "/models/construction/mini-excavator-cbe1ae.glb",
+  bulldozer: "/models/construction/crawler-bulldozer-b851fb.glb",
+  mobileCrane: "/models/construction/mobile-crane-671d3f.glb",
+  flatbedLorry: "/models/construction/flatbed-delivery-lorry-571458.glb",
+  concretePump: "/models/construction/concrete-pump-c073ef.glb",
+  cherryPicker: "/models/construction/cherry-picker-38c4af.glb",
+  scissorLift: "/models/construction/scissor-lift-platform-3eae3f.glb",
+  trencher: "/models/construction/chain-trencher-215857.glb",
 } as const;
 
 export type ConstructionKind = keyof typeof FILES;
@@ -213,6 +249,13 @@ export function cloneConstructionModel(kind: ConstructionKind): THREE.Group | nu
  *  above the tower. 0 while the model is still streaming in. */
 export function constructionGroundY(kind: ConstructionKind): number {
   return cache.get(kind)?.groundY ?? 0;
+}
+
+/** The authored size of one kit model (metres) — night-light seating reads the
+ *  light-tower / traffic-light heights off it instead of hardcoding. 0-size
+ *  while the model is still streaming in. */
+export function constructionSize(kind: ConstructionKind): THREE.Vector3 {
+  return cache.get(kind)?.size ?? new THREE.Vector3();
 }
 
 /** Fire the callback when every construction model has SETTLED (loaded or
