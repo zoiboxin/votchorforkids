@@ -196,23 +196,45 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     c.stroke();
     dot(cp.x, cp.z, 1.1 * U, "#fb923c", 0.95); // the ever-burning pit
   }
-  // ✈️ THE DROP — the shared flight path + the dropship marker (while deploying).
-  // The line is identical on every client (master-seed derived) — PUBG's
-  // "everyone sees the same plane route", drawn straight on their own map.
-  if (engine.deploy && engine.deployPath) {
+  // ✈️ THE DROP — the shared flight route + the LIVE dropship marker. The
+  // route line stays up all match (PUBG-style route memory, identical on every
+  // client — master-seed derived); the amber plane glyph glides along it while
+  // the ship is still crossing, so players can track the flight live on both
+  // the corner minimap and the big map — before AND after they jump.
+  if (engine.deployPath) {
     const path = engine.deployPath;
+    const pose = engine.deployShipPose();
     c.setLineDash([4, 3]);
-    c.strokeStyle = "rgba(125,211,252,0.85)";
+    c.strokeStyle = pose ? "rgba(125,211,252,0.85)" : "rgba(125,211,252,0.45)"; // route dims once the ship is gone
     c.lineWidth = Math.max(1, 1.5 * U);
     c.beginPath();
     c.moveTo(S / 2 + path.x0 * K, S / 2 + path.z0 * K);
     c.lineTo(S / 2 + path.x1 * K, S / 2 + path.z1 * K);
     c.stroke();
     c.setLineDash([]);
-    const pose = engine.deployShipPose();
     if (pose) {
-      dot(pose.x, pose.z, 3.4 * U, "#fbbf24", 1);
-      dot(pose.x, pose.z, 1.5 * U, "#ffffff", 1);
+      // live plane glyph — an amber arrow riding the route, nose along the
+      // ship's heading (screen angle from up = atan2(dx, −dz))
+      const hdgx = path.x1 - path.x0, hdgz = path.z1 - path.z0;
+      const px = S / 2 + pose.x * K, pz = S / 2 + pose.z * K;
+      c.save();
+      c.translate(px, pz);
+      c.rotate(Math.atan2(hdgx, -hdgz));
+      c.beginPath();
+      c.moveTo(0, -4.4 * U); c.lineTo(2.9 * U, 3.1 * U); c.lineTo(0, 1.5 * U); c.lineTo(-2.9 * U, 3.1 * U);
+      c.closePath();
+      c.fillStyle = "#fbbf24";
+      c.fill();
+      c.strokeStyle = "rgba(255,255,255,0.9)";
+      c.lineWidth = Math.max(1, 0.8 * U);
+      c.stroke();
+      c.restore();
+      // soft halo so the live marker pops against the terrain paint
+      c.beginPath();
+      c.arc(px, pz, 6.2 * U, 0, Math.PI * 2);
+      c.strokeStyle = "rgba(251,191,36,0.4)";
+      c.lineWidth = Math.max(1, 1.1 * U);
+      c.stroke();
     }
   }
   /* 🧹 mini map declutter: vans, food, licenses, power gems, cash piles, loot, police,
@@ -2084,13 +2106,35 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
             </div>
             <div className="text-[11px] font-bold text-white/80">
               {hud.deploy.phase === "ship"
-                ? "SPACE — jump and pick your drop"
+                ? "SPACE — jump and pick your drop · auto-drop at route end"
                 : hud.deploy.phase === "fall"
                   ? "WASD — steer the dive"
                   : "WASD — glide to your landing spot"}
             </div>
-            <div className="mt-0.5 rounded-full bg-sky-400/15 px-3 py-0.5 text-[11px] font-black tabular-nums text-sky-200">
-              ALT {Math.round(hud.deploy.alt)} m · AGL {Math.round(Math.max(0, hud.deploy.alt - hud.deploy.ground))} m
+            {hud.deploy.phase === "ship" && (
+              <div className="mt-1 w-48" aria-hidden>
+                <div className="relative h-1.5 w-full overflow-hidden rounded-full bg-white/15">
+                  <div
+                    className="h-full rounded-full bg-sky-400"
+                    style={{ width: `${Math.round(Math.min(1, Math.max(0, hud.deploy.route)) * 100)}%` }}
+                  />
+                </div>
+                <div className="mt-0.5 flex w-full justify-between text-[9px] font-bold uppercase tracking-widest text-white/45">
+                  <span>route</span>
+                  <span>{Math.round(Math.min(1, Math.max(0, hud.deploy.route)) * 100)}%</span>
+                </div>
+              </div>
+            )}
+            <div
+              className={`mt-0.5 rounded-full px-3 py-0.5 text-[11px] font-black tabular-nums ${
+                hud.deploy.phase === "ship" && hud.deploy.autoDropT > 0 && hud.deploy.autoDropT <= 10
+                  ? "bg-amber-400/20 text-amber-200"
+                  : "bg-sky-400/15 text-sky-200"
+              }`}
+            >
+              {hud.deploy.phase === "ship" && hud.deploy.autoDropT > 0 && hud.deploy.autoDropT <= 10
+                ? `⏱ AUTO-DROP IN ${Math.max(1, Math.ceil(hud.deploy.autoDropT))}s · ALT ${Math.round(hud.deploy.alt)} m`
+                : `ALT ${Math.round(hud.deploy.alt)} m · AGL ${Math.round(Math.max(0, hud.deploy.alt - hud.deploy.ground))} m`}
             </div>
           </div>
         </div>

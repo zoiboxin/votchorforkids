@@ -1,6 +1,6 @@
 import {
   AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, BUST_CARRY_BONUS, BUST_POINTS, BUST_TARGET, CARRY_RADIUS, CAR_ACCEL, CAR_BRAKE, CAR_COAST, CAR_COAST_FRICTION, CAR_ENTER_R, CAR_HIT_CD, CAR_HIT_MIN_CLOSING, CAR_HIT_TRANSFER, CAR_REV_SPEED, CAR_ROOF_TOP, CAR_SLIDE_FRICTION, CAR_SPIN_FRICTION, CAR_STEER, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
-  CHUTE_ALT, CHUTE_DRIFT, CHUTE_VY, DROP_ALT, DROP_OUTER, DROP_SPEED,
+  CHUTE_ALT, CHUTE_DRIFT, CHUTE_VY, DROP_ALT, DROP_OUTER, DROP_SPEED, AUTO_EJECT_R,
   CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, CONFISCATE_FINE, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
   ESCAPE_LOST_S, FARM_RADIUS, FLIP_S, GRAVITY, GRAVEYARD, HAUL_CAMP_R, HEARSE_GUARD_COUNT_MAX, HEARSE_GUARD_COUNT_MIN, HEARSE_GUARD_DMG, HEARSE_GUARD_HP, HEARSE_GUARD_HOME_R, HEARSE_GUARD_LEASH, HEARSE_GUARD_SPEED, HEARSE_HOARD, HEARSE_TYPE, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
@@ -549,8 +549,9 @@ export interface HudData {
   /** relay round-trip estimate (ms) */
   mpPing: number;
   /* --- ✈️ THE DROP — deployment HUD --- */
-  /** current deployment phase (null = boots on the ground) */
-  deploy: { phase: "ship" | "fall" | "chute"; alt: number; ground: number } | null;
+  /** current deployment phase (null = boots on the ground). `route` rides
+   *  0→1 along the flight line; `autoDropT` counts down to the AFK eject. */
+  deploy: { phase: "ship" | "fall" | "chute"; alt: number; ground: number; route: number; autoDropT: number } | null;
   /** ✈️ the deterministic flight path — the minimap draws the shared line */
   deployPath: [number, number, number, number] | null;
   /** the real souls in town — scoreboard & presence */
@@ -747,6 +748,9 @@ export class GameEngine {
   deployPath: { x0: number; z0: number; x1: number; z1: number } | null = null;
   /** distance travelled along the flight path (u) */
   private shipU = 0;
+  /** 🪂 the path distance where the AFK auto-drop fires (exit-leg crossing of
+   *  AUTO_EJECT_R — precomputed in rollDropPath) */
+  private autoDropU = 0;
 
   /* --- 🤖 bots acting like real players ---
    * goodieClaims: per-frame map goodieKey → crewId; each loose snack/pile/gem
@@ -1880,19 +1884,46 @@ export class GameEngine {
     const a = r() * Math.PI * 2;
     const cx = Math.cos(a) * DROP_OUTER, cz = Math.sin(a) * DROP_OUTER;
     this.deployPath = { x0: cx, z0: cz, x1: -cx, z1: -cz };
+    // 🪂 precompute where the AFK auto-drop fires: the path distance on the
+    // EXIT leg (past the mid-point) where the ship crosses AUTO_EJECT_R.
+    // |P0 + dir·u|² = R²  →  u² + 2(P0·dir)u + |P0|² − R² = 0, take the
+    // larger root (the exit-side crossing; the entry one sits before the apex).
+    const L = Math.hypot(this.deployPath.x1 - this.deployPath.x0, this.deployPath.z1 - this.deployPath.z0) || 1;
+    const dx = (this.deployPath.x1 - this.deployPath.x0) / L, dz = (this.deployPath.z1 - this.deployPath.z0) / L;
+    const b = 2 * (cx * dx + cz * dz);
+    const c = cx * cx + cz * cz - AUTO_EJECT_R * AUTO_EJECT_R;
+    const disc = b * b - 4 * c;
+    const root = disc > 0 ? (-b + Math.sqrt(disc)) / 2 : L;
+    this.autoDropU = Math.min(L, Math.max(0, root));
   }
 
-  /** ✈️ the dropship pose for the renderer (ship phase only). Heading follows
-   *  the flight path; the fuselage banks nothing — a steady troop lift.
+  /** full length of the flight line (u) */
+  private shipPathLen(): number {
+    const p = this.deployPath;
+    return p ? Math.hypot(p.x1 - p.x0, p.z1 - p.z0) || 1 : 1;
+  }
+
+  /** 🪂 seconds until the AFK auto-drop ejects an idle rider (0 once past it
+   *  or off the ship) — the HUD banner counts it down live. */
+  autoDropSeconds(): number {
+    if (!this.deployPath || this.deploy?.phase !== "ship") return 0;
+    return Math.max(0, (this.autoDropU - this.shipU) / DROP_SPEED);
+  }
+
+  /** ✈️ the dropship pose for the renderer — live for the WHOLE crossing (the
+   *  ship flies on after the rider bails, so the airframe + the map marker
+   *  stay up until it exits the far side). Heading follows the flight path;
+   *  the fuselage banks nothing — a steady troop lift.
    *  rot is a three.js heading for a NOSE-ALONG-+Z model (polyfork kit aircraft
    *  are authored nose +Z): rotation.y = atan2(dx, dz) points +Z along the
    *  travel direction (dx, dz) = (x1−x0, z1−z0), i.e. nose at the far end.
    *  (The old formula pointed +Z BACK along the line — the primitive ship flew
    *  sideways; the real model now flies nose-first.) */
   deployShipPose(): { x: number; z: number; y: number; rot: number } | null {
-    if (!this.deploy || this.deploy.phase !== "ship" || !this.deployPath) return null;
+    if (!this.deployPath) return null;
     const path = this.deployPath;
-    const L = Math.hypot(path.x1 - path.x0, path.z1 - path.z0) || 1;
+    const L = this.shipPathLen();
+    if (this.shipU >= L) return null; // the ship has crossed the island — gone
     const t = Math.min(1, this.shipU / L);
     return {
       x: path.x0 + (path.x1 - path.x0) * t,
@@ -1903,8 +1934,9 @@ export class GameEngine {
   }
 
   /** 🪂 SPACE aboard the ship — jump! (queueJump routes here; the ship also
-   *  auto-ejects at the end of the line so nobody rides it into the wall.) */
-  private jumpFromShip() {
+   *  auto-ejects idle riders just before the mountains so an AFK ride always
+   *  ends on playable ground, never out past the wall on the peaks.) */
+  private jumpFromShip(auto = false) {
     const d = this.deploy;
     if (!d || d.phase !== "ship" || !this.deployPath) return;
     d.phase = "fall";
@@ -1912,11 +1944,18 @@ export class GameEngine {
     d.jumped = true;
     const path = this.deployPath;
     const L = Math.hypot(path.x1 - path.x0, path.z1 - path.z0) || 1;
-    // inherit the ship's momentum — the leap arcs forward before gravity takes over
-    this.player.vx = ((path.x1 - path.x0) / L) * DROP_SPEED * 0.45;
-    this.player.vz = ((path.z1 - path.z0) / L) * DROP_SPEED * 0.45;
-    sfx.jump();
-    this.toast("🪂 FREEFALL! Steer with WASD — the chute pops low. Pick your drop!", "info");
+    // inherit the ship's momentum — the leap arcs forward before gravity takes
+    // over (the AFK auto-drop just steps out: a gentle nudge keeps them on the
+    // last playable ground BEFORE the mountains instead of drifting to the rim)
+    const k = auto ? 0.12 : 0.45;
+    this.player.vx = ((path.x1 - path.x0) / L) * DROP_SPEED * k;
+    this.player.vz = ((path.z1 - path.z0) / L) * DROP_SPEED * k;
+    if (auto) {
+      this.toast("🪂 End of the route — you were dropped off before the mountains. The chute pops low!", "info");
+    } else {
+      sfx.jump();
+      this.toast("🪂 FREEFALL! Steer with WASD — the chute pops low. Pick your drop!", "info");
+    }
   }
 
   /** ✈️🪂 the deployment state machine — runs INSTEAD of normal body physics
@@ -1929,7 +1968,7 @@ export class GameEngine {
     if (d.phase === "ship") {
       // ride the shared flight line — every client computes the SAME pose
       this.shipU += DROP_SPEED * dt;
-      const L = Math.hypot(path.x1 - path.x0, path.z1 - path.z0) || 1;
+      const L = this.shipPathLen();
       const t = Math.min(1, this.shipU / L);
       p.x = path.x0 + (path.x1 - path.x0) * t;
       p.z = path.z0 + (path.z1 - path.z0) * t;
@@ -1937,7 +1976,11 @@ export class GameEngine {
       p.vx = 0; p.vz = 0; p.vy = 0;
       p.face = Math.atan2(path.x1 - path.x0, path.z1 - path.z0);
       p.sprinting = false;
-      if (t >= 1) this.jumpFromShip(); // end of the line — out!
+      // 🪂 AFK auto-drop — the ride always ends on playable ground: once the
+      // ship is past the island mid-point and closes on the map edge, eject
+      // BEFORE the mountain band (the old end-of-line eject at r = 760 spilled
+      // idle skydivers past the wall, straight onto the peaks).
+      if (t >= 0.5 && (Math.hypot(p.x, p.z) >= AUTO_EJECT_R || t >= 1)) this.jumpFromShip(true);
       return;
     }
     // falling / under canopy — WASD steering relative to the camera yaw
@@ -7108,6 +7151,13 @@ export class GameEngine {
     /* --- police van fleet: transport prisoners to the nearest station --- */
     this.updateVans(dt);
 
+    /* --- ✈️ the dropship keeps crossing on its own deterministic clock — it
+     *  flies on after the rider bails (and after they land) until it exits the
+     *  far side, so the airframe + the live map marker stay up the whole route */
+    if (this.deployPath && this.deploy?.phase !== "ship" && this.shipU < this.shipPathLen()) {
+      this.shipU += DROP_SPEED * dt;
+    }
+
     /* --- bot planes: taxi → take off → cruise the city → land (pure spectacle) --- */
     this.updatePlanes(dt);
     // vans are solid — shove the player out of their footprint (no bonk, police don't ram kids)
@@ -8530,7 +8580,7 @@ export class GameEngine {
     // ✈️ THE DROP — the deployment verb outranks every ground prompt
     if (this.deploy) {
       prompt = this.deploy.phase === "ship"
-        ? "Press SPACE to jump from the DROPSHIP and pick your drop!"
+        ? "SPACE — jump and pick your drop! (auto-drop at the end of the route)"
         : this.deploy.phase === "fall" ? "FREEFALL — steer with WASD (chute pops low)" : "PARACHUTE — steer with WASD and land";
     }
     if (!prompt && !this.deploy && !this.drive && !this.ride) {
@@ -8638,7 +8688,13 @@ export class GameEngine {
       mpPing: this.mpPing,
       /* --- ✈️ THE DROP --- */
       deploy: this.deploy
-        ? { phase: this.deploy.phase, alt: Math.max(0, this.player.y), ground: terrainHeight(this.player.x, this.player.z) }
+        ? {
+            phase: this.deploy.phase,
+            alt: Math.max(0, this.player.y),
+            ground: terrainHeight(this.player.x, this.player.z),
+            route: Math.min(1, this.shipU / this.shipPathLen()),
+            autoDropT: this.autoDropSeconds(),
+          }
         : null,
       deployPath: this.deployPath && this.deploy
         ? [this.deployPath.x0, this.deployPath.z0, this.deployPath.x1, this.deployPath.z1]

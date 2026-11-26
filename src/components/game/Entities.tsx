@@ -5,7 +5,7 @@ import { useFrame, useThree } from "@react-three/fiber";
 import * as THREE from "three";
 import {
   ANIMAL_SET, ATTACK_CD, BIKE_TYPE, CAP_COLORS, CIVIL_NAMES, FAINT_S, FLIP_S, HAIR_COLORS, HAIR_STYLES, ITEMS, ITEM_COUNT, LAND_SQUASH_S, MAGNET_RADIUS, MORPH_ANIMALS, PANTS_COLORS, POWERS, ROCK_BREAK_S, SHIRT_COLORS, SKIN_TONES, TOOLS,
-  TOTAL_VOTES, TREE_FALL_S, ZONE_WALL_H, FARM_RADIUS, JUNGLE_RADIUS, WILDLIFE, normalizeAppearance, type AnimalKind, type Appearance,
+  TOTAL_VOTES, TREE_FALL_S, ZONE_WALL_H, FARM_RADIUS, JUNGLE_RADIUS, WILDLIFE, DROP_ALT, normalizeAppearance, type AnimalKind, type Appearance,
 } from "@/lib/game/constants";
 import { preloadModels, onModelsReady, spawnModel } from "@/lib/game/models";
 import type { GameEngine } from "@/lib/game/engine";
@@ -170,15 +170,15 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     return grp;
   }, []);
 
-  // ✈️ THE DROP — the shared DROPSHIP is now the REAL polyfork regional
-  // turboprop (kit module, deterministic knobs — the exact same airframe on
-  // every client). Flight state: gear retracted + doors closed + take-off
-  // flaps, teal livery to match the NightLine accents. Visible only while YOU
-  // ride it; the flight line is the same deterministic path on every client,
-  // so everyone sees "the" plane. The kit is authored nose-along-+Z resting on
-  // y=0 — deployShipPose().rot already points the group's +Z along the flight
-  // line, and the airframe is re-centred so the CABIN sits at the rider point
-  // (the ship pose), not the old ground contact.
+  // ✈️ THE DROP — the shared DROPSHIP is the REAL polyfork regional turboprop
+  // (kit module, deterministic knobs — the exact same airframe on every
+  // client). Flight state: gear retracted + doors closed + take-off flaps,
+  // teal livery to match the NightLine accents. Visible the WHOLE crossing
+  // (the ship flies on after every soul bails, until it exits the far side);
+  // riders are INVISIBLE while aboard — the plane alone owns the sky. The kit
+  // is authored nose-along-+Z — deployShipPose().rot points the group's +Z
+  // along the flight line, and the airframe is re-centred so its cabin centre
+  // sits on the ship pose the engine hands out every frame.
   const SHIP_SCALE = 0.66; // ≈ 18 m span/length at the ship pose — imposing on
   // the island, still comfortably framed by the chase camera
   const shipMesh = useMemo(() => {
@@ -186,12 +186,11 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     const model = createTurboprop({ colorway: "teal", gear: 1, doors: "closed", flaps: 15 });
     model.scale.setScalar(SHIP_SCALE);
     // sink the airframe so its vertical midpoint (≈ cabin centre) sits on the
-    // group origin — the rider point the engine hands out every frame
+    // group origin — the ship pose rides at cruise altitude with the fuselage
+    // nicely framed around it (riders are hidden while aboard, so the plane
+    // alone owns this pose — no fuselage-spine stand needed any more)
     const box = new THREE.Box3().setFromObject(model);
     model.position.y -= box.getCenter(new THREE.Vector3()).y;
-    // + a hair more sink so the hull top meets y=0 — the rider (feet at the
-    // group origin) stands ON the fuselage spine instead of knee-deep in it
-    model.position.y -= 0.8;
     grp.add(model);
     // the named rig pivots (prop-l / prop-r) spin every frame — collect them once
     const props: THREE.Object3D[] = [];
@@ -225,7 +224,11 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     // sealed roofs keep the classic hidden body
     const rideSeat = engine.ride && engine.world.cars[engine.ride.ci]
       ? DRIVE_SEAT[engine.world.cars[engine.ride.ci].t % DRIVE_SEAT.length] : null;
-    mesh.visible = (!engine.lost || engine.deathT < 3.4) && !engine.playerInVan && !morphing && (!engine.ride || !!rideSeat) && !beast; // 🩸 the dark takes the body too — after one final fall · 🚗 the driver STAYS visible in open-top cars
+    // ✈️ THE DROP — aboard the ship the body stays aboard (invisible): just
+    // show the PLANE — a rider standing on the fuselage spine read as a bug.
+    // They pop back into view the moment they bail out (freefall).
+    const aboardShip = engine.deploy?.phase === "ship";
+    mesh.visible = (!engine.lost || engine.deathT < 3.4) && !engine.playerInVan && !morphing && (!engine.ride || !!rideSeat) && !beast && !aboardShip; // 🩸 the dark takes the body too — after one final fall · 🚗 the driver STAYS visible in open-top cars · ✈️ the dropship hides its riders
     beastMesh.visible = beast && !engine.lost && !engine.playerInVan && !engine.drive && !engine.ride;
     if (beastMesh.visible) {
       beastMesh.position.set(p.x, p.y, p.z);
@@ -421,7 +424,9 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     const focusY = spec ? 0 : p.y;
     // ✈️ riding the dropship pulls the camera further back so the real
     // airframe (≈18 m at SHIP_SCALE) frames without the tail cone clipping the lens
-    const cd = shipPose ? 14 : drv ? 11 : 8.6;
+    // (keyed to the RIDER phase — after bailing out the chase cam snaps back
+    // to the skydiver even though the ship keeps flying alongside)
+    const cd = aboardShip ? 14 : drv ? 11 : 8.6;
     const iy = engine.input.yaw, ip = engine.input.pitch;
     let tx = camX + Math.sin(iy) * cd * Math.cos(ip);
     let ty = Math.max(1.2, focusY + 2.1 + Math.sin(ip) * cd);
@@ -1510,7 +1515,10 @@ export function Shadows({ engine }: { engine: GameEngine }) {
       mesh.setMatrixAt(i++, dummy.matrix);
     };
     const p = engine.player;
-    put(p.x, p.z, 0.64, p.y);
+    // ✈️ aboard the dropship the hidden rider casts no blob shadow — the
+    // airframe owns the sky (freefall/chute keep theirs: it helps read the
+    // landing spot)
+    if (engine.deploy?.phase !== "ship") put(p.x, p.z, 0.64, p.y);
     for (const c of engine.cops) put(c.x, c.z, 0.6);
     for (const c of engine.civs) if (!c.dead) put(c.x, c.z, 0.6); // the fallen sink away — no ghost shadows
     if (nightFactor(engine.clock) > 0.4) for (const z of engine.zombies) if (!z.dead) put(z.x, z.z, 0.6);
@@ -2108,6 +2116,16 @@ export function RemotesView({ engine }: { engine: GameEngine }) {
         return;
       }
       deadT.current.delete(r.slot); // back among the living — reset their fall clock
+      // ✈️ still aboard the dropship — no rider body floats over the plane;
+      // the SHIP is what you see (their stream holds y ≈ cruise altitude until
+      // they bail, then they pop out mid-air in freefall)
+      if (r.y >= DROP_ALT - 1.25) {
+        body.visible = false;
+        if (v.tag) v.tag.visible = false;
+        if (v.btag) v.btag.visible = false;
+        if (v.ptag) v.ptag.visible = false;
+        return;
+      }
       // 🚗 they're inside a car (driving it or riding shotgun) — the body GLUES
       // to the exact vehicle's seat on the open-top styles (van / bus / jeep /
       // convertible — sealed roofs keep the classic hidden body). The state

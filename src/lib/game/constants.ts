@@ -31,6 +31,11 @@ export const CHUTE_ALT = 17;         // altitude above ground where the chute po
 export const CHUTE_VY = 6.2;         // parachute descent speed (u/s)
 export const CHUTE_DRIFT = 8.5;      // steering authority under the canopy
 export const LAND_GRACE_S = 7;       // spawn-protection re-armed after touchdown
+/** 🪂 AFK auto-drop — a soul who never jumps is ejected here, NOT at the raw
+ *  path end (r = 760, past the wall 712 and out on the peaks). 585 sits safely
+ *  inside the jungle band, just before MOUNTAIN_INNER (610): the idle ride
+ *  always ends on playable ground before the mountains. */
+export const AUTO_EJECT_R = 585;
 /** The world grew! City → farmland → BIG jungle → DEEP jungle → climbable ⛰️ mountains → wall. */
 export const WALL_RADIUS = 712;
 export const CITY_RADIUS = 405;
