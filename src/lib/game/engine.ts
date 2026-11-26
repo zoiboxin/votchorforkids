@@ -1883,7 +1883,12 @@ export class GameEngine {
   }
 
   /** ✈️ the dropship pose for the renderer (ship phase only). Heading follows
-   *  the flight path; the fuselage banks nothing — a steady troop lift. */
+   *  the flight path; the fuselage banks nothing — a steady troop lift.
+   *  rot is a three.js heading for a NOSE-ALONG-+Z model (polyfork kit aircraft
+   *  are authored nose +Z): rotation.y = atan2(dx, dz) points +Z along the
+   *  travel direction (dx, dz) = (x1−x0, z1−z0), i.e. nose at the far end.
+   *  (The old formula pointed +Z BACK along the line — the primitive ship flew
+   *  sideways; the real model now flies nose-first.) */
   deployShipPose(): { x: number; z: number; y: number; rot: number } | null {
     if (!this.deploy || this.deploy.phase !== "ship" || !this.deployPath) return null;
     const path = this.deployPath;
@@ -1893,7 +1898,7 @@ export class GameEngine {
       x: path.x0 + (path.x1 - path.x0) * t,
       z: path.z0 + (path.z1 - path.z0) * t,
       y: DROP_ALT,
-      rot: Math.atan2(path.x0 - path.x1, path.z0 - path.z1), // nose points at the far end
+      rot: Math.atan2(path.x1 - path.x0, path.z1 - path.z0), // nose points at the far end
     };
   }
 

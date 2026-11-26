@@ -22,6 +22,7 @@ import { GLB_CHARACTERS, glbTemplate, makeGlbInstance, tintGlbZombie, loadGlbTem
 import { tintRot } from "@/lib/game/models";
 import { WORLD } from "./WorldView";
 import { useGame } from "./store";
+import { createAsset as createTurboprop } from "@/lib/game/planes/kit/regional-turboprop-097f26.mjs";
 
 export type ClockRef = { current: number };
 
@@ -169,38 +170,33 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     return grp;
   }, []);
 
-  // ✈️ THE DROP — the shared DROPSHIP, a stylized troop lift built from
-  // primitives (visible only while YOU ride it; the flight line is the same
-  // deterministic path on every client, so everyone sees "the" plane)
+  // ✈️ THE DROP — the shared DROPSHIP is now the REAL polyfork regional
+  // turboprop (kit module, deterministic knobs — the exact same airframe on
+  // every client). Flight state: gear retracted + doors closed + take-off
+  // flaps, teal livery to match the NightLine accents. Visible only while YOU
+  // ride it; the flight line is the same deterministic path on every client,
+  // so everyone sees "the" plane. The kit is authored nose-along-+Z resting on
+  // y=0 — deployShipPose().rot already points the group's +Z along the flight
+  // line, and the airframe is re-centred so the CABIN sits at the rider point
+  // (the ship pose), not the old ground contact.
+  const SHIP_SCALE = 0.66; // ≈ 18 m span/length at the ship pose — imposing on
+  // the island, still comfortably framed by the chase camera
   const shipMesh = useMemo(() => {
     const grp = new THREE.Group();
-    const body = new THREE.Mesh(
-      new THREE.CapsuleGeometry(1.7, 9.5, 4, 10),
-      new THREE.MeshLambertMaterial({ color: "#565e6b" }),
-    );
-    body.rotation.z = Math.PI / 2;
-    grp.add(body);
-    const wing = new THREE.Mesh(
-      new THREE.BoxGeometry(3.4, 0.34, 15.5),
-      new THREE.MeshLambertMaterial({ color: "#454c57" }),
-    );
-    wing.position.y = 0.7;
-    grp.add(wing);
-    const tail = new THREE.Mesh(
-      new THREE.BoxGeometry(2.6, 4.2, 0.36),
-      new THREE.MeshLambertMaterial({ color: "#f59e0b" }),
-    );
-    tail.position.set(-5.6, 2.0, 0);
-    grp.add(tail);
-    for (const s of [-1, 1]) {
-      const eng = new THREE.Mesh(
-        new THREE.CapsuleGeometry(0.62, 2.2, 3, 7),
-        new THREE.MeshLambertMaterial({ color: "#2f3640" }),
-      );
-      eng.rotation.z = Math.PI / 2;
-      eng.position.set(1.1, -0.15, s * 4.6);
-      grp.add(eng);
-    }
+    const model = createTurboprop({ colorway: "teal", gear: 1, doors: "closed", flaps: 15 });
+    model.scale.setScalar(SHIP_SCALE);
+    // sink the airframe so its vertical midpoint (≈ cabin centre) sits on the
+    // group origin — the rider point the engine hands out every frame
+    const box = new THREE.Box3().setFromObject(model);
+    model.position.y -= box.getCenter(new THREE.Vector3()).y;
+    // + a hair more sink so the hull top meets y=0 — the rider (feet at the
+    // group origin) stands ON the fuselage spine instead of knee-deep in it
+    model.position.y -= 0.8;
+    grp.add(model);
+    // the named rig pivots (prop-l / prop-r) spin every frame — collect them once
+    const props: THREE.Object3D[] = [];
+    model.traverse((o) => { if (o.name === "prop-l" || o.name === "prop-r") props.push(o); });
+    grp.userData.props = props;
     grp.visible = false;
     return grp;
   }, []);
@@ -389,12 +385,16 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       chute.rotation.y += dt * 0.4;
     } else if (chute.visible) chute.visible = false;
 
-    // ✈️ the dropship carries us along the shared flight line (ship phase)
+    // ✈️ the dropship carries us along the shared flight line (ship phase);
+    // the twin propellers stay disc-blurred fast while the lift cruises
     const shipPose = engine.deployShipPose();
     if (shipPose) {
       shipMesh.visible = true;
       shipMesh.position.set(shipPose.x, shipPose.y, shipPose.z);
       shipMesh.rotation.y = shipPose.rot;
+      for (const pr of (shipMesh.userData.props ?? []) as THREE.Object3D[]) {
+        pr.rotation.z -= dt * 42; // ≈ 6.7 rev/s — reads as a fast cruise spin
+      }
     } else if (shipMesh.visible) shipMesh.visible = false;
 
     // dizzy stars orbit the head while the bonk faint lasts
@@ -419,7 +419,9 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     const camX = spec ? spec.x : drv ? drv.vx : p.x;
     const camZ = spec ? spec.z : drv ? drv.vz : p.z;
     const focusY = spec ? 0 : p.y;
-    const cd = drv ? 11 : 8.6;
+    // ✈️ riding the dropship pulls the camera further back so the real
+    // airframe (≈18 m at SHIP_SCALE) frames without the tail cone clipping the lens
+    const cd = shipPose ? 14 : drv ? 11 : 8.6;
     const iy = engine.input.yaw, ip = engine.input.pitch;
     let tx = camX + Math.sin(iy) * cd * Math.cos(ip);
     let ty = Math.max(1.2, focusY + 2.1 + Math.sin(ip) * cd);
