@@ -1084,6 +1084,10 @@ function runRow(x: number, z: number, n: number, step: number, rot: number): Con
 /** 🚧 construction-site collider — optional standable top (precast stacks,
  *  spoil heaps, pallets, scaffold bays and cones are all climbable furniture) */
 const conCol = (x: number, z: number, r: number, top?: number) => (top === undefined ? { x, z, r } : { x, z, r, top });
+/** standable top for furniture standing INSIDE a dig — the deck sits rel metres
+ *  above the dirt surface at that spot (−digDown), not above street grade, so
+ *  a pit scaffold deck lands under your feet instead of floating mid-air */
+const pitTop = (x: number, z: number, rel: number) => -digDown(x, z) + rel;
 
 export const SITEKIT = (() => {
   /* ---- Site A · LAKESHORE TOWERS — west midtown block (-168.75, 33.75) ----
@@ -1175,7 +1179,7 @@ export const SITEKIT = (() => {
       conCol(-189, 14, 2.5),                                     // crane base
       conCol(-175.5, 26.5, 2.6), conCol(-161.5, 40, 2.5),        // pit machines
       conCol(-170.5, 27, 1.5), conCol(-167, 38.5, 1.6), conCol(-179, 38, 1.7), // pit fleet (picker/lift/mini)
-      conCol(-168, 41.5, 1.8, 2.3),                              // pit scaffold bay — jump platform
+      conCol(-168, 41.5, 1.8, pitTop(-168, 41.5, 2.3)),          // pit scaffold bay — jump platform (deck follows the terrace dirt)
       conCol(-177, 42, 1.5), conCol(-155.5, 25, 1.4), conCol(-158.5, 21.5, 1.2), // spoil heaps
       conCol(-190.5, 50, 0.9), conCol(-183, 48, 1.2),            // light tower + generator
       conCol(-181.5, 52.5, 0.8), conCol(-179.5, 52.5, 0.8),      // portable toilets
@@ -1296,7 +1300,7 @@ export const SITEKIT = (() => {
       conCol(259.5, -88, 0.7, 0.55), conCol(257.5, -85.5, 0.7, 0.55), // pallets — steppable
       conCol(260.2, -86.2, 0.75, 0.95), conCol(259, -85, 0.75, 0.95), // dumpy bags — steppable
       conCol(258.8, -94.5, 2.1),                                 // telehandler
-      conCol(245.5, -90.5, 0.7, 1.3), conCol(245.5, -93.5, 0.7, 1.3), // scaffold stacks (floor) — climbable
+      conCol(245.5, -90.5, 0.7, pitTop(245.5, -90.5, 0.75)), conCol(245.5, -93.5, 0.7, pitTop(245.5, -93.5, 0.75)), // scaffold stacks (floor) — climbable
       conCol(226, -74.5, 2.6), conCol(220, -78, 1.6),            // flatbed lorry + water bowser
       conCol(258.5, -100, 0.7), conCol(258.5, -104, 0.7),        // formwork runs
       conCol(256, -112, 1.1), conCol(214.5, -104, 1.7, 1.45),    // rebar + skip
@@ -1412,6 +1416,24 @@ export const SITEKIT = (() => {
   for (const b of C.props.crashBarrier!) C.cols.push(conCol(b.x, b.z, 0.5));
   for (const h of C.props.hoarding!) C.cols.push(conCol(h.x, h.z, 0.5));
   for (const f of C.props.meshFence!) C.cols.push(conCol(f.x, f.z, 0.45));
+
+  /* 🕳️ pit-floor grounding pass — anything PLACED INSIDE a dig (negative y
+   *  means "on the pit floor") sits at −digDown(x,z) so machines, trench
+   *  props, spoil heaps and crew follow the real dirt profile. The hardcoded
+   *  floor depths (−3 / −4.3 / −2.7) are only exact on the FLAT bottom: a
+   *  machine parked one metre onto a terrace was buried to its cab, and the
+   *  site dumper south of pit B actually stood 4.3 m UNDER the yard. The
+   *  rising-structure kinds are EXEMPT — their lower lifts carry structural
+   *  offsets (site B's second storey rides −1.2 above its −4.3 base), and
+   *  storeys above grade keep their positive offsets either way. */
+  const GROUNDED_KINDS = new Set<string>(["steelFrame", "metalDeck", "coreSection"]);
+  for (const site of [A, B, C]) {
+    for (const [kind, list] of Object.entries(site.props)) {
+      if (GROUNDED_KINDS.has(kind)) continue;
+      for (const p of list) if (p.y !== undefined && p.y < 0) p.y = -digDown(p.x, p.z);
+    }
+    for (const c of site.crew ?? []) if (c.y !== undefined && c.y < 0) c.y = -digDown(c.x, c.z);
+  }
 
   return { at: [A, B, C] as ConSiteDef[] };
 })();
@@ -2856,11 +2878,14 @@ export function resolve(p: { x: number; z: number }, radius: number, world: Worl
  *  tagged with a `top` count, and only ones whose surface is at or below
  *  `feetY + gate` (the gate = how far a step-up can lift you: 0.02 while
  *  falling → you land ON it; 0.55 while walking → low bricks step up like ramps).
- *  Returns 0 when nothing standable is underfoot (plain terrain). */
+ *  Returns −Infinity when nothing standable is underfoot, so the caller's
+ *  max(terrain, platform) falls through to the TERRAIN — with the old 0 floor
+ *  a body could never descend below grade and floated over the 🚧 construction
+ *  digs on invisible ground. */
 export function standTopAt(world: World, x: number, z: number, feetY: number, gate = 0.02): number {
   const g = world.grid;
   const boxes = world.boxes, circles = world.circles;
-  let best = 0;
+  let best = -Infinity;
   const probe = (bx: number, bz: number) => {
     // gather the handful of colliders around the point straight from the grid
     if (!g) {
