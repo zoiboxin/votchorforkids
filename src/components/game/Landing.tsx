@@ -121,14 +121,19 @@ function XpBar({ pct, bar = "from-amber-400 to-yellow-300", h = "h-2" }: { pct: 
 }
 
 /* ------------- global chat (right-side dock — LIVE socket.io relay) -------------
- * mini-services/chat-service keeps the shared history and broadcasts every
- * message to every connected soul. The dock badge counts UNSEEN messages that
- * arrived while the panel was closed — opening the panel marks them seen and
- * the badge clears. History catch-up never pings the badge. */
+ * mini-services/chat-service PERSISTS 7 days of shared history (SQLite) and
+ * broadcasts every message to every connected soul — a page refresh replays
+ * the stored lines, nothing is lost. The dock badge counts UNSEEN messages
+ * that arrived while the panel was closed — opening the panel marks them seen
+ * and the badge clears. History catch-up never pings the badge. */
 
 interface ChatMsg { id: string; name: string; msg: string; ts: number }
 
 const CHAT_PORT = 3003;
+
+/* how many lines the panel keeps in view — the relay stores a full 7 days and
+ * replays the newest 300 on (re)connect, so a refresh re-shows the week */
+const CHAT_VIEW_CAP = 300;
 
 function GlobalChatDock({ name, placement }: { name: string; placement: "rail" | "dock" }) {
   const [chat, setChat] = useState<ChatMsg[]>([]);
@@ -159,14 +164,14 @@ function GlobalChatDock({ name, placement }: { name: string; placement: "rail" |
     socket.on("connect", () => setConnected(true));
     socket.on("disconnect", () => setConnected(false));
 
-    /* late joiner catch-up — history arrives pre-seen, no badge ping */
+    /* late joiner catch-up — stored history arrives pre-seen, no badge ping */
     socket.on("chat:history", (msgs: ChatMsg[]) => {
-      setChat(msgs.slice(-50));
+      setChat(msgs.slice(-CHAT_VIEW_CAP));
       setUnread(0);
     });
 
     socket.on("chat:message", (m: ChatMsg) => {
-      setChat((c) => [...c.slice(-50), m]);
+      setChat((c) => [...c.slice(-(CHAT_VIEW_CAP - 1)), m]);
       /* unseen only while the panel is closed and it's not our own echo */
       if (!openRef.current && m.name !== meRef.current) {
         setUnread((u) => Math.min(99, u + 1));
@@ -201,13 +206,16 @@ function GlobalChatDock({ name, placement }: { name: string; placement: "rail" |
   };
 
   /* 📍 panel position follows the placement:
-     • "rail" (desktop right-rail icon near the TOP) → FIXED under the header
-       bar and opens DOWNWARD — a bottom-anchored panel here would fly off the
-       top of the screen; fixed + top-16 always fits every viewport
-     • "dock" (mobile footer icon) → anchored to its icon, opens UPWARD as before */
+     • "rail" (desktop right-rail icon) → anchored to the ICON: the panel top
+       sits a step BELOW the icon's top and the whole box is shifted LEFT of
+       the rail column (right edge = icon's left edge − 10px), so the chat
+       icon itself stays fully visible + clickable while the panel is open
+     • "dock" (mobile footer icon) → anchored to its icon, opens UPWARD.
+     ⚠ calc() values need the underscore spaces (`calc(100%_+_10px)`) — without
+       them Tailwind emits invalid CSS and the anchor silently disappears. */
   const panelPos = placement === "rail"
-    ? "fixed right-3 top-16 z-40 w-[min(20rem,calc(100vw-2.5rem))]"
-    : "absolute bottom-[calc(100%+10px)] right-0 z-40 w-[min(20rem,calc(100vw-2.5rem))]";
+    ? "absolute right-[calc(100%_+_10px)] top-7 z-40 w-[min(20rem,calc(100vw_-_2.5rem))]"
+    : "absolute bottom-[calc(100%_+_10px)] right-0 z-40 w-[min(20rem,calc(100vw_-_2.5rem))]";
 
   return (
     <div className="relative">
@@ -240,7 +248,7 @@ function GlobalChatDock({ name, placement }: { name: string; placement: "rail" |
       </button>
 
       {/* the chat panel — same card style as the challenges board; rail opens
-          DOWNWARD from under the header, dock opens UPWARD above its icon */}
+          DOWNWARD-LEFT of its icon (icon stays visible), dock opens UPWARD */}
       {open && (
         <motion.div
           initial={{ opacity: 0, y: 8 }}
@@ -276,7 +284,7 @@ function GlobalChatDock({ name, placement }: { name: string; placement: "rail" |
             >
               Global chat
             </Strip>
-            <div ref={scrollRef} aria-live="polite" className="lobby-scroll max-h-52 min-h-[3.5rem] space-y-1.5 overflow-y-auto p-2.5">
+            <div ref={scrollRef} aria-live="polite" className="lobby-scroll max-h-56 min-h-[3.5rem] space-y-1.5 overflow-y-auto p-2.5 lg:max-h-80">
               {chat.length === 0 ? (
                 <p className="px-1 py-2 text-center text-[11px] font-bold text-white/40">
                   {connected ? "Say hello to the night…" : "Lighting the relay…"}

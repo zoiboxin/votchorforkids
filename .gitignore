@@ -60,3 +60,7 @@ tool-results/
 dev.log
 server.log
 chat-service.log
+# global chat relay runtime store (7-day rolling history)
+mini-services/chat-service/chat.db
+mini-services/chat-service/chat.db-shm
+mini-services/chat-service/chat.db-wal
