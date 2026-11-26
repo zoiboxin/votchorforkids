@@ -1,10 +1,12 @@
 import {
   AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, BUST_CARRY_BONUS, BUST_POINTS, BUST_TARGET, CARRY_RADIUS, CAR_ACCEL, CAR_BRAKE, CAR_COAST, CAR_COAST_FRICTION, CAR_ENTER_R, CAR_HIT_CD, CAR_HIT_MIN_CLOSING, CAR_HIT_TRANSFER, CAR_REV_SPEED, CAR_ROOF_TOP, CAR_SLIDE_FRICTION, CAR_SPIN_FRICTION, CAR_STEER, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
+  CHUTE_ALT, CHUTE_DRIFT, CHUTE_VY, DROP_ALT, DROP_OUTER, DROP_SPEED,
   CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, CONFISCATE_FINE, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
-  ESCAPE_LOST_S, FARM_RADIUS, FLIP_S, GRAVEYARD, HAUL_CAMP_R, HEARSE_GUARD_COUNT_MAX, HEARSE_GUARD_COUNT_MIN, HEARSE_GUARD_DMG, HEARSE_GUARD_HP, HEARSE_GUARD_HOME_R, HEARSE_GUARD_LEASH, HEARSE_GUARD_SPEED, HEARSE_HOARD, HEARSE_TYPE, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
+  ESCAPE_LOST_S, FARM_RADIUS, FLIP_S, GRAVITY, GRAVEYARD, HAUL_CAMP_R, HEARSE_GUARD_COUNT_MAX, HEARSE_GUARD_COUNT_MIN, HEARSE_GUARD_DMG, HEARSE_GUARD_HP, HEARSE_GUARD_HOME_R, HEARSE_GUARD_LEASH, HEARSE_GUARD_SPEED, HEARSE_HOARD, HEARSE_TYPE, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
   DEEP_JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER,
-  ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_BUFFER_S, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
+  ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_BUFFER_S, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LAND_GRACE_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MASTER_MATCH_SEED, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
+  FREEFALL_DRIFT, FREEFALL_VMAX,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
   RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SCAVENGER_COUNT, SCAVENGER_SENSE_R, SPAWN, SONIC_MULT, STAR_DECAY_S, TAXI_TYPE, TOTAL_VOTES, TRAFFIC_COUNT, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_GLB, VEHICLE_LABELS, VEHICLE_POOL, VEHICLE_STEER, VEHICLE_TOP, VAN_AXLE, VAN_LOAD_S, VAN_PATROL_GATE_S, VAN_PATROL_WAIT_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
   AIRPORT, PLANE_COUNT, POWER_CARRY,
@@ -546,6 +548,11 @@ export interface HudData {
   mpHost: boolean;
   /** relay round-trip estimate (ms) */
   mpPing: number;
+  /* --- ✈️ THE DROP — deployment HUD --- */
+  /** current deployment phase (null = boots on the ground) */
+  deploy: { phase: "ship" | "fall" | "chute"; alt: number; ground: number } | null;
+  /** ✈️ the deterministic flight path — the minimap draws the shared line */
+  deployPath: [number, number, number, number] | null;
   /** the real souls in town — scoreboard & presence */
   netPlayers: { slot: number; name: string; points: number; kills: number; money: number; hp: number; alive: boolean; beast: boolean; drive: boolean; ride: boolean; self: boolean }[];
 }
@@ -723,6 +730,23 @@ export class GameEngine {
    * ride: the car WE are riding shotgun in (someone else drives — E hops out). */
   remoteDriven = new Map<number, { x: number; z: number; rot: number; lights: boolean; spin: number; vx: number; vz: number; at: number }>();
   ride: { ci: number } | null = null;
+
+  /* --- ✈️ THE DROP — PUBG-style match deployment (Phase 3 of the match pipeline) ---
+   * Every match opens aboard the shared DROPSHIP: it crosses the island on a
+   * deterministic flight path (derived from the master match seed — the SAME
+   * line on every client, solo or relayed), each soul jumps when THEY choose,
+   * freefalls, pops the chute low and lands where their steering takes them.
+   * Jump/fall/land coordinates replicate through the normal 12 Hz state stream
+   * (y rides the packet at ×4 quantization) so every player visibly sees the
+   * others falling and landing around them in the same world. While airborne
+   * the body is untouchable: cops, beasts, traffic, the wall and pickups all
+   * stand down until boots touch dirt. */
+  deploy: { phase: "ship" | "fall" | "chute"; vy: number; jumped: boolean } | null = null;
+  /** the deterministic flight path — endpoints outside the wall, derived ONCE
+   *  from the master match seed (a dedicated rng stream: main-stream safe) */
+  deployPath: { x0: number; z0: number; x1: number; z1: number } | null = null;
+  /** distance travelled along the flight path (u) */
+  private shipU = 0;
 
   /* --- 🤖 bots acting like real players ---
    * goodieClaims: per-frame map goodieKey → crewId; each loose snack/pile/gem
@@ -1023,6 +1047,9 @@ export class GameEngine {
     // 🎲 random drop spot FIRST — cops, the join bot & crew all spread around it
     this.rollPlayerSpawn();
     this.player.x = this.playerSpawn.x; this.player.z = this.playerSpawn.z;
+    // ✈️ Phase 1/3 — the deterministic flight path + the drop state board the
+    // ship BEFORE the first frame; reset() re-arms the same sequence.
+    this.rollDropPath();
     this.hud = this.buildHud();
     this.spawnAll();
     // index each car's two axle colliders so a driven car can move them along
@@ -1839,6 +1866,121 @@ export class GameEngine {
     return ts.find((t) => t.key === this.specKey) ?? null;
   }
 
+  /* ---------------- ✈️ THE DROP — flight path, jump, freefall, chute ---------------- */
+
+  /** 🎲 derive the DETERMINISTIC dropship flight path from the master match
+   *  seed. A dedicated rng stream (main gameplay stream untouched) picks the
+   *  crossing angle; the ship flies a full diameter through the city from one
+   *  wall-side to the other. Same seed → same line on every client, so every
+   *  screen watches the same plane cross the same island (PUBG's shared flight
+   *  path, computed locally instead of streamed). */
+  private rollDropPath() {
+    const seed = this.rngSeed ?? MASTER_MATCH_SEED;
+    const r = mulberry32(seed ^ 0x44521f0);
+    const a = r() * Math.PI * 2;
+    const cx = Math.cos(a) * DROP_OUTER, cz = Math.sin(a) * DROP_OUTER;
+    this.deployPath = { x0: cx, z0: cz, x1: -cx, z1: -cz };
+  }
+
+  /** ✈️ the dropship pose for the renderer (ship phase only). Heading follows
+   *  the flight path; the fuselage banks nothing — a steady troop lift. */
+  deployShipPose(): { x: number; z: number; y: number; rot: number } | null {
+    if (!this.deploy || this.deploy.phase !== "ship" || !this.deployPath) return null;
+    const path = this.deployPath;
+    const L = Math.hypot(path.x1 - path.x0, path.z1 - path.z0) || 1;
+    const t = Math.min(1, this.shipU / L);
+    return {
+      x: path.x0 + (path.x1 - path.x0) * t,
+      z: path.z0 + (path.z1 - path.z0) * t,
+      y: DROP_ALT,
+      rot: Math.atan2(path.x0 - path.x1, path.z0 - path.z1), // nose points at the far end
+    };
+  }
+
+  /** 🪂 SPACE aboard the ship — jump! (queueJump routes here; the ship also
+   *  auto-ejects at the end of the line so nobody rides it into the wall.) */
+  private jumpFromShip() {
+    const d = this.deploy;
+    if (!d || d.phase !== "ship" || !this.deployPath) return;
+    d.phase = "fall";
+    d.vy = -5;
+    d.jumped = true;
+    const path = this.deployPath;
+    const L = Math.hypot(path.x1 - path.x0, path.z1 - path.z0) || 1;
+    // inherit the ship's momentum — the leap arcs forward before gravity takes over
+    this.player.vx = ((path.x1 - path.x0) / L) * DROP_SPEED * 0.45;
+    this.player.vz = ((path.z1 - path.z0) / L) * DROP_SPEED * 0.45;
+    sfx.jump();
+    this.toast("🪂 FREEFALL! Steer with WASD — the chute pops low. Pick your drop!", "info");
+  }
+
+  /** ✈️🪂 the deployment state machine — runs INSTEAD of normal body physics
+   *  while `deploy` is live. Ship ride → freefall → parachute → touchdown. */
+  private stepDeploy(dt: number) {
+    const d = this.deploy;
+    const path = this.deployPath;
+    const p = this.player;
+    if (!d || !path) { this.deploy = null; return; }
+    if (d.phase === "ship") {
+      // ride the shared flight line — every client computes the SAME pose
+      this.shipU += DROP_SPEED * dt;
+      const L = Math.hypot(path.x1 - path.x0, path.z1 - path.z0) || 1;
+      const t = Math.min(1, this.shipU / L);
+      p.x = path.x0 + (path.x1 - path.x0) * t;
+      p.z = path.z0 + (path.z1 - path.z0) * t;
+      p.y = DROP_ALT;
+      p.vx = 0; p.vz = 0; p.vy = 0;
+      p.face = Math.atan2(path.x1 - path.x0, path.z1 - path.z0);
+      p.sprinting = false;
+      if (t >= 1) this.jumpFromShip(); // end of the line — out!
+      return;
+    }
+    // falling / under canopy — WASD steering relative to the camera yaw
+    const ground = terrainHeight(p.x, p.z);
+    const f = this.personalPause || this.lost ? 0 : this.input.f;
+    const rr = this.personalPause || this.lost ? 0 : this.input.r;
+    const drift = d.phase === "fall" ? FREEFALL_DRIFT : CHUTE_DRIFT;
+    const sy = Math.sin(this.input.yaw), cy = Math.cos(this.input.yaw);
+    // forward = (−sin yaw, −cos yaw) · right = (cos yaw, −sin yaw) — camera convention
+    const tvx = (f * -sy + rr * cy) * drift;
+    const tvz = (f * -cy + rr * -sy) * drift;
+    const steerK = Math.min(1, dt * (d.phase === "fall" ? 2.2 : 3.6));
+    p.vx += (tvx - p.vx) * steerK;
+    p.vz += (tvz - p.vz) * steerK;
+    p.x += p.vx * dt;
+    p.z += p.vz * dt;
+    // keep the dive inside the playable disc (the wall does not catch skydivers)
+    const rad = Math.hypot(p.x, p.z);
+    if (rad > WALL_RADIUS - 30) {
+      const k = (WALL_RADIUS - 30) / rad;
+      p.x *= k; p.z *= k;
+    }
+    if (d.phase === "fall") {
+      d.vy = Math.max(-FREEFALL_VMAX, d.vy - GRAVITY * dt * 1.35);
+      if (p.y + d.vy * dt - ground <= CHUTE_ALT) {
+        d.phase = "chute";
+        sfx.bonk(); // the canopy snaps open
+        this.toast("🪂 Chute open! Glide to your drop and land running.", "good");
+      }
+    } else {
+      d.vy += (-CHUTE_VY - d.vy) * Math.min(1, dt * 3.2);
+    }
+    p.y += d.vy * dt;
+    if (p.y > ground) {
+      p.face = Math.atan2(p.vx, p.vz) || p.face; // face the travel direction
+      p.sprinting = false;
+      return;
+    }
+    // 🥾 TOUCHDOWN — boots on dirt, combat state begins (invuln re-armed)
+    p.y = ground;
+    p.vy = 0;
+    this.squashT = LAND_SQUASH_S;
+    sfx.land();
+    this.invulnT = LAND_GRACE_S;
+    this.deploy = null;
+    this.toast("🥾 Landed! Arms, snacks & cash are out there — gear up before dusk!", "good");
+  }
+
   reset(look: Appearance, gear?: OwnedGear) {
     this.look = look;
     this.side = look.fac;
@@ -1950,6 +2092,21 @@ export class GameEngine {
     // would otherwise hide the 🪪 license badge (and every other granted perk)
     // for a beat — the "purchased the license but the game doesn't show it" moment.
     this.hud = this.buildHud();
+    /* --- ✈️ Phase 3: THE DROP — every match opens aboard the shared dropship ---
+     * The flight path is deterministic (master seed), the ship crosses the
+     * island and every soul jumps when they choose. playerSpawn stays the
+     * deterministic scatter anchor for cops/crew; our BODY starts at 62 u. */
+    if (!this.deployPath) this.rollDropPath();
+    this.deploy = { phase: "ship", vy: 0, jumped: false };
+    this.shipU = 0;
+    {
+      const pose = this.deployShipPose()!;
+      this.player.x = pose.x; this.player.z = pose.z; this.player.y = pose.y;
+      this.player.vx = 0; this.player.vz = 0; this.player.vy = 0;
+      this.player.face = Math.atan2(this.deployPath!.x1 - this.deployPath!.x0, this.deployPath!.z1 - this.deployPath!.z0);
+      this.input.yaw = Math.atan2(this.deployPath!.x0 - this.deployPath!.x1, this.deployPath!.z0 - this.deployPath!.z1); // camera looks ALONG the flight line
+      this.input.pitch = 0.52; // eyes down — the island rolls out below
+    }
     this.running = true;
   }
 
@@ -2062,7 +2219,7 @@ export class GameEngine {
 
   /* ---------------- interactions ---------------- */
   interact() {
-    if (!this.running || this.personalPause || this.lost) return;
+    if (!this.running || this.personalPause || this.lost || this.deploy) return; // ✈️ nothing to interact with at 62 u
     // in a car? E hops out first — everything else waits
     if (this.drive) { this.exitCar(); return; }
     // riding shotgun? E hops out too — the driver keeps their wheel
@@ -2373,7 +2530,7 @@ export class GameEngine {
         const oa = (g.id % 89) * 2.399;
         stepNpc(g, p.x + Math.cos(oa) * offR, p.z + Math.sin(oa) * offR, HEARSE_GUARD_SPEED, dt, this.world);
         // caught — rotting hands (harder than the street horde's)
-        if (d2p < 1.55 * 1.55 && g.touchCd <= 0) {
+        if (d2p < 1.55 * 1.55 && g.touchCd <= 0 && !this.deploy) { // ✈️ the sky is neutral
           g.touchCd = ZOMBIE_TOUCH_CD;
           g.attackT = 0.5;
           this.hp = Math.max(0, this.hp - HEARSE_GUARD_DMG);
@@ -3437,6 +3594,7 @@ export class GameEngine {
   }
 
   private catchPlayer(cop: Npc) {
+    if (this.deploy) return; // ✈️ cops can't arrest a skydiver — they finish the drop first
     this.caughtCount++;
     this.stars = Math.min(5, this.stars + 1);
     this.starTimer = STAR_DECAY_S;
@@ -3753,7 +3911,7 @@ export class GameEngine {
 
   /** Blink Teleport: poof ~15u in the direction the CAMERA looks. Only while the blink power lasts. */
   tryBlink() {
-    if (!this.running || this.personalPause || this.lost) return;
+    if (!this.running || this.personalPause || this.lost || this.deploy) return;
     if (this.drive) {
       // teleporting out of a moving car would leave it driverless — park first!
       if (this.driveMsgT <= 0) {
@@ -4623,7 +4781,7 @@ export class GameEngine {
         }
         // caught someone?
         if (c.touchCd <= 0) {
-          if (victim < 0 && !victimCiv && td < 1.8 * 1.8 && this.detainedT <= 0 && !this.drive && !this.ride) {
+          if (victim < 0 && !victimCiv && td < 1.8 * 1.8 && this.detainedT <= 0 && !this.deploy && !this.drive && !this.ride) {
             c.touchCd = HUNTER_TOUCH_CD;
             c.attackAnimT = 0.45; // claw swipe animation
             this.hp = Math.max(0, this.hp - HUNTER_DMG);
@@ -5631,7 +5789,7 @@ export class GameEngine {
     const lead = 0.24;
     const pursuit = spd * (1 + Math.min(0.24, (c.xp ?? 0) * 0.05)) * (0.92 + 0.2 * skill);
     stepNpc(c, p.x + p.vx * lead, p.z + p.vz * lead, pursuit, dt, this.world);
-    if (d2 < BOT_PUNCH_RANGE_SQ && (c.atkCd ?? 0) <= 0 && this.detainedT <= 0) {
+    if (d2 < BOT_PUNCH_RANGE_SQ && (c.atkCd ?? 0) <= 0 && this.detainedT <= 0 && !this.deploy) {
       c.atkCd = BOT_PUNCH_CD * botBrain.punchCdMult();
       c.attackT = 0.5;
       if (this.invulnT <= 0) {
@@ -5843,12 +6001,14 @@ export class GameEngine {
    *  one attempt (the body latch still blocks hold-to-double-jump). */
   queueJump() {
     if (!this.running || this.lost || this.personalPause || this.detainedT > 0 || this.drive) return;
+    // ✈️ aboard the dropship, Space = JUMP — the PUBG drop verb, not a hop
+    if (this.deploy?.phase === "ship") { this.jumpFromShip(); return; }
     this.jumpBufT = JUMP_BUFFER_S;
   }
 
   /** Swing the held arm — claws, blade, axe, hammer… or sad bare fists. */
   attack() {
-    if (!this.running || this.personalPause || this.lost || this.attackCd > 0 || this.faintT > 0 || this.detainedT > 0 || this.drive) return;
+    if (!this.running || this.personalPause || this.lost || this.attackCd > 0 || this.faintT > 0 || this.detainedT > 0 || this.drive || this.deploy) return;
     this.breakEmote();
     const p = this.player;
     this.attackCd = ATTACK_CD;
@@ -6183,7 +6343,11 @@ export class GameEngine {
     this.lastChop = { i, dx, dz };
     this.chopVersion++;
     this.addShake(0.16); // 💥 LIGHT — steel biting wood
-    if (this.treeHits[i] >= TREE_HITS) {
+    const felled = this.treeHits[i] >= TREE_HITS;
+    // 🌐 Phase-4 world replication — the strike crosses the wire so every
+    // client's forest takes the same beating (indices = deterministic arrays)
+    if (this.mp) this.netEmit?.({ t: felled ? "felled" : "chop", i, dx, dz });
+    if (felled) {
       this.felled.add(i);
       this.fellVersion++;
       this.world.circles[i].r = 0.24; // only the stump blocks now
@@ -6218,7 +6382,42 @@ export class GameEngine {
       // 🪨 the boulder CRUMBLES — it sinks, shrinks and rolls apart (RocksView)
       this.rockBreakAt.set(i, this.elapsed);
       this.addShake(0.45); // 💥 BIG — the boulder splits apart
+      // 🌐 Phase-4 world replication — the wreck crosses the wire
+      if (this.mp) this.netEmit?.({ t: "wreck", i });
     }
+  }
+
+  /** 🌐 a teammate chopped / felled tree `i` — mirror the exact same world state
+   *  (hit counter, shudder, stump collider, tipping trunk). `felled` = final blow. */
+  netChopTree(i: number, dx: number, dz: number, felled: boolean) {
+    const t = this.world.trees[i];
+    if (!t) return;
+    this.treeHits[i] = felled ? TREE_HITS : (this.treeHits[i] ?? 0) + 1;
+    this.lastChop = { i, dx, dz };
+    this.chopVersion++;
+    sfx.chop();
+    if (felled && !this.felled.has(i)) {
+      this.felled.add(i);
+      this.fellVersion++;
+      this.world.circles[i].r = 0.24; // only the stump blocks now
+      this.fellTimes.set(i, this.elapsed);
+      this.fellDir.set(i, Math.atan2(dx, dz));
+      sfx.smash();
+    }
+  }
+
+  /** 🌐 a teammate smashed boulder `i` — mirror the rubble + break animation. */
+  netSmashRock(i: number) {
+    const rk = this.world.rocks[i];
+    if (!rk || this.brokenRocks.has(i)) return;
+    this.brokenRocks.add(i);
+    this.fellVersion++;
+    const ci = this.world.rockCi[i];
+    if (this.world.circles[ci]) this.world.circles[ci].r = 0.06; // rubble
+    this.rockBreakAt.set(i, this.elapsed);
+    this.lastRock = i;
+    this.rockVersion++;
+    sfx.smash();
   }
 
   /* ---------------- 🧟 horde prey-spread brain ---------------- */
@@ -6366,7 +6565,7 @@ export class GameEngine {
 
   /** Build a barricade (B) or a campfire (V) a few units ahead of the camera. */
   placeBuild(kind: "barricade" | "campfire") {
-    if (!this.running || this.personalPause || this.lost) return;
+    if (!this.running || this.personalPause || this.lost || this.deploy) return;
     if (this.drive) {
       // building from the driver's seat drops walls in the road ahead of the
       // moving car — park first, same rule as Blink
@@ -6435,7 +6634,7 @@ export class GameEngine {
   /** R — accuse the survivor next to you. Right call banishes the possessed;
    *  wrong call kills an innocent. The town never forgives. */
   accuse() {
-    if (!this.running || this.personalPause || this.lost) return;
+    if (!this.running || this.personalPause || this.lost || this.deploy) return;
     if (this.drive) {
       if (this.driveMsgT <= 0) {
         this.driveMsgT = 2.5;
@@ -6619,9 +6818,9 @@ export class GameEngine {
     if (this.input.turn) this.input.yaw += this.input.turn * 2.4 * dt;
     this.input.yaw = ((this.input.yaw + Math.PI) % TAU + TAU) % TAU - Math.PI;
 
-    // day/night zone toast
+    // day/night zone toast (✈️ silent from the sky — no spam while crossing the map)
     const z = zoneOf(p.x, p.z);
-    if (z !== this.zone) { this.zone = z; this.toast(ZONE_TOAST[z], "info"); }
+    if (z !== this.zone && !this.deploy) { this.zone = z; this.toast(ZONE_TOAST[z], "info"); }
     // 🦗 the jungle never goes quiet — crickets & cicadas swell at night and
     // fade to lone daytime chirps; silent the moment you leave the trees
     {
@@ -6662,8 +6861,9 @@ export class GameEngine {
     }
 
     // 🏕️ camp discovery — walking up to a lonely jungle camp is worth a line
+    // (✈️ flying over one doesn't count)
     for (let ci = 0; ci < this.world.camps.length; ci++) {
-      if (this.discCamps.has(ci)) continue;
+      if (this.discCamps.has(ci) || this.deploy) continue;
       const cp = this.world.camps[ci];
       if (dist2(p.x, p.z, cp.x, cp.z) < 13 * 13) {
         this.discCamps.add(ci);
@@ -6746,6 +6946,11 @@ export class GameEngine {
         }
       }
       p.vx = p.vz = 0;
+    } else if (this.deploy) {
+      // ✈️ THE DROP — the deployment state machine owns the body: ship ride →
+      // freefall → parachute. Nothing on the ground can touch a skydiver.
+      this.invulnT = Math.max(0, this.invulnT - dt);
+      this.stepDeploy(dt);
     } else if (this.drive) {
       // 🚗 behind the wheel — car physics runs, the driver enjoys the ride
       this.invulnT = Math.max(0, this.invulnT - dt);
@@ -6817,9 +7022,11 @@ export class GameEngine {
     this.stepRemoteCars(dt); // 🌐 remote-driven cars mirror their real driver
     this.carCrashCd = Math.max(0, this.carCrashCd - dt);
     // 🚗🚶 every moving vehicle floors pedestrians it catches — fall → lie → get up
-    this.carVsPeds(dt);
+    // (✈️ parked while we're still in the air — bumpers can't reach 62 u)
+    if (!this.deploy) this.carVsPeds(dt);
     // 🧱 THE WALL — outside the safe circle your life drains away (PUBG blue-zone)
-    this.stepZone(dt);
+    // (✈️ the dropship crosses INSIDE the future walls — the sky is neutral)
+    if (!this.deploy) this.stepZone(dt);
 
     /* --- ring-road traffic: solid cars that FLOOR careless runners ---
      * ✈️ ringTrafficPoint swings cars around the airport's NW corner on the
@@ -6845,7 +7052,7 @@ export class GameEngine {
       t.a += t.spCur * t.dir * dt;
       const pt = ringTrafficPoint(t.a, t.r, t.dir);
       t.x = pt.x; t.z = pt.z; t.rot = pt.rot;
-      if (this.detainedT > 0 || this.drive || this.ride) continue; // sitting out detention / safe inside a vehicle — traffic can't touch you
+      if (this.detainedT > 0 || this.drive || this.ride || this.deploy) continue; // sitting out detention / inside a vehicle / still skydiving — traffic can't touch you
       const fx = Math.sin(t.rot), fz = Math.cos(t.rot);
       const tax = VEHICLE_AXLE[t.t % VEHICLE_AXLE.length];
       const taxR = VEHICLE_AXLE_R[t.t % VEHICLE_AXLE_R.length];
@@ -6935,7 +7142,7 @@ export class GameEngine {
     }
 
     /* --- 💰 MONEY — the vote chase is retired; cash piles & dropped loot rule now --- */
-    if (this.detainedT <= 0 && !this.won) {
+    if (this.detainedT <= 0 && !this.won && !this.deploy) {
       // scattered 💰 cash piles: walk over one to pocket it (a fresh pile restocks elsewhere)
       for (const v of this.votes) {
         if (v.state !== "world") {
@@ -6986,7 +7193,7 @@ export class GameEngine {
         if (it.respawn <= 0) it.active = true;
         continue;
       }
-      if (this.detainedT > 0) continue; // locked up — no foraging from the cell
+      if (this.detainedT > 0 || this.deploy) continue; // locked up / still in the air — no foraging from the cell or the sky
       // 🧲 Food Magnet — snacks within the aura fly straight into your pockets
       if (this.activePower === "magnet") {
         const mdx = p.x - it.x, mdz = p.z - it.z;
@@ -7025,7 +7232,7 @@ export class GameEngine {
     }
 
     /* --- 🪓 7Nights arms: walk over a glowing tool to pocket it (ONE of each!) --- */
-    if (this.detainedT <= 0 && !(this.youPossessed && this.phase === "night")) {
+    if (this.detainedT <= 0 && !this.deploy && !(this.youPossessed && this.phase === "night")) {
       for (const te of this.toolEnts) {
         if (!te.active) {
           te.respawn -= dt;
@@ -7062,7 +7269,7 @@ export class GameEngine {
         this.toast(was === "morph" ? "🐒 Morph faded — you're a kid again!" : "✨ Your super power faded away.", "info");
       }
     }
-    if (this.detainedT <= 0) {
+    if (this.detainedT <= 0 && !this.deploy) {
       for (const pw of this.powers) {
         if (!pw.active) {
           pw.respawn -= dt;
@@ -7086,7 +7293,7 @@ export class GameEngine {
     }
 
     /* --- driving licenses: walk over a glowing 🪪 card to unlock every car --- */
-    if (!this.hasLicense && this.detainedT <= 0) {
+    if (!this.hasLicense && this.detainedT <= 0 && !this.deploy) {
       for (const lc of this.licenses) {
         if (!lc.active) continue;
         if (dist2(p.x, p.z, lc.x, lc.z) < LICENSE_PICKUP_R * LICENSE_PICKUP_R) {
@@ -7716,7 +7923,7 @@ export class GameEngine {
             }
           }
         }
-        if (d2p < 1.6 * 1.6 && zb.touchCd <= 0 && this.detainedT <= 0 && !this.drive && !this.ride && !beastYou) { // the car shell keeps zombies out
+        if (d2p < 1.6 * 1.6 && zb.touchCd <= 0 && this.detainedT <= 0 && !this.deploy && !this.drive && !this.ride && !beastYou) { // the car shell keeps zombies out — and the sky does too
           zb.touchCd = ZOMBIE_TOUCH_CD;
           zb.attackT = 0.5; // 🧟 the lunge-bite animation
           this.hp = Math.max(0, this.hp - ZOMBIE_DMG);
@@ -8315,7 +8522,13 @@ export class GameEngine {
         if (c.mode === "detained" && dist2(p.x, p.z, c.x, c.z) < RESCUE_RADIUS * RESCUE_RADIUS) { prompt = `Press E to rescue ${c.name}!`; break; }
     }
     /* --- 7Nights story prompts --- */
-    if (!prompt && !this.drive && !this.ride) {
+    // ✈️ THE DROP — the deployment verb outranks every ground prompt
+    if (this.deploy) {
+      prompt = this.deploy.phase === "ship"
+        ? "Press SPACE to jump from the DROPSHIP and pick your drop!"
+        : this.deploy.phase === "fall" ? "FREEFALL — steer with WASD (chute pops low)" : "PARACHUTE — steer with WASD and land";
+    }
+    if (!prompt && !this.deploy && !this.drive && !this.ride) {
       if (this.phase === "day" || this.phase === "dawn") {
         const c = this.nearestCrewAlive(ACCUSE_RADIUS);
         if (c) prompt = `Press R to ACCUSE ${c.name} — are they the possessed one?`;
@@ -8418,6 +8631,13 @@ export class GameEngine {
       mpCode: this.mpCode,
       mpHost: this.mpHost,
       mpPing: this.mpPing,
+      /* --- ✈️ THE DROP --- */
+      deploy: this.deploy
+        ? { phase: this.deploy.phase, alt: Math.max(0, this.player.y), ground: terrainHeight(this.player.x, this.player.z) }
+        : null,
+      deployPath: this.deployPath && this.deploy
+        ? [this.deployPath.x0, this.deployPath.z0, this.deployPath.x1, this.deployPath.z1]
+        : null,
       netPlayers: [
         ...(this.mp
           ? [{
@@ -8576,6 +8796,7 @@ export class GameEngine {
    *  (mercy knockdown — fights have rounds; the SECOND one can finish it).
    *  `fromSlot` rides along so our KO can credit the killer's scoreboard. */
   netTakeDmg(amount: number, fromX?: number, fromZ?: number, pvp = false, fromName?: string, fromSlot?: number) {
+    if (this.deploy) return; // ✈️ a skydiver is untouchable — the wire agrees
     if (!this.running || this.lost || this.won) return;
     if (this.detainedT > 0 || this.drive) return;
     if (this.invulnT > 0) {

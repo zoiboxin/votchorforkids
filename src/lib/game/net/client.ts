@@ -14,15 +14,17 @@
  */
 import { io, type Socket } from "socket.io-client";
 import { Interp, packState, unpackAi, unpackState, unpackCar, CARIDX_NONE, type AiEntry, type NetState, type CarState } from "./protocol";
-import type { Appearance } from "../constants";
+import { MASTER_MATCH_SEED, type Appearance } from "../constants";
 
-/** 🎲 derive the shared gameplay RNG seed from the room code — every client in
- *  the same session grows IDENTICAL bots / loot / plane schedules from the same
- *  mulberry32 stream (the deterministic-world promise now covers gameplay too). */
-export function sessionSeed(code: string): number {
-  let h = 2166136261;
-  for (let i = 0; i < code.length; i++) { h ^= code.charCodeAt(i); h = Math.imul(h, 16777619); }
-  return Math.abs(h) % 1000000;
+/** 🎲 THE MASTER MATCH SEED — every match (solo OR relayed) grows the identical
+ *  gameplay stream from ONE seed: bots, loot, tools, powers, licenses, vote
+ *  cash, cops, crews, plane schedule and the ✈️ dropship flight path are the
+ *  same on every screen. The relay owns MatchSessionState and echoes this seed
+ *  in every lobby payload (see mini-services/relay + constants.ts) — solo
+ *  players now see exactly what a 2+ player room sees, and a relinked client
+ *  regrows a byte-identical town. */
+export function sessionSeed(_code?: string): number {
+  return MASTER_MATCH_SEED;
 }
 
 export interface LobbyPlayer {
@@ -41,6 +43,10 @@ export interface LobbySnapshot {
   phase?: "lobby" | "live";
   /** epoch ms when the shared match-lobby countdown fires (0/absent = none) */
   lobbyEndsAt?: number;
+  /** 🌐 MatchSessionState.seed — the relay's authoritative master match seed */
+  seed?: number;
+  /** 🌐 the full authoritative match state (seed + timeline stamps) */
+  match?: { seed: number; createdAt: number; startedAt: number };
 }
 
 export type ConnState = "idle" | "connecting" | "lobby" | "room" | "error" | "closed";
@@ -82,6 +88,13 @@ export type MpEvent =
   | { t: "dropLicense"; x: number; z: number; from: string }
   | { t: "hearseUnlock"; from: string }
   | { t: "zhit"; kind: "zombie" | "hound"; idx: number; amt: number }
+  /** 🌳🔨 Phase-4 world replication — destroyed cover crosses the wire so every
+   *  client's forest/rocks match: chop = tree index swung (hit counter +1),
+   *  felled = tree index DOWN, wreck = boulder index smashed. Indices are over
+   *  the deterministic world arrays, so they mean the SAME tree on every client. */
+  | { t: "chop"; i: number; dx: number; dz: number }
+  | { t: "felled"; i: number; dx: number; dz: number }
+  | { t: "wreck"; i: number }
   | { t: "reset" }
   | { t: "start" }
   | { t: "hello" };

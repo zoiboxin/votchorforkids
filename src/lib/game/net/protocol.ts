@@ -5,8 +5,14 @@
  *
  *   ┌──────┬────────┬────────┬─────┬───────┬────┬───────┬──────┬──────┐
  *   │ slot │ x      │ z      │ y   │ yaw   │ hp │ flags │ ci   │ down │
- *   │ u8   │ i16×10 │ i16×10 │ u8×8│ u8    │ u8 │ u8    │ u16  │ u8   │
+ *   │ u8   │ i16×10 │ i16×10 │ u8×4│ u8    │ u8 │ u8    │ u16  │ u8   │
  *   └──────┴────────┴────────┴─────┴───────┴────┴───────┴──────┴──────┘
+ *
+ *   `y` — ✈️ THE DROP: the byte rides the absolute altitude at ×4 (max
+ *   63.75 u, 25 cm steps). Freefall/chute altitudes (ship cruise 62 u) now
+ *   replicate whole — peers SEE each other jump from the dropship, fall and
+ *   land. The old ×8 packed clamped at 25.5 u: a skydiver on every other
+ *   screen teleported to that ceiling for the whole flight.
  *
  *   `down` — 🥊 the floored/get-up clock (added for cross-wire PvP: when a
  *   rival's punch FLOORS you, every peer's mirror plays the fall + push-off):
@@ -218,7 +224,7 @@ export function packState(s: {
   v.setUint8(0, s.slot & 0xff);
   v.setInt16(1, Math.round(Math.max(-3276, Math.min(3276, s.x)) * 10), true);
   v.setInt16(3, Math.round(Math.max(-3276, Math.min(3276, s.z)) * 10), true);
-  v.setUint8(5, Math.max(0, Math.min(25.5, s.y)) * 8 | 0);
+  v.setUint8(5, Math.max(0, Math.min(63.75, s.y)) * 4 | 0);
   v.setUint8(6, Math.round((wrap(s.yaw) / (Math.PI * 2)) * 255));
   v.setUint8(7, Math.max(0, Math.min(100, Math.round(s.hp))));
   let f = 0;
@@ -285,7 +291,7 @@ export function unpackState(data: BinSrc, t = 0): NetState | null {
     slot: v.getUint8(0),
     x: v.getInt16(1, true) / 10,
     z: v.getInt16(3, true) / 10,
-    y: v.getUint8(5) / 8,
+    y: v.getUint8(5) / 4,
     yaw: (v.getUint8(6) / 255) * Math.PI * 2,
     hp: v.getUint8(7),
     sprint: !!(f & FLAG_SPRINT),

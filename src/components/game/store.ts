@@ -8,7 +8,7 @@ import { DAILY_TASK_POOL, ALL_DONE_BONUS, applyRunToDaily, ensureDaily, freshDai
 import { shopItem } from "@/lib/game/shop";
 import { lsGet, lsRemove, lsSet } from "@/lib/game/storage";
 
-export type Screen = "landing" | "profile" | "shop" | "battlepass" | "challenges" | "career" | "news" | "select" | "outfit" | "creator" | "connecting" | "lobby" | "matchlobby" | "play";
+export type Screen = "landing" | "profile" | "shop" | "battlepass" | "challenges" | "career" | "news" | "locker" | "select" | "outfit" | "creator" | "connecting" | "lobby" | "matchlobby" | "play";
 export interface Toast { msg: string; kind: "info" | "good" | "bad"; id: number }
 
 export interface ScoreRow { id: string; name: string; points: number; votes: number; rescues: number; won: boolean; timeMs: number; createdAt: string }
@@ -36,7 +36,31 @@ export interface RunRecord {
 const LS_PROFILE = "votechor_profile_v3";
 const LS_PROFILE_V2 = "votechor_profile_v2"; // migrated once, then rewritten as v3
 const LS_SETTINGS = "votechor_settings_v2";
+const LS_LOADOUT = "votechor_loadout_v1"; // 🎒 which PURCHASED items ride into the next match
 const HISTORY_CAP = 60;
+
+/** 🎒 the LOCKER LOADOUT — which of the player's purchases spawn in-game.
+ *  PUBG-style: owning is not equipping. Everything bought starts EQUIPPED
+ *  (so nothing silently vanishes for existing players); the Locker page lets
+ *  you unequip anything you don't want to bring. */
+function loadLoadout(owned: readonly string[]): string[] {
+  if (typeof window === "undefined") return [...owned];
+  try {
+    const raw = JSON.parse(lsGet(LS_LOADOUT) ?? "null") as unknown;
+    if (Array.isArray(raw)) {
+      const set = new Set(raw.filter((x): x is string => typeof x === "string"));
+      // only owned items may ride — a stale id can't grant an unowned item
+      const clean = owned.filter((id) => set.has(id));
+      lsSet(LS_LOADOUT, JSON.stringify(clean));
+      return clean;
+    }
+  } catch { /* first run / corrupted — fall through to equip-all */ }
+  return [...owned];
+}
+
+function saveLoadout(loadout: readonly string[]) {
+  try { lsSet(LS_LOADOUT, JSON.stringify(loadout)); } catch { /* storage blocked — session only */ }
+}
 
 /* ---------- 🛒 the wallet — banked cash + purchased items (own save slot) ----------
  * Kept separate from the big profile blob so run-end banking and shop buys
@@ -277,6 +301,16 @@ export interface GameStore {
   /** 🛒 ids of every shop item PURCHASED — gear/gems/snacks/license spawn with
    *  you every run; outfits are worn from the shop or the locker */
   owned: string[];
+  /** 🎒 the LOCKER LOADOUT — the subset of `owned` that spawns in-game every
+   *  run (PUBG-style equip selection). New purchases auto-equip; the Locker
+   *  page toggles items on/off. Style/hero items are WEAR choices, not gear. */
+  loadout: string[];
+  /** 🎒 toggle whether an owned item rides into the next match (Locker page) */
+  toggleEquip: (id: string) => void;
+  /** 🎒 equip EVERYTHING owned (one-click full loadout) */
+  equipAll: () => void;
+  /** 🎒 unequip EVERYTHING owned (travel light — hunt the world) */
+  unequipAll: () => void;
   /** buy a shop item — true on success (coins deducted, id added to owned) */
   buyItem: (id: string) => boolean;
   /** 💰 bank run earnings straight into the wallet (also used by tests/debug) */
@@ -366,6 +400,7 @@ export const emptyHud: HudData = {
   zoneLevel: 0, zoneR: 712, outsideWall: false, dawnLeft: 0, dawnOutside: false, dawnR: 430,
   spec: { on: false, name: "" },
   mp: false, mpCode: "", mpHost: false, mpPing: 0, netPlayers: [], remotesAlive: 0,
+  deploy: null, deployPath: null,
 };
 
 let toastId = 1;
@@ -418,6 +453,25 @@ export const useGame = create<GameStore>()((set, get) => ({
   coins: savedWallet.coins,
   lifeMoney: saved.stats.votes,
   owned: savedWallet.owned,
+  loadout: loadLoadout(savedWallet.owned),
+  toggleEquip: (id) => set((s) => {
+    if (!s.owned.includes(id)) return; // can't equip what you don't own
+    const loadout = s.loadout.includes(id) ? s.loadout.filter((x) => x !== id) : [...s.loadout, id];
+    saveLoadout(loadout);
+    scheduleCloudSave();
+    return { loadout };
+  }),
+  equipAll: () => set((s) => {
+    const loadout = [...s.owned];
+    saveLoadout(loadout);
+    scheduleCloudSave();
+    return { loadout };
+  }),
+  unequipAll: () => set((s) => {
+    saveLoadout([]);
+    scheduleCloudSave();
+    return { loadout: [] };
+  }),
   buyItem: (id) => {
     const it = shopItem(id);
     const s = get();
@@ -426,7 +480,9 @@ export const useGame = create<GameStore>()((set, get) => ({
     if (s.coins < it.price) return false;  // 💰 not enough banked cash — the buy is refused
     const coins = s.coins - it.price;      // 💰 the price leaves the wallet right here
     const owned = [...s.owned, id];
+    const loadout = [...s.loadout, id];    // 🎒 new purchases ride into the next match by default
     saveWallet(coins, owned);
+    saveLoadout(loadout);
     // 🛡️ purchases are PERMANENT — bump the profile's savedAt as well, because
     // the cloud push stamps savedAt ~4 s AFTER saveProfile wrote it (the debounce
     // delay), so the server copy is always slightly "newer" than the local one.
@@ -434,7 +490,7 @@ export const useGame = create<GameStore>()((set, get) => ({
     // adopt the pre-purchase server wallet and silently WIPE the buy (the
     // "purchased the license but the game doesn't show it" bug).
     saveProfile(s.playerName, s.look, profileStatsOf(s), s.history, s.bonusXp, s.daily);
-    set({ coins, owned });
+    set({ coins, owned, loadout });
     scheduleCloudSave(600); // 🛒 purchases reach the cloud FAST — tiny loss window
     return true;
   },
@@ -523,12 +579,17 @@ export const useGame = create<GameStore>()((set, get) => ({
       const bonusXp = Math.max(0, Math.floor(Number(blob.bonusXp) || 0));
       const daily = ensureDaily(blob.daily);
       const lifeMoney = stats.votes;
+      // 🎒 the loadout follows the wallet: cloud purchases auto-equip, stale
+      // ids (no longer owned) drop out — the Locker promise is "what you see
+      // is exactly what rides into the next match"
+      const loadout = Array.from(new Set([...s0.loadout, ...mergedOwned])).filter((id) => mergedOwned.includes(id));
+      saveLoadout(loadout);
       // write the adopted copy back to localStorage (local-first, instant)
       saveProfile(name, look, stats, history, bonusXp, daily);
       saveWallet(coins, mergedOwned);
       cloudDirty = false; // the adopted copy IS the cloud copy — no urgent push needed
       set({
-        look, stats, history, bonusXp, daily, owned: mergedOwned, coins, lifeMoney,
+        look, stats, history, bonusXp, daily, owned: mergedOwned, coins, lifeMoney, loadout,
         careerXp: stats.totalScore + bonusXp,
         runsPlayed: stats.runs, bestScore: stats.best, lifeVotes: stats.votes,
         lifeRescues: stats.rescues, wins: stats.wins, lifeCaught: stats.caught,

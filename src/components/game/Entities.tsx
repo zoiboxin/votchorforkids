@@ -147,6 +147,64 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
     return ring;
   }, []);
 
+  // 🪂 THE DROP — the parachute canopy that pops overhead under CHUTE_ALT
+  const chute = useMemo(() => {
+    const grp = new THREE.Group();
+    const canopy = new THREE.Mesh(
+      new THREE.SphereGeometry(2.6, 18, 10, 0, Math.PI * 2, 0, Math.PI / 2),
+      new THREE.MeshLambertMaterial({ color: "#f59e0b", side: THREE.DoubleSide }),
+    );
+    canopy.position.y = 3.1;
+    grp.add(canopy);
+    const cordMat = new THREE.LineBasicMaterial({ color: "#3f3f46" });
+    for (let i = 0; i < 6; i++) {
+      const a = (i / 6) * Math.PI * 2;
+      const geo = new THREE.BufferGeometry().setFromPoints([
+        new THREE.Vector3(Math.cos(a) * 2.3, 3.05, Math.sin(a) * 2.3),
+        new THREE.Vector3(0, 1.0, 0),
+      ]);
+      grp.add(new THREE.Line(geo, cordMat));
+    }
+    grp.visible = false;
+    return grp;
+  }, []);
+
+  // ✈️ THE DROP — the shared DROPSHIP, a stylized troop lift built from
+  // primitives (visible only while YOU ride it; the flight line is the same
+  // deterministic path on every client, so everyone sees "the" plane)
+  const shipMesh = useMemo(() => {
+    const grp = new THREE.Group();
+    const body = new THREE.Mesh(
+      new THREE.CapsuleGeometry(1.7, 9.5, 4, 10),
+      new THREE.MeshLambertMaterial({ color: "#565e6b" }),
+    );
+    body.rotation.z = Math.PI / 2;
+    grp.add(body);
+    const wing = new THREE.Mesh(
+      new THREE.BoxGeometry(3.4, 0.34, 15.5),
+      new THREE.MeshLambertMaterial({ color: "#454c57" }),
+    );
+    wing.position.y = 0.7;
+    grp.add(wing);
+    const tail = new THREE.Mesh(
+      new THREE.BoxGeometry(2.6, 4.2, 0.36),
+      new THREE.MeshLambertMaterial({ color: "#f59e0b" }),
+    );
+    tail.position.set(-5.6, 2.0, 0);
+    grp.add(tail);
+    for (const s of [-1, 1]) {
+      const eng = new THREE.Mesh(
+        new THREE.CapsuleGeometry(0.62, 2.2, 3, 7),
+        new THREE.MeshLambertMaterial({ color: "#2f3640" }),
+      );
+      eng.rotation.z = Math.PI / 2;
+      eng.position.set(1.1, -0.15, s * 4.6);
+      grp.add(eng);
+    }
+    grp.visible = false;
+    return grp;
+  }, []);
+
   useFrame((_, dt0) => {
     const dt = Math.min(0.05, dt0);
     engine.update(dt);
@@ -324,6 +382,21 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       (magnetRing.material as THREE.MeshBasicMaterial).opacity = 0.3 + Math.sin(performance.now() / 240) * 0.1;
     } else if (magnetRing.visible) magnetRing.visible = false;
 
+    // 🪂 the parachute canopy rides overhead while we glide to our drop
+    if (engine.deploy?.phase === "chute") {
+      chute.visible = true;
+      chute.position.set(p.x, p.y, p.z);
+      chute.rotation.y += dt * 0.4;
+    } else if (chute.visible) chute.visible = false;
+
+    // ✈️ the dropship carries us along the shared flight line (ship phase)
+    const shipPose = engine.deployShipPose();
+    if (shipPose) {
+      shipMesh.visible = true;
+      shipMesh.position.set(shipPose.x, shipPose.y, shipPose.z);
+      shipMesh.rotation.y = shipPose.rot;
+    } else if (shipMesh.visible) shipMesh.visible = false;
+
     // dizzy stars orbit the head while the bonk faint lasts
     if (engine.faintT > 0) {
       const t = performance.now() / 1000;
@@ -433,6 +506,9 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       <primitive object={trail.grp} />
       <primitive object={magnetRing} />
       <primitive object={stars} />
+      {/* ✈️ THE DROP — the shared dropship + our parachute canopy */}
+      <primitive object={shipMesh} />
+      <primitive object={chute} />
       <pointLight ref={lantern} distance={30} decay={1.5} color="#ffca7a" position={[0, 2.6, 0]} intensity={0} />
     </>
   );

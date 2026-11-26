@@ -9,6 +9,7 @@ import { useGame } from "./store";
 import { sfx, startMusic, stopMusic, stopDrone } from "@/lib/game/audio";
 import { useGameInput, requestGameLock } from "./Scene";
 import { net, sessionSeed } from "@/lib/game/net/client";
+import { MASTER_MATCH_SEED } from "@/lib/game/constants";
 import { attachNet, type NetHandle } from "@/lib/game/net/engineNet";
 import { enterMatchLobby, leaveMatchmaking } from "@/lib/game/net/matchlobby";
 import type { Appearance } from "@/lib/game/constants";
@@ -22,6 +23,7 @@ import { BattlePassPage } from "./BattlePassPage";
 import { ChallengesPage } from "./ChallengesPage";
 import { CareerPage } from "./CareerPage";
 import { NewsPage } from "./NewsPage";
+import { LockerRoom } from "./LockerRoom";
 import { VictoryModal } from "./VictoryModal";
 import { Multiplayer } from "./Multiplayer";
 import { MatchLobby } from "./MatchLobby";
@@ -54,6 +56,14 @@ export function GameRoot() {
   const [runId, setRunId] = useState(0);
   /** true while this run is a networked co-op session */
   const mpRef = useRef(false);
+
+  /** 🎒 the LOCKER promise — only EQUIPPED purchases ride into the match.
+   *  The Locker Room page is the single place that decides this list; every
+   *  boot / restart-together re-reads it so loadout changes apply next match. */
+  const lockerOwned = useCallback(() => {
+    const s = useGame.getState();
+    return s.loadout.filter((id) => s.owned.includes(id));
+  }, []);
   /** 💾 the end-of-run record saves exactly once per run (death no longer pops a modal) */
   const endSavedRef = useRef(false);
   /** 🏁 when the run ended while the player sits at the pause menu — ms tick when
@@ -77,8 +87,8 @@ export function GameRoot() {
     recapPostedRef.current = false; // 📝 the fresh week posts its own score
     clearEndKick();
     if (engineRef.current) {
-      // 🎒 locker gear rides every restart too — purchased items always spawn
-      const gear = ownedGear(useGame.getState().owned);
+      // 🎒 locker gear rides every restart too — the EQUIPPED items spawn
+      const gear = ownedGear(lockerOwned());
       engineRef.current.reset(useGame.getState().look, gear);
       const gs = gearSummary(gear);
       if (gs) useGame.getState().pushToast(`🎒 Locker gear — ${gs}`, "good");
@@ -119,12 +129,14 @@ export function GameRoot() {
       const freshLook = useGame.getState().look;
 
       /** 🌐 ONE boot path for every seat state — engine + (optional) net glue.
-       *  The seat is claimed BEFORE the world boots so the gameplay seed (room
-       *  code) and the drop slot are known at construction: bots, loot, planes
-       *  and your spawn point grow IDENTICALLY on every client. */
+       *  The seat is claimed BEFORE the world boots so the gameplay seed and
+       *  the drop slot are known at construction. 🌐 THE MASTER MATCH SEED:
+       *  EVERY match — solo or relayed — grows from the same seed (the relay
+       *  echoes it in MatchSessionState), so a solo player sees exactly what a
+       *  2+ player room sees: same bots, same loot, same flight line, same town. */
       const boot = () => {
         const mpSeat = mpRef.current && net.code && net.slot >= 0;
-        const seed = mpSeat ? sessionSeed(net.code) : undefined;
+        const seed = mpSeat ? sessionSeed(net.code) : MASTER_MATCH_SEED;
         const seat = mpSeat ? net.slot : undefined;
         let eng = engineRef.current;
         if (!eng) {
@@ -154,9 +166,9 @@ export function GameRoot() {
         }
         // FIRST RUN init: the constructor spawns the town, but only reset() grants
         // the driving license, scatters the cash piles, homes the vans & calms the cops.
-        // 🎒 locker gear: every PURCHASED item spawns with you — tools & gems ride
+        // 🎒 locker gear: every EQUIPPED item spawns with you — tools & gems ride
         // the 🎒 wheel (G / right-click), snacks fill the hotbar, license skips the hunt
-        const gear = ownedGear(useGame.getState().owned);
+        const gear = ownedGear(lockerOwned());
         eng.reset(freshLook, gear);
         const gs = gearSummary(gear);
         if (gs) pushToast(`🎒 Locker gear — ${gs}`, "good");
@@ -333,8 +345,8 @@ export function GameRoot() {
         endSavedRef.current = false; // 💾 the fresh week saves its own end
         recapPostedRef.current = false; // 📝 the fresh week posts its own score
         clearEndKick();
-        // 🎒 locker gear rides every restart — purchased items always spawn
-        const gear = ownedGear(useGame.getState().owned);
+        // 🎒 locker gear rides every restart — the EQUIPPED items always spawn
+        const gear = ownedGear(lockerOwned());
         eng.reset(useGame.getState().look, gear);
         const gs = gearSummary(gear);
         if (gs) useGame.getState().pushToast(`🎒 Locker gear — ${gs}`, "good");
@@ -452,6 +464,9 @@ export function GameRoot() {
 
       {/* 👤 full-page profile hub (rank, daily tasks, hall of fame, account, features) */}
       {screen === "profile" && <Profile />}
+
+      {/* 🎒 full-page locker room — equipped loadout + styles (PUBG-style) */}
+      {screen === "locker" && <LockerRoom />}
 
       {/* 🛒 full-page item shop — the lobby's store tab navigates here */}
       {screen === "shop" && <ShopPage />}

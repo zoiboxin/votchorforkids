@@ -196,6 +196,25 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     c.stroke();
     dot(cp.x, cp.z, 1.1 * U, "#fb923c", 0.95); // the ever-burning pit
   }
+  // ✈️ THE DROP — the shared flight path + the dropship marker (while deploying).
+  // The line is identical on every client (master-seed derived) — PUBG's
+  // "everyone sees the same plane route", drawn straight on their own map.
+  if (engine.deploy && engine.deployPath) {
+    const path = engine.deployPath;
+    c.setLineDash([4, 3]);
+    c.strokeStyle = "rgba(125,211,252,0.85)";
+    c.lineWidth = Math.max(1, 1.5 * U);
+    c.beginPath();
+    c.moveTo(S / 2 + path.x0 * K, S / 2 + path.z0 * K);
+    c.lineTo(S / 2 + path.x1 * K, S / 2 + path.z1 * K);
+    c.stroke();
+    c.setLineDash([]);
+    const pose = engine.deployShipPose();
+    if (pose) {
+      dot(pose.x, pose.z, 3.4 * U, "#fbbf24", 1);
+      dot(pose.x, pose.z, 1.5 * U, "#ffffff", 1);
+    }
+  }
   /* 🧹 mini map declutter: vans, food, licenses, power gems, cash piles, loot, police,
      civilians, loot-runners, animals, crew, co-op souls, dropped arms, builds and
      planes are BIG-MAP-ONLY — the corner minimap shows just terrain, landmarks,
@@ -2044,8 +2063,41 @@ export function Hud({ engine, onQuit }: { engine: GameEngine; onQuit?: () => voi
         </div>
       )}
 
+      {/* ✈️ THE DROP — the PUBG deployment banner (ship ride → freefall → chute) */}
+      {hud.deploy && !hud.spec.on && (
+        <div
+          role="status"
+          aria-label={`Deployment phase: ${hud.deploy.phase}`}
+          className="absolute left-1/2 top-[26%] z-10 -translate-x-1/2"
+        >
+          <div className="flex flex-col items-center gap-2 rounded-2xl border border-sky-300/30 bg-slate-950/72 px-6 py-3 text-center shadow-2xl backdrop-blur-md">
+            <motion.div
+              animate={{ y: [0, -4, 0] }}
+              transition={{ repeat: Infinity, duration: 2.2 }}
+              className="text-3xl leading-none"
+              aria-hidden
+            >
+              {hud.deploy.phase === "ship" ? "✈️" : "🪂"}
+            </motion.div>
+            <div className="text-sm font-black uppercase tracking-[0.22em] text-sky-300">
+              {hud.deploy.phase === "ship" ? "DROPSHIP" : hud.deploy.phase === "fall" ? "FREEFALL" : "PARACHUTE"}
+            </div>
+            <div className="text-[11px] font-bold text-white/80">
+              {hud.deploy.phase === "ship"
+                ? "SPACE — jump and pick your drop"
+                : hud.deploy.phase === "fall"
+                  ? "WASD — steer the dive"
+                  : "WASD — glide to your landing spot"}
+            </div>
+            <div className="mt-0.5 rounded-full bg-sky-400/15 px-3 py-0.5 text-[11px] font-black tabular-nums text-sky-200">
+              ALT {Math.round(hud.deploy.alt)} m · AGL {Math.round(Math.max(0, hud.deploy.alt - hud.deploy.ground))} m
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* prompt */}
-      {hud.prompt && !hud.spec.on && (
+      {hud.prompt && !hud.spec.on && !hud.deploy && (
         <div role="status" className="absolute bottom-36 left-1/2 -translate-x-1/2 animate-pulse rounded-full bg-emerald-500/90 px-5 py-2 font-black text-white shadow-xl sm:bottom-28">
           {hud.prompt}
         </div>

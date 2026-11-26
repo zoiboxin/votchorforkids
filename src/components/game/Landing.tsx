@@ -454,7 +454,7 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
       if (e.metaKey || e.ctrlKey || e.altKey) return;
       switch (e.key.toLowerCase()) {
         case "p": sfx.click(); setScreen("profile"); break;
-        case "l": sfx.click(); setScreen("creator"); break;
+        case "l": sfx.click(); setScreen("locker"); break;
         case "s": sfx.click(); setScreen("shop"); break;
         case "c": sfx.click(); setScreen("challenges"); break;
         case "b": sfx.click(); setScreen("battlepass"); break;
@@ -557,11 +557,11 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
               </button>
             );
           })}
-          {/* LOCKER — jumps to the full survivor creator */}
+          {/* LOCKER — the PUBG-style loadout hub: equipped purchases + styles */}
           <button
             role="tab"
             aria-selected={false}
-            onClick={() => { sfx.click(); setScreen("creator"); }}
+            onClick={() => { sfx.click(); setScreen("locker"); }}
             className="-skew-x-[10deg] shrink-0 rounded-[3px] bg-slate-950/85 px-3 py-1.5 ring-1 ring-white/15 transition-all hover:bg-slate-800/90 hover:ring-white/30 sm:px-3.5"
           >
             <span className="flex skew-x-[10deg] items-center gap-1 whitespace-nowrap text-[10px] font-black uppercase tracking-wider text-white/85 sm:text-[11px]">

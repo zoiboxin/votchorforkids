@@ -27,6 +27,20 @@ const PORT = 3030;
 const MAX_PLAYERS = 8;
 const CODE_CHARS = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // no I/1/O/0 — kid-proof codes
 
+/* ---------- 🌐 MatchSessionState — the relay is the SINGLE SOURCE OF TRUTH ----------
+ * Every session carries a match state created AT SEAT TIME, before any world
+ * is grown. The seed is THE master match seed (see src/lib/game/constants.ts):
+ * every client — solo or relayed, first boot or late rejoin — derives the
+ * identical town from it (terrain comes from WORLD_SEED; this seed covers
+ * bots, loot, tools, powers, licenses, vote cash, cops, crews, the plane
+ * schedule and the ✈️ dropship flight path). The seed rides every lobby
+ * payload so a client can never guess the wrong world.
+ *   CreateSession -> GenerateWorld (deterministic client-side) ->
+ *   SyncClients (shared countdown gate) -> StartDrop (shared flight path) ->
+ *   LiveMatch (state/event streams + restart-together relobby)
+ */
+const MASTER_MATCH_SEED = 20241337;
+
 interface Member {
   sid: string;
   slot: number;
@@ -47,10 +61,23 @@ interface Room {
   phase: "lobby" | "live";
   /** epoch ms when the shared lobby countdown fires (0 = no countdown armed) */
   lobbyEndsAt: number;
+  /** 🌐 authoritative MatchSessionState — born with the room, echoed in every payload */
+  match: { seed: number; createdAt: number; startedAt: number };
 }
 
-const rooms = new Map<string, Room>();
-const memberRoom = new Map<string, string>(); // socket.id → room code
+/* 🔥 hot-reload-proof state — `bun --hot` re-evaluates this module whenever the
+ * project churns (dev-mode Next recompiles touch watched files), and a plain
+ * top-level `new Map()` would WIPE every live room mid-session (sockets stayed
+ * connected, rosters vanished: seats, match state, everything). Stashing the
+ * maps on globalThis survives module re-evaluation — same process, same state.
+ * Production (`bun index.ts`) never re-evaluates; the guard is pure insurance. */
+type RelayStore = { rooms: Map<string, Room>; memberRoom: Map<string, string> };
+const gState = globalThis as typeof globalThis & { __relay7n?: RelayStore };
+if (!gState.__relay7n) {
+  gState.__relay7n = { rooms: new Map(), memberRoom: new Map() };
+}
+const rooms = gState.__relay7n.rooms;
+const memberRoom = gState.__relay7n.memberRoom;
 
 const makeCode = (): string => {
   let c = "";
@@ -71,6 +98,9 @@ const lobbyPayload = (room: Room) => ({
   })),
   phase: room.phase,
   lobbyEndsAt: room.lobbyEndsAt,
+  // 🌐 the authoritative match state — clients grow their world from THIS seed
+  seed: room.match.seed,
+  match: room.match,
 });
 
 const roomOf = (sid: string): Room | null => {
@@ -117,7 +147,7 @@ function seatInRoom(io: Server, sock: { join: (c: string) => void; id: string; d
 }
 
 function createRoom(hostSid: string): Room {
-  const room: Room = { code: makeCode(), hostSid, members: new Map(), createdAt: Date.now(), started: false, phase: "lobby", lobbyEndsAt: 0 };
+  const room: Room = { code: makeCode(), hostSid, members: new Map(), createdAt: Date.now(), started: false, phase: "lobby", lobbyEndsAt: 0, match: { seed: MASTER_MATCH_SEED, createdAt: Date.now(), startedAt: 0 } };
   rooms.set(room.code, room);
   return room;
 }
@@ -145,6 +175,7 @@ io.on("connection", (sock) => {
       started: false,
       phase: "lobby",
       lobbyEndsAt: 0,
+      match: { seed: MASTER_MATCH_SEED, createdAt: Date.now(), startedAt: 0 },
     };
     rooms.set(room.code, room);
     sock.join(room.code);
@@ -317,6 +348,8 @@ io.on("connection", (sock) => {
       room.started = true;
       room.phase = "live"; // the lobby countdown is done — the night owns the room now
       room.lobbyEndsAt = 0;
+      // 🌐 MatchSessionState timeline — stamp the deployment moment (audit + ops)
+      if (!room.match.startedAt) room.match.startedAt = Date.now();
     }
     const m = room.members.get(sock.id);
     // stamp the sender's slot so clients can attribute events (host stamps `phase`/`roster`)

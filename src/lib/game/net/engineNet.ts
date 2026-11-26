@@ -408,6 +408,13 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
     engine.netZombieHit(ev.kind, ev.idx, ev.amt);
   });
 
+  // 🌳🔨 Phase-4 world replication — destroyed cover crosses the wire so every
+  // client's forest & boulders take the SAME beating (chop mirrors a swing,
+  // felled brings a tree down, wreck crumbles a boulder)
+  on("chop", (ev) => engine.netChopTree(ev.i, ev.dx, ev.dz, false));
+  on("felled", (ev) => engine.netChopTree(ev.i, ev.dx, ev.dz, true));
+  on("wreck", (ev) => engine.netSmashRock(ev.i));
+
   // 📦🪪 a teammate DROPPED their license on the ground — spawn the card here
   // so everyone can race over and snatch it
   on("dropLicense", (ev) => engine.spawnDroppedLicense(ev.x, ev.z, ev.from));

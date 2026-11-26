@@ -1,6 +1,36 @@
 /** 7Nights — shared constants. A spooky (but kid-friendly) survival story. */
 
 export const WORLD_SEED = 1337;
+
+/* ---------- 🌐 THE MASTER MATCH SEED — single source of truth ----------
+ * EVERY match — a lonely solo night or a full 8-soul relay room — grows its
+ * gameplay (bots, loot piles, tools, powers, license cards, vote cash, cops,
+ * crews, plane schedule AND the ✈️ dropship flight path) from THIS one seed.
+ * That is the PUBG promise the match pipeline is built on: the world is
+ * generated once, deterministically, and every connected client renders the
+ * exact same map content — solo players see precisely what a 2+ player room
+ * sees, and a relinked/rejoined client regrows a byte-identical town.
+ * (The terrain itself is fixed by WORLD_SEED; this seed covers everything the
+ * engine spawns on top of it. The relay echoes it in every lobby payload as
+ * the authoritative MatchSessionState.seed — see mini-services/relay.) */
+export const MASTER_MATCH_SEED = 20241337;
+
+/* ---------- ✈️ THE DROP — PUBG-style match deployment ----------
+ * Every match opens aboard the shared DROPSHIP: it crosses the island on a
+ * deterministic flight path (derived from the master match seed), every soul
+ * jumps when THEY choose, freefalls, pops the parachute low, and lands where
+ * their steering takes them. Jump/land coordinates replicate through the
+ * normal state stream (y rides the same packet) so every player visibly sees
+ * the others falling and landing around them in the same world. */
+export const DROP_ALT = 62;          // dropship cruise altitude (absolute y)
+export const DROP_SPEED = 58;        // ship ground speed (u/s) — full crossing ≈ 25 s
+export const DROP_OUTER = 760;       // flight path endpoints sit outside the wall (712)
+export const FREEFALL_VMAX = 30;     // terminal velocity of the freefall (u/s)
+export const FREEFALL_DRIFT = 13;    // WASD steering authority while freefalling
+export const CHUTE_ALT = 17;         // altitude above ground where the chute pops
+export const CHUTE_VY = 6.2;         // parachute descent speed (u/s)
+export const CHUTE_DRIFT = 8.5;      // steering authority under the canopy
+export const LAND_GRACE_S = 7;       // spawn-protection re-armed after touchdown
 /** The world grew! City → farmland → BIG jungle → DEEP jungle → climbable ⛰️ mountains → wall. */
 export const WALL_RADIUS = 712;
 export const CITY_RADIUS = 405;
