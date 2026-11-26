@@ -1112,6 +1112,19 @@ export class GameEngine {
   /** 🎲 PUBG-style drop: YOU parachute into a random street every match.
    *  Multiplayer: your seat slot picks the spot (same on every client). */
   private rollPlayerSpawn() {
+    // 🔎 preview convenience — ?at=x,z drops YOU at that world spot so a
+    // district tour (construction sites, graveyard, hospital…) starts there
+    // instead of a random drop. Ignored unless both numbers parse.
+    const at = typeof window !== "undefined"
+      ? new URLSearchParams(window.location.search).get("at")
+      : null;
+    if (at && !this.mp) {
+      const [ax, az] = at.split(",").map(Number);
+      if (Number.isFinite(ax) && Number.isFinite(az)) {
+        this.playerSpawn = { x: ax, z: az };
+        return this.playerSpawn;
+      }
+    }
     if (this.mp && this.mpSlot >= 0) this.playerSpawn = this.spawnSpotFor(this.mpSlot);
     else this.playerSpawn = freeSpot(this.rnd, this.world, 14, CITY_RADIUS - 14);
     return this.playerSpawn;

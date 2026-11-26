@@ -5,11 +5,14 @@
  * worldgen — graded ramp down, terraced dirt walls, machines + kit crew on
  * the floor), composed to match the kit's official live-preview scene
  * (polyfork.dev/kit/construction-site-9e40b0 — layout DNA: rising steel
- * frame + metal-deck floors + concrete core, hoarding to the street with
- * walkway tunnels & loading gantry at the gate, materials yards, welfare
- * compound with smoking shelter & tool vault, machines fleet everywhere):
- *   A  "Lakeshore Towers"  — west midtown SKYSCRAPER job: 30m crane, tower
- *      rising out of its own deep foundation dig
+ * frame built on the kit's stacking recipe (contiguous bays, 3.1m lifts,
+ * metal-deck floors, full-height concrete core leading the steel), scaffold
+ * hugging the frame, hoarding + mesh fence closing the whole block with
+ * gated entries, walkway tunnels & loading gantry, materials yards with
+ * precast/pallet rows on hardcore aprons, welfare compound with smoking
+ * shelter & tool vault, machines fleet everywhere):
+ *   A  "Lakeshore Towers"  — west midtown SKYSCRAPER job: 30m crane, 4-lift
+ *      tower + twin cores rising out of its own deep foundation dig
  *   B  "Eastside Mega Dig" — east belt OPEN-PIT excavation: the rising
  *      structure stands ON the pit floor, two excavators, two dump trucks
  *   C  "Northgate Works"   — north boulevard BLOCK BUILD with its own crane
