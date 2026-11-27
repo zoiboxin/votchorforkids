@@ -76,10 +76,11 @@ function buildEntries(cat: CatId, vaultOwned: boolean): Sel[] {
   }
   const items =
     cat === "all"
-      ? SHOP_ITEMS
+      ? SHOP_ITEMS.filter((it) => !it.vaultHero)
       : cat === "vault"
-        ? SHOP_ITEMS.filter((it) => it.id === RPG_VAULT_ITEM_ID)
-        : SHOP_ITEMS.filter((it) => it.kind === cat);
+        ? /* 🐉 the bundle + every vault hero priced 1 coin per triangle */
+          SHOP_ITEMS.filter((it) => it.id === RPG_VAULT_ITEM_ID || it.vaultHero)
+        : SHOP_ITEMS.filter((it) => it.kind === cat && !it.vaultHero);
   return items.map((item): Sel => ({ t: "item", item }));
 }
 
@@ -489,9 +490,9 @@ const PROMOS: readonly Promo[] = [
   },
   {
     id: "vault",
-    badge: "LEGENDARY BUNDLE",
-    title: "MYTHIC HERO VAULT",
-    sub: "28 rigged RPG heroes — Dragonborn, Elves, Dwarves, Orcs & more. One key unlocks the whole vault.",
+    badge: "MYTHIC VAULT · 28 HEROES",
+    title: "MYTHIC HERO VAULT — 1 COIN PER TRIANGLE",
+    sub: "Dragonborn, Elves, Dwarves, Orcs & more — grab any single hero at its exact triangle count, or one key unlocks the whole vault.",
     emoji: "🐉",
     grad: "from-violet-600/95 via-purple-600/85 to-fuchsia-600/75",
     glow: "rgba(167,139,250,0.55)",
@@ -631,10 +632,11 @@ export function ShopPage() {
   /* 🎭 stream the 18-hero shop cast as soon as the shop opens — portraits
    * snap themselves as each GLB lands (same pipeline as the creator picker) */
   useEffect(() => { ensureGlbArea(SHOP_CAST_AREA_ID); }, []);
-  /* 🐉 vault owners get the full hero roster streamed for the vault tab */
+  /* 🐉 vault tab streams the full hero roster — real GLB portraits snap onto
+   * the tiles as each file lands, for BOTH the bundle browser and owners */
   useEffect(() => {
-    if (cat === "vault" && vaultOwned) ensureGlbArea(MYTHIC_AREA_ID);
-  }, [cat, vaultOwned]);
+    if (cat === "vault") ensureGlbArea(MYTHIC_AREA_ID);
+  }, [cat]);
 
   /* 🛒 buy with the wallet's banked cash — same tone/toasts as the lobby shop */
   const buy = (it: ShopItem) => {
@@ -987,8 +989,8 @@ export function ShopPage() {
               </div>
 
               <p className="mt-2 px-1 text-[10px] font-bold text-white/40">
-                Prices for Shop Cast heroes are 1 coin per triangle — the exact triangle count on each
-                polyfork.dev catalog page.
+                Prices for Shop Cast &amp; Mythic Vault heroes are 1 coin per triangle — the exact
+                triangle count of each hero&apos;s GLB. The 🐉 Mythic Vault bundle still unlocks all 28.
               </p>
             </section>
           </div>

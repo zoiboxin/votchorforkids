@@ -48,7 +48,7 @@ import {
   type GlbInstance,
 } from "@/lib/game/glbCharacters";
 import { sfx } from "@/lib/game/audio";
-import { RPG_VAULT_ITEM_ID, shopItem, SHOP_ITEMS, SHOP_KINDS, type ShopItem } from "@/lib/game/shop";
+import { RPG_VAULT_ITEM_ID, shopItem, SHOP_ITEMS, SHOP_KINDS, vaultHeroItemId, type ShopItem } from "@/lib/game/shop";
 import { useGame } from "./store";
 import { Leaderboard } from "./Leaderboard";
 import { HowToPlay } from "./Panels";
@@ -393,10 +393,13 @@ function HeroPicker({ value, onChange }: { value: string; onChange: (slug: strin
             const on = value === h.slug;
             const thumb = glbThumb(h.slug);
             const dead = glbCharFailed(h.slug);
-            // 🐉 Mythic Vault heroes — purchasable in the Item Shop, locked until owned
+            // 🐉 Mythic Vault heroes — the whole-roster bundle OR the single
+            // hero item (both in the Item Shop) unlocks wearing it
             // 🎭 Shop Costumes — sold individually (char-<slug> items), locked until owned
             const locked =
-              (h.area === MYTHIC_AREA_ID && !owned.includes(RPG_VAULT_ITEM_ID)) ||
+              (h.area === MYTHIC_AREA_ID &&
+                !owned.includes(RPG_VAULT_ITEM_ID) &&
+                !owned.includes(vaultHeroItemId(h.slug))) ||
               (h.area === SHOP_CAST_AREA_ID && !owned.includes(shopCastItemId(h.slug)));
             return (
               <button
@@ -410,7 +413,7 @@ function HeroPicker({ value, onChange }: { value: string; onChange: (slug: strin
                   if (locked)
                     pushToast(
                       h.area === MYTHIC_AREA_ID
-                        ? "🐉 The Mythic Vault is locked — purchase it in the Item Shop!"
+                        ? "🐉 This vault hero is locked — buy it in the Item Shop, or grab the whole Mythic Vault!"
                         : `🎭 ${h.name} is locked — purchase this costume in the Item Shop!`,
                       "bad",
                     );

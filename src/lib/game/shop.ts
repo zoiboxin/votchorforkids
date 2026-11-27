@@ -12,9 +12,13 @@
  */
 
 import { ITEMS, OUTFIT_PRESETS, POWERS, TOOLS, VEHICLE_LABELS, type PowerKind, type ToolKind } from "./constants";
+import { MYTHIC_HEROES } from "./glbCharacters";
 
 /** 🐉 the Mythic Hero Vault bundle — unlocks every kit hero */
 export const RPG_VAULT_ITEM_ID = "kit-rpg-vault";
+
+/** 🐉 shop item id that unlocks ONE Mythic Vault hero (single source of truth) */
+export const vaultHeroItemId = (slug: string): string => `hero-${slug}`;
 
 export type ShopKind = "gear" | "power" | "support" | "style" | "garage";
 
@@ -32,6 +36,9 @@ export interface ShopItem {
   presetId?: string;
   /** 🎭 Shop Cast hero slug — owning this item unlocks WEARING that rigged GLB character */
   char?: string;
+  /** 🐉 Mythic Vault hero sold individually (shown only in the vault tab;
+   *  the 🐉 Mythic Hero Vault bundle unlocks every one of them) */
+  vaultHero?: true;
   license?: boolean;
   /** hero bundle — owning this unlocks the hero kit(s) listed in its tip */
   heroBundle?: true;
@@ -43,6 +50,41 @@ export interface ShopItem {
 
 /* stable lookups into the shared catalogs */
 const itemIdx = (name: string) => ITEMS.findIndex((i) => i.name === name);
+
+/** 🐉 exact triangle count per Mythic Vault hero — measured from the shipped
+ *  GLB files with scripts/tricount.mjs (same counting as the Shop Cast:
+ *  index accessor /3 per primitive, POSITION /3 when unindexed). Price = 1
+ *  💰 per triangle, identical to the Garage rides & Shop Cast heroes. */
+const VAULT_HERO_TRIS: Record<string, number> = {
+  "dragonborn-berserker-67ba6f": 5624,
+  "dragonborn-knight-9f16b1": 6290,
+  "dragonborn-monk-6ee8c9": 4988,
+  "dryad-hunter-093b74": 5559,
+  "dryad-priest-0c60e3": 5800,
+  "dwarf-berserker-13558d": 5646,
+  "dwarf-knight-2fff64": 6341,
+  "dwarf-priest-bcbea0": 6366,
+  "elf-assassin-944f87": 6340,
+  "elf-hunter-511e25": 5544,
+  "elf-mage-de335e": 5626,
+  "gnome-mage-2b94dc": 5618,
+  "gnome-warrior-bbc2b5": 6067,
+  "goblin-assassin-f8d72b": 5522,
+  "goblin-berserker-2b28c2": 6334,
+  "goblin-mage-60c815": 6282,
+  "halfling-assassin-b99057": 6186,
+  "halfling-hunter-4fa876": 5792,
+  "halfling-monk-9bde42": 5476,
+  "hooded-staff-acolyte-f24f63": 4674,
+  "human-assassin-049e85": 5485,
+  "human-knight-f544dd": 6374,
+  "human-mage-662684": 5480,
+  "human-priest-02f0e6": 6455,
+  "human-warrior-62c9a5": 6331,
+  "orc-berserker-2da4d0": 5575,
+  "orc-hunter-4f0410": 5892,
+  "orc-warrior-bffa73": 5552,
+};
 
 /** every outfit preset becomes a purchasable style item (prices per rarity) */
 const PRESET_PRICE: Record<string, number> = {
@@ -177,8 +219,25 @@ export const SHOP_ITEMS: readonly ShopItem[] = [
   /* ---------- 👕 STYLE — cosmetic outfits, worn from the shop or the locker ---------- */
   {
     id: RPG_VAULT_ITEM_ID, name: "Mythic Hero Vault", emoji: "🐉", kind: "style", price: 560, heroBundle: true,
-    tip: "Unlock 28 rigged RPG heroes — Dragonborn, Dwarves, Elves, Orcs, Goblins & more. Wear them here or in the Locker!",
+    tip: "Unlock ALL 28 rigged RPG heroes — Dragonborn, Dwarves, Elves, Orcs, Goblins & more — one key, the whole vault (best value by far!). Wear them here or in the Locker!",
   },
+
+  /* ---------- 🐉 MYTHIC VAULT HEROES — the 28 rigged RPG kit heroes, ALSO
+   * sold individually, priced 1 coin per triangle ----------
+   * Same deal as the Shop Cast: each hero is a rigged GLB (Idle/Walk/Run
+   * embedded, shipped locally) and its price is that hero's EXACT triangle
+   * count — measured straight from the shipped GLB files
+   * (scripts/tricount.mjs). The 🐉 Mythic Hero Vault bundle above still
+   * unlocks the entire roster in one purchase, so grabbing a single hero
+   * here is for picking a favourite without the full vault. */
+  ...MYTHIC_HEROES.map((h): ShopItem => {
+    const tris = VAULT_HERO_TRIS[h.slug] ?? 5500;
+    return {
+      id: vaultHeroItemId(h.slug), name: h.name, emoji: h.emoji, kind: "style",
+      price: tris, char: h.slug, vaultHero: true,
+      tip: `Rigged RPG hero — exactly ${tris.toLocaleString()} triangles, priced 1 💰 per triangle. Or unlock ALL 28 vault heroes with the 🐉 Mythic Hero Vault bundle (way better value).`,
+    };
+  }),
   ...OUTFIT_PRESETS.map(
     (p): ShopItem => ({
       id: `style-${p.id}`, name: p.label, emoji: p.emoji, kind: "style",
