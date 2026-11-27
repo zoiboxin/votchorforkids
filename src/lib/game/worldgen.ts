@@ -2641,7 +2641,18 @@ export function generateWorld(seed = WORLD_SEED): World {
    * NOTE: tree circles are pushed FIRST, in tree order — tree index i is
    * ALWAYS circle index i, which is how the axe finds the collider to shrink
    * when a tree falls. Rock circles come right after, recorded in rockCi. */
-  const boxes: BoxCollider[] = buildings.map(({ x, z, w, d, h }) => ({ x, z, w, d, h }));
+  /* 🧍 ROOFTOPS ARE FLOORS — every building box carries a standable `top` (see
+   * standTopAt): parachute onto a roof and STAND on it, hop tower-to-tower,
+   * camp the night above the horde. Flat-roof kinds (towers, shops, mall,
+   * school, hospital, police) stand on the roof slab — walls top out at h and
+   * the slab spans h → h + 0.9. Pyramid roofs (homes & barns) stand at 55% up
+   * the rise: boots read on the slope instead of sinking to the knees at the
+   * apex or floating a body-length over the eaves. */
+  const PYR_RISE = (kind: Building["kind"]) => (kind === 6 ? 3.4 : 2.3); // matches <Buildings> cone heights
+  const boxes: BoxCollider[] = buildings.map((b) => ({
+    x: b.x, z: b.z, w: b.w, d: b.d, h: b.h,
+    top: b.kind === 2 || b.kind === 6 ? b.h + PYR_RISE(b.kind) * 0.55 : b.h + 0.9,
+  }));
   const circles: CircleCollider[] = trees.map(({ x, z, r }) => ({ x, z, r }));
   circles.push({ x: PARK.x - 11, z: PARK.z + 11, r: 8.2 });               // park pond
   circles.push({ x: PARK.x, z: PARK.z, r: 3.6 });                          // fountain
@@ -2862,6 +2873,16 @@ export function generateWorld(seed = WORLD_SEED): World {
       : Math.floor(rnd() * 3) === 0 ? (["glowShroom", "puffball", "orbWeb", "nestMound", "waspPot"] as const) : FLORA_KEYS;
     pushInsect(pool[Math.floor(rnd() * pool.length)], x, z);
     n++;
+  }
+
+  /* 🧍 every remaining BUILT structure is standable too — kit buildings (the
+   * hospital ward/core/annexe/ER, the Victorian house, airport terminal &
+   * tower, log cabins, ranger station, site cabins, construction cores, NYC
+   * solids, fuel tanks, woodsheds): their `h` already IS their roof height.
+   * Boxes that tagged their own lower tops earlier (crate stacks, scaffold
+   * bays) keep theirs — the blanket only fills the gaps. */
+  for (const b of boxes) {
+    if (b.top === undefined && b.h !== undefined && b.h >= 1.1) b.top = b.h;
   }
 
   return { buildings, trees, rocks, rockCi, flowers, boxes, circles, cars, lamps, benches, fields, silos, umbrellas, signs, windmills, camps, ponds, ferns, tufts, shrooms, bushes, wilds, stumps, logs, reeds, pads, stones, spires, cabins, ranger: rangerPos, lookout, trucks, bridges, docks, boats, kiosks, trailPosts, trails: trailPts, birdhouses, handcarts, chopBlocks, firewood, woodsheds, insectProps, grid: buildColliderGrid(boxes, circles) };

@@ -36,6 +36,14 @@ export const LAND_GRACE_S = 7;       // spawn-protection re-armed after touchdow
  *  inside the jungle band, just before MOUNTAIN_INNER (610): the idle ride
  *  always ends on playable ground before the mountains. */
 export const AUTO_EJECT_R = 585;
+/** 🪂 TALL-FALL AUTO-CHUTE — after touchdown the pack stays folded for normal
+ *  hops (a jump's return fall peaks ≈ −9 u/s at GRAVITY 22), but falling this
+ *  fast with this much air still below the boots — tower hops, mountain
+ *  ledges, bridge railings, the hospital roof — snaps it open so every
+ *  landing is a safe one. BOTH gates must pass: speed alone would fire while
+ *  sprinting down a steep scree slope, height alone on slow floaty slips. */
+export const AUTO_CHUTE_VY = 13;     // fall speed that arms the pack (u/s)
+export const AUTO_CHUTE_MIN_H = 7;   // minimum air still below the feet (u)
 /** The world grew! City → farmland → BIG jungle → DEEP jungle → climbable ⛰️ mountains → wall. */
 export const WALL_RADIUS = 712;
 export const CITY_RADIUS = 405;

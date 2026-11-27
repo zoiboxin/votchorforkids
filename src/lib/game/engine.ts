@@ -6,7 +6,7 @@ import {
   ESCAPE_LOST_S, FARM_RADIUS, FLIP_S, GRAVITY, GRAVEYARD, HAUL_CAMP_R, HEARSE_GUARD_COUNT_MAX, HEARSE_GUARD_COUNT_MIN, HEARSE_GUARD_DMG, HEARSE_GUARD_HP, HEARSE_GUARD_HOME_R, HEARSE_GUARD_LEASH, HEARSE_GUARD_SPEED, HEARSE_HOARD, HEARSE_TYPE, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
   DEEP_JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER,
   ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_BUFFER_S, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LAND_GRACE_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MASTER_MATCH_SEED, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
-  FREEFALL_DRIFT, FREEFALL_VMAX,
+  FREEFALL_DRIFT, FREEFALL_VMAX, AUTO_CHUTE_MIN_H, AUTO_CHUTE_VY,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
   RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SCAVENGER_COUNT, SCAVENGER_SENSE_R, SPAWN, SONIC_MULT, STAR_DECAY_S, TAXI_TYPE, TOTAL_VOTES, TRAFFIC_COUNT, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_GLB, VEHICLE_LABELS, VEHICLE_POOL, VEHICLE_STEER, VEHICLE_TOP, VAN_AXLE, VAN_LOAD_S, VAN_PATROL_GATE_S, VAN_PATROL_WAIT_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
   AIRPORT, PLANE_COUNT, POWER_CARRY,
@@ -32,7 +32,7 @@ import {
 } from "./constants";
 import { clamp, mulberry32, range } from "./rng";
 import type { OwnedGear } from "./shop";
-import { addDynamicCircle, freeSpot, lineClear, refreshCarCircle, resolve, ringTrafficPoint, RING_R, ROADS, scatterSpots, spotNear, terrainHeight, TOWN_SQUARE, type Car, type CircleCollider, type World } from "./worldgen";
+import { addDynamicCircle, freeSpot, lineClear, refreshCarCircle, resolve, ringTrafficPoint, RING_R, ROADS, scatterSpots, spotNear, standTopAt, terrainHeight, TOWN_SQUARE, type Car, type CircleCollider, type World } from "./worldgen";
 import { nightFactor, newBody, stepBody, stepNpc, type Body, type SteerMemory } from "./sim";
 import { botBrain } from "./botBrain";
 import { sfx, startDrone, stopDrone, setInsects, stopInsects } from "./audio";
@@ -2026,8 +2026,12 @@ export class GameEngine {
       if (t >= 0.5 && (Math.hypot(p.x, p.z) >= AUTO_EJECT_R || t >= 1)) this.jumpFromShip(true);
       return;
     }
-    // falling / under canopy — WASD steering relative to the camera yaw
-    const ground = terrainHeight(p.x, p.z);
+    // falling / under canopy — WASD steering relative to the camera yaw.
+    // 🧍🪂 ROOF-AWARE SURFACE: the ground below is the higher of the terrain and
+    // the tallest standable roof under our boots (buildings carry standable
+    // `top`s — see worldgen). The chute pops and TOUCHES DOWN on rooftops
+    // instead of sailing through them and landing inside the walls.
+    const ground = Math.max(terrainHeight(p.x, p.z), standTopAt(this.world, p.x, p.z, p.y, 0.02));
     const f = this.personalPause || this.lost ? 0 : this.input.f;
     const rr = this.personalPause || this.lost ? 0 : this.input.r;
     const drift = d.phase === "fall" ? FREEFALL_DRIFT : CHUTE_DRIFT;
@@ -2040,6 +2044,10 @@ export class GameEngine {
     p.vz += (tvz - p.vz) * steerK;
     p.x += p.vx * dt;
     p.z += p.vz * dt;
+    // 🧱 skydivers SLIDE around rooftops, walls, towers and tree trunks instead
+    // of clipping straight through them (feet-above-top skips standable roofs —
+    // glide over an eave and touch down ON it; drift into a wall and slide down it)
+    resolve(p, 0.45, this.world, -1, p.y);
     // keep the dive inside the playable disc (the wall does not catch skydivers)
     const rad = Math.hypot(p.x, p.z);
     if (rad > WALL_RADIUS - 30) {
@@ -2062,7 +2070,7 @@ export class GameEngine {
       p.sprinting = false;
       return;
     }
-    // 🥾 TOUCHDOWN — boots on dirt, combat state begins (invuln re-armed)
+    // 🥾 TOUCHDOWN — boots on the roof (or the dirt), combat state begins (invuln re-armed)
     p.y = ground;
     p.vy = 0;
     this.squashT = LAND_SQUASH_S;
@@ -7081,6 +7089,18 @@ export class GameEngine {
           drainMult: this.side === "police" ? this.policePerk.drainMult : 1,
         });
       this.stamina = p.stamina; // sprinting drains / walking regenerates (see stepBody)
+      // 🪂 TALL-FALL AUTO-CHUTE — step off a tower, a mountain ledge or a bridge
+      // rail and the pack snaps open before the ground gets dangerous: falling
+      // faster than any jump can ever return AND with real air still below the
+      // boots. Normal hops (return fall ≈ −9 u/s) and low sheds never trigger it.
+      if (!p.onGround && p.vy < -AUTO_CHUTE_VY) {
+        const surf = Math.max(terrainHeight(p.x, p.z), standTopAt(this.world, p.x, p.z, p.y, 0.02));
+        if (p.y - surf > AUTO_CHUTE_MIN_H) {
+          this.deploy = { phase: "chute", vy: p.vy, jumped: true };
+          sfx.bonk(); // the canopy snaps open
+          this.toast("🪂 Chute open! Too high to land raw — gliding you down safe.", "good");
+        }
+      }
       // 🩸 the beast never tires — sprinting costs nothing while you are possessed
       if (this.youPossessed && this.phase === "night" && this.stamina < staminaBefore) this.stamina = staminaBefore;
       // ⚡ Sonic legs don't tire — sprint costs nothing while Sonic Dash lasts
@@ -8735,7 +8755,9 @@ export class GameEngine {
         ? {
             phase: this.deploy.phase,
             alt: Math.max(0, this.player.y),
-            ground: terrainHeight(this.player.x, this.player.z),
+            // 🧍 roof-aware — the altimeter counts down to the ROOF when you are
+            // dropping onto one, not to the street hidden underneath it
+            ground: Math.max(terrainHeight(this.player.x, this.player.z), standTopAt(this.world, this.player.x, this.player.z, this.player.y, 0.02)),
             route: Math.min(1, this.shipU / this.shipPathLen()),
             autoDropT: this.autoDropSeconds(),
           }
