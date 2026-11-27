@@ -1691,7 +1691,178 @@ export function graveyardLaneDist(x: number, z: number): number {
   return best;
 }
 
-const TOWER_COLS = [0x9fc4d8, 0xb8d0da, 0xc9d2cf, 0xa8b8c4, 0xd8cfc0, 0x8fb0a8, 0xc4b8d0, 0xb0c4b8];
+/* ---------------- 🏙️ CITY KIT — the empty plots grow real buildings ----------------
+ * Every one of the city's vacant blocks is filled from the polyfork catalog
+ * (https://github.com/lucas-martinic/polyfork-catalog · models/buildings.md,
+ * CC BY 4.0 — files in public/models/city/, loader in cityModels.ts): five
+ * themed districts — Civic squares (NYC kit), Little Tokyo, a Mediterranean
+ * plaza, a Frontier Town corner and brownstone/tenement/loft rows — plus
+ * suburban house rows, the downtown skyline upgrade (art-deco + office GLB
+ * towers) and two blocks of real kit houses replacing the plain box homes.
+ *
+ * Each entry is ONE building: render placement (slug, x, z, rot, s) + its
+ * collider box (w/d = half extents, h = roof height, top = standable y —
+ * pitched roofs stand ~55-80% up the rise, flat roofs at the slab). `col`
+ * adds extra collider boxes (the art-deco tower's base skirt). The renderer
+ * (<CityDistricts> in WorldView) streams the GLBs; worldgen bakes the boxes
+ * so the roofs are standable from day one — skydive onto the bank and STAND.
+ * Facades are authored facing +Z, so rot 0 faces south, π north, ±π/2 east/west. */
+export interface CityGlm {
+  /** cityModels.ts FILES key */
+  slug: string;
+  x: number; z: number;
+  /** rotation-y (radians) + uniform scale (model is grounded & centred by the loader) */
+  rot: number; s: number;
+  /** collider half-extents + height (the roof y) — optional standable top override */
+  w: number; d: number; h: number; top?: number;
+  /** extra collider boxes — tower base skirts etc. (offsets from x/z) */
+  col?: { dx: number; dz: number; w: number; d: number; h: number }[];
+}
+export const CITYKIT = {
+  at: [
+    /* ---- Civic Square East (-101.25, -168.75) — bank, church, clock tower ---- */
+    { slug: "classicalBank", x: -106.25, z: -175.75, rot: 0, s: 1.2, w: 7.2, d: 7.2, h: 12.2 },
+    { slug: "brickChurch", x: -88.25, z: -165.75, rot: Math.PI / 2, s: 1.1, w: 6.6, d: 4.4, h: 18, top: 14.5 },
+    { slug: "clockTower", x: -106.25, z: -156.75, rot: 0, s: 1.7, w: 2.6, d: 2.6, h: 21.8, top: 20.5 },
+    { slug: "newsstand", x: -91.25, z: -154.75, rot: -Math.PI / 2, s: 1.6, w: 2, d: 1.4, h: 3.7 },
+    /* ---- Civic Square West (101.25, -168.75) — department store & movie night ---- */
+    { slug: "departmentStore", x: 94.25, z: -176.75, rot: 0, s: 1.1, w: 8.8, d: 7, h: 25.4 },
+    { slug: "movieTheater", x: 113.25, z: -160.75, rot: Math.PI, s: 1.2, w: 7.2, d: 4.8, h: 15.6 },
+    { slug: "streetDiner", x: 115.25, z: -180.75, rot: -Math.PI / 2, s: 1.4, w: 2.8, d: 5.6, h: 7.6 },
+    { slug: "newsstand", x: 85.25, z: -156.75, rot: 0, s: 1.6, w: 2, d: 1.4, h: 3.7 },
+    { slug: "subway", x: 101.25, z: -153.75, rot: Math.PI, s: 1.5, w: 3, d: 3, h: 7.7 },
+    /* ---- Little Tokyo North (-236.25, -101.25) — apartment over the shophouses ---- */
+    { slug: "tokyoApartment", x: -236.25, z: -114.25, rot: 0, s: 1.2, w: 7.2, d: 2.4, h: 11.3 },
+    { slug: "bathhouse", x: -248.25, z: -94.25, rot: Math.PI, s: 1.1, w: 4.4, d: 4.4, h: 12.1 },
+    { slug: "cornerShophouse", x: -233.25, z: -92.25, rot: Math.PI, s: 1.4, w: 2.8, d: 2.8, h: 13.3 },
+    { slug: "shophouse3", x: -225.25, z: -92.25, rot: Math.PI, s: 1.4, w: 2.8, d: 2.8, h: 13.2 },
+    { slug: "shophouse2", x: -219.25, z: -92.25, rot: Math.PI, s: 1.4, w: 2.8, d: 2.8, h: 10.7 },
+    /* ---- Little Tokyo South (-168.75, -101.25) — shrine court & bar alley ---- */
+    { slug: "shrineHall", x: -170.75, z: -108.25, rot: 0, s: 1.9, w: 3.8, d: 3.8, h: 6.8 },
+    { slug: "alleyBarHut", x: -182.75, z: -114.25, rot: Math.PI / 2, s: 1.5, w: 3, d: 3, h: 5 },
+    { slug: "alleyBarHut", x: -156.75, z: -114.25, rot: -Math.PI / 2, s: 1.5, w: 3, d: 3, h: 5 },
+    { slug: "amusementParlour", x: -158.75, z: -93.25, rot: Math.PI, s: 1.3, w: 5.2, d: 2.6, h: 12.2 },
+    { slug: "convenienceStore", x: -179.75, z: -91.25, rot: Math.PI, s: 1.5, w: 6, d: 3, h: 5.1 },
+    { slug: "shophouseWide", x: -166.75, z: -88.25, rot: Math.PI, s: 1.2, w: 4.8, d: 2.4, h: 9.9 },
+    /* ---- Mediterranean Plaza (-101.25, -101.25) — whitewash & domes ---- */
+    { slug: "domedChurch", x: -101.25, z: -110.25, rot: 0, s: 1.2, w: 4.8, d: 7.2, h: 12.7, top: 11.5 },
+    { slug: "bellTower", x: -113.25, z: -103.25, rot: 0, s: 1.6, w: 3.2, d: 3.2, h: 15.8, top: 14.5 },
+    { slug: "blueChapel", x: -89.25, z: -103.25, rot: -Math.PI / 2, s: 1.3, w: 5.2, d: 2.6, h: 8.5, top: 7.3 },
+    { slug: "kafeneio", x: -105.25, z: -89.25, rot: Math.PI, s: 1.6, w: 6.4, d: 3.2, h: 4.8 },
+    { slug: "villageShop", x: -96.25, z: -88.25, rot: Math.PI, s: 1.5, w: 3, d: 3.3, h: 4.5 },
+    { slug: "cubeHouse", x: -88.25, z: -89.25, rot: Math.PI, s: 1.6, w: 3.2, d: 3.2, h: 4.8 },
+    { slug: "dovecote", x: -85.25, z: -113.25, rot: 0, s: 1.7, w: 3.4, d: 3.4, h: 11.8, top: 10.6 },
+    { slug: "archPassage", x: -115.25, z: -97.25, rot: Math.PI / 2, s: 1.7, w: 0.4, d: 0.4, h: 5.1 },
+    /* ---- Frontier Town (-168.75, -33.75) — the old west corner ---- */
+    { slug: "saloon", x: -180.75, z: -30.75, rot: Math.PI, s: 1.2, w: 3.6, d: 4.8, h: 7.2 },
+    { slug: "generalStore", x: -168.75, z: -29.75, rot: Math.PI, s: 1.2, w: 3.6, d: 4.8, h: 7.2 },
+    { slug: "frontierHotel", x: -155.75, z: -31.75, rot: Math.PI, s: 1.2, w: 3.6, d: 6, h: 8.8 },
+    { slug: "barberBath", x: -181.75, z: -42.75, rot: 0, s: 1.2, w: 2.4, d: 4.8, h: 6.8 },
+    { slug: "blacksmith", x: -171.75, z: -42.75, rot: 0, s: 1.2, w: 3.6, d: 3.6, h: 7.4 },
+    { slug: "telegraphOffice", x: -164.75, z: -43.75, rot: 0, s: 1.2, w: 2.4, d: 3.6, h: 7.8 },
+    { slug: "clapboardChurch", x: -156.75, z: -44.75, rot: 0, s: 1.1, w: 3.3, d: 5.5, h: 11, top: 8.8 },
+    { slug: "undertaker", x: -185.75, z: -50.75, rot: 0, s: 1.2, w: 2.4, d: 4.8, h: 6.6 },
+    { slug: "liveryStable", x: -155.75, z: -20.75, rot: Math.PI, s: 1.1, w: 4.4, d: 5.5, h: 7.5, top: 6 },
+    /* ---- Brownstone Row North (-236.25, 33.75) ---- */
+    { slug: "brownstoneRowHouse", x: -250.25, z: 24.75, rot: 0, s: 1.1, w: 4.4, d: 4.4, h: 18.8 },
+    { slug: "brownstoneRowHouse", x: -236.25, z: 24.75, rot: 0, s: 1.1, w: 4.4, d: 4.4, h: 18.8 },
+    { slug: "brownstoneRowHouse", x: -222.25, z: 24.75, rot: 0, s: 1.1, w: 4.4, d: 4.4, h: 18.8 },
+    { slug: "brickTenement", x: -245.25, z: 43.75, rot: Math.PI, s: 1.1, w: 4.4, d: 5.1, h: 25.4 },
+    { slug: "brickTenement", x: -229.25, z: 43.75, rot: Math.PI, s: 1.1, w: 4.4, d: 5.1, h: 25.4 },
+    { slug: "narrowWalkUp", x: -220.25, z: 42.75, rot: Math.PI, s: 1.1, w: 2.2, d: 5.2, h: 14.3 },
+    /* ---- Eastside Heights (236.25, 33.75) — the postwar slab anchors the east ---- */
+    { slug: "postwarSlab", x: 230.25, z: 42.75, rot: Math.PI, s: 1.05, w: 8.4, d: 6.3, h: 52.6 },
+    { slug: "brownstoneRowHouse", x: 223.25, z: 22.75, rot: 0, s: 1.1, w: 4.4, d: 4.4, h: 18.8 },
+    { slug: "narrowWalkUp", x: 237.25, z: 22.75, rot: 0, s: 1.1, w: 2.2, d: 5.2, h: 14.3 },
+    { slug: "castIronLoft", x: 250.25, z: 24.75, rot: 0, s: 1.1, w: 6.6, d: 4.9, h: 22.1 },
+    { slug: "parkingGarage", x: 249.25, z: 43.75, rot: Math.PI, s: 1.05, w: 6.3, d: 6.3, h: 17.9 },
+    /* ---- University Green (-168.75, 101.25) — school, clock tower, services ---- */
+    { slug: "publicSchool", x: -168.75, z: 92.25, rot: 0, s: 1.05, w: 10.5, d: 6.3, h: 13.9 },
+    { slug: "clockTower", x: -168.75, z: 112.25, rot: 0, s: 2.2, w: 3.3, d: 3.3, h: 28.2, top: 26.5 },
+    { slug: "fireStation", x: -182.75, z: 112.25, rot: Math.PI, s: 1.1, w: 4.4, d: 4.4, h: 7.7 },
+    { slug: "newsstand", x: -154.75, z: 114.25, rot: Math.PI / 2, s: 1.5, w: 1.9, d: 1.3, h: 3.5 },
+    /* ---- Loft District (-101.25, 168.75) ---- */
+    { slug: "castIronLoft", x: -109.25, z: 159.75, rot: 0, s: 1.1, w: 6.6, d: 4.9, h: 22.1 },
+    { slug: "autoRepair", x: -91.25, z: 160.75, rot: 0, s: 1.1, w: 6.6, d: 4.4, h: 7.9 },
+    { slug: "fireStation", x: -111.25, z: 177.75, rot: Math.PI, s: 1.15, w: 4.6, d: 4.6, h: 8.1 },
+    { slug: "cornerShop", x: -92.25, z: 178.75, rot: Math.PI, s: 1.1, w: 4.9, d: 4.9, h: 7.7 },
+    { slug: "newsstand", x: -100.25, z: 153.75, rot: Math.PI / 2, s: 1.6, w: 2, d: 1.4, h: 3.7 },
+    /* ---- Tenement Row (101.25, 168.75) ---- */
+    { slug: "cornerTenement", x: 90.25, z: 166.75, rot: -Math.PI / 2, s: 1.1, w: 7.3, d: 4.8, h: 22.1 },
+    { slug: "brickTenement", x: 109.25, z: 159.75, rot: 0, s: 1.1, w: 4.4, d: 5.1, h: 25.4 },
+    { slug: "brownstoneRowHouse", x: 114.25, z: 178.75, rot: Math.PI, s: 1.1, w: 4.4, d: 4.4, h: 18.8 },
+    { slug: "narrowWalkUp", x: 102.25, z: 179.75, rot: Math.PI, s: 1.1, w: 2.2, d: 5.2, h: 14.3 },
+    { slug: "streetDiner", x: 93.25, z: 181.75, rot: 0, s: 1.3, w: 5.2, d: 2.6, h: 7.1 },
+    /* ---- Market Street (-33.75, 168.75) ---- */
+    { slug: "shopRow", x: -42.75, z: 159.75, rot: 0, s: 1.2, w: 7.2, d: 5.4, h: 5.6 },
+    { slug: "shophouse2", x: -47.75, z: 177.75, rot: Math.PI, s: 1.4, w: 2.8, d: 2.8, h: 10.7 },
+    { slug: "shophouse2", x: -37.75, z: 177.75, rot: Math.PI, s: 1.4, w: 2.8, d: 2.8, h: 10.7 },
+    { slug: "shophouse3", x: -27.75, z: 177.75, rot: Math.PI, s: 1.4, w: 2.8, d: 2.8, h: 13.2 },
+    { slug: "cornerShophouse", x: -18.75, z: 166.75, rot: -Math.PI / 2, s: 1.4, w: 2.8, d: 2.8, h: 13.3 },
+    { slug: "shophouseWide", x: -19.75, z: 179.75, rot: Math.PI, s: 1.2, w: 4.8, d: 2.4, h: 9.9 },
+    { slug: "newsstand", x: -31.75, z: 153.75, rot: Math.PI / 2, s: 1.5, w: 1.9, d: 1.3, h: 3.5 },
+    /* ---- Orchard Row (-101.25, 236.25) — suburban kit houses ---- */
+    { slug: "aFrameCabin", x: -115.25, z: 224.25, rot: 0, s: 1.2, w: 2.4, d: 4.8, h: 7.4, top: 4.4 },
+    { slug: "alpineChalet", x: -99.25, z: 225.25, rot: 0, s: 1.1, w: 5.5, d: 4.4, h: 8.2, top: 6.2 },
+    { slug: "gabledFarmhouse", x: -87.25, z: 226.25, rot: 0, s: 1.3, w: 3.9, d: 3.3, h: 8.1, top: 6.1 },
+    { slug: "colonialHouse", x: -113.25, z: 246.25, rot: Math.PI, s: 1.2, w: 3.6, d: 4.8, h: 10.2, top: 8.2 },
+    { slug: "frenchTownhouse", x: -98.25, z: 247.25, rot: Math.PI, s: 1.1, w: 5.4, d: 4.1, h: 11.8, top: 10.6 },
+    { slug: "aFrameCabin", x: -87.25, z: 246.25, rot: Math.PI, s: 1.2, w: 2.4, d: 4.8, h: 7.4, top: 4.4 },
+    /* ---- Hacienda Row (-33.75, 236.25) ---- */
+    { slug: "adobeFarmhouse", x: -43.75, z: 226.25, rot: 0, s: 0.85, w: 6.8, d: 3.4, h: 4.6, top: 3.9 },
+    { slug: "adobeFarmhouse", x: -24.75, z: 226.25, rot: 0, s: 0.85, w: 6.8, d: 3.4, h: 4.6, top: 3.9 },
+    { slug: "colonialHouse", x: -45.75, z: 245.25, rot: Math.PI, s: 1.2, w: 3.6, d: 4.8, h: 10.2, top: 8.2 },
+    { slug: "gabledFarmhouse", x: -33.75, z: 246.25, rot: Math.PI, s: 1.3, w: 3.9, d: 3.3, h: 8.1, top: 6.1 },
+    { slug: "colonialHouse", x: -22.75, z: 246.25, rot: Math.PI, s: 1.2, w: 3.6, d: 4.8, h: 10.2, top: 8.2 },
+    /* ---- Lakeside Cabins (33.75, -236.25) ---- */
+    { slug: "aFrameCabin", x: 20.75, z: -246.25, rot: 0, s: 1.25, w: 2.5, d: 5, h: 7.7, top: 4.6 },
+    { slug: "aFrameCabin", x: 32.75, z: -246.25, rot: 0, s: 1.25, w: 2.5, d: 5, h: 7.7, top: 4.6 },
+    { slug: "alpineChalet", x: 45.75, z: -245.25, rot: 0, s: 1.1, w: 5.5, d: 4.4, h: 8.2, top: 6.2 },
+    { slug: "gabledFarmhouse", x: 25.75, z: -225.25, rot: Math.PI, s: 1.3, w: 3.9, d: 3.3, h: 8.1, top: 6.1 },
+    { slug: "colonialHouse", x: 39.75, z: -225.25, rot: Math.PI, s: 1.2, w: 3.6, d: 4.8, h: 10.2, top: 8.2 },
+    /* ---- NW Homestead (-236.25, 236.25) ---- */
+    { slug: "liveryStable", x: -248.25, z: 228.25, rot: 0, s: 1.1, w: 4.4, d: 5.5, h: 7.5, top: 6 },
+    { slug: "gabledFarmhouse", x: -232.25, z: 225.25, rot: 0, s: 1.3, w: 3.9, d: 3.3, h: 8.1, top: 6.1 },
+    { slug: "alpineChalet", x: -224.25, z: 245.25, rot: Math.PI, s: 1.1, w: 5.5, d: 4.4, h: 8.2, top: 6.2 },
+    { slug: "aFrameCabin", x: -239.25, z: 247.25, rot: Math.PI, s: 1.2, w: 2.4, d: 4.8, h: 7.4, top: 4.4 },
+    /* ---- 🌆 DOWNTOWN SKYLINE UPGRADE — the plain box towers grow real faces ----
+     * The two downtown blocks (33.75,-33.75) & (-33.75,33.75) swap their four
+     * procedural towers each for the art-deco setback tower (60u — the new
+     * city landmark) and the glass office tower. Base skirts are separate
+     * colliders so skydivers settle on the setback tiers instead of clipping. */
+    { slug: "artDecoTower", x: 46.25, z: -21.25, rot: 0, s: 1, w: 6.5, d: 6.5, h: 60, col: [{ dx: 0, dz: 0, w: 8, d: 8, h: 18 }] },
+    { slug: "artDecoTower", x: 21.25, z: -46.25, rot: Math.PI, s: 1, w: 6.5, d: 6.5, h: 60, col: [{ dx: 0, dz: 0, w: 8, d: 8, h: 18 }] },
+    { slug: "officeTower", x: 46.25, z: -46.25, rot: Math.PI, s: 1.3, w: 5.2, d: 5.2, h: 41.7 },
+    { slug: "officeTower", x: 21.25, z: -21.25, rot: 0, s: 1.3, w: 5.2, d: 5.2, h: 41.7 },
+    { slug: "artDecoTower", x: -46.25, z: 21.25, rot: Math.PI / 2, s: 1, w: 6.5, d: 6.5, h: 60, col: [{ dx: 0, dz: 0, w: 8, d: 8, h: 18 }] },
+    { slug: "artDecoTower", x: -21.25, z: 46.25, rot: -Math.PI / 2, s: 1, w: 6.5, d: 6.5, h: 60, col: [{ dx: 0, dz: 0, w: 8, d: 8, h: 18 }] },
+    { slug: "officeTower", x: -46.25, z: 46.25, rot: Math.PI, s: 1.3, w: 5.2, d: 5.2, h: 41.7 },
+    { slug: "officeTower", x: -21.25, z: 21.25, rot: 0, s: 1.3, w: 5.2, d: 5.2, h: 41.7 },
+    /* ---- 🏡 suburb home upgrade — two blocks of real kit houses ---- */
+    { slug: "frenchTownhouse", x: -118.75, z: 92.5, rot: Math.PI, s: 1.05, w: 5.1, d: 3.8, h: 11.1, top: 10 },
+    { slug: "colonialHouse", x: -101.25, z: 92.5, rot: Math.PI, s: 1.2, w: 3.6, d: 4.8, h: 10.2, top: 8.2 },
+    { slug: "alpineChalet", x: -83.75, z: 92.5, rot: Math.PI, s: 1.05, w: 5.3, d: 4.4, h: 7.8, top: 5.9 },
+    { slug: "gabledFarmhouse", x: -118.75, z: 110, rot: Math.PI, s: 1.3, w: 3.9, d: 3.3, h: 8.1, top: 6.1 },
+    { slug: "aFrameCabin", x: -101.25, z: 110, rot: Math.PI, s: 1.2, w: 2.4, d: 4.8, h: 7.4, top: 4.4 },
+    { slug: "colonialHouse", x: -83.75, z: 110, rot: Math.PI, s: 1.15, w: 3.5, d: 4.6, h: 9.8, top: 7.9 },
+    { slug: "aFrameCabin", x: 16.25, z: -110, rot: 0, s: 1.2, w: 2.4, d: 4.8, h: 7.4, top: 4.4 },
+    { slug: "alpineChalet", x: 33.75, z: -110, rot: 0, s: 1.1, w: 5.5, d: 4.4, h: 8.2, top: 6.2 },
+    { slug: "gabledFarmhouse", x: 51.25, z: -110, rot: 0, s: 1.3, w: 3.9, d: 3.3, h: 8.1, top: 6.1 },
+    { slug: "frenchTownhouse", x: 16.25, z: -92.5, rot: 0, s: 1.05, w: 5.1, d: 3.8, h: 11.1, top: 10 },
+    { slug: "colonialHouse", x: 33.75, z: -92.5, rot: 0, s: 1.2, w: 3.6, d: 4.8, h: 10.2, top: 8.2 },
+    { slug: "aFrameCabin", x: 51.25, z: -92.5, rot: 0, s: 1.15, w: 2.3, d: 4.6, h: 7.1, top: 4.2 },
+  ] as CityGlm[],
+  /** True when (x,z) sits on/near any kit building (pad in world units) —
+   *  fringe cottages, wildflower patches & floor scatter all keep off. */
+  hit(x: number, z: number, pad = 0): boolean {
+    for (const g of this.at) {
+      if (Math.abs(x - g.x) < g.w + pad && Math.abs(z - g.z) < g.d + pad) return true;
+      if (g.col) for (const c of g.col) if (Math.abs(x - (g.x + c.dx)) < c.w + pad && Math.abs(z - (g.z + c.dz)) < c.d + pad) return true;
+    }
+    return false;
+  },
+};
+
 const TOWER_ROOF = 0x3d434c;
 const OFFICE_COLS = [0xe0c9a0, 0xc9b8a0, 0xd8d2c4, 0xbfae94, 0xc4cec4, 0xd0c0b0];
 const SHOP_COLS = [0xf4a261, 0xe76f51, 0x2a9d8f, 0xf7b2bd, 0xffb4a2, 0xe9c46a, 0x8ecae6, 0xcdb4db];
@@ -1721,18 +1892,11 @@ export function generateWorld(seed = WORLD_SEED): World {
     lamps.push({ x, z });
   };
 
-  /* ---- downtown towers (2 blocks × 4 towers) ---- */
-  for (const [bx, bz] of [[33.75, -33.75], [-33.75, 33.75]] as const) {
-    for (const a of [-1, 1]) for (const b of [-1, 1]) {
-      const tall = rnd() < 0.5;
-      push(
-        bx + a * 12.5, bz + b * 12.5,
-        range(rnd, 8.5, 12), range(rnd, 8.5, 12),
-        tall ? range(rnd, 38, 58) : range(rnd, 22, 38),
-        0, TOWER_COLS[buildings.length % TOWER_COLS.length], TOWER_ROOF,
-      );
-    }
-  }
+  /* ---- downtown towers — ✨ CITY KIT UPGRADE: the two downtown blocks now
+   *  render REAL polyfork towers (art-deco setback + glass office) straight
+   *  from <CityDistricts>; their standable colliders bake from CITYKIT below.
+   *  (the old procedural box towers are gone — TOWER_COLS stays for the
+   *  remaining midtown offices.) */
 
   /* ---- shopping streets (3 blocks, 5 shops facing the road + plaza) ---- */
   const SHOP_BLOCKS = [[101.25, -33.75], [33.75, 101.25], [-101.25, 33.75]] as const;
@@ -1774,7 +1938,10 @@ export function generateWorld(seed = WORLD_SEED): World {
   // NOTE: [±101.25,-101.25] used to appear here AND in the mixed list — 12 overlapping
   // buildings in one block. Fixed by giving those blocks to mixed only and adding
   // three brand-new home blocks (city is bigger now).
-  const HOME_BLOCKS = [[-101.25, 101.25], [33.75, -101.25], [101.25, 101.25], [-33.75, 101.25], [33.75, 33.75]] as const;
+  // 🏡 [-101.25,101.25] & [33.75,-101.25] upgraded to real CITY KIT houses
+  // (CITYKIT renders them + bakes their colliders) — the other three blocks
+  // keep their procedural homes (hospital / school / mall share those blocks).
+  const HOME_BLOCKS = [[101.25, 101.25], [-33.75, 101.25], [33.75, 33.75]] as const;
   for (const [bx, bz] of HOME_BLOCKS) {
     for (let i = 0; i < 3; i++) for (let j = 0; j < 2; j++) {
       const fz: 1 | -1 = bz < 0 ? 1 : -1;
@@ -1890,6 +2057,22 @@ export function generateWorld(seed = WORLD_SEED): World {
     }
   }
 
+  /* ---- 🏙️ city-kit district furnishing — plaza benches & corner lamps ----
+   * The new districts get their street furniture: benches on the civic plazas,
+   * the Mediterranean court, the shrine gravel, the university green and the
+   * frontier boardwalk; lamps on the district corners (pushLamp refuses roads). */
+  benches.push(
+    { x: -106.25, z: -162.5, rot: 0 }, { x: -97, z: -160, rot: Math.PI / 2 },        // civic east plaza
+    { x: 101.25, z: -160.5, rot: 0 }, { x: 108, z: -153, rot: 0 },                   // civic west plaza
+    { x: -101.25, z: -98.5, rot: 0 }, { x: -95.5, z: -97.5, rot: 0 },                // mediterranean court
+    { x: -170.75, z: -103.5, rot: 0 }, { x: -176, z: -108, rot: 0 },                 // shrine gravel
+    { x: -168.75, z: 103.5, rot: 0 }, { x: -162, z: 103.5, rot: 0 },                 // university green
+    { x: -168.75, z: -25, rot: 0 }, { x: -163.75, z: -25, rot: 0 },                  // frontier boardwalk
+    { x: 26.75, z: -238, rot: 0 }, { x: 38.75, z: -238, rot: 0 },                    // lakeside cabins
+  );
+  pushLamp(-101.25, -166); pushLamp(101.25, -166); pushLamp(-168.75, -97); pushLamp(-168.75, 105);
+  pushLamp(-41, 166); pushLamp(-236.25, -103); pushLamp(236.25, 26); pushLamp(-227, 236.25);
+
   /* ---- 🗽 NYC city-kit district (east midtown column x=168.75) ----
    * Pushed BEFORE the fringe-cottage loops so cottages keep off the plots. */
   for (const n of NYC.boxBuildings) push(n.x, n.z, n.w, n.d, n.h, n.kind, n.color, n.roof, n.awn, n.fz);
@@ -1917,6 +2100,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     // clear of every grid road line (+ sidewalks) and of existing buildings & stations
     if (ROADS.some((o) => Math.abs(x - o) < 12 || Math.abs(z - o) < 12)) continue;
     if (buildings.some((b) => Math.abs(x - b.x) < b.w + 6 && Math.abs(z - b.z) < b.d + 6)) continue;
+    if (CITYKIT.hit(x, z, 6)) continue;                                      // 🏙️ the kit districts keep the fringe clear
     if (POLICE_STATIONS.some((st) => Math.hypot(x - st.x, z - st.z) < 32)) continue;
     if (Math.hypot(x - MALL.x, z - MALL.z) < 30 || Math.hypot(x - SCHOOL.x, z - SCHOOL.z) < 26) continue;
     if (inHospitalCampus(x, z, 6)) continue;                                 // 🏥 the medical campus took this whole block
@@ -2341,6 +2525,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     if (inFlightZone(x, z)) return false; // ✈️ plot + climb-out corridor stay prop-free
     if (inHospitalCampus(x, z, pad)) return false; // 🏥 the medical campus grounds stay prop-free
     if (nearRailway(x, z, 5 + pad) || inRailwayYard(x, z, pad)) return false; // 🚂 no tufts/bushes/ferns sprouting on the rails or in the yard
+    if (CITYKIT.hit(x, z, pad)) return false;                                // 🏙️ nothing sprouts through the kit buildings
     if (buildings.some((b) => Math.abs(x - b.x) < b.w + pad && Math.abs(z - b.z) < b.d + pad)) return false;
     if (fields.some((f) => Math.abs(x - f.x) < f.w + pad && Math.abs(z - f.z) < f.d + pad)) return false;
     if (camps.some((cp) => Math.hypot(cp.x - x, cp.z - z) < 8.5)) return false;
@@ -2396,6 +2581,7 @@ export function generateWorld(seed = WORLD_SEED): World {
     if (Math.abs(x) < 13 && z > MAIN_ROAD.z0 - 3 && z < MAIN_ROAD.z1 + 3) continue;
     if (Math.abs(rr - RING_R) < 9) continue;
     if (inHospitalCampus(x, z, 1.8)) continue;                                              // 🏥 no wildflowers in the hospital lawn
+    if (CITYKIT.hit(x, z, 1.8)) continue;                                                   // 🏙️ none in the kit districts either
     if (buildings.some((b) => Math.abs(x - b.x) < b.w + 1.8 && Math.abs(z - b.z) < b.d + 1.8)) continue;
     wilds.push({ x, z, rot: range(rnd, 0, 6.283), s: range(rnd, 0.7, 1.2), c: Math.floor(rnd() * 3) });
     n++;
@@ -2653,6 +2839,13 @@ export function generateWorld(seed = WORLD_SEED): World {
     x: b.x, z: b.z, w: b.w, d: b.d, h: b.h,
     top: b.kind === 2 || b.kind === 6 ? b.h + PYR_RISE(b.kind) * 0.55 : b.h + 0.9,
   }));
+  /* 🏙️ CITY KIT — every kit building bakes a solid, STANDABLE collider box
+   * (rooftops are floors: skydive onto the bank and stand on it). Tower base
+   * skirts ride along as their own boxes so the setback tiers catch landings. */
+  for (const g of CITYKIT.at) {
+    boxes.push({ x: g.x, z: g.z, w: g.w, d: g.d, h: g.h, top: g.top ?? g.h });
+    if (g.col) for (const c of g.col) boxes.push({ x: g.x + c.dx, z: g.z + c.dz, w: c.w, d: c.d, h: c.h, top: c.h });
+  }
   const circles: CircleCollider[] = trees.map(({ x, z, r }) => ({ x, z, r }));
   circles.push({ x: PARK.x - 11, z: PARK.z + 11, r: 8.2 });               // park pond
   circles.push({ x: PARK.x, z: PARK.z, r: 3.6 });                          // fountain

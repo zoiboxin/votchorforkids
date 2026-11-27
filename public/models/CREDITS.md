@@ -189,3 +189,68 @@ parked beside the player at the start of every run:
 
 Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
 (https://creativecommons.org/licenses/by/4.0/)
+
+`city/` 🏙️ City Kit — the empty city plots (CITYKIT in worldgen.ts), filled
+from the catalog's buildings list (github.com/lucas-martinic/polyfork-catalog ·
+models/buildings.md). NYC-kit civic & residential rows, the Little Tokyo
+shophouse quarter, a Mediterranean plaza, a Frontier Town corner, suburban
+house rows and the downtown art-deco / office tower skyline upgrade:
+
+| File | Model | Triangles |
+| --- | --- | --- |
+| `a-frame-cabin-6cb550.glb` | A-Frame Cabin | 1,502 |
+| `adobe-colonial-farmhouse-cf13d8.glb` | Adobe Colonial Farmhouse | 1,967 |
+| `alley-bar-hut-3e41f8.glb` | Alley Bar Hut | 1,678 |
+| `alpine-chalet-47d59e.glb` | Alpine Chalet | 1,742 |
+| `amusement-parlour-7eb45f.glb` | Amusement Parlour | 1,334 |
+| `apartment-block-6445af.glb` | Apartment Block | 1,374 |
+| `arched-passage-56393e.glb` | Arched Passage | 1,002 |
+| `art-deco-setback-tower-b3a788.glb` | Art Deco Setback Tower | 3,712 |
+| `auto-repair-garage-b91464.glb` | Auto Repair Garage | 2,782 |
+| `barber-and-bath-house-e0ff5c.glb` | Barber and Bath House | 1,545 |
+| `bathhouse-4ac41a.glb` | Bathhouse | 2,213 |
+| `blacksmith-s-shop-9c5f43.glb` | Blacksmith's Shop | 1,339 |
+| `blue-domed-chapel-297391.glb` | Blue-Domed Chapel | 1,251 |
+| `brick-church-322885.glb` | Brick Church | 2,952 |
+| `brick-tenement-7d2014.glb` | Brick Tenement | 3,066 |
+| `brownstone-row-house-1b84fd.glb` | Brownstone Row House | 3,050 |
+| `cast-iron-loft-b04b5a.glb` | Cast Iron Loft | 3,212 |
+| `cave-house-front-ed6b36.glb` | Cave House Front | 1,144 |
+| `clapboard-church-03a6f5.glb` | Clapboard Church | 1,513 |
+| `clock-tower-752081.glb` | Clock Tower | 1,178 |
+| `colonial-house-d6f8fd.glb` | Colonial House | 1,193 |
+| `convenience-store-c30e1d.glb` | Convenience Store | 920 |
+| `corner-shophouse-ad15c2.glb` | Corner Shophouse | 1,134 |
+| `corner-shop-5aec8c.glb` | Corner Shop | 2,887 |
+| `corner-tenement-92fb62.glb` | Corner Tenement | 2,842 |
+| `cube-house-module-a9b8e8.glb` | Cube House Module | 1,328 |
+| `department-store-ffbd58.glb` | Department Store | 3,108 |
+| `domed-church-dcbe85.glb` | Domed Church | 1,844 |
+| `dovecote-tower-db7d30.glb` | Dovecote Tower | 1,638 |
+| `fire-station-e2b756.glb` | Fire Station | 2,282 |
+| `french-quarter-townhouse-fd109f.glb` | French Quarter Townhouse | 4,204 |
+| `gabled-farmhouse-c7534f.glb` | Gabled Farmhouse | 908 |
+| `general-store-a2187a.glb` | General Store | 1,395 |
+| `hotel-b43f66.glb` | Hotel | 1,235 |
+| `kafeneio-25e357.glb` | Kafeneio | 1,920 |
+| `livery-stable-c01ee0.glb` | Livery Stable | 1,677 |
+| `movie-theater-40eeef.glb` | Movie Theater | 3,106 |
+| `narrow-walk-up-41f10c.glb` | Narrow Walk-Up | 2,962 |
+| `newsstand-6dfd65.glb` | Newsstand | 560 |
+| `office-tower-1538cc.glb` | Office Tower | 2,676 |
+| `one-storey-shop-row-83c958.glb` | One-Storey Shop Row | 2,410 |
+| `parking-garage-6e4f2c.glb` | Parking Garage | 2,229 |
+| `postwar-apartment-slab-cee5f9.glb` | Postwar Apartment Slab | 3,812 |
+| `prewar-apartment-house-1081a6.glb` | Prewar Apartment House | 3,996 |
+| `public-school-19ade5.glb` | Public School | 3,074 |
+| `saloon-6dda1c.glb` | Saloon | 1,394 |
+| `small-shrine-hall-cb8b25.glb` | Small Shrine Hall | 1,432 |
+| `street-diner-40fc87.glb` | Street Diner | 2,584 |
+| `subway-entrance-9ccc8b.glb` | Subway Entrance | 1,900 |
+| `telegraph-and-post-office-71d3ff.glb` | Telegraph and Post Office | 1,232 |
+| `three-storey-shophouse-2f6378.glb` | Three-Storey Shophouse | 1,146 |
+| `tiered-bell-tower-e1b706.glb` | Tiered Bell Tower | 1,512 |
+| `two-storey-shophouse-183790.glb` | Two-Storey Shophouse | 1,250 |
+| `undertaker-s-3e1285.glb` | Undertaker's | 950 |
+| `village-shopfront-d3088e.glb` | Village Shopfront | 2,208 |
+| `wide-shophouse-089f20.glb` | Wide Shophouse | 988 |

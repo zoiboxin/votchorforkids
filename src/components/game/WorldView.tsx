@@ -9,7 +9,7 @@ import {
   WILDLIFE_ENABLED,
 } from "@/lib/game/constants";
 import {
-  AVENUE, BARN_BASE, DIGS, FARMKIT, FIELDS_BASE, GATE, generateWorld, GRAVEKIT, inAirportPlot, MALL, MAIN_ROAD, NYC, PARK, RAILWAY, railPoint, RING_GAP, RING_R, RING_W, ROAD_W, ROADS, SCHOOL, TOWN_SQUARE, terrainHeight,
+  AVENUE, BARN_BASE, CITYKIT, DIGS, FARMKIT, FIELDS_BASE, GATE, generateWorld, GRAVEKIT, inAirportPlot, MALL, MAIN_ROAD, NYC, PARK, RAILWAY, railPoint, RING_GAP, RING_R, RING_W, ROAD_W, ROADS, SCHOOL, TOWN_SQUARE, terrainHeight,
   type World,
 } from "@/lib/game/worldgen";
 import { nameTag } from "@/lib/game/character";
@@ -32,6 +32,7 @@ import { RailwayKit } from "@/components/game/RailwayKit";
 import { ConstructionSites } from "@/components/game/ConstructionSites";
 import { PrehistoricValley } from "@/components/game/PrehistoricValley";
 import { registerCullRoot, resetCullRoots, tickStaticCull } from "@/lib/game/staticCull";
+import { preloadCityModels, spawnCityModel, useCityModels } from "@/lib/game/cityModels";
 
 export const WORLD: World = generateWorld();
 /** 🚕🚓⚰️ body types that render from a real polyfork GLB (yellow cab + the
@@ -3889,6 +3890,35 @@ function nycBladeTex(text: string, bg: string): THREE.CanvasTexture {
   });
 }
 
+/* ------------------------- 🏙️ CITY KIT districts -------------------------
+ * The empty city plots (CITYKIT in worldgen) render their real polyfork
+ * buildings here — one streamed GLB per placement. Models load in the
+ * background (cityModels.ts): each placement mounts the moment its GLB
+ * lands, clones share geometry & materials, and the whole group rides the
+ * static culler inside the cullable world root. Colliders are baked in
+ * worldgen, so every roof is standable from the first frame. */
+function CityDistricts() {
+  useCityModels(); // re-render whenever another building GLB finished loading
+  useEffect(() => { preloadCityModels(); }, []);
+  /** mounted clones per placement index — kept across re-renders so each
+   *  building mounts exactly once (new GLBs only ADD to the map) */
+  const clones = useRef(new Map<number, THREE.Group>());
+  CITYKIT.at.forEach((g, i) => {
+    if (!clones.current.has(i)) {
+      const obj = spawnCityModel(g.slug);
+      if (obj) clones.current.set(i, obj);
+    }
+  });
+  return (
+    <group name="city-districts">
+      {[...clones.current.entries()].map(([i, obj]) => {
+        const g = CITYKIT.at[i];
+        return <primitive key={i} object={obj} position={[g.x, 0, g.z]} rotation-y={g.rot} scale={g.s} />;
+      })}
+    </group>
+  );
+}
+
 function NycDistrict() {
   const billboardTex = useMemo(() => nycTex(512, 288, (g, W, H) => {
     g.fillStyle = "#b5432a"; g.fillRect(0, 0, W, H);
@@ -5102,6 +5132,7 @@ export function WorldView({ clockRef, engine }: { clockRef: React.MutableRefObje
         <FarmKit />
         <Railway />
         <NycDistrict />
+        <CityDistricts />
         <Landmarks />
         <HospitalCampus engine={engine} />
         <ConstructionSites engine={engine} clockRef={clockRef} />
