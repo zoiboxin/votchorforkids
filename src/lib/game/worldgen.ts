@@ -1122,9 +1122,10 @@ export const SITEKIT = (() => {
         { x: -162.5, z: 30, y: 3.2, rot: Math.PI / 2 }, { x: -162.5, z: 34, y: 3.2, rot: Math.PI / 2 }, { x: -162.5, z: 38, y: 3.2, rot: Math.PI / 2 },
         { x: -162.5, z: 30, y: 6.3, rot: Math.PI / 2 }, { x: -162.5, z: 34, y: 6.3, rot: Math.PI / 2 }, { x: -162.5, z: 38, y: 6.3, rot: Math.PI / 2 },
       ],
-      // the concrete core — two full-height 18.6m pours beside the frame
+      // the concrete core — two full-height pours BUTTED against the frame's
+      // west face (kit scene DNA: core bolted flush to the steel, leading it)
       coreSection: [
-        { x: -166.5, z: 30.5, y: -3, rot: Math.PI / 2 }, { x: -166.5, z: 34.5, y: -3, rot: Math.PI / 2 },
+        { x: -165.5, z: 30.5, y: -3, rot: Math.PI / 2 }, { x: -165.5, z: 34.5, y: -3, rot: Math.PI / 2 },
       ],
       // scaffold HUGS the tower (kit DNA): two 13m bays against the north
       // face from the pit floor (topped out level with the frame) + the east
@@ -1170,9 +1171,12 @@ export const SITEKIT = (() => {
       pallet: [
         { x: -152.6, z: 44.6, rot: 0.1 }, { x: -152.6, z: 46.2, rot: -0.1 },
         { x: -151.2, z: 44.6, rot: 0.15 }, { x: -151.2, z: 46.2, rot: 0 },
+        // block/brick pallets staged ON the build — the kit scene keeps a
+        // masonry supply right at the frame (pit NE terrace shelf)
+        { x: -161, z: 44, y: -3, rot: 0 }, { x: -161, z: 46, y: -3, rot: 0.05 },
       ],
-      dumpyBag: [{ x: -154.4, z: 48.8, rot: 0.3 }, { x: -153.2, z: 49.2, rot: -0.2 }],
-      rebar: [{ x: -152.5, z: 54, rot: 0 }],
+      dumpyBag: [{ x: -154.4, z: 48.8, rot: 0.3 }, { x: -153.2, z: 49.2, rot: -0.2 }, { x: -163.2, z: 45.2, y: -3, rot: 0.3 }],
+      rebar: [{ x: -152.5, z: 54, rot: 0 }, { x: -167.5, z: 32.5, y: -3, rot: 0 }],
       scaffoldStack: [{ x: -149.5, z: 35.5, rot: Math.PI / 2 }, { x: -149.5, z: 39.5, rot: Math.PI / 2 }],
       hardcoreTile: [
         { x: -150.5, z: 44, rot: 0 }, { x: -150.5, z: 48, rot: 0 }, { x: -150.5, z: 52, rot: 0 },
@@ -1194,13 +1198,14 @@ export const SITEKIT = (() => {
       wheelWash: [{ x: -168.75, z: 7.5, rot: 0 }],
       flatbedLorry: [{ x: -195.5, z: 45, rot: -Math.PI / 2 }],
       waterBowser: [{ x: -147.5, z: 30, rot: 1.2 }],
-      formwork: [{ x: -176.5, z: 17.6, rot: 0 }, { x: -172.5, z: 17.6, rot: 0 }],
+      formwork: [{ x: -176.5, z: 17.6, rot: 0 }, { x: -172.5, z: 17.6, rot: 0 },
+        { x: -168, z: 46, rot: 0 }, { x: -172, z: 46, rot: 0 }],
       skip: [{ x: -147, z: 22, rot: 0.3 }],
       arrowBoard: [{ x: -193.6, z: 33.5, rot: Math.PI / 2 }],
       signBoard: [{ x: -160, z: 12.6, rot: 0.2 }],
       mudTile: [{ x: -152.5, z: 28, rot: 0.2 }, { x: -157, z: 44, rot: 0.5 }],
       crashBarrier: [{ x: -165, z: 20.4, rot: 0 }, { x: -172.5, z: 20.4, rot: 0 }],
-      cone: [{ x: -165.5, z: 19.5, rot: 0.2 }, { x: -172, z: 20 }, { x: -168.75, z: 16.5 }, { x: -147.5, z: 24, rot: 0.4 }, { x: -150, z: 18.5 }, { x: -189, z: 18 }, { x: -163.5, z: 15.5, rot: 0.6 }, { x: -174, z: 9.2, rot: 0.2 }],
+      cone: [{ x: -165.5, z: 19.5, rot: 0.2 }, { x: -172, z: 20 }, { x: -168.75, z: 16.5 }, { x: -147.5, z: 24, rot: 0.4 }, { x: -150, z: 18.5 }, { x: -189, z: 18 }, { x: -163.5, z: 15.5, rot: 0.6 }, { x: -174, z: 9.2, rot: 0.2 }, { x: -169.3, z: 11.4, rot: 0.1 }],
     },
     crew: [
       { slug: "groundworker-083f5c", x: -164.5, z: 31, y: -3, rot: 2.2 },
@@ -1224,7 +1229,7 @@ export const SITEKIT = (() => {
       conCol(-149, 44, 1.5, 1.25), conCol(-149, 48.2, 1.5, 1.25), conCol(-149, 52.4, 1.5, 1.25), // precast run — climbable
       conCol(-152.6, 44.6, 0.7, 0.55), conCol(-152.6, 46.2, 0.7, 0.55), conCol(-151.2, 44.6, 0.7, 0.55), conCol(-151.2, 46.2, 0.7, 0.55), // pallets — steppable
       conCol(-154.4, 48.8, 0.75, 0.95), conCol(-153.2, 49.2, 0.75, 0.95), // dumpy bags — steppable
-      conCol(-152.5, 54, 1.1),                                   // rebar cage
+      conCol(-152.5, 54, 1.1), conCol(-167.5, 32.5, 1.1),        // rebar cages (yard + core pour)
       conCol(-149.5, 35.5, 0.7, 1.3), conCol(-149.5, 39.5, 0.7, 1.3), // scaffold stacks — climbable
       conCol(-156.8, 46.5, 2.2), conCol(-156.2, 52.5, 1.6),      // telehandler + skid-steer
       conCol(-177.5, 15.6, 2.4), conCol(-170.8, 15.2, 2.7),      // pump + mixer on the frontage
@@ -1234,7 +1239,10 @@ export const SITEKIT = (() => {
       conCol(-147, 22, 1.7, 1.45),                               // skip — hop on the rim
       conCol(-193.6, 33.5, 0.6), conCol(-160, 12.6, 0.6),        // arrow + sign boards
       conCol(-173, 10.5, 0.55), conCol(-157, 10.5, 0.55),        // temporary signals
-      conCol(-163.5, 15.5, 0.35), conCol(-174, 9.2, 0.35),       // cones
+      conCol(-163.5, 15.5, 0.35), conCol(-174, 9.2, 0.35), conCol(-169.3, 11.4, 0.35), // cones (gate dressing)
+      conCol(-161, 44, 0.7, pitTop(-161, 44, 0.55)), conCol(-161, 46, 0.7, pitTop(-161, 46, 0.55)), // build-side block pallets — steppable
+      conCol(-163.2, 45.2, 0.75, pitTop(-163.2, 45.2, 0.95)),    // terrace dumpy bag — steppable
+      conCol(-168, 46, 0.7), conCol(-172, 46, 0.7),              // staged formwork runs
     ],
     boxes: [{ x: -186, z: 44, w: 4.4, d: 8.4, h: 3.4 }],         // site cabin
   };
@@ -1269,7 +1277,9 @@ export const SITEKIT = (() => {
         { x: 243, z: -94, y: 1.9, rot: Math.PI / 2 }, { x: 243, z: -98, y: 1.9, rot: Math.PI / 2 },
         { x: 243, z: -94, y: 5, rot: Math.PI / 2 }, { x: 243, z: -98, y: 5, rot: Math.PI / 2 },
       ],
-      coreSection: [{ x: 249, z: -99, y: -4.3, rot: Math.PI / 2 }],
+      // the core pours FLUSH against the frame's east face (kit scene DNA),
+      // leading the steel one bay south
+      coreSection: [{ x: 246, z: -99, y: -4.3, rot: Math.PI / 2 }],
       // scaffold HUGS the tower's north face from the pit floor (kit DNA)
       scaffold: [{ x: 241, z: -92.7, y: -4.3, rot: 0 }, { x: 245, z: -92.7, y: -4.3, rot: 0 }],
       scaffoldStack: [{ x: 236.5, z: -92.5, y: -4.3, rot: Math.PI / 2 }, { x: 236.5, z: -96.5, y: -4.3, rot: Math.PI / 2 }],
@@ -1320,10 +1330,13 @@ export const SITEKIT = (() => {
       airCompressor: [{ x: 253.5, z: -86.5, rot: 0.9 }],
       cementMixerStand: [{ x: 250.5, z: -97, rot: -0.5 }],
       lightTower: [{ x: 216.5, z: -80.5 }, { x: 214, z: -95, rot: 1.1 }],
-      pallet: [{ x: 259.5, z: -88, rot: 0.3 }, { x: 257.5, z: -85.5, rot: -0.5 }],
-      dumpyBag: [{ x: 256.5, z: -81.5, rot: 0.3 }, { x: 255.4, z: -82.2, rot: 0.8 }],
+      pallet: [{ x: 259.5, z: -88, rot: 0.3 }, { x: 257.5, z: -85.5, rot: -0.5 },
+        // block/brick supply INSIDE the frame bays (kit scene: masonry staged
+        // right under the decks it builds) + the core pour supply
+        { x: 242, z: -96, y: -4.3, rot: 0 }, { x: 244, z: -96, y: -4.3, rot: 0.05 }],
+      dumpyBag: [{ x: 256.5, z: -81.5, rot: 0.3 }, { x: 255.4, z: -82.2, rot: 0.8 }, { x: 244, z: -94, y: -4.3, rot: -0.2 }],
       telehandler: [{ x: 258.8, z: -94.5, rot: -Math.PI / 2 }],
-      rebar: [{ x: 256, z: -112, rot: 1 }],
+      rebar: [{ x: 256, z: -112, rot: 1 }, { x: 246, z: -95.8, y: -4.3, rot: 0 }],
       skip: [{ x: 214.5, z: -104, rot: 0.4 }],
       signBoard: [{ x: 218.5, z: -79.5, rot: -Math.PI / 4 }],
       arrowBoard: [{ x: 214, z: -127, rot: 0.2 }],
@@ -1354,12 +1367,15 @@ export const SITEKIT = (() => {
       conCol(246.5, -85.5, 1.2), conCol(252, -92.5, 1.0), conCol(253.5, -86.5, 1.3), conCol(250.5, -97, 1.1), // shelter/vault/compressor/mixer
       conCol(259.5, -88, 0.7, 0.55), conCol(257.5, -85.5, 0.7, 0.55), // pallets — steppable
       conCol(256.5, -81.5, 0.75, 0.95), conCol(255.4, -82.2, 0.75, 0.95), // dumpy bags — steppable
+      conCol(242, -96, 0.7, pitTop(242, -96, 0.55)), conCol(244, -96, 0.7, pitTop(244, -96, 0.55)), // bay block pallets — steppable
+      conCol(244, -94, 0.75, pitTop(244, -94, 0.95)),            // bay dumpy bag — steppable
       conCol(258.8, -94.5, 2.1),                                 // telehandler
       conCol(236.5, -92.5, 0.7, pitTop(236.5, -92.5, 0.75)), conCol(236.5, -96.5, 0.7, pitTop(236.5, -96.5, 0.75)), // scaffold stacks (floor) — climbable
       conCol(241, -92.7, 1.7, pitTop(241, -92.7, 2.3)), conCol(245, -92.7, 1.7, pitTop(245, -92.7, 2.3)), // tower scaffold — jump platforms
       conCol(226, -74.5, 2.6), conCol(219, -75.8, 1.6),          // flatbed lorry + water bowser
       conCol(258.5, -100, 0.7), conCol(258.5, -104, 0.7),        // formwork runs
       conCol(256, -112, 1.1), conCol(214.5, -104, 1.7, 1.45),    // rebar + skip
+      conCol(246, -95.8, 1.1),                                   // core-pour rebar cage
       conCol(218.5, -79.5, 0.6), conCol(214, -127, 0.6),         // sign + arrow boards
       conCol(226, -77, 0.35), conCol(250, -73.5, 0.35),          // new cones
     ],
@@ -1421,7 +1437,8 @@ export const SITEKIT = (() => {
       mudTile: [{ x: 20, z: 176, rot: 0.9 }, { x: 26, z: 186, rot: 0.2 }],
       slabTile: [{ x: 24, z: 190, rot: 0.2 }, { x: 47, z: 188, rot: 0 }],
       hardcoreTile: [{ x: 28, z: 190.5, rot: 0 }, { x: 32, z: 191, rot: 0.1 }, { x: 46, z: 180, rot: 0.05 }, { x: 46, z: 184, rot: 0.1 }],
-      formwork: [{ x: 46.5, z: 175.5, rot: Math.PI / 2 }, { x: 46.5, z: 179.5, rot: Math.PI / 2 }],
+      formwork: [{ x: 46.5, z: 175.5, rot: Math.PI / 2 }, { x: 46.5, z: 179.5, rot: Math.PI / 2 },
+        { x: 37.5, z: 169, y: -2.7, rot: 0 }],
       cementMixerStand: [{ x: 44.5, z: 169.5, rot: 0.8 }],
       arrowBoard: [{ x: 44, z: 196.5, rot: Math.PI }],
       trafficLight: [{ x: 20, z: 196.5, rot: -Math.PI / 2 }, { x: 48, z: 196.5, rot: Math.PI / 2 }],
@@ -1451,14 +1468,16 @@ export const SITEKIT = (() => {
       lightTower: [{ x: 12.5, z: 150.5 }, { x: 48, z: 162, rot: -0.6 }],
       waterBowser: [{ x: 16, z: 152.5, rot: 0.5 }],
       compactorPlate: [{ x: 21.5, z: 182, rot: 0.5 }],
-      pallet: [{ x: 44, z: 176, rot: 0.4 }, { x: 42, z: 178.5, rot: -0.7 }],
-      dumpyBag: [{ x: 45.5, z: 177, rot: 0.4 }, { x: 46.5, z: 175.8, rot: -0.3 }],
+      pallet: [{ x: 44, z: 176, rot: 0.4 }, { x: 42, z: 178.5, rot: -0.7 },
+        // block/brick supply at the core pour (pit floor, east of the slab)
+        { x: 43.5, z: 171, y: -2.7, rot: 0 }, { x: 43.5, z: 173, y: -2.7, rot: 0.05 }],
+      dumpyBag: [{ x: 45.5, z: 177, rot: 0.4 }, { x: 46.5, z: 175.8, rot: -0.3 }, { x: 44.9, z: 176.5, y: -2.7, rot: 0.4 }],
       precast: [{ x: 50, z: 182, rot: 0.3 }, { x: 50, z: 178, rot: -0.2 }],
-      rebar: [{ x: 38, z: 188, rot: 0.7 }],
+      rebar: [{ x: 38, z: 188, rot: 0.7 }, { x: 41, z: 175.5, y: -2.7, rot: 0 }],
       skip: [{ x: 54.5, z: 168, rot: 0.2 }],
       signBoard: [{ x: 14.5, z: 160, rot: Math.PI / 2 }],
       crashBarrier: [{ x: 18.4, z: 163.5, rot: 0 }, { x: 18.4, z: 174, rot: 0 }],
-      cone: [{ x: 18, z: 165.5 }, { x: 18, z: 172, rot: 0.3 }, { x: 14.5, z: 168.75 }, { x: 48, z: 160, rot: 0.4 }, { x: 24, z: 158 }, { x: 44, z: 164, rot: 0.2 }, { x: 12, z: 190, rot: 0.5 }, { x: 13, z: 165.5, rot: 0.4 }, { x: 7.5, z: 173, rot: 0.9 }],
+      cone: [{ x: 18, z: 165.5 }, { x: 18, z: 172, rot: 0.3 }, { x: 14.5, z: 168.75 }, { x: 48, z: 160, rot: 0.4 }, { x: 24, z: 158 }, { x: 44, z: 164, rot: 0.2 }, { x: 12, z: 190, rot: 0.5 }, { x: 13, z: 165.5, rot: 0.4 }, { x: 7.5, z: 173, rot: 0.9 }, { x: 10.4, z: 166.6, rot: 0.2 }],
     },
     crew: [
       { slug: "surveyor-82e5c7", x: 47, z: 165.5, rot: -1.2 },
@@ -1478,8 +1497,12 @@ export const SITEKIT = (() => {
       conCol(52.5, 170, 0.7, 1.3), conCol(52.5, 174, 0.7, 1.3),  // scaffold stacks — climbable
       conCol(50, 182, 2.1, 1.25), conCol(50, 178, 2.1, 1.25),    // precast stacks — climbable
       conCol(44, 176, 0.7, 0.55), conCol(42, 178.5, 0.7, 0.55),  // pallets — steppable
+      conCol(43.5, 171, 0.7, pitTop(43.5, 171, 0.55)), conCol(43.5, 173, 0.7, pitTop(43.5, 173, 0.55)), // core-side block pallets — steppable
+      conCol(44.9, 176.5, 0.75, pitTop(44.9, 176.5, 0.95)),      // pit dumpy bag — steppable
       conCol(45.5, 177, 0.75, 0.95), conCol(46.5, 175.8, 0.75, 0.95), // dumpy bags — steppable
       conCol(38, 188, 1.1),                                      // rebar cage
+      conCol(41, 175.5, 1.1),                                    // core-pour rebar cage
+      conCol(37.5, 169, 0.7),                                    // staged formwork run
       conCol(46.5, 175.5, 0.7), conCol(46.5, 179.5, 0.7),        // formwork runs
       conCol(44.5, 169.5, 1.1), conCol(21.5, 182, 0.6),          // cement mixer stand + compactor plate
       conCol(54.5, 168, 1.7, 1.45),                              // skip — hop on the rim
@@ -1489,6 +1512,7 @@ export const SITEKIT = (() => {
       conCol(55.5, 155.5, 1.3), conCol(16, 152.5, 1.6),          // air compressor + water bowser
       conCol(14.5, 160, 0.6), conCol(44, 196.5, 0.6), conCol(20, 196.5, 0.55), conCol(48, 196.5, 0.55), // boards + lights
       conCol(13, 165.5, 0.35), conCol(7.5, 173, 0.35),           // new cones
+      conCol(10.4, 166.6, 0.35),                                 // gate-sliver cone
     ],
     boxes: [{ x: 50, z: 152, w: 8.4, d: 4.4, h: 3.4 }],          // site cabin (rot −π/2 → length along x)
   };

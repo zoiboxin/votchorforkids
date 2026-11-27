@@ -659,7 +659,10 @@ export class GameEngine {
   private exhaustedAnnounced = false;
   private pocketFullT = 0;  // throttles the "pockets full" toast
   private powerFullT = 0;   // throttles the "power pocket full" toast
-  clock = 0.3;
+  /** 🌗 preview convenience — ?clock=0..1 (0 midnight, 0.5 noon) starts the
+   *  day cycle at that time so district tours can verify night lighting
+   *  immediately (same contract as ?at=). Ignored unless the value parses. */
+  clock = this.previewClock();
   stars = 0; starTimer = 0;
   chased = false; // true while (or just after) any cop is hunting the player
   carriedVotes: VoteEnt[] = [];
@@ -1109,6 +1112,16 @@ export class GameEngine {
     this.player.x = s.x;
     this.player.z = s.z;
   }
+  /** 🌗 preview convenience — ?clock=0..1 (0 = midnight, 0.5 = noon) pins the
+   *  START of the day cycle so district tours can verify night lighting
+   *  immediately (same contract as ?at=). Returns 0.3 (morning) otherwise. */
+  private previewClock(): number {
+    const c = typeof window === "undefined"
+      ? NaN
+      : Number(new URLSearchParams(window.location.search).get("clock"));
+    return Number.isFinite(c) && c >= 0 && c < 1 ? c : 0.3;
+  }
+
   /** 🎲 PUBG-style drop: YOU parachute into a random street every match.
    *  Multiplayer: your seat slot picks the spot (same on every client). */
   private rollPlayerSpawn() {
@@ -2083,7 +2096,7 @@ export class GameEngine {
     this.netCrewMirror = false; // 🤖 crew mirror re-arms from the live host stream
     this.netPhaseAt = 0; // 🕐 host clock trust re-arms too
     for (const lc of this.licenses) lc.active = true;
-    this.detainedT = 0; this.invulnT = 8; this.elapsed = 0; this.won = false; this.lost = false; this.clock = 0.3;
+    this.detainedT = 0; this.invulnT = 8; this.elapsed = 0; this.won = false; this.lost = false; this.clock = this.previewClock();
     this.arrest = "free"; this.arrestStation = -1; this.playerInVan = false; this.vanNeeded = false;
     /* --- 7 Nights: rewind the story --- */
     this.nightNo = 1; this.phase = "day"; this.phaseT = PHASE_DAY_S;
