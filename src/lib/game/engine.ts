@@ -659,9 +659,15 @@ export class GameEngine {
   private exhaustedAnnounced = false;
   private pocketFullT = 0;  // throttles the "pockets full" toast
   private powerFullT = 0;   // throttles the "power pocket full" toast
-  /** 🌗 preview convenience — ?clock=0..1 (0 midnight, 0.5 noon) starts the
-   *  day cycle at that time so district tours can verify night lighting
-   *  immediately (same contract as ?at=). Ignored unless the value parses. */
+  /** 🌗 preview convenience — ?clock=0..1 (0 = midnight, 0.5 = noon) pins the
+   *  SKY at that time so district tours can verify night lighting immediately
+   *  (same contract as ?at=). previewClockPinned also freezes the net clock-sync
+   *  (engineNet) AND overrides the phase sky target below, so the pinned sky
+   *  can't drift to host time or slide back to high noon with the phases.
+   *  Declared BEFORE clock — the field initializer below calls previewClock(). */
+  previewClockPinned = false;
+  previewClockValue = 0.3;
+  /** 🌗 starts the day cycle from ?clock= when present (0.3 = morning). */
   clock = this.previewClock();
   stars = 0; starTimer = 0;
   chased = false; // true while (or just after) any cop is hunting the player
@@ -1112,14 +1118,17 @@ export class GameEngine {
     this.player.x = s.x;
     this.player.z = s.z;
   }
-  /** 🌗 preview convenience — ?clock=0..1 (0 = midnight, 0.5 = noon) pins the
-   *  START of the day cycle so district tours can verify night lighting
-   *  immediately (same contract as ?at=). Returns 0.3 (morning) otherwise. */
+  /** 🌗 starts the day cycle from ?clock= when present (0.3 = morning); also
+   *  records the pin + value so the phase sky-ease and engineNet's clock-sync
+   *  both leave the tour's sky alone. */
   private previewClock(): number {
     const c = typeof window === "undefined"
       ? NaN
       : Number(new URLSearchParams(window.location.search).get("clock"));
-    return Number.isFinite(c) && c >= 0 && c < 1 ? c : 0.3;
+    const pinned = Number.isFinite(c) && c >= 0 && c < 1;
+    this.previewClockPinned = pinned;
+    this.previewClockValue = pinned ? c : 0.3;
+    return pinned ? c : 0.3;
   }
 
   /** 🎲 PUBG-style drop: YOU parachute into a random street every match.
@@ -4308,6 +4317,7 @@ export class GameEngine {
     if (this.phase === "dusk") target = 0.46 + (1 - Math.max(0, this.phaseT) / PHASE_DUSK_S) * 0.28; // sunset slide
     else if (this.phase === "night") target = 0.80; // deep night
     else if (this.phase === "dawn") target = 0.30 + (Math.max(0, this.phaseT) / PHASE_DAWN_S) * 0.44; // sunrise slide
+    if (this.previewClockPinned) target = this.previewClockValue; // 🌗 ?clock= tour — the sky stays pinned
     this.clock += (target - this.clock) * Math.min(1, dt * 2.4);
   }
 

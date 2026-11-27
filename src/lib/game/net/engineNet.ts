@@ -315,7 +315,9 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       // path around the circle, and snap past ⅓ of a day. The old `|dc| > 3`
       // threshold could NEVER fire (max diff is 1), so joiners EASED through
       // noon for ~10 s — their lamps rendered day-plain while the night raged.
-      if (ev.clock !== undefined) {
+      // 🌗 ?clock= preview tours pin the sky locally — the sync must not drag
+      // the tour back to the host's morning (same contract as ?at=).
+      if (ev.clock !== undefined && !engine.previewClockPinned) {
         let dc = ev.clock - engine.clock;
         dc = ((dc + 0.5) % 1 + 1) % 1 - 0.5; // shortest path across midnight
         if (Math.abs(dc) > 0.34) engine.clock = (engine.clock + dc + 1) % 1;
@@ -340,7 +342,8 @@ export function attachNet(opts: AttachNetOpts): NetHandle {
       if (engine.nightNo !== ev.nightNo) engine.nightNo = ev.nightNo;
       // gentle clock drift-correction keeps every client's sky on the same beat
       // (shortest path around the wrap, same ⅓-day snap rule as above)
-      if (ev.clock !== undefined) {
+      // 🌗 skipped for ?clock= preview tours — the pinned sky must not drift back
+      if (ev.clock !== undefined && !engine.previewClockPinned) {
         let dc = ev.clock - engine.clock;
         dc = ((dc + 0.5) % 1 + 1) % 1 - 0.5;
         engine.clock = Math.abs(dc) > 0.34
