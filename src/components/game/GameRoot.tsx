@@ -27,17 +27,12 @@ import { LockerRoom } from "./LockerRoom";
 import { VictoryModal } from "./VictoryModal";
 import { Multiplayer } from "./Multiplayer";
 import { MatchLobby } from "./MatchLobby";
+import { BootScreen } from "./BootScreen";
 import { CookieBar } from "./Landing";
 
 const Scene = dynamic(() => import("./Scene").then((m) => m.Scene), {
   ssr: false,
-  loading: () => (
-    <div className="absolute inset-0 flex items-center justify-center bg-slate-950">
-      <div className="animate-bounce rounded-2xl bg-white/10 px-6 py-3 text-lg font-black text-amber-200 shadow-xl">
-        Night is falling… 🌙
-      </div>
-    </div>
-  ),
+  loading: () => <BootScreen variant="scene" />,
 });
 
 /** 🏁 once the run is over, an idle paused player gets this long at the pause
@@ -513,13 +508,7 @@ export function GameRoot() {
         </>
       )}
 
-      {screen === "connecting" && !engine && (
-        <div className="absolute inset-0 flex items-center justify-center bg-slate-950">
-          <div className="animate-bounce rounded-2xl bg-white/10 px-6 py-3 text-lg font-black text-amber-200 shadow-xl">
-            The first night approaches… 🌑
-          </div>
-        </div>
-      )}
+      {screen === "connecting" && !engine && <BootScreen variant="scene" />}
 
       {/* 🍪 consent is reachable from EVERY screen — accepting arms the cloud profile */}
       <CookieBar />
