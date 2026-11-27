@@ -1122,9 +1122,15 @@ export class GameEngine {
    *  records the pin + value so the phase sky-ease and engineNet's clock-sync
    *  both leave the tour's sky alone. */
   private previewClock(): number {
-    const c = typeof window === "undefined"
-      ? NaN
-      : Number(new URLSearchParams(window.location.search).get("clock"));
+    // ⚠️ Number(null) === 0 — a bare .get("clock") MUST NOT feed Number()
+    //    directly or an ABSENT param parses as clock=0 (midnight) and, with the
+    //    pin live, the whole night is played under a pinned black sky (the
+    //    phase HUD proudly says DAY while lamps/fog/bots run night behaviour).
+    //    Absent or empty ⇒ NaN ⇒ no pin, normal 0.3 morning start.
+    const raw = typeof window === "undefined"
+      ? null
+      : new URLSearchParams(window.location.search).get("clock");
+    const c = raw == null || raw.trim() === "" ? NaN : Number(raw);
     const pinned = Number.isFinite(c) && c >= 0 && c < 1;
     this.previewClockPinned = pinned;
     this.previewClockValue = pinned ? c : 0.3;
