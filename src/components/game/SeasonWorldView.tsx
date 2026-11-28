@@ -89,7 +89,9 @@ function Stars({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
   });
   return (
     <points geometry={geo} frustumCulled={false}>
-      <pointsMaterial ref={mat} color="#e8ecff" size={7} sizeAttenuation transparent opacity={0} depthWrite={false} />
+      {/* fog={false} — the night fog closes to a 300 u pocket; without this the
+          whole star dome would wash out exactly when it should shine */}
+      <pointsMaterial ref={mat} color="#e8ecff" size={7} sizeAttenuation transparent opacity={0} depthWrite={false} fog={false} />
     </points>
   );
 }
@@ -747,7 +749,8 @@ function SeasonRim({ world }: { world: SeasonWorld }) {
     const q = new THREE.Quaternion();
     for (let i = 0; i < PEAKS; i++) {
       const a = (i / PEAKS) * Math.PI * 2 + (i % 3) * 0.014;
-      const r = 2260 + ((i * 83) % 320);
+      // inside the camera far plane (2400) so the skyline reads from any radius
+      const r = 2120 + ((i * 83) % 180);
       const s = 130 + ((i * 137) % 130);
       const h = s * (0.9 + ((i * 53) % 40) / 90);
       q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), a);

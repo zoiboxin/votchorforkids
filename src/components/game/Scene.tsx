@@ -311,6 +311,16 @@ export function useGameInput(engine: GameEngine | null) {
   }, [engine, setTouch]);
 }
 
+/** 🧹 frees the WebGL context the moment a Canvas unmounts (map swaps). */
+function CanvasJanitor() {
+  const gl = useThree((s) => s.gl);
+  useEffect(() => () => {
+    try { gl.forceContextLoss(); } catch { /* context already gone */ }
+    try { gl.dispose(); } catch { /* already disposed */ }
+  }, [gl]);
+  return null;
+}
+
 export function Scene({ engine }: { engine: GameEngine }) {
   const clockRef = useRef<number>(0.3) as ClockRef;
   // 🗺️ seasonal arenas run the same physics on a 4×4 km field — the camera far
@@ -334,7 +344,7 @@ export function Scene({ engine }: { engine: GameEngine }) {
     <Canvas
       key={mapId}
       className={`absolute inset-0 ${playing && !touch ? "cursor-none" : ""}`}
-      camera={{ fov: 62, near: 0.5, far: seasonal ? 1900 : 900, position: [0, 40, 90] }}
+      camera={{ fov: 62, near: 0.5, far: seasonal ? 2400 : 900, position: [0, 40, 90] }}
       dpr={dpr}
       gl={{ antialias: !low, powerPreference: "high-performance" }}
       onCreated={({ gl, scene, camera }) => {
@@ -343,6 +353,11 @@ export function Scene({ engine }: { engine: GameEngine }) {
         (window as unknown as { __vc3?: unknown }).__vc3 = { gl, scene, camera, engine };
       }}
     >
+      {/* 🧹 GL janitor — the map swap (lobby town ⇄ 4×4 km season arena) remounts
+          this Canvas; R3F disposes the scene graph, but the OLD WebGL context can
+          linger until GC on the 4 GB sandbox and OOM the renderer mid-drop. This
+          mounts FIRST, so its cleanup runs LAST and hard-frees the context. */}
+      <CanvasJanitor />
       {low && <AdaptiveDpr />}
       {/* SIM FIRST — R3F runs useFrame callbacks in mount order. GameLoop (which
         * advances the engine and aims the camera) used to mount AFTER WorldView,
