@@ -17,7 +17,9 @@ import { nightFactor } from "@/lib/game/sim";
 import { registerCullRoot, resetCullRoots, tickStaticCull } from "@/lib/game/staticCull";
 import { enableGlbCulling } from "@/lib/game/glbCull";
 import { preloadSeasonModels, seasonModelSize, spawnSeasonModel } from "@/lib/game/seasonModels";
+import { isKitType, kitWheelR, makeKitCar } from "@/lib/game/cars/kit";
 import type { SeasonWorld } from "@/lib/game/seasonWorld";
+import { roadProfileH } from "@/lib/game/seasonWorld";
 import type { SeasonDef, SeasonPalette, FoliageKind } from "@/lib/game/seasons";
 
 /* ------------------------- environment ------------------------- */
@@ -31,10 +33,13 @@ function SeasonEnv({ clockRef, pal }: { clockRef: React.MutableRefObject<number>
   const hemi = useRef<THREE.HemisphereLight>(null!);
   const sun = useRef<THREE.DirectionalLight>(null!);
   const sky = useMemo(() => new THREE.Color(), []);
+  const horizon = useMemo(() => new THREE.Color(), []);
   const fog = useMemo(() => new THREE.Fog(pal.skyDay, 160, 1500), [pal]);
   const DAY = useMemo(() => new THREE.Color(pal.skyDay), [pal]);
   const DUSK = useMemo(() => new THREE.Color(pal.skyDusk), [pal]);
   const NIGHT = useMemo(() => new THREE.Color(pal.skyNight), [pal]);
+  const FOG_DAY = useMemo(() => new THREE.Color(pal.fogDay), [pal]);
+  const FOG_NIGHT = useMemo(() => new THREE.Color(pal.fogNight), [pal]);
   const PI2 = Math.PI * 2;
   useFrame(() => {
     const clock = clockRef.current;
@@ -44,7 +49,10 @@ function SeasonEnv({ clockRef, pal }: { clockRef: React.MutableRefObject<number>
     sky.copy(DAY).lerp(NIGHT, n);
     if (dk > 0) sky.lerp(DUSK, dk * 0.6);
     scene.background = sky;
-    fog.color.copy(sky);
+    // the horizon band stays a touch warmer/brighter than the zenith — real
+    // skies read by their horizon, not their overhead color
+    horizon.copy(sky).lerp(dk > 0 ? DUSK : FOG_DAY, 0.42 + dk * 0.2).lerp(FOG_NIGHT, n * 0.35);
+    fog.color.copy(horizon);
     // the big map breathes: day fog opens past the capital skyline, night
     // closes to a claustrophobic pocket just like the town island
     fog.far = n > 0.5 ? 300 : 1500;
@@ -57,9 +65,118 @@ function SeasonEnv({ clockRef, pal }: { clockRef: React.MutableRefObject<number>
     <>
       <hemisphereLight ref={hemi} args={[pal.skyDay, pal.ground, 0.8]} />
       <directionalLight ref={sun} args={[pal.sunDay, 1]} />
+      <SeasonSkyDome clockRef={clockRef} pal={pal} zenith={sky} horizon={horizon} />
       <Stars clockRef={clockRef} />
       <SeasonClouds clockRef={clockRef} />
+      {pal.snow && <SeasonSnow clockRef={clockRef} />}
     </>
+  );
+}
+
+/* ---------------- gradient sky dome + sun & moon discs ---------------- */
+
+const SKY_VERT = /* glsl */ `
+  varying vec3 vWorld;
+  void main() {
+    vec4 wp = modelMatrix * vec4(position, 1.0);
+    vWorld = wp.xyz;
+    gl_Position = projectionMatrix * viewMatrix * wp;
+  }
+`;
+const SKY_FRAG = /* glsl */ `
+  uniform vec3 topColor;
+  uniform vec3 horizonColor;
+  varying vec3 vWorld;
+  void main() {
+    // 0 at the horizon band, 1 straight up — the dome IS the gradient
+    float k = clamp(vWorld.y / 900.0, 0.0, 1.0);
+    vec3 c = mix(horizonColor, topColor, smoothstep(0.0, 0.62, k));
+    // a gentle brightening right at the horizon line (atmospheric thickness)
+    c += horizonColor * 0.14 * (1.0 - smoothstep(0.0, 0.18, k));
+    gl_FragColor = vec4(c, 1.0);
+  }
+`;
+
+function SeasonSkyDome({ clockRef, pal, zenith, horizon }: {
+  clockRef: React.MutableRefObject<number>;
+  pal: SeasonPalette;
+  zenith: THREE.Color;
+  horizon: THREE.Color;
+}) {
+  const { camera } = useThree();
+  const dome = useRef<THREE.Mesh>(null!);
+  const sunDisc = useRef<THREE.Mesh>(null!);
+  const moon = useRef<THREE.Mesh>(null!);
+  const sunGlow = useRef<THREE.Sprite>(null!);
+  const uniforms = useMemo(() => ({
+    topColor: { value: new THREE.Color(pal.skyDay) },
+    horizonColor: { value: new THREE.Color(pal.fogDay) },
+  }), [pal]);
+  const PI2 = Math.PI * 2;
+  const glowTex = useMemo(() => {
+    const c = document.createElement("canvas");
+    c.width = c.height = 128;
+    const g = c.getContext("2d")!;
+    const grad = g.createRadialGradient(64, 64, 4, 64, 64, 64);
+    grad.addColorStop(0, "rgba(255,244,214,0.9)");
+    grad.addColorStop(0.35, "rgba(255,236,190,0.32)");
+    grad.addColorStop(1, "rgba(255,230,170,0)");
+    g.fillStyle = grad;
+    g.fillRect(0, 0, 128, 128);
+    return new THREE.CanvasTexture(c);
+  }, []);
+  useFrame(() => {
+    const clock = clockRef.current;
+    const n = nightFactor(clock);
+    // the dome rides WITH the camera (a skybox) — the far plane never clips it,
+    // and the gradient stays put however far out into the arena you roam
+    dome.current.position.copy(camera.position);
+    uniforms.topColor.value.copy(zenith);
+    uniforms.horizonColor.value.copy(horizon);
+    // ☀️ the sun rides its real direction (same clock the light uses) — a disc
+    // low at dawn/dusk, high at noon; 🌙 the moon sits opposite, fading in at night
+    const h = Math.sin(PI2 * (clock - 0.25));
+    const sx = Math.cos(PI2 * (clock - 0.25)) * 1500;
+    const sy = Math.max(60, h * 1100);
+    const dir = new THREE.Vector3(sx, sy, 320).normalize();
+    sunDisc.current.position.copy(camera.position).addScaledVector(dir, 2000);
+    sunDisc.current.visible = n < 0.75 && h > -0.12;
+    if (sunGlow.current) {
+      sunGlow.current.position.copy(sunDisc.current.position);
+      sunGlow.current.visible = sunDisc.current.visible;
+      (sunGlow.current.material as THREE.SpriteMaterial).opacity = Math.max(0, 0.8 - n) * 0.7;
+    }
+    const mDir = new THREE.Vector3(-Math.cos(PI2 * (clock - 0.25)) * 1200, Math.max(160, -h * 900), -420).normalize();
+    moon.current.position.copy(camera.position).addScaledVector(mDir, 1950);
+    moon.current.visible = n > 0.25;
+  });
+  return (
+    <group>
+      <mesh ref={dome} frustumCulled={false} renderOrder={-10}>
+        <sphereGeometry args={[2300, 32, 20]} />
+        <shaderMaterial
+          vertexShader={SKY_VERT}
+          fragmentShader={SKY_FRAG}
+          uniforms={uniforms}
+          side={THREE.BackSide}
+          depthWrite={false}
+          fog={false}
+        />
+      </mesh>
+      {/* the sun — a warm disc + soft additive halo */}
+      <mesh ref={sunDisc} frustumCulled={false} renderOrder={-9}>
+        <sphereGeometry args={[46, 14, 12]} />
+        <meshBasicMaterial color={pal.sunDay} fog={false} />
+      </mesh>
+      <sprite ref={sunGlow} scale={[560, 560, 1]} frustumCulled={false} renderOrder={-9}>
+        <spriteMaterial map={glowTex} transparent opacity={0.6} depthWrite={false} fog={false} blending={THREE.AdditiveBlending} />
+      </sprite>
+      {/* the moon — a pale disc with a darker crater bite, high in the night sky */}
+      <mesh ref={moon} frustumCulled={false} renderOrder={-9}>
+        <sphereGeometry args={[30, 14, 12]} />
+        <meshBasicMaterial color="#e8ecf4" fog={false} />
+      </mesh>
+    </group>
   );
 }
 
@@ -128,12 +245,68 @@ function SeasonClouds({ clockRef }: { clockRef: React.MutableRefObject<number> }
   );
 }
 
+/* ---------------- ❄️ falling snow (camera-following particle field) ---------------- */
+
+function SeasonSnow({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
+  const { camera } = useThree();
+  const snowMat = useRef<THREE.PointsMaterial>(null!);
+  const N = 1500;
+  const FIELD = 130;   // flakes live in a disc this wide around the camera
+  const TOP = 46;      // spawn ceiling above the camera
+  const geo = useMemo(() => {
+    const g = new THREE.BufferGeometry();
+    g.setAttribute("position", new THREE.BufferAttribute(new Float32Array(N * 3), 3));
+    return g;
+  }, []);
+  const state = useMemo(() =>
+    Array.from({ length: N }, () => ({
+      a: Math.random() * Math.PI * 2,
+      d: Math.sqrt(Math.random()) * FIELD,
+      y: Math.random() * TOP,
+      fall: 1.7 + Math.random() * 1.9,
+      sway: Math.random() * Math.PI * 2,
+      swayAmp: 0.35 + Math.random() * 0.8,
+      drift: 0.35 + Math.random() * 0.7,
+    })), []);
+  useFrame((_, dtRaw) => {
+    const dt = Math.min(0.05, Math.max(0.001, dtRaw));
+    const n = nightFactor(clockRef.current);
+    const pos = geo.attributes.position as THREE.BufferAttribute;
+    const arr = pos.array as Float32Array;
+    const cx = camera.position.x, cy = camera.position.y, cz = camera.position.z;
+    const windX = Math.sin(clockRef.current * 0.14) * 0.9;
+    for (let i = 0; i < N; i++) {
+      const s = state[i];
+      s.y -= s.fall * dt;
+      s.sway += dt * 1.4;
+      if (s.y < -6) { s.y = TOP * (0.75 + Math.random() * 0.25); s.a = Math.random() * Math.PI * 2; s.d = Math.sqrt(Math.random()) * FIELD; }
+      const flakeX = cx + Math.cos(s.a) * s.d + Math.sin(s.sway) * s.swayAmp + windX * s.drift * 3;
+      const flakeZ = cz + Math.sin(s.a) * s.d + Math.cos(s.sway * 0.8) * s.swayAmp;
+      arr[i * 3] = flakeX;
+      arr[i * 3 + 1] = cy + s.y - 8;
+      arr[i * 3 + 2] = flakeZ;
+    }
+    pos.needsUpdate = true;
+    if (snowMat.current) snowMat.current.opacity = 0.52 + 0.3 * n; // a touch denser after dark
+  });
+  return (
+    <points geometry={geo} frustumCulled={false}>
+      <pointsMaterial ref={snowMat} color="#ffffff" size={0.26} sizeAttenuation transparent opacity={0.65} depthWrite={false} />
+    </points>
+  );
+}
+
 /* ---------------- heightfield ground ---------------- */
 
 function SeasonGround({ world }: { world: SeasonWorld }) {
   const pal = world.def.pal;
   const geo = useMemo(() => {
-    const SIZE = 4600, SEG = 150;
+    // the mesh hugs the arena: a 2×2 km village grounds on a ~2.7 km plate,
+    // the 4×4 maps keep the old ~4.7 km one. 220 segments keep the fine
+    // terrain octaves visible (what you walk is what you see — the physics
+    // samples the SAME terrain function).
+    const SIZE = Math.max(2700, world.map.wallR * 2 + 700);
+    const SEG = 220;
     const g = new THREE.PlaneGeometry(SIZE, SIZE, SEG, SEG);
     g.rotateX(-Math.PI / 2);
     const pos = g.attributes.position as THREE.BufferAttribute;
@@ -146,11 +319,13 @@ function SeasonGround({ world }: { world: SeasonWorld }) {
       const x = pos.getX(i), z = pos.getZ(i);
       const h = world.map.terrain(x, z);
       pos.setY(i, h);
-      // patchwork: two noise bands pick ground vs ground2, road edges go dirt
+      // patchwork: two noise bands pick ground vs ground2, road edges go dirt;
+      // hilltops catch a brighter tint (snow settles on the crests)
       const n1 = Math.sin(x * 0.013 + z * 0.017) + Math.sin(x * 0.005 - z * 0.008);
       const n2 = Math.sin(x * 0.041 + z * 0.037) * 0.5;
       tmp.copy(c1).lerp(c2, Math.min(1, Math.max(0, n1 * 0.5 + 0.5)));
       if (n2 > 0.42) tmp.lerp(dirt, 0.35);
+      if (h > 4) tmp.lerp(c2, Math.min(0.4, (h - 4) * 0.06));
       colors[i * 3] = tmp.r; colors[i * 3 + 1] = tmp.g; colors[i * 3 + 2] = tmp.b;
     }
     g.setAttribute("color", new THREE.BufferAttribute(colors, 3));
@@ -158,7 +333,9 @@ function SeasonGround({ world }: { world: SeasonWorld }) {
     return g;
   }, [world, pal]);
   return (
-    <mesh geometry={geo} position={[0, -0.08, 0]} receiveShadow frustumCulled={false}>
+    // sits EXACTLY on the physics ground (y=0 = terrain(x,z)) — the old -0.08
+    // offset left every soul hovering a hair above the snow
+    <mesh geometry={geo} receiveShadow frustumCulled={false}>
       <meshLambertMaterial vertexColors />
     </mesh>
   );
@@ -175,30 +352,35 @@ function SeasonRoads({ world }: { world: SeasonWorld }) {
       const vx = seg.x2 - seg.x1, vz = seg.z2 - seg.z1;
       const L = Math.hypot(vx, vz) || 1;
       const nx = -vz / L, nz = vx / L;
-      const y = seg.h + 0.07;
+      // ⛰️ the tarmac GRADES with its physics profile — end heights (h1→h2)
+      // lift each corner so the road rides the hills instead of trenching
+      const y1 = roadProfileH(seg, 0) + 0.07;
+      const y2 = roadProfileH(seg, 1) + 0.07;
       const hw = seg.w / 2;
       const quad = new THREE.BufferGeometry();
       quad.setAttribute("position", new THREE.BufferAttribute(new Float32Array([
-        seg.x1 + nx * hw, y, seg.z1 + nz * hw,
-        seg.x2 + nx * hw, y, seg.z2 + nz * hw,
-        seg.x2 - nx * hw, y, seg.z2 - nz * hw,
-        seg.x1 - nx * hw, y, seg.z1 - nz * hw,
+        seg.x1 + nx * hw, y1, seg.z1 + nz * hw,
+        seg.x2 + nx * hw, y2, seg.z2 + nz * hw,
+        seg.x2 - nx * hw, y2, seg.z2 - nz * hw,
+        seg.x1 - nx * hw, y1, seg.z1 - nz * hw,
       ]), 3));
       quad.setIndex([0, 1, 2, 0, 2, 3]);
       quad.computeVertexNormals();
       strips.push(quad);
-      // dashed centre line on the big roads
+      // dashed centre line on the big roads — each dash follows the profile
       if (seg.w >= 9) {
         const n = Math.floor(L / 22);
         for (let k = 0; k < n; k++) {
           const t0 = k / n, t1 = t0 + 0.35 / n;
           const q = new THREE.BufferGeometry();
           const w0 = 0.35;
+          const yA = roadProfileH(seg, t0) + 0.12;
+          const yB = roadProfileH(seg, t1) + 0.12;
           q.setAttribute("position", new THREE.BufferAttribute(new Float32Array([
-            seg.x1 + vx * t0 + nx * w0, y + 0.05, seg.z1 + vz * t0 + nz * w0,
-            seg.x1 + vx * t1 + nx * w0, y + 0.05, seg.z1 + vz * t1 + nz * w0,
-            seg.x1 + vx * t1 - nx * w0, y + 0.05, seg.z1 + vz * t1 - nz * w0,
-            seg.x1 + vx * t0 - nx * w0, y + 0.05, seg.z1 + vz * t0 - nz * w0,
+            seg.x1 + vx * t0 + nx * w0, yA, seg.z1 + vz * t0 + nz * w0,
+            seg.x1 + vx * t1 + nx * w0, yB, seg.z1 + vz * t1 + nz * w0,
+            seg.x1 + vx * t1 - nx * w0, yB, seg.z1 + vz * t1 - nz * w0,
+            seg.x1 + vx * t0 - nx * w0, yA, seg.z1 + vz * t0 - nz * w0,
           ]), 3));
           q.setIndex([0, 1, 2, 0, 2, 3]);
           lines.push(q);
@@ -232,6 +414,21 @@ function SeasonRoads({ world }: { world: SeasonWorld }) {
 function SeasonBuildings({ world }: { world: SeasonWorld }) {
   const pal = world.def.pal;
   const B = world.buildings;
+  // ❄️ snow seasons dust every roof white — the palette roof tint lerps toward
+  // fresh snow so the village reads like the kit preview at a glance
+  const SNOW_ROOF = useMemo(() => new THREE.Color("#eef4fa"), []);
+  const roofOf = useMemo(() => {
+    const cache = new Map<number, THREE.Color>();
+    return (hex: number): THREE.Color => {
+      let c = cache.get(hex);
+      if (!c) {
+        c = new THREE.Color(hex);
+        if (pal.snow) c.lerp(SNOW_ROOF, 0.55);
+        cache.set(hex, c);
+      }
+      return c;
+    };
+  }, [pal, SNOW_ROOF]);
   const wallRef = useRef<THREE.InstancedMesh>(null!);
   const flatRef = useRef<THREE.InstancedMesh>(null!);
   const pyrRef = useRef<THREE.InstancedMesh>(null!);
@@ -258,7 +455,7 @@ function SeasonBuildings({ world }: { world: SeasonWorld }) {
           new THREE.Vector3(b.w * 2.18, rise, b.d * 2.18),
         );
         pyrRef.current.setMatrixAt(pi++, m);
-        pyrRef.current.setColorAt(pi - 1, col.set(b.roof));
+        pyrRef.current.setColorAt(pi - 1, col.copy(roofOf(b.roof)));
       } else {
         m.compose(
           new THREE.Vector3(b.x, y + b.h + 0.35, b.z),
@@ -266,7 +463,7 @@ function SeasonBuildings({ world }: { world: SeasonWorld }) {
           new THREE.Vector3(b.w * 2.16, 0.7, b.d * 2.16),
         );
         flatRef.current.setMatrixAt(fi++, m);
-        flatRef.current.setColorAt(fi - 1, col.set(b.roof));
+        flatRef.current.setColorAt(fi - 1, col.copy(roofOf(b.roof)));
         // door slab faces +z
         m.compose(
           new THREE.Vector3(b.x, y + 1.05, b.z + b.d + 0.02),
@@ -274,7 +471,7 @@ function SeasonBuildings({ world }: { world: SeasonWorld }) {
           new THREE.Vector3(b.w * 0.5, 2.1, 0.18),
         );
         doorRef.current.setMatrixAt(di++, m);
-        doorRef.current.setColorAt(di - 1, col.set(b.roof));
+        doorRef.current.setColorAt(di - 1, col.copy(roofOf(b.roof)));
       }
     });
     flatRef.current.count = fi;
@@ -284,7 +481,7 @@ function SeasonBuildings({ world }: { world: SeasonWorld }) {
       r.current.instanceMatrix.needsUpdate = true;
       if (r.current.instanceColor) r.current.instanceColor.needsUpdate = true;
     });
-  }, [world, B]);
+  }, [world, B, roofOf]);
   return (
     <group>
       <instancedMesh ref={wallRef} args={[undefined, undefined, Math.max(1, B.length)]} frustumCulled={false}>
@@ -682,6 +879,119 @@ function SeasonSigns({ world }: { world: SeasonWorld }) {
   );
 }
 
+/* ---------------- 🚗 the season fleet (polyfork Retro Cars Kit) ----------------
+ * Parked cars from world.cars, the cruising ring traffic, the car YOU drive,
+ * bot-driven rides and mirrored remote cars — every body drawn from the kit's
+ * parametric models (real-world scale, +Z nose, named wheel/steer parts we
+ * spin every frame). Beams share one additive material so after-dark headlights
+ * cost nothing extra. */
+
+const seasonBeamMat = new THREE.MeshBasicMaterial({
+  color: "#ffedb0", transparent: true, opacity: 0, blending: THREE.AdditiveBlending,
+  depthWrite: false, side: THREE.DoubleSide,
+});
+const SEASON_BEAM_LEN = 5.6;
+
+interface SeasonCarRig {
+  src: "park" | "traffic";
+  i: number;
+  t: number;
+  obj: THREE.Group;
+  wheels: THREE.Object3D[];
+  steer: THREE.Object3D[];
+  beams: THREE.Mesh[];
+  spin: number;
+  lastX: number;
+  lastZ: number;
+  y: number;
+}
+
+function SeasonCars({ world, engine, clockRef }: { world: SeasonWorld; engine: GameEngine; clockRef: React.MutableRefObject<number> }) {
+  const terrain = world.map.terrain;
+  const rigs = useMemo<SeasonCarRig[]>(() => {
+    const out: SeasonCarRig[] = [];
+    const build = (src: "park" | "traffic", i: number, t: number, c: number, x: number, z: number) => {
+      const r = makeKitCar(t, c);
+      if (!r) return;
+      // 🔆 two headlight cones poking from the nose — parked cars keep them
+      // folded (engine off), driven/traffic rides light them after dark
+      const box = new THREE.Box3().setFromObject(r.obj);
+      const nose = box.max.z;
+      const beams: THREE.Mesh[] = [];
+      const geo = new THREE.ConeGeometry(0.95, SEASON_BEAM_LEN, 10, 1, true);
+      for (const s of [-1, 1]) {
+        const cone = new THREE.Mesh(geo, seasonBeamMat);
+        cone.rotation.x = -Math.PI / 2;
+        cone.position.set(s * box.max.x * 0.6, 0.72, nose + SEASON_BEAM_LEN / 2 - 0.05);
+        cone.visible = false;
+        r.obj.add(cone);
+        beams.push(cone);
+      }
+      out.push({ src, i, t, obj: r.obj, wheels: r.wheels, steer: r.steer, beams, spin: 0, lastX: x, lastZ: z, y: terrain(x, z) });
+    };
+    world.cars.forEach((c, i) => { if (isKitType(c.t)) build("park", i, c.t, c.c, c.x, c.z); });
+    engine.traffic.forEach((t, i) => { if (isKitType(t.t)) build("traffic", i, t.t, t.c, t.x, t.z); });
+    return out;
+  }, [world, engine]);
+
+  useFrame(({ camera }, dtRaw) => {
+    const dt = Math.min(0.05, Math.max(0.001, dtRaw));
+    const d = engine.drive;
+    const nf = nightFactor(clockRef.current);
+    seasonBeamMat.opacity = Math.max(0, nf - 0.14) * 0.42;
+    for (const k of rigs) {
+      let x: number, z: number, rot: number, steerA = 0, lit = false, driven = false;
+      if (k.src === "park") {
+        const c = world.cars[k.i];
+        if (!c) continue;
+        if (d && d.ci === k.i) {
+          x = d.vx; z = d.vz; rot = d.vrot; steerA = d.steerVis; driven = true;
+          k.spin = -d.spin;
+          lit = nf > 0.14 && (d.lights ?? true);
+        } else if (engine.botDriven.has(k.i)) {
+          x = c.x; z = c.z; rot = c.rot; driven = true;
+          k.spin += Math.hypot(c.x - k.lastX, c.z - k.lastZ) / kitWheelR(k.t);
+          lit = nf > 0.14;
+        } else if (engine.remoteDriven.has(k.i)) {
+          const st = engine.remoteDriven.get(k.i)!;
+          x = c.x; z = c.z; rot = c.rot; driven = true;
+          k.spin += Math.hypot(c.x - k.lastX, c.z - k.lastZ) / kitWheelR(k.t);
+          lit = st.lights && nf > 0.14;
+        } else {
+          x = c.x; z = c.z; rot = c.rot;
+        }
+      } else {
+        const t = engine.traffic[k.i];
+        if (!t) continue;
+        x = t.x; z = t.z; rot = t.rot;
+        k.spin += (t.spCur ?? t.sp) * t.r * dt / kitWheelR(k.t);
+        lit = nf > 0.14;
+      }
+      k.lastX = x; k.lastZ = z;
+      // 🏔️ the body rides the season terrain — eased tighter when driven so
+      // rolling over the hills never leaves the wheels floating
+      const gy = terrain(x, z);
+      k.y += (gy - k.y) * Math.min(1, dt * (driven ? 14 : 7));
+      k.obj.position.set(x, k.y, z);
+      k.obj.rotation.y = rot;
+      // 📉 distance cull — the big map's fog eats rides beyond the draw-in line,
+      // and 100+ kit cars × ~6 meshes would still rasterise on the software GPU
+      const dx = x - camera.position.x, dz = z - camera.position.z;
+      const vis = driven || dx * dx + dz * dz < 560 * 560;
+      if (k.obj.visible !== vis) k.obj.visible = vis;
+      for (const w of k.wheels) w.rotation.x = k.spin;
+      for (const s of k.steer) s.rotation.y = steerA;
+      if (k.beams[0].visible !== lit) for (const b of k.beams) b.visible = lit;
+    }
+  });
+
+  return (
+    <group>
+      {rigs.map((k, i) => <primitive object={k.obj} key={i} />)}
+    </group>
+  );
+}
+
 /* ---------------- kit GLB pieces ---------------- */
 
 function SeasonGlbs({ world }: { world: SeasonWorld }) {
@@ -744,21 +1054,29 @@ function SeasonRim({ world }: { world: SeasonWorld }) {
   const pal = world.def.pal;
   const ref = useRef<THREE.InstancedMesh>(null!);
   const PEAKS = 64;
+  // 🗺️ the skyline hugs the wall — radius/height scale from the arena size so
+  // the 2×2 km village reads its peaks at ~1.2 km, the 4×4 maps at ~2.3 km
+  const layout = useMemo(() => {
+    const R = world.map.wallR;
+    return Array.from({ length: PEAKS }, (_, i) => {
+      const a = (i / PEAKS) * Math.PI * 2 + (i % 3) * 0.014;
+      const r = R + 110 + ((i * 83) % 180);
+      const base = Math.max(64, 130 * (R / 2000));
+      const s = base + ((i * 137) % 130) * Math.max(0.55, R / 2000);
+      const h = s * (0.9 + ((i * 53) % 40) / 90);
+      return { a, r, s, h };
+    });
+  }, [world]);
   useLayoutEffect(() => {
     const m = new THREE.Matrix4();
     const q = new THREE.Quaternion();
-    for (let i = 0; i < PEAKS; i++) {
-      const a = (i / PEAKS) * Math.PI * 2 + (i % 3) * 0.014;
-      // inside the camera far plane (2400) so the skyline reads from any radius
-      const r = 2120 + ((i * 83) % 180);
-      const s = 130 + ((i * 137) % 130);
-      const h = s * (0.9 + ((i * 53) % 40) / 90);
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), a);
-      m.compose(new THREE.Vector3(Math.cos(a) * r, h * 0.28, Math.sin(a) * r), q, new THREE.Vector3(s, h, s));
+    layout.forEach((p, i) => {
+      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.a);
+      m.compose(new THREE.Vector3(Math.cos(p.a) * p.r, p.h * 0.28, Math.sin(p.a) * p.r), q, new THREE.Vector3(p.s, p.h, p.s));
       ref.current.setMatrixAt(i, m);
-    }
+    });
     ref.current.instanceMatrix.needsUpdate = true;
-  }, []);
+  }, [layout]);
   return (
     <group>
       <instancedMesh ref={ref} args={[undefined, undefined, PEAKS]} frustumCulled={false}>
@@ -833,6 +1151,10 @@ export function SeasonWorldView({ clockRef, engine }: { clockRef: React.MutableR
         <SeasonSigns world={world} />
         <SeasonPoiBoards world={world} />
       </group>
+      {/* 🚗 the fleet moves — parked rows, ring traffic, YOUR ride, bot & remote
+          drivers. Outside the static cull root: the culler hides whole groups,
+          which would fight a driven car that's always in view. */}
+      <SeasonCars world={world} engine={engine} clockRef={clockRef} />
       <SeasonStaticCuller staticRef={staticRoot} />
     </>
   );

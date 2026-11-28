@@ -13,10 +13,10 @@
  * — walls, dropship route, safe-zone ladder and spawn rings all scale from
  * the MapInfo attached to the world (see mapInfo.ts).
  */
-import { buildColliderGrid, type BoxCollider, type Building, type CircleCollider, type Rock, type Tree, type World, type Camp, type Flower, type Field, type Lamp, type Bench, type Sign, type Pond, type FloorProp } from "./worldgen";
+import { buildColliderGrid, type BoxCollider, type Building, type Car, type CircleCollider, type Rock, type Tree, type World, type Camp, type Flower, type Field, type Lamp, type Bench, type Sign, type Pond, type FloorProp } from "./worldgen";
 import { mulberry32, range } from "./rng";
 import { SEASON_ZONE_RADII, type MapInfo } from "./mapInfo";
-import { type Zone } from "./constants";
+import { CAR_ROOF_TOP, VEHICLE_AXLE, VEHICLE_AXLE_R, type Zone } from "./constants";
 import { SEASON_BY_ID, type SeasonDef } from "./seasons";
 import { SEASON_ASSETS } from "./seasonAssets";
 
@@ -30,7 +30,21 @@ export interface SeasonPoi {
   type: "capital" | "town" | "landmark" | "farm";
 }
 
-export interface RoadSeg { x1: number; z1: number; x2: number; z2: number; w: number; h: number }
+export interface RoadSeg {
+  x1: number; z1: number; x2: number; z2: number; w: number;
+  /** legacy flat profile (kept in sync = (h1+h2)/2) for non-seasonal readers */
+  h: number;
+  /** ⛰️ terrain height at each END — the road GRADES between them (chunk
+   *  chains share endpoints, so the tarmac never terraces at chunk joints) */
+  h1?: number; h2?: number;
+}
+
+/** the road surface height at parameter t∈[0,1] along a segment — the graded
+ *  profile when the segment carries endpoint heights, else its flat legacy h */
+export const roadProfileH = (seg: RoadSeg, t: number): number =>
+  seg.h1 !== undefined && seg.h2 !== undefined
+    ? seg.h1 + (seg.h2 - seg.h1) * t
+    : seg.h;
 
 /** one vendored kit piece placed in the world — the renderer spawns clones */
 export interface GlbPlace { file: string; name: string; role: "building" | "landmark" | "tree" | "prop"; x: number; z: number; rot: number; s: number; h: number }
@@ -48,26 +62,23 @@ export interface SeasonWorld extends World {
 
 const smooth01 = (k: number) => { const t = Math.min(1, Math.max(0, k)); return t * t * (3 - 2 * t); };
 
-/** rolling hills for the big arenas — cheap (3 sin pairs), flat near POIs & roads */
+/** rolling hills for the big arenas — cheap (5 sin pairs + a valley carve),
+ *  flat near POIs & roads. The layered octaves read as REAL countryside:
+ *  broad ridges (~600 u wavelength), rolling mounds (~180 u) and a fine bumpy
+ *  skin (~55 u) — mountains stay in the rim band, villages stay buildable. */
 function makeSeasonTerrain(pois: SeasonPoi[], roads: RoadSeg[], wallR: number) {
   const base = (x: number, z: number) =>
-    1.9 * Math.sin(x * 0.0031 + z * 0.0027) * Math.cos(x * 0.0018 - z * 0.0035) +
-    1.15 * Math.sin(x * 0.0063 + 1.7) * Math.sin(z * 0.0057 + 0.6) +
-    0.35 * Math.sin(x * 0.021) * Math.sin(z * 0.019);
+    3.1 * Math.sin(x * 0.0031 + z * 0.0027) * Math.cos(x * 0.0018 - z * 0.0035) +
+    1.55 * Math.sin(x * 0.0063 + 1.7) * Math.sin(z * 0.0057 + 0.6) +
+    0.9 * Math.sin(x * 0.0115 - z * 0.0092 + 2.4) * Math.cos(x * 0.0071 + z * 0.0121) +
+    0.5 * Math.sin(x * 0.0231 + z * 0.0197) * Math.sin(z * 0.0263 - 1.1) +
+    0.18 * Math.sin(x * 0.0621 + 0.8) * Math.sin(z * 0.0553 - 0.4);
   const rimStart = wallR * 0.89, rimBand = wallR * 0.16;
   const terrain = (x: number, z: number): number => {
     let h = base(x, z);
-    // ⛰️ the rim rises gently toward the wall so the boundary reads as hills
-    const r = Math.hypot(x, z);
-    if (r > rimStart) h += smooth01((r - rimStart) / rimBand) * 10;
-    // 🏘️ POIs sit on a shared plateau
-    for (const p of pois) {
-      const dx = x - p.x, dz = z - p.z;
-      const d2 = dx * dx + dz * dz;
-      const reach = (p.r + 8) * (p.r + 8);
-      if (d2 < reach) h = p.h + (h - p.h) * smooth01((Math.sqrt(d2) - p.r * 0.55) / (p.r * 0.45 + 8));
-    }
-    // 🛣️ roads grade toward their own flat profile
+    // 🛣️ roads grade FIRST (their tarmac profile slopes between endpoint
+    // heights — one flat strip would trench through the hills like a canal,
+    // and per-chunk flat heights would terrace at every chunk joint)
     for (const seg of roads) {
       const vx = seg.x2 - seg.x1, vz = seg.z2 - seg.z1;
       const L2 = vx * vx + vz * vz || 1;
@@ -77,8 +88,30 @@ function makeSeasonTerrain(pois: SeasonPoi[], roads: RoadSeg[], wallR: number) {
       const cx = seg.x1 + vx * t, cz = seg.z1 + vz * t;
       const d = Math.hypot(x - cx, z - cz);
       const half = seg.w / 2 + 2.5;
-      if (d < half) h = seg.h + (h - seg.h) * smooth01((d - seg.w / 2) / 2.5);
+      if (d < half) {
+        const rh = roadProfileH(seg, t);
+        h = rh + (h - rh) * smooth01((d - seg.w / 2) / 2.5);
+      }
     }
+    // 🏘️ POIs sit on shared plateaus — applied AFTER the roads so a village
+    // square stays truly flat (roads still grade into its skirt outside the
+    // core, and stub roads end ON the plateau height anyway). The CLOSEST
+    // POI relative to its size owns the point: overlapping village skirts
+    // never fight over a plaza corner.
+    let own: SeasonPoi | undefined, ownK = Infinity;
+    for (const p of pois) {
+      const dx = x - p.x, dz = z - p.z;
+      const d2 = dx * dx + dz * dz;
+      const reach = (p.r + 8) * (p.r + 8);
+      if (d2 < reach) {
+        const k = Math.sqrt(d2) / p.r;
+        if (k < ownK) { ownK = k; own = p; }
+      }
+    }
+    if (own) h = own.h + (h - own.h) * smooth01((ownK - 0.55) / (0.45 + 8 / own.r));
+    // ⛰️ the rim rises gently toward the wall so the boundary reads as hills
+    const r = Math.hypot(x, z);
+    if (r > rimStart) h += smooth01((r - rimStart) / rimBand) * 10;
     return h;
   };
   return { base, terrain };
@@ -159,16 +192,28 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
     pushPoi(nameNext(), Math.cos(a) * r * K, Math.sin(a) * r * K, pr, type);
   }
 
-  /* ---- roads: 8 radials + 2 ring roads + POI stubs ---- */
+  /* ---- roads: 8 radials + 2 ring roads + POI stubs ----
+   * ⛰️ radials are SUBDIVIDED into ~120 u chunks so every chunk grades to its
+   * own hill height — one flat strip would trench through the rolling hills
+   * like a canal (the terrain function flattens toward each segment's own h). */
   const roads: RoadSeg[] = [];
   const radials: number[] = [];
+  const chunk = 120 * Math.max(0.7, K);
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2 + range(rnd, -0.06, 0.06);
     radials.push(a);
-    roads.push({ x1: Math.cos(a) * 150, z1: Math.sin(a) * 150, x2: Math.cos(a) * (WALL_R - 40), z2: Math.sin(a) * (WALL_R - 40), w: 11, h: 0 });
+    const r0 = 150, r1 = WALL_R - 40;
+    const n = Math.max(1, Math.round((r1 - r0) / chunk));
+    let px = Math.cos(a) * r0, pz = Math.sin(a) * r0;
+    for (let k = 1; k <= n; k++) {
+      const rr = r0 + ((r1 - r0) * k) / n;
+      const nx = Math.cos(a) * rr, nz = Math.sin(a) * rr;
+      roads.push({ x1: px, z1: pz, x2: nx, z2: nz, w: 11, h: 0 });
+      px = nx; pz = nz;
+    }
   }
   const ringRoad = (r: number) => {
-    const N = 22;
+    const N = Math.max(16, Math.round((2 * Math.PI * r) / chunk));
     for (let i = 0; i < N; i++) {
       const a0 = (i / N) * Math.PI * 2, a1 = ((i + 1) / N) * Math.PI * 2;
       roads.push({ x1: Math.cos(a0) * r, z1: Math.sin(a0) * r, x2: Math.cos(a1) * r, z2: Math.sin(a1) * r, w: 10, h: 0 });
@@ -194,9 +239,20 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
   /* ---- terrain (needs POI heights) ---- */
   const { base, terrain } = makeSeasonTerrain(pois, roads, WALL_R);
   for (const p of pois) p.h = base(p.x, p.z);
+  // ⛰️ every road carries a graded profile: its END heights (snapped to a POI
+  // plateau when the end lands inside one — stub roads melt INTO the square,
+  // never step onto it). Chunk chains share endpoints, so heights chain
+  // seamlessly around radials and the ring roads.
+  const endH = (x: number, z: number): number => {
+    for (const p of pois) {
+      if (Math.hypot(x - p.x, z - p.z) < p.r * 0.75) return p.h;
+    }
+    return base(x, z);
+  };
   for (const seg of roads) {
-    const mx = (seg.x1 + seg.x2) / 2, mz = (seg.z1 + seg.z2) / 2;
-    seg.h = base(mx, mz);
+    seg.h1 = endH(seg.x1, seg.z1);
+    seg.h2 = endH(seg.x2, seg.z2);
+    seg.h = (seg.h1 + seg.h2) / 2;
   }
 
   /* ---- buildings ---- */
@@ -341,6 +397,89 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
     trees.push({ x, z, r: 0.62, s: range(rnd, 0.85, 1.4), kind: poolOf() as Tree["kind"] });
   }
 
+  /* ---- 🚗 parked cars — the village fleet along every big road + plaza lot ----
+   * The town island parks a car every ~48 u along its streets; the season maps
+   * do the same on their radial + ring roads (never on the narrow POI stubs),
+   * nose-in toward the tarmac, alternating kerb sides. The capital gets a real
+   * market parking row facing the square. Kit-bodied types only (the season
+   * renderer draws every car from the polyfork Retro Cars Kit — no town-GLB
+   * taxis/hearses stream on seasonal maps). Colliders land with the rest below. */
+  const cars: Car[] = [];
+  const SEASON_FLEET: readonly number[] = [0, 0, 1, 1, 2, 2, 3, 3, 6, 6, 7, 7, 8, 8, 9, 9];
+  /** ON the tarmac or overlapping a junction/stub mouth — a parked kerb-side
+   *  car sits at roadDist ≈ w/2 + 2.9 from its OWN segment, so the thresholds
+   *  here must stay INSIDE that (the old +4.2 blanket rejected every car). */
+  const carBlocked = (x: number, z: number): boolean => {
+    for (const seg of roads) {
+      const d = roadDist(x, z, seg);
+      if (d < seg.w / 2 + 1.2) return true; // on the tarmac
+      if (d < seg.w / 2 + 5.5) {
+        // near the kerb of ANOTHER segment → this is a junction or stub mouth
+        for (const o of roads) {
+          if (o === seg) continue;
+          if (roadDist(x, z, o) < o.w / 2 + 6.5) return true;
+        }
+      }
+    }
+    return false;
+  };
+  /** the inner plaza itself — buildings, stalls & the landmark keep this clear */
+  const inPlaza = (x: number, z: number): boolean => {
+    for (const p of pois) if (Math.hypot(x - p.x, z - p.z) < p.r * 0.42) return true;
+    return false;
+  };
+  for (const seg of roads) {
+    if (seg.w < 9) continue; // the 8-wide POI stubs stay pedestrian
+    const vx = seg.x2 - seg.x1, vz = seg.z2 - seg.z1;
+    const L = Math.hypot(vx, vz);
+    if (L < 40) continue;
+    const step = 62 * K;
+    const n = Math.min(Math.floor(L / step), seg.w >= 10.5 ? 2 : 1);
+    const ux = vx / L, uz = vz / L;
+    const heading = Math.atan2(vx, vz);
+    let side = 1;
+    for (let k = 1; k <= n; k++, side = -side) {
+      const t = k / (n + 1);
+      const off = side * (seg.w / 2 + 2.9);
+      const cx = seg.x1 + vx * t - uz * off, cz = seg.z1 + vz * t + ux * off;
+      if (Math.hypot(cx, cz) > WALL_R - 30) continue;
+      if (carBlocked(cx, cz) || inPlaza(cx, cz)) continue;
+      cars.push({
+        x: cx + ux * range(rnd, -3, 3), z: cz + uz * range(rnd, -3, 3),
+        rot: heading + (side > 0 ? 0 : Math.PI), c: cars.length % 8,
+        t: SEASON_FLEET[(cars.length * 7 + 3) % SEASON_FLEET.length],
+      });
+    }
+  }
+  // 🎄 capital market lot — a row of nose-in parking facing the square
+  if (pois.length > 0) {
+    const cap = pois[0];
+    for (let i = 0; i < 6; i++) {
+      const a = 2.2 + i * 0.16;
+      const d = cap.r * 0.78;
+      const px = cap.x + Math.cos(a) * d, pz = cap.z + Math.sin(a) * d;
+      if (carBlocked(px, pz)) continue;
+      cars.push({ x: px, z: pz, rot: a + Math.PI, c: (i + 2) % 8, t: SEASON_FLEET[(i * 5 + 1) % SEASON_FLEET.length] });
+    }
+    // 🚜 one farm pickup parked by each farm's field gate
+    for (const p of pois) {
+      if (p.type !== "farm") continue;
+      const a = Math.atan2(p.z, p.x);
+      const px = p.x + Math.cos(a) * p.r * 0.5, pz = p.z + Math.sin(a) * p.r * 0.5;
+      if (carBlocked(px, pz) || inPlaza(px, pz)) continue;
+      cars.push({ x: px, z: pz, rot: a + Math.PI / 2, c: 6, t: 3 });
+    }
+  }
+  // 🧊 fleet budget — 300+ kit-car clones burst the 4 GB sandbox's draw call
+  // pool; decimate deterministically down to ~150 (every Nth car stays, so the
+  // kerb rows keep their rhythm instead of clumping)
+  if (cars.length > 150) {
+    const keep = Math.ceil(cars.length / 150);
+    for (let i = cars.length - 1; i >= 0; i--) {
+      if (i % keep !== 0) cars.splice(i, 1);
+    }
+  }
+
   /* ---- rocks, ponds, camps, lamps, fields, flowers ---- */
   const rocks: Rock[] = [];
   for (let i = 0; i < Math.round(90 * K * 1.2); i++) {
@@ -377,10 +516,10 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
     if (seg.w < 9) continue; // lamp only the big roads
     const vx = seg.x2 - seg.x1, vz = seg.z2 - seg.z1;
     const L = Math.hypot(vx, vz);
-    const step = 150 * K;
-    const n = Math.floor(L / step);
-    for (let k = 1; k < n; k++) {
-      const t = k / n;
+    const step = 105 * Math.max(0.6, K);
+    const n = Math.max(1, Math.round(L / step));
+    for (let k = 0; k < n; k++) {
+      const t = (k + 0.5) / n;
       const ox = -vz / L, oz = vx / L;
       const side = k % 2 === 0 ? 1 : -1;
       lamps.push({ x: seg.x1 + vx * t + ox * side * (seg.w / 2 + 1.2), z: seg.z1 + vz * t + oz * side * (seg.w / 2 + 1.2) });
@@ -441,6 +580,15 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
       circles.push({ x: g.x, z: g.z, r: 0.55 });
     }
   }
+  // 🚗 every parked car is two axle discs (front + rear, tagged with its car
+  // index) — solid metal the player can't walk through, a STANDABLE roof to
+  // hop on (the engine's drive system moves these along when a car is driven)
+  cars.forEach((c, ci) => {
+    const fx = Math.sin(c.rot), fz = Math.cos(c.rot);
+    const ax = VEHICLE_AXLE[c.t % VEHICLE_AXLE.length], rr = VEHICLE_AXLE_R[c.t % VEHICLE_AXLE_R.length];
+    circles.push({ x: c.x - fx * ax, z: c.z - fz * ax, r: rr, car: ci, top: terrain(c.x - fx * ax, c.z - fz * ax) + CAR_ROOF_TOP });
+    circles.push({ x: c.x + fx * ax, z: c.z + fz * ax, r: rr, car: ci, top: terrain(c.x + fx * ax, c.z + fz * ax) + CAR_ROOF_TOP });
+  });
   for (const l of lamps) circles.push({ x: l.x, z: l.z, r: 0.3 });
   for (const s of signs) circles.push({ x: s.x, z: s.z, r: 0.45 });
   for (const cp of camps) {
@@ -486,7 +634,7 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
     flowers,
     boxes,
     circles,
-    cars: [],
+    cars,
     lamps,
     benches,
     fields,

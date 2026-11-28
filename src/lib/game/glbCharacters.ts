@@ -730,10 +730,13 @@ export function setGlbLocomotion(
   // stride cadence tracks ground speed (clamped — a frantic blur reads worse
   // than a little foot-slide on the cartoon proportions). Walk plays ~35%
   // faster than the old mapping: a brisk, purposeful survivor stride.
+  // 🚶 the upper clamp must sit ABOVE walk speed (7.2 u/s teen → ts 2.0) — the
+  // old 1.65 cap made the legs cycle ~15% slower than the ground covered, and
+  // every casual walk read as moon-SLIDING over the snow.
   const walk = st.actions[walkN];
-  if (walk && ww > 0.01) walk.setEffectiveTimeScale(clamp(speed / 3.6, 0.65, 1.65));
+  if (walk && ww > 0.01) walk.setEffectiveTimeScale(clamp(speed / 3.6, 0.65, 2.1));
   const run = st.actions[runN];
-  if (run && rw > 0.01) run.setEffectiveTimeScale(clamp(speed / 9.0, 0.8, 1.5));
+  if (run && rw > 0.01) run.setEffectiveTimeScale(clamp(speed / 9.0, 0.8, 1.55));
   st.cur = rw > ww ? runN : ww > 0.01 ? walkN : idleN;
 }
 

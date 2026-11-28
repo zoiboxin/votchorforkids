@@ -26,6 +26,12 @@ import { createAsset as createTurboprop } from "@/lib/game/planes/kit/regional-t
 
 export type ClockRef = { current: number };
 
+/** 🗺️ the ground under a world point — routes through the ACTIVE map's terrain
+ *  (lobby town mountains / season arena hills). The old hardcoded y=0 and the
+ *  town-only terrainHeight() left every crew bot, cop, shadow and dropped item
+ *  floating or buried on the season maps' rolling ground. */
+const groundAt = (engine: GameEngine, x: number, z: number): number => engine.M.terrain(x, z);
+
 /* 🚗 per-body-style driver seat offsets — (x = side, z = forward of the nose
  * axis, y = floor height above ground). `null` = sealed body style, the
  * driver stays hidden (a head through a roof reads as a bug, not a mod).
@@ -245,7 +251,7 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       let bd = p.face - beastMesh.rotation.y;
       bd = Math.atan2(Math.sin(bd), Math.cos(bd));
       beastMesh.rotation.y += bd * Math.min(1, dt * 14);
-      poseCharacter(beastMesh, Math.hypot(p.vx, p.vz), performance.now() / 1000, {
+      poseCharacter(beastMesh, Math.hypot(p.vx, p.vz), clockRef.current, {
         airborne: p.y > 0.12,
         vy: p.vy,
         zombie: true,
@@ -267,7 +273,7 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
       const f = Math.min(1, el / 0.5);
       downEz = f * f * (3 - 2 * f);
     }
-    poseCharacter(mesh, Math.hypot(p.vx, p.vz), performance.now() / 1000, {
+    poseCharacter(mesh, Math.hypot(p.vx, p.vz), clockRef.current, {
       airborne: p.y > 0.12,
       detained: engine.detainedT > 0,
       vy: p.vy,
@@ -359,7 +365,7 @@ export function GameLoop({ engine, clockRef }: { engine: GameEngine; clockRef: C
           rig.cur = playClip(rig.mixer, rig.clips, rig.cur, want);
           rig.mixer.update(dt);
         } else {
-          poseAnimal(am, Math.hypot(p.vx, p.vz), performance.now() / 1000, 0);
+          poseAnimal(am, Math.hypot(p.vx, p.vz), clockRef.current, 0);
         }
       }
     } else for (const rig of morphMeshes.values()) if (rig.root.visible) rig.root.visible = false;
@@ -598,7 +604,7 @@ export function Npcs({ engine }: { engine: GameEngine }) {
   }, [engine]);
 
   useFrame((s) => {
-    const t = s.clock.elapsedTime;
+    const t = engine.elapsed;
     const cam = s.camera.position;
     // 🌙 names hide at dusk & night — the dark takes identities away; they return at dawn
     const namesHidden = engine.phase === "dusk" || engine.phase === "night";
@@ -627,7 +633,7 @@ export function Npcs({ engine }: { engine: GameEngine }) {
           const fall = Math.min(1, dT / 0.55);
           const ez = fall * fall * (3 - 2 * fall);
           const sinkD = Math.max(0, dT - CORPSE_LIE_S) / CORPSE_SINK_S;
-          v.mesh.position.set(n.x, 0.34 * ez - 2.0 * sinkD, n.z);
+          v.mesh.position.set(n.x, groundAt(engine, n.x, n.z) + 0.34 * ez - 2.0 * sinkD, n.z);
           v.mesh.rotation.x = -ez * Math.PI / 2.1;
           poseCharacter(v.mesh, 0, t, { phase: n.phase, detained: true });
           if (v.bubble) v.bubble.visible = false;
@@ -642,7 +648,7 @@ export function Npcs({ engine }: { engine: GameEngine }) {
           const f = Math.min(1, el / 0.5);
           const ez = f * f * (3 - 2 * f);
           v.mesh.visible = true;
-          v.mesh.position.set(n.x, 0.36 * ez, n.z);
+          v.mesh.position.set(n.x, groundAt(engine, n.x, n.z) + 0.36 * ez, n.z);
           v.mesh.rotation.x = lying ? -ez * Math.PI / 2.1 : -(n.getupT ?? 0) * Math.PI / 2.1;
           poseCharacter(v.mesh, 0, t, {
             phase: n.phase,
@@ -653,7 +659,7 @@ export function Npcs({ engine }: { engine: GameEngine }) {
           if (v.tag) v.tag.visible = false;
           continue;
         }
-        v.mesh.position.set(n.x, 0, n.z);
+        v.mesh.position.set(n.x, groundAt(engine, n.x, n.z), n.z);
         v.mesh.rotation.x = 0;
         let dd = n.face - v.mesh.rotation.y;
         dd = Math.atan2(Math.sin(dd), Math.cos(dd));
@@ -793,7 +799,7 @@ export function Zombies({ engine }: { engine: GameEngine }) {
       if (built > 0) setRigVer((v) => v + 1);
     }
     const night = nightFactor(engine.clock);
-    const t = s.clock.elapsedTime;
+    const t = engine.elapsed;
     const cam = s.camera.position;
     for (const z of engine.zombies) {
       const m = views.get(z.id);
@@ -809,7 +815,7 @@ export function Zombies({ engine }: { engine: GameEngine }) {
         const fall = Math.min(1, dT / 0.5);
         const ez = fall * fall * (3 - 2 * fall);
         const sinkD = Math.max(0, dT - 1.5) / CORPSE_SINK_S;
-        m.position.set(z.x, -1.85 * sinkD, z.z);
+        m.position.set(z.x, groundAt(engine, z.x, z.z) - 1.85 * sinkD, z.z);
         let dd = z.face - m.rotation.y;
         dd = Math.atan2(Math.sin(dd), Math.cos(dd));
         m.rotation.y += dd * 0.2;
@@ -822,7 +828,7 @@ export function Zombies({ engine }: { engine: GameEngine }) {
       // rise from the grave as night falls (fully out at night >= 0.55)
       const rise = THREE.MathUtils.clamp((night - 0.4) / 0.15, 0, 1);
       const sink = -1.8 * (1 - rise);
-      m.position.set(z.x, sink, z.z);
+      m.position.set(z.x, groundAt(engine, z.x, z.z) + sink, z.z);
       let dd = z.face - m.rotation.y;
       dd = Math.atan2(Math.sin(dd), Math.cos(dd));
       m.rotation.y += dd * 0.12;
@@ -878,7 +884,7 @@ export function HearseGuards({ engine }: { engine: GameEngine }) {
   }, []);
   useFrame((s) => {
     if (engine.hearseGuardRev !== revRef.current) { revRef.current = engine.hearseGuardRev; setRev(engine.hearseGuardRev); }
-    const t = s.clock.elapsedTime;
+    const t = engine.elapsed;
     const cam = s.camera.position;
     for (const g of engine.hearseGuards) {
       const m = views.get(g.id);
@@ -1106,7 +1112,7 @@ export function Animals({ engine }: { engine: GameEngine }) {
 
   useFrame((s, dtRaw) => {
     const dt = Math.min(0.05, dtRaw);
-    const t = s.clock.elapsedTime;
+    const t = engine.elapsed;
     const cam = s.camera.position;
     const nf = nightFactor(engine.clock);
     for (const a of engine.animals) {
@@ -1242,7 +1248,7 @@ export function JungleInsects({ engine }: { engine: GameEngine }) {
   }, []);
   const fade = useRef(0);
   useFrame((s) => {
-    const t = s.clock.elapsedTime;
+    const t = engine.elapsed;
     const night = nightFactor(engine.clock);
     // `zone` is TS-private on GameEngine but runtime-visible — read it through a minimal structural view
     const engZone = (engine as unknown as { zone: Zone }).zone;
@@ -1326,13 +1332,13 @@ export function Powers({ engine }: { engine: GameEngine }) {
   }), [engine]);
 
   useFrame((s) => {
-    const t = s.clock.elapsedTime;
+    const t = engine.elapsed;
     for (let idx = 0; idx < engine.powers.length; idx++) {
       const pw = engine.powers[idx];
       const v = views[idx];
       v.group.visible = pw.active;
       if (!pw.active) continue;
-      v.group.position.set(pw.x, 0, pw.z);
+      v.group.position.set(pw.x, groundAt(engine, pw.x, pw.z), pw.z);
       v.gem.rotation.y = t * 1.7 + idx;
       v.gem.position.y = 0.95 + Math.sin(t * 2.2 + idx * 1.7) * 0.12;
       v.glow.position.y = v.gem.position.y;
@@ -1384,7 +1390,7 @@ export function Licenses({ engine }: { engine: GameEngine }) {
   }), [engine, rev]);
 
   useFrame((s) => {
-    const t = s.clock.elapsedTime;
+    const t = engine.elapsed;
     if (engine.licRev !== revRef.current) { // a dropped card spawned a new entity
       revRef.current = engine.licRev;
       setRev(engine.licRev);
@@ -1395,7 +1401,7 @@ export function Licenses({ engine }: { engine: GameEngine }) {
       if (!v) continue;
       v.group.visible = lc.active;
       if (!lc.active) continue;
-      v.group.position.set(lc.x, 0, lc.z);
+      v.group.position.set(lc.x, groundAt(engine, lc.x, lc.z), lc.z);
       v.group.rotation.y = t * 1.4 + idx;
       v.card.position.y = 0.95 + Math.sin(t * 2.4 + idx * 1.3) * 0.12;
       v.em.position.y = 1.62 + Math.sin(t * 2.6 + idx) * 0.08;
@@ -1445,7 +1451,7 @@ export function Pickups({ engine }: { engine: GameEngine }) {
   }, []);
 
   useFrame((s) => {
-    const t = s.clock.elapsedTime;
+    const t = engine.elapsed;
     const p = engine.player;
     // id → civ lookup so a bot-carried vote (runner OR scavenger) hovers over ITS carrier
     const civById = new Map(engine.civs.map((c) => [c.id, c]));
@@ -1455,7 +1461,7 @@ export function Pickups({ engine }: { engine: GameEngine }) {
     for (const v of engine.votes) {
       if (v.state === "delivered") continue;
       if (v.state === "world") {
-        dummy.position.set(v.x, 0.75 + Math.sin(t * 2.6 + v.id) * 0.16, v.z);
+        dummy.position.set(v.x, groundAt(engine, v.x, v.z) + 0.75 + Math.sin(t * 2.6 + v.id) * 0.16, v.z);
         dummy.rotation.set(0, t * 2 + v.id, 0);
         dummy.scale.setScalar(1);
       } else if (v.carrierId != null) {
@@ -1485,7 +1491,7 @@ export function Pickups({ engine }: { engine: GameEngine }) {
       let fi = 0;
       for (const it of engine.items) {
         if (!it.active || it.def !== def || fi >= ITEM_COUNT) continue;
-        dummy.position.set(it.x, 0.5 + Math.sin(t * 2.2 + it.id) * 0.12, it.z);
+        dummy.position.set(it.x, groundAt(engine, it.x, it.z) + 0.5 + Math.sin(t * 2.2 + it.id) * 0.12, it.z);
         dummy.rotation.set(0, t * 1.4 + it.id, 0);
         dummy.scale.setScalar(1);
         dummy.updateMatrix();
@@ -1520,7 +1526,9 @@ export function Shadows({ engine }: { engine: GameEngine }) {
     let i = 0;
     const put = (x: number, z: number, r: number, lift = 0) => {
       if (i >= 128) return;
-      dummy.position.set(x, 0.1, z);
+      // 🗺️ shadows ride the ACTIVE terrain — the old absolute y=0.1 buried every
+      // blob in the season hills (or floated it over valley floors)
+      dummy.position.set(x, Math.max(0.06, groundAt(engine, x, z) + 0.05), z);
       dummy.rotation.set(0, 0, 0);
       dummy.scale.setScalar(r * 2 * Math.max(0.55, 1 - lift * 0.1));
       dummy.updateMatrix();
@@ -1669,7 +1677,7 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
   }, [engine]);
 
   useFrame((s) => {
-    const t = s.clock.elapsedTime;
+    const t = engine.elapsed;
     const cam = s.camera.position;
     // 🌙 names hide at dusk & night — identify by CLOTH COLOR, not tags
     const namesHidden = engine.phase === "dusk" || engine.phase === "night";
@@ -1688,7 +1696,7 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
       const bodyGone = dTb > CORPSE_LIE_S + CORPSE_SINK_S;
       v.blood.visible = near && !c.alive && !bodyGone && dTb > 0.35;
       if (v.blood.visible) {
-        v.blood.position.set(c.deathX, 0.04, c.deathZ);
+        v.blood.position.set(c.deathX, groundAt(engine, c.deathX, c.deathZ) + 0.04, c.deathZ);
         (v.blood.material as THREE.MeshBasicMaterial).opacity =
           0.75 * Math.min(1, (dTb - 0.35) / 0.6) * (1 - Math.max(0, (dTb - CORPSE_LIE_S) / CORPSE_SINK_S));
       }
@@ -1705,7 +1713,7 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
           const el = lying ? PED_DOWN_S - (c.downT ?? 0) : PED_DOWN_S;
           const f = Math.min(1, el / 0.5);
           const ez = f * f * (3 - 2 * f);
-          v.mesh.position.set(c.x, 0.36 * ez, c.z);
+          v.mesh.position.set(c.x, groundAt(engine, c.x, c.z) + 0.36 * ez, c.z);
           v.mesh.rotation.x = lying ? -ez * Math.PI / 2.1 : -(c.getupT ?? 0) * Math.PI / 2.1;
           v.mesh.rotation.z = 0;
           poseCharacter(v.mesh, 0, t, {
@@ -1716,7 +1724,7 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
           if (v.tag) v.tag.visible = d2 < DETAIL_SQ && !namesHidden;
           return;
         }
-        v.mesh.position.set(c.x, 0, c.z);
+        v.mesh.position.set(c.x, groundAt(engine, c.x, c.z), c.z);
         let dd = c.face - v.mesh.rotation.y;
         dd = Math.atan2(Math.sin(dd), Math.cos(dd));
         v.mesh.rotation.y += dd * 0.15;
@@ -1744,7 +1752,7 @@ export function CrewRig({ engine }: { engine: GameEngine }) {
           const fall = Math.min(1, dTb / FALL_S);
           const ez = fall * fall * (3 - 2 * fall);
           const sinkD = Math.max(0, dTb - CORPSE_LIE_S) / CORPSE_SINK_S;
-          v.mesh.position.set(c.deathX, 0.34 * ez - 2.0 * sinkD, c.deathZ);
+          v.mesh.position.set(c.deathX, groundAt(engine, c.deathX, c.deathZ) + 0.34 * ez - 2.0 * sinkD, c.deathZ);
           v.mesh.rotation.y = c.face;
           v.mesh.rotation.x = -ez * Math.PI / 2.1;
           v.mesh.rotation.z = 0;
@@ -1800,7 +1808,7 @@ export function LootView({ engine }: { engine: GameEngine }) {
   }), []);
 
   useFrame((s) => {
-    const t = s.clock.elapsedTime;
+    const t = engine.elapsed;
     const cam = s.camera.position;
     for (let i = 0; i < MAX_LOOT_POOLS; i++) {
       const g = piles[i];
@@ -1809,7 +1817,7 @@ export function LootView({ engine }: { engine: GameEngine }) {
       const dx = live.x - cam.x, dz = live.z - cam.z;
       g.visible = dx * dx + dz * dz < CULL_SQ;
       if (!g.visible) continue;
-      g.position.set(live.x, 0, live.z);
+      g.position.set(live.x, groundAt(engine, live.x, live.z), live.z);
       const em = g.children[0];
       em.position.y = 0.85 + Math.sin(t * 2.6 + live.bob) * 0.12;
       em.rotation.y = t * 1.4 + live.bob;
@@ -1845,13 +1853,13 @@ export function ToolDrops({ engine }: { engine: GameEngine }) {
     });
   }, [engine]);
   useFrame((s) => {
-    const t = s.clock.elapsedTime;
+    const t = engine.elapsed;
     engine.toolEnts.forEach((te, i) => {
       const g = views[i];
       if (!g) return;
       g.visible = te.active;
       if (!te.active) return;
-      g.position.set(te.x, terrainHeight(te.x, te.z) + 0.9 + Math.sin(t * 2.4 + i) * 0.16, te.z);
+      g.position.set(te.x, groundAt(engine, te.x, te.z) + 0.9 + Math.sin(t * 2.4 + i) * 0.16, te.z);
       g.rotation.y = 0; // sprites always face the camera
     });
   });
@@ -1912,7 +1920,7 @@ export function BuildsView({ engine }: { engine: GameEngine }) {
       if (!g) continue;
       if (!b) { if (g.visible) g.visible = false; continue; }
       g.visible = true;
-      g.position.set(b.x, terrainHeight(b.x, b.z), b.z);
+      g.position.set(b.x, groundAt(engine, b.x, b.z), b.z);
       if (b.kind === "barricade") {
         g.rotation.y = b.rot;
         g.children.forEach((ch) => { if (ch.name === "flame" || ch.name === "flameLight") (ch as THREE.Object3D).visible = false; });
@@ -1924,7 +1932,7 @@ export function BuildsView({ engine }: { engine: GameEngine }) {
         g.scale.y = 1;
         const flame = g.getObjectByName("flame") as THREE.Sprite | undefined;
         const light = g.getObjectByName("flameLight") as THREE.PointLight | undefined;
-        const t = s.clock.elapsedTime;
+        const t = engine.elapsed;
         if (flame) {
           flame.visible = true;
           flame.scale.setScalar(1.3 + Math.sin(t * 9 + i) * 0.22);
@@ -1944,7 +1952,12 @@ export function BuildsView({ engine }: { engine: GameEngine }) {
 /* 🪨 7Nights — boulders (smashable) & 🌳 stumps (felled trees)        */
 /* ------------------------------------------------------------------ */
 export function RocksView({ engine }: { engine: GameEngine }) {
+  // 🗺️ season arenas dress their boulders in SeasonWorldView's own instanced
+  // pool (grounded on the season terrain) — this town renderer would double-
+  // draw every rock at the wrong height there
+  const seasonal = engine.M.seasonal;
   const meshes = useMemo(() => {
+    if (seasonal) return [];
     return engine.world.rocks.map((rk, i) => {
       const m = new THREE.Mesh(
         new THREE.DodecahedronGeometry(1.05 * rk.s, 0),
@@ -1955,7 +1968,7 @@ export function RocksView({ engine }: { engine: GameEngine }) {
       m.scale.y = 0.72;
       return m;
     });
-  }, [engine]);
+  }, [engine, seasonal]);
   // pristine transforms — the jiggle & crumble passes restore from these
   const base = useMemo(
     () => meshes.map((m) => ({ px: m.position.x, py: m.position.y, pz: m.position.z, rx: m.rotation.x, ry: m.rotation.y, rz: m.rotation.z })),
@@ -1966,11 +1979,12 @@ export function RocksView({ engine }: { engine: GameEngine }) {
   const crumbles = useRef(new Map<number, number>()); // rock idx → crumble start (clock s)
   const brkVer = useRef(-1);
   useFrame((s) => {
-    const now = s.clock.elapsedTime;
+    const now = engine.elapsed;
+    if (meshes.length === 0) return; // 🗺️ season arenas — SeasonRocks owns the boulders
     // 🔨 hammer blow — the struck boulder RINGS: a quick rocking jiggle
     if (engine.rockVersion !== jigVer.current) {
       jigVer.current = engine.rockVersion;
-      if (engine.lastRock >= 0 && !engine.brokenRocks.has(engine.lastRock)) {
+      if (engine.lastRock >= 0 && meshes[engine.lastRock] && !engine.brokenRocks.has(engine.lastRock)) {
         jiggles.current.set(engine.lastRock, now + 0.34);
       }
     }
@@ -1992,7 +2006,7 @@ export function RocksView({ engine }: { engine: GameEngine }) {
       }
     }
     for (const [i, end] of jiggles.current) {
-      if (engine.brokenRocks.has(i)) { jiggles.current.delete(i); continue; }
+      if (!meshes[i] || engine.brokenRocks.has(i)) { jiggles.current.delete(i); continue; }
       if (now >= end) {
         jiggles.current.delete(i);
         const b = base[i];
@@ -2008,6 +2022,7 @@ export function RocksView({ engine }: { engine: GameEngine }) {
       meshes[i].scale.set(1 / sq, 0.72 * sq, 1 / sq);
     }
     for (const [i, t0] of crumbles.current) {
+      if (!meshes[i]) { crumbles.current.delete(i); continue; }
       const k = (now - t0) / ROCK_BREAK_S;
       if (k >= 1) {
         crumbles.current.delete(i);
@@ -2055,7 +2070,7 @@ export function Stumps({ engine }: { engine: GameEngine }) {
         const t = engine.world.trees[i];
         const g = pool[k];
         g.visible = true;
-        g.position.set(t.x, terrainHeight(t.x, t.z) + 0.3, t.z);
+        g.position.set(t.x, groundAt(engine, t.x, t.z) + 0.3, t.z);
         g.scale.setScalar(t.s * 0.9);
         slotTree.current[k] = i;
         k++;
@@ -2097,7 +2112,7 @@ export function RemotesView({ engine }: { engine: GameEngine }) {
   const deadT = useRef(new Map<number, number>());
 
   useFrame((s, dt0) => {
-    const t = s.clock.elapsedTime;
+    const t = engine.elapsed;
     const cam = s.camera.position;
     const dt = Math.min(0.05, dt0);
     engine.remotes.forEach((r) => {
@@ -2120,7 +2135,7 @@ export function RemotesView({ engine }: { engine: GameEngine }) {
           const fall = Math.min(1, dT / 0.6);
           const ez = fall * fall * (3 - 2 * fall);
           const sinkD = Math.max(0, dT - 2) / CORPSE_SINK_S;
-          body.position.set(r.x, 0.34 * ez - 2.0 * sinkD, r.z);
+          body.position.set(r.x, r.y * (1 - sinkD) + 0.34 * ez - 2.0 * sinkD, r.z);
           body.rotation.set(-ez * Math.PI / 2.1, r.face, 0);
         }
         if (v.tag) v.tag.visible = false;
@@ -2172,9 +2187,11 @@ export function RemotesView({ engine }: { engine: GameEngine }) {
         return;
       }
       body.visible = true;
-      // y follows their stream (jump arcs) + terrain in the hills
-      const gy = terrainHeight(r.x, r.z);
-      body.position.set(r.x, gy + r.y, r.z);
+      // y follows their stream — the body's sim y is ABSOLUTE on every map
+      // (terrain-relative in the hills, 0 on the flat town streets), so the
+      // old terrainHeight() add-on double-counted the mountains and buried
+      // remotes inside the season maps' rolling ground
+      body.position.set(r.x, r.y, r.z);
       let dd = r.face - body.rotation.y;
       dd = Math.atan2(Math.sin(dd), Math.cos(dd));
       body.rotation.y += dd * 0.22;
@@ -2202,7 +2219,7 @@ export function RemotesView({ engine }: { engine: GameEngine }) {
       });
       if (dnT > 0) {
         // lying flat where the punch sent them
-        body.position.set(r.x, (gy + r.y) * (1 - downEz) + 0.36 * downEz, r.z);
+        body.position.set(r.x, r.y * (1 - downEz) + 0.36 * downEz, r.z);
         body.rotation.x = -downEz * Math.PI / 2.05;
       } else if (guT > 0) {
         // the push-off — the root unfolds from flat back to standing
@@ -2321,7 +2338,7 @@ export function ZoneWall({ engine }: { engine: GameEngine }) {
       top.current?.scale.set(R, R, 1);
       // the player's own stance decides the mood: safe teal vs. burning red
       const outside = Math.hypot(engine.player.x, engine.player.z) > R;
-      const t = s.clock.elapsedTime;
+      const t = engine.elapsed;
       const pulse = 0.72 + Math.sin(t * 2.1) * 0.28;
       const col = outside ? ZONE_BURN : ZONE_SAFE;
       if (wallMat.current) {
@@ -2342,7 +2359,7 @@ export function ZoneWall({ engine }: { engine: GameEngine }) {
       if (dawnOn) {
         const dR = engine.dawnWallRadius();
         dawnRing.current.scale.set(dR, dR, 1);
-        const t2 = s.clock.elapsedTime;
+        const t2 = engine.elapsed;
         if (dawnMat.current) dawnMat.current.opacity = 0.55 + Math.sin(t2 * 3.2) * 0.3;
       }
     }

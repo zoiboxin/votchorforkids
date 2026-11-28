@@ -47,6 +47,10 @@ import { AIKIND_HOUND, AIKIND_HUNTER, AIKIND_ZOMBIE, AIKIND_CREW, type AiEntry }
 
 const TAU = Math.PI * 2; // full circle — used to keep the camera yaw wrapped
 
+/** 🗺️ season arenas' ring-traffic fleet — every body style the season renderer
+ *  draws from the polyfork Retro Cars Kit (no town-GLB taxi/bus/jeep bodies). */
+const SEASON_TRAFFIC: readonly number[] = [0, 1, 2, 2, 3, 3, 6, 7, 8, 9, 0, 1, 6, 8, 2, 9];
+
 /** 📉 alive-count milestones the feed ALWAYS announces — the required story
  *  beats survive any toast throttling while ambient deaths stay quiet. */
 const ALIVE_MILESTONES = [50, 25, 10, 5, 3, 2];
@@ -1092,6 +1096,17 @@ export class GameEngine {
    *  this file goes through here so both worlds share one physics stack. */
   get M(): MapInfo { return this.world.map ?? LOBBY_MAP; }
 
+  /** ring-road point for the traffic fleet — the town island swings around the
+   *  airport's NW bypass chord; a season arena is a clean circle around its
+   *  ring road (no airport plot to dodge). */
+  private ringPt(a: number, r: number, dir: 1 | -1): { x: number; z: number; rot: number } {
+    if (this.M.seasonal) {
+      const na = ((a % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
+      return { x: Math.cos(na) * r, z: Math.sin(na) * r, rot: dir > 0 ? -na : Math.PI - na };
+    }
+    return ringTrafficPoint(a, r, dir);
+  }
+
   /* ---------------- 🔍 night trace: AI forensics for the stuck-horde mystery ----------------
    * Ring-buffered log lines (console.debug + `window.__vc.engine.trace()`).
    * Night sampling tracks the exact symptoms the lobby reported: hunters piling
@@ -1457,6 +1472,8 @@ export class GameEngine {
     }
     // ring-road traffic — two lanes, both directions, the full fleet: buses, pickups,
     // vans & jeeps cruise alongside the family cars
+    // 🗺️ seasonal arenas run a kit-bodied fleet (the season renderer draws every
+    // car from the polyfork Retro Cars Kit — town-GLB taxis don't stream there)
     for (let i = 0; i < TRAFFIC_COUNT; i++) {
       const dir: 1 | -1 = i % 2 === 0 ? 1 : -1;
       this.traffic.push({
@@ -1465,11 +1482,13 @@ export class GameEngine {
         a: (i / TRAFFIC_COUNT) * Math.PI * 2,
         sp: 0.034 + (i % 3) * 0.011, // ≈7–12 u/s — quicker than a walking kid, dodgeable when sprinting
         c: (i * 3 + 1) % 8,
-        t: i % 4 === 3 ? TAXI_TYPE : VEHICLE_POOL[i % VEHICLE_POOL.length], // 🚕 every 4th ride is a yellow cab
+        t: this.M.seasonal
+          ? SEASON_TRAFFIC[i % SEASON_TRAFFIC.length]
+          : i % 4 === 3 ? TAXI_TYPE : VEHICLE_POOL[i % VEHICLE_POOL.length], // 🚕 every 4th ride is a yellow cab
         x: 0, z: 0, rot: 0,
       });
       const t = this.traffic[this.traffic.length - 1];
-      const pt = ringTrafficPoint(t.a, t.r, t.dir);
+      const pt = this.ringPt(t.a, t.r, t.dir);
       t.x = pt.x; t.z = pt.z; t.rot = pt.rot;
     }
     // police side: a slice of the civilians become vote-runners (the player hunts THEM)
@@ -3196,7 +3215,7 @@ export class GameEngine {
       for (let i = 0; i < amb.tr.length && i < this.traffic.length; i++) {
         const t = this.traffic[i];
         t.a = amb.tr[i];
-        const pt = ringTrafficPoint(t.a, t.r, t.dir);
+        const pt = this.ringPt(t.a, t.r, t.dir);
         t.x = pt.x; t.z = pt.z; t.rot = pt.rot;
       }
     }
@@ -7184,7 +7203,7 @@ export class GameEngine {
      * recover to cruise speed once the lane clears. Traffic can never plough
      * straight through metal, so two vehicles can never overlap or cross. */
     for (const t of this.traffic) {
-      const look = ringTrafficPoint(t.a + t.dir * (7.4 / Math.max(24, t.r)), t.r, t.dir);
+      const look = this.ringPt(t.a + t.dir * (7.4 / Math.max(24, t.r)), t.r, t.dir);
       let blocked = false;
       for (const o of this.world.cars) {
         if (dist2(o.x, o.z, look.x, look.z) < 3.2 * 3.2) { blocked = true; break; }
@@ -7198,7 +7217,7 @@ export class GameEngine {
       }
       t.spCur = Math.min(t.sp, Math.max(0, (t.spCur ?? t.sp) + (blocked ? -5.5 : 2.2) * dt));
       t.a += t.spCur * t.dir * dt;
-      const pt = ringTrafficPoint(t.a, t.r, t.dir);
+      const pt = this.ringPt(t.a, t.r, t.dir);
       t.x = pt.x; t.z = pt.z; t.rot = pt.rot;
       if (this.detainedT > 0 || this.drive || this.ride || this.deploy) continue; // sitting out detention / inside a vehicle / still skydiving — traffic can't touch you
       const fx = Math.sin(t.rot), fz = Math.cos(t.rot);
