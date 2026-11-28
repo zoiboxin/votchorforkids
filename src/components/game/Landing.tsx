@@ -1,22 +1,27 @@
 "use client";
 
 /**
- * Landing — the 🎮 FORTNITE / PUBG-style PC lobby dashboard.
+ * Landing — the FORTNITE / PUBG-style PC lobby dashboard.
  *
  * A dense desktop lobby, exactly the pattern from the big battle-royale games:
  *   • angled logo band + tab rail on top (Lobby · Battle Pass · Challenges ·
  *     Locker · Item Shop · Career · News) with XP / crew chips and the avatar
- *   • left rail: SEASON, SUGGESTED CHALLENGES and the DAILY CHALLENGES board
- *     collapse into icon buttons — click one to pop open just that card
- *     (one at a time, click again to close)
+ *   • left rail: SEASON, SUGGESTED and DAILY icons — each navigates to its
+ *     own DEDICATED FULL PAGE (the Item-Shop pattern): the season calendar
+ *     follows the cpanel-scheduled live season, Suggested is the smart
+ *     recommendation hub, Daily is the full challenge board
  *   • center: the rigged GLB survivor LIVE on the lobby floor (drag to spin,
  *     glowing center circle — no cartoon bodies) with the name plate + READY
  *     status above and the rank boost pill below
  *   • bottom: Global chat docked as a right-side icon — a LIVE socket.io relay
- *     (mini-services/chat-service) where every soul sees every message; the icon
- *     carries an UNSEEN badge that clears the moment the panel is opened, and
- *     the big yellow SOLO PLAYER button plus the MULTIPLAYER squads button —
- *     customization lives in the LOCKER, never blocking the way into a night
+ *     (mini-services/chat-service) where every soul sees every message; the
+ *     icon carries an UNSEEN badge that clears the moment the panel is opened,
+ *     and the big yellow SOLO PLAYER button plus the MULTIPLAYER squads
+ *     button — customization lives in the LOCKER, never blocking the way in
+ *
+ * 🛡️ Chat moderation aware: the relay bounces blocked/banned/muted senders
+ * with chat:blocked / chat:muted / chat:banned, deleted messages vanish via
+ * chat:delete — the dock renders strike notices and restricts the input.
  *
  * Wiring is unchanged: SOLO PLAYER queues through the PUBG-style match lobby
  * (bots fill the 100-soul night; a name is rolled automatically the first
@@ -29,45 +34,24 @@ import { useEffect, useRef, useState } from "react";
 import { motion } from "framer-motion";
 import { io, type Socket } from "socket.io-client";
 import {
-  CalendarDays, ChevronRight, Cloud, CloudOff, CloudUpload, Crown, Flame,
-  Info, MessageSquare, Pencil, Play, Send, Settings, Sparkles, Star, Trophy,
+  CalendarDays, Cloud, CloudOff, CloudUpload, Crown,
+  Info, MessageSquare, Pencil, Play, Send, Settings, Sparkles, Star,
   Users, X, Zap,
   type LucideIcon,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { DAILY_TASK_POOL, ALL_DONE_BONUS } from "@/lib/game/daily";
 import {
   NAME_SUGGESTIONS,
   type Appearance,
 } from "@/lib/game/constants";
-import { RANKS, rankFor } from "@/lib/game/ranks";
+import { rankFor } from "@/lib/game/ranks";
 import { primeAudio, sfx, startMusic } from "@/lib/game/audio";
 import { storageBlocked } from "@/lib/game/storage";
-import { useGame } from "./store";
+import { useGame, type Screen } from "./store";
 import { HowToPlay, SettingsDialog, StatsDialog, HistoryDialog } from "./Panels";
 import { RankBadge } from "./RankCard";
 import { LobbyStage } from "./LobbyStage";
-
-/* ---------------- meta progression ---------------- */
-
-/** XP needed per account LEVEL (Fortnite-style — grows forever) */
-const LEVEL_STEP = 500;
-
-/** stable quarterly season number (SEASON 1 starts Jan 2025) */
-function seasonNo(d = new Date()): number {
-  return 1 + (d.getFullYear() - 2025) * 4 + Math.floor(d.getMonth() / 3);
-}
-
-/** how long until the daily reset, as "5h 12m" */
-function resetCountdown(): string {
-  const now = new Date();
-  const mid = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-  const ms = mid.getTime() - now.getTime();
-  const h = Math.floor(ms / 3_600_000);
-  const m = Math.floor((ms % 3_600_000) / 60_000);
-  return h > 0 ? `${h}h ${m}m` : `${m}m`;
-}
 
 /* ---------------- tabs ---------------- */
 
@@ -83,7 +67,6 @@ const TABS: { id: Tab; label: string; key?: string }[] = [
 ];
 
 /** the ONE lobby card popped open from the left icon rail (or none) */
-type LobbyCard = "season" | "suggested" | "daily";
 
 /* ---------------- tiny building blocks ---------------- */
 
@@ -107,25 +90,17 @@ function Panel({ children, className = "" }: { children: React.ReactNode; classN
   );
 }
 
-function XpBar({ pct, bar = "from-amber-400 to-yellow-300", h = "h-2" }: { pct: number; bar?: string; h?: string }) {
-  return (
-    <div className={`w-full overflow-hidden rounded-full bg-black/55 ring-1 ring-white/15 ${h}`}>
-      <motion.div
-        className={`h-full rounded-full bg-gradient-to-r ${bar}`}
-        initial={{ width: 0 }}
-        animate={{ width: `${Math.round(Math.max(0, Math.min(1, pct)) * 100)}%` }}
-        transition={{ duration: 0.5, ease: "easeOut" }}
-      />
-    </div>
-  );
-}
-
 /* ------------- global chat (right-side dock — LIVE socket.io relay) -------------
  * mini-services/chat-service PERSISTS 7 days of shared history (SQLite) and
  * broadcasts every message to every connected soul — a page refresh replays
  * the stored lines, nothing is lost. The dock badge counts UNSEEN messages
  * that arrived while the panel was closed — opening the panel marks them seen
- * and the badge clears. History catch-up never pings the badge. */
+ * and the badge clears. History catch-up never pings the badge.
+ *
+ * 🛡️ Moderation aware: the relay silently refuses muted/banned senders and
+ * answers with chat:muted / chat:banned; abusive language never broadcasts
+ * and answers chat:blocked with the strike count (3 strikes → 30 min auto-
+ * mute). Deleted-by-admin lines vanish live via chat:delete. */
 
 interface ChatMsg { id: string; name: string; msg: string; ts: number }
 
@@ -142,10 +117,19 @@ function GlobalChatDock({ name, placement }: { name: string; placement: "rail" |
   const [unread, setUnread] = useState(0);
   const [connected, setConnected] = useState(false);
   const [online, setOnline] = useState(1);
+  /* 🛡️ moderation state — strike notices, mute sentence, chat ban */
+  const [sysNotes, setSysNotes] = useState<{ id: number; text: string; kind: "block" | "mute" | "ban" }[]>([]);
+  const [muted, setMuted] = useState<{ until: number; reason: string } | null>(null);
+  const [banned, setBanned] = useState<string | null>(null);
   const socketRef = useRef<Socket | null>(null);
   const openRef = useRef(false);
   const scrollRef = useRef<HTMLDivElement | null>(null);
   const meRef = useRef(name);
+  const sysIdRef = useRef(1);
+
+  const pushNote = (text: string, kind: "block" | "mute" | "ban") => {
+    setSysNotes((s) => [...s.slice(-4), { id: sysIdRef.current++, text, kind }]);
+  };
 
   /* keep the sender identity fresh for the unseen-badge check */
   useEffect(() => { meRef.current = name || "Guest"; }, [name]);
@@ -180,8 +164,36 @@ function GlobalChatDock({ name, placement }: { name: string; placement: "rail" |
 
     socket.on("chat:presence", (p: { online: number }) => setOnline(Math.max(1, p.online)));
 
+    /* 🛡️ moderation events — the relay refused our message or cleaned one up */
+    socket.on("chat:blocked", (p: { word?: string; strikes?: number; limit?: number }) => {
+      pushNote(
+        `Message blocked — the word filter caught it${p.word ? ` ("${p.word}")` : ""}. Strike ${p.strikes ?? 1}/${p.limit ?? 3} — 3 strikes in 10 minutes auto-mute 30 minutes.`,
+        "block",
+      );
+    });
+    socket.on("chat:muted", (p: { until: number; reason?: string }) => {
+      setMuted({ until: p.until, reason: p.reason ?? "Chat restricted." });
+      pushNote(`Chat restricted until ${new Date(p.until).toLocaleTimeString()} — ${p.reason ?? "by an admin"}.`, "mute");
+    });
+    socket.on("chat:banned", (p: { reason?: string }) => {
+      setBanned(p.reason ?? "You are banned from chat.");
+      pushNote(p.reason ?? "You are banned from chat.", "ban");
+    });
+    socket.on("chat:delete", (p: { id: string }) => {
+      setChat((c) => c.filter((m) => m.id !== p.id));
+    });
+
     return () => { socket.disconnect(); };
   }, []);
+
+  /* the mute sentence counts down — the input frees the moment it expires */
+  useEffect(() => {
+    if (!muted) return;
+    const t = setInterval(() => {
+      if (Date.now() >= muted.until) setMuted(null);
+    }, 1000);
+    return () => clearInterval(t);
+  }, [muted]);
 
   /* newest message stays in view while the panel is open */
   useEffect(() => {
@@ -199,11 +211,20 @@ function GlobalChatDock({ name, placement }: { name: string; placement: "rail" |
   const send = () => {
     const msg = draft.trim().slice(0, 120);
     const socket = socketRef.current;
-    if (!msg || !socket?.connected) return;
+    if (!msg || !socket?.connected || muted || banned) return;
     socket.emit("chat:send", { name: meRef.current, msg });
     setDraft("");
     sfx.click();
   };
+
+  /** remaining mute time as "12m 30s" — for the restriction pill */
+  const muteLeft = (() => {
+    if (!muted) return "";
+    const ms = Math.max(0, muted.until - Date.now());
+    const m = Math.floor(ms / 60_000);
+    const s = Math.floor((ms % 60_000) / 1000);
+    return m > 0 ? `${m}m ${String(s).padStart(2, "0")}s` : `${s}s`;
+  })();
 
   /* 📍 panel position follows the placement:
      • "rail" (desktop right-rail icon) → anchored to the ICON: the panel top
@@ -285,34 +306,58 @@ function GlobalChatDock({ name, placement }: { name: string; placement: "rail" |
               Global chat
             </Strip>
             <div ref={scrollRef} aria-live="polite" className="lobby-scroll max-h-56 min-h-[3.5rem] space-y-1.5 overflow-y-auto p-2.5 lg:max-h-80">
-              {chat.length === 0 ? (
+              {chat.length === 0 && sysNotes.length === 0 ? (
                 <p className="px-1 py-2 text-center text-[11px] font-bold text-white/40">
                   {connected ? "Say hello to the night…" : "Lighting the relay…"}
                 </p>
               ) : (
-                chat.map((m) => {
-                  const mine = m.name === (name || "Guest");
-                  return (
-                    <div key={m.id} className="rounded border border-white/10 bg-white/5 px-2.5 py-1.5 text-[11px] font-bold leading-snug text-white/80">
-                      <span className={m.name === "NightLine" ? "text-teal-300/90" : mine ? "text-yellow-300/90" : "text-orange-200/90"}>
-                        {m.name}:
-                      </span>{" "}
-                      {m.msg}
+                <>
+                  {chat.map((m) => {
+                    const mine = m.name === (name || "Guest");
+                    return (
+                      <div key={m.id} className="rounded border border-white/10 bg-white/5 px-2.5 py-1.5 text-[11px] font-bold leading-snug text-white/80">
+                        <span className={m.name === "NightLine" ? "text-teal-300/90" : mine ? "text-yellow-300/90" : "text-orange-200/90"}>
+                          {m.name}:
+                        </span>{" "}
+                        {m.msg}
+                      </div>
+                    );
+                  })}
+                  {sysNotes.map((n) => (
+                    <div
+                      key={n.id}
+                      className={`rounded border px-2.5 py-1.5 text-[10px] font-bold leading-snug ${
+                        n.kind === "block"
+                          ? "border-amber-400/40 bg-amber-400/10 text-amber-200"
+                          : n.kind === "mute"
+                            ? "border-orange-400/40 bg-orange-500/10 text-orange-200"
+                            : "border-rose-400/40 bg-rose-500/10 text-rose-200"
+                      }`}
+                    >
+                      {n.text}
                     </div>
-                  );
-                })
+                  ))}
+                </>
               )}
             </div>
+            {(muted || banned) && (
+              <div className="border-t border-white/10 bg-rose-950/40 px-2.5 py-1.5 text-[10px] font-bold text-rose-200">
+                {banned
+                  ? banned
+                  : `Chat restricted — ${muteLeft} left. ${muted?.reason ?? ""}`}
+              </div>
+            )}
             <form
               onSubmit={(e) => { e.preventDefault(); send(); }}
               className="flex items-center gap-2 border-t border-white/10 bg-black/30 px-2.5 py-2"
             >
               <Input
                 value={draft}
-                disabled={!connected}
+                disabled={!connected || !!muted || !!banned}
                 onChange={(e) => setDraft(e.target.value.slice(0, 120))}
-                placeholder={connected ? "Press Enter to chat…" : "Lighting the relay…"}
+                placeholder={banned ? "Chat banned" : muted ? "Restricted — wait it out" : connected ? "Press Enter to chat…" : "Lighting the relay…"}
                 aria-label="Global chat message"
+                aria-disabled={!!muted || !!banned}
                 maxLength={120}
                 className="h-7 flex-1 border-0 bg-transparent px-1 text-xs text-white shadow-none placeholder:text-white/35 focus-visible:ring-0"
               />
@@ -398,6 +443,9 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
   const pullProfile = useGame((s) => s.pullProfile);
   const daily = useGame((s) => s.daily);
   const ensureDailyToday = useGame((s) => s.ensureDailyToday);
+  /* the live season — synced from the cpanel-scheduled calendar on boot */
+  const seasonId = useGame((s) => s.seasonId);
+  const seasonNum = Number(seasonId.replace("s", "")) || 1;
 
   /* 🗂️ lobby tab lives in the store so any panel can deep-link straight into
      a tab (locker → "Open the Item Shop" now lands on the full shop page) */
@@ -409,15 +457,9 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [statsOpen, setStatsOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
-  const [countdown, setCountdown] = useState("");
-  const [lobbyCard, setLobbyCard] = useState<LobbyCard | null>(null);
 
   const hasProfile = playerName.trim().length > 0;
-  const { rank, next, progress, toNext } = rankFor(careerXp);
-  const level = Math.floor(careerXp / LEVEL_STEP) + 1;
-  const intoLevel = careerXp % LEVEL_STEP;
-  const tier = RANKS.findIndex((r) => r.id === rank.id) + 1;
-  const season = seasonNo();
+  const { rank } = rankFor(careerXp);
 
   /* audio unlock + warm the leaderboard cache (same as the old landing) */
   useEffect(() => {
@@ -433,13 +475,25 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
     if (consent && playerName.trim()) void pullProfile();
   }, [consent, playerName, pullProfile]);
 
-  /* roll the daily board at local midnight + refresh the reset countdown */
+  /* roll the daily board at local midnight */
   useEffect(() => {
-    const tick = () => { ensureDailyToday(); setCountdown(resetCountdown()); };
+    const tick = () => { ensureDailyToday(); };
     const first = setTimeout(tick, 0);
     const id = setInterval(tick, 30_000);
     return () => { clearTimeout(first); clearInterval(id); };
   }, [ensureDailyToday]);
+
+  /* 🗓️ the cpanel-scheduled LIVE season drives the default match arena —
+     every boot syncs it (the MatchLobby picker can still override a room) */
+  useEffect(() => {
+    fetch("/api/seasons")
+      .then((r) => r.json())
+      .then((d: { active?: { id?: string } | null }) => {
+        const id = d?.active?.id;
+        if (id && /^s\d+$/.test(id)) useGame.getState().setSeasonId(id);
+      })
+      .catch(() => {});
+  }, []);
 
   /* 🗂️ every non-lobby tab is a DEDICATED FULL PAGE now (the Item-Shop pattern):
      old deep-links that still ask for a "battlepass"/"challenges"/"career"/
@@ -497,19 +551,19 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
     setScreen(id === "store" ? "shop" : id);
   };
 
-  /** left-rail icons — open exactly ONE lobby card (Season / Suggested / Daily);
-   *  clicking the active icon closes it, clicking another swaps the panel */
-  const toggleLobbyCard = (id: LobbyCard) => {
+  /** left-rail icons — SEASON / SUGGESTED / DAILY are DEDICATED FULL PAGES
+   *  now (the Item-Shop pattern): the icon navigates straight there */
+  const openLobbyPage = (id: Screen) => {
     sfx.click();
     setTab("lobby");
-    setLobbyCard((cur) => (cur === id ? null : id));
+    setScreen(id);
   };
 
   const doneCount = daily.tasks.filter((t) => t.done).length;
 
-  /* the left rail — three lobby cards collapsed to icons (badges live on them) */
-  const lobbyCards: { id: LobbyCard; label: string; icon: LucideIcon; badge?: string }[] = [
-    { id: "season", label: "Season", icon: Crown, badge: `S${season}` },
+  /* the left rail — three full pages reachable from icons (badges live on them) */
+  const lobbyPages: { id: Screen; label: string; icon: LucideIcon; badge?: string }[] = [
+    { id: "season", label: "Season", icon: Crown, badge: `S${seasonNum}` },
     { id: "suggested", label: "Suggested", icon: Sparkles },
     { id: "daily", label: "Daily", icon: CalendarDays, badge: `${doneCount}/${daily.tasks.length}` },
   ];
@@ -632,183 +686,46 @@ export function Landing({ onQuickPlay }: { onQuickPlay?: () => void }) {
         </div>
       </header>
 
-      {/* ================= main: left panels + center stage ================= */}
+      {/* ================= main: left rail + center stage ================= */}
       <main className="lobby-scroll relative z-10 flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-2 py-3 pb-2 sm:px-3 lg:flex-row lg:overflow-hidden">
-        {/* -------- left rail: Season / Suggested / Daily collapse to icons -------- */}
-        <aside className="lobby-scroll order-2 w-full shrink-0 lg:order-1 lg:w-[330px] lg:overflow-y-auto lg:pr-1.5">
-          <div className="flex flex-col gap-2.5 lg:flex-row lg:items-start lg:gap-2">
-            {/* icon rail — click an icon to pop open just that card (one at a time) */}
-            <div role="tablist" aria-label="Lobby cards" className="flex shrink-0 flex-row gap-1.5 lg:mt-8 lg:flex-col">
-              {lobbyCards.map((c) => {
-                const open = tab === "lobby" && lobbyCard === c.id;
-                const RailIcon = c.icon;
-                return (
-                  <button
-                    key={c.id}
-                    role="tab"
-                    aria-selected={open}
-                    aria-label={`Open ${c.label} card`}
-                    title={`${c.label}${c.badge ? ` — ${c.badge}` : ""}`}
-                    onClick={() => toggleLobbyCard(c.id)}
-                    className={`relative flex h-14 w-14 shrink-0 flex-col items-center justify-center gap-0.5 rounded-md border transition-all ${
-                      open
-                        ? "border-orange-400/80 bg-orange-600/25 text-orange-200 shadow-[0_0_14px_rgba(234,88,12,0.4)]"
-                        : "border-white/15 bg-slate-950/85 text-white/70 backdrop-blur hover:bg-slate-800/90 hover:text-white"
-                    }`}
-                  >
-                    <RailIcon size={18} />
-                    <span className="text-[8px] font-black uppercase tracking-wider">{c.label}</span>
-                    {c.badge && (
-                      <span
-                        className={`absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-black text-white ring-2 ring-slate-950 ${
-                          c.id === "daily" && doneCount === daily.tasks.length ? "bg-emerald-500" : "bg-orange-600"
-                        }`}
-                      >
-                        {c.badge}
-                      </span>
-                    )}
-                  </button>
-                );
-              })}
-            </div>
-
-            <motion.div
-              key={`${tab}-${lobbyCard ?? "none"}`}
-              initial={{ opacity: 0, y: 10 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.18 }}
-              className="min-w-0 flex-1 space-y-2.5"
-            >
-            {/* ---------- SEASON card (pops open from its rail icon) ---------- */}
-            {tab === "lobby" && lobbyCard === "season" && (
-            <Panel>
-              <Strip right={<span className="text-[10px] font-black uppercase text-white/85">Survive the 7 nights</span>}>
-                Season {season}
-              </Strip>
-              <div className="p-3">
-                <div className="flex items-center gap-3">
-                  <RankBadge xp={careerXp} size={58} />
-                  <div className="min-w-0 flex-1">
-                    <div className="text-2xl font-black italic leading-none text-white">
-                      LEVEL <span className="text-yellow-300">{level}</span>
-                    </div>
-                    <div className="mt-1.5">
-                      <XpBar pct={intoLevel / LEVEL_STEP} />
-                    </div>
-                    <div className="mt-1 flex items-center justify-between text-[10px] font-bold text-white/55">
-                      <span>{intoLevel.toLocaleString()} / {LEVEL_STEP.toLocaleString()} XP</span>
-                      <span className="flex items-center gap-1 text-yellow-300/90">
-                        <Star size={11} fill="currentColor" /> LVL {level + 1} reward
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                {/* battle pass tier strip → the rank ladder */}
+        {/* -------- left rail: Season / Suggested / Daily full-page links -------- */}
+        <aside className="order-2 w-full shrink-0 lg:order-1 lg:w-14">
+          <div role="tablist" aria-label="Lobby pages" className="flex flex-row gap-1.5 lg:mt-8 lg:flex-col">
+            {lobbyPages.map((c) => {
+              const RailIcon = c.icon;
+              return (
                 <button
-                  onClick={() => openTab("battlepass")}
-                  className="mt-3 flex w-full items-center gap-2.5 rounded-md border border-yellow-300/35 bg-yellow-400/10 px-3 py-2 text-left transition-colors hover:bg-yellow-400/20"
-                  aria-label="Open battle pass"
+                  key={c.id}
+                  role="tab"
+                  aria-label={`Open the ${c.label} page`}
+                  title={`${c.label}${c.badge ? ` — ${c.badge}` : ""} — full page`}
+                  onClick={() => openLobbyPage(c.id)}
+                  className="relative flex h-14 w-14 shrink-0 flex-col items-center justify-center gap-0.5 rounded-md border border-white/15 bg-slate-950/85 text-white/70 backdrop-blur transition-all hover:border-orange-400/60 hover:bg-slate-800/90 hover:text-white"
                 >
-                  <Trophy size={18} className="shrink-0 text-yellow-300" />
-                  <span className="min-w-0 flex-1">
-                    <span className="flex items-center justify-between gap-2 text-[10px] font-black uppercase tracking-wider text-yellow-200">
-                      <span className="whitespace-nowrap">Battle pass · Tier {tier}/{RANKS.length}</span>
-                      <span className="whitespace-nowrap text-white/55">{next ? `${toNext} XP to tier up` : "MAX 👑"}</span>
+                  <RailIcon size={18} />
+                  <span className="text-[8px] font-black uppercase tracking-wider">{c.label}</span>
+                  {c.badge && (
+                    <span
+                      className={`absolute -right-1.5 -top-1.5 flex h-4 min-w-4 items-center justify-center rounded-full px-1 text-[9px] font-black text-white ring-2 ring-slate-950 ${
+                        c.id === "daily" && doneCount === daily.tasks.length ? "bg-emerald-500" : "bg-orange-600"
+                      }`}
+                    >
+                      {c.badge}
                     </span>
-                    <span className="mt-1 block"><XpBar pct={progress} bar="from-yellow-300 to-amber-400" h="h-1.5" /></span>
-                    <span className="mt-1 block text-[10px] font-bold text-white/60">{rank.emoji} {rank.name}</span>
-                  </span>
-                  <ChevronRight size={15} className="shrink-0 text-yellow-200/70" />
+                  )}
                 </button>
-              </div>
-            </Panel>
-            )}
-
-            {/* ---------- SUGGESTED challenges card (pops open from its rail icon) ---------- */}
-            {tab === "lobby" && lobbyCard === "suggested" && (
-                <Panel>
-                  <Strip>Suggested challenges</Strip>
-                  <div className="space-y-1.5 p-2.5">
-                    <button
-                      onClick={play}
-                      className="flex w-full items-center gap-2 rounded border border-white/10 bg-white/5 px-2.5 py-2 text-left transition-colors hover:border-yellow-300/40 hover:bg-white/10"
-                    >
-                      <Trophy size={15} className="shrink-0 text-yellow-300" />
-                      <span className="min-w-0 flex-1 truncate text-[11px] font-bold text-white/90">Win a run — outlast all 7 nights</span>
-                      <span className="shrink-0 rounded-full bg-yellow-300/15 px-2 py-0.5 text-[10px] font-black text-yellow-200">+120 XP</span>
-                    </button>
-                    <button
-                      onClick={() => { sfx.click(); setScreen("lobby"); }}
-                      className="flex w-full items-center gap-2 rounded border border-white/10 bg-white/5 px-2.5 py-2 text-left transition-colors hover:border-teal-300/40 hover:bg-white/10"
-                    >
-                      <Users size={15} className="shrink-0 text-teal-300" />
-                      <span className="min-w-0 flex-1 truncate text-[11px] font-bold text-white/90">Play a match with a friend — host or quick join</span>
-                      <span className="shrink-0 rounded-full bg-teal-300/15 px-2 py-0.5 text-[10px] font-black text-teal-200">+50 XP</span>
-                    </button>
-                    <button
-                      onClick={() => openTab("challenges")}
-                      className="flex w-full items-center gap-2 rounded border border-white/10 bg-white/5 px-2.5 py-2 text-left transition-colors hover:border-emerald-300/40 hover:bg-white/10"
-                    >
-                      <Flame size={15} className="shrink-0 text-orange-300" />
-                      <span className="min-w-0 flex-1 truncate text-[11px] font-bold text-white/90">Keep the 🔥 streak alive — play daily</span>
-                      <span className="shrink-0 rounded-full bg-orange-300/15 px-2 py-0.5 text-[10px] font-black text-orange-200">+{ALL_DONE_BONUS} XP</span>
-                    </button>
-                  </div>
-                </Panel>
-            )}
-
-            {/* ---------- DAILY challenges card (pops open from its rail icon) ---------- */}
-            {tab === "lobby" && lobbyCard === "daily" && (
-                <Panel>
-                  <Strip right={<span className="text-[10px] font-black text-white/85">{doneCount}/{daily.tasks.length} done</span>}>
-                    Daily challenges
-                  </Strip>
-                  <div className="space-y-1.5 p-2.5">
-                    {daily.tasks.map((t) => {
-                      const def = DAILY_TASK_POOL.find((d) => d.id === t.id);
-                      const pct = Math.min(1, t.progress / t.target);
-                      return (
-                        <div key={t.id} className={`rounded border px-2.5 py-2 ${t.done ? "border-emerald-300/40 bg-emerald-400/10" : "border-white/10 bg-white/5"}`}>
-                          <div className="flex items-center gap-2 text-[11px] font-bold text-white/90">
-                            <span aria-hidden className="text-base leading-none">{t.done ? "✅" : (def?.emoji ?? "🎯")}</span>
-                            <span className="min-w-0 flex-1 truncate">{def?.label(t.target) ?? t.id}</span>
-                            <span className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-black ${t.done ? "bg-emerald-400/25 text-emerald-200" : "bg-yellow-300/15 text-yellow-200"}`}>
-                              {t.done ? "done" : `+${t.xp} XP`}
-                            </span>
-                          </div>
-                          {!t.done && (
-                            <div className="mt-1.5 flex items-center gap-2">
-                              <XpBar pct={pct} bar="from-emerald-400 to-yellow-300" h="h-1.5" />
-                              <span className="w-16 shrink-0 text-right text-[10px] font-black tabular-nums text-white/55">
-                                {Math.floor(t.progress)}/{t.target}
-                              </span>
-                            </div>
-                          )}
-                        </div>
-                      );
-                    })}
-                    <div className="flex items-center justify-between pt-0.5 text-[10px] font-bold text-white/45">
-                      <span>🔥 streak: <b className="text-orange-200">{daily.streak} day{daily.streak === 1 ? "" : "s"}</b></span>
-                      <span>resets in {countdown || "…"}</span>
-                    </div>
-                  </div>
-                </Panel>
-            )}
-
-            </motion.div>
+              );
+            })}
           </div>
         </aside>
 
         {/* -------- center: the survivor stage --------
-             The left rail (330px) is far wider than the right rail (56px),
-             which shoves a plain flex-1 stage right of the viewport center.
-             A compensating lg right margin re-centers the whole stage — hero,
-             name plate and rank pill all line up dead-center like the big-game
-             lobbies. (Offset = (330 − 56) / 2 + gap = 137px → margin = 274px.) */}
+             Left and right rails are the same 56px width now, so a plain
+             flex-1 stage sits dead-center — hero, name plate and rank pill
+             all line up like the big-game lobbies. */}
         <section
           aria-label="Your survivor — drag to spin"
-          className="relative order-1 h-[44vh] min-h-[300px] w-full lg:order-2 lg:mr-[274px] lg:h-auto lg:min-h-0 lg:flex-1"
+          className="relative order-1 h-[44vh] min-h-[300px] w-full lg:order-2 lg:h-auto lg:min-h-0 lg:flex-1"
         >
           {/* name plate + rank pill (Fortnite center-stage) */}
           <div className="pointer-events-none absolute left-1/2 top-0 z-20 -translate-x-1/2 text-center">

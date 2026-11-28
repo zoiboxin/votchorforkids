@@ -26,6 +26,15 @@ export async function POST(req: Request) {
     const body = await req.json().catch(() => ({}));
     const rawName = typeof body.name === "string" ? body.name : "";
     const name = rawName.replace(/[^\p{L}\p{N} _.-]/gu, "").trim().slice(0, 16) || "Guest";
+
+    // 🚫 banned players cannot post to the hall of fame
+    const mod = await db.playerModeration
+      .findUnique({ where: { id: name.toLowerCase() } })
+      .catch(() => null);
+    if (mod?.banned) {
+      return NextResponse.json({ ok: false, banned: true, error: mod.banReason || "This account is banned." }, { status: 403 });
+    }
+
     const score = await db.score.create({
       data: {
         name,

@@ -46,6 +46,16 @@ export async function POST(req: Request) {
     }
     const name = normName(body.name);
     if (!name) return NextResponse.json({ ok: false, error: "bad name" }, { status: 400 });
+
+    // 🚫 admin bans block the cloud save — the account cannot re-sync progress
+    const mod = await db.playerModeration.findUnique({ where: { id: name } }).catch(() => null);
+    if (mod?.banned) {
+      return NextResponse.json(
+        { ok: false, banned: true, error: mod.banReason || "This account is banned." },
+        { status: 403 },
+      );
+    }
+
     const data = typeof body.data === "string" ? body.data : JSON.stringify(body.data ?? {});
     if (data.length > MAX_DATA) {
       return NextResponse.json({ ok: false, error: "profile too large" }, { status: 413 });

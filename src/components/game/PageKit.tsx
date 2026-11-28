@@ -84,8 +84,11 @@ export function XpChip({ xp }: { xp: number }) {
 
 const PAGE_NAV: readonly { id: Screen; label: string; emoji: string }[] = [
   { id: "landing", label: "Lobby", emoji: "🏠" },
+  { id: "season", label: "Season", emoji: "👑" },
   { id: "battlepass", label: "Battle Pass", emoji: "🎫" },
   { id: "challenges", label: "Challenges", emoji: "🎯" },
+  { id: "suggested", label: "Suggested", emoji: "✨" },
+  { id: "daily", label: "Daily", emoji: "📅" },
   { id: "shop", label: "Item Shop", emoji: "🛒" },
   { id: "career", label: "Career", emoji: "📊" },
   { id: "news", label: "News", emoji: "📰" },

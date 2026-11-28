@@ -24,6 +24,9 @@ import { BattlePassPage } from "./BattlePassPage";
 import { ChallengesPage } from "./ChallengesPage";
 import { CareerPage } from "./CareerPage";
 import { NewsPage } from "./NewsPage";
+import { SeasonPage } from "./SeasonPage";
+import { SuggestedPage } from "./SuggestedPage";
+import { DailyPage } from "./DailyPage";
 import { LockerRoom } from "./LockerRoom";
 import { VictoryModal } from "./VictoryModal";
 import { Multiplayer } from "./Multiplayer";
@@ -321,6 +324,13 @@ export function GameRoot() {
     void enterMatchLobby();
   }, [clearEndKick, startGame]);
 
+  /* 🎮 register the SOLO entry globally so every full page (Season, Suggested,
+     Daily…) can queue the match lobby with the same one-tap flow */
+  useEffect(() => {
+    useGame.getState().setQuickPlay(startMatchLobby);
+    return () => useGame.getState().setQuickPlay(null);
+  }, [startMatchLobby]);
+
   /* ---------- 🌐 match launch — every lobby member boots the night together ----------
    * The MatchLobby countdown is the primary trigger; this shared fn is the ONE
    * launch path (guarded so a timer + a racing `start` event can't double-boot). */
@@ -547,6 +557,15 @@ export function GameRoot() {
 
       {/* 📰 full-page newsroom — features, patch notes, ticker */}
       {screen === "news" && <NewsPage />}
+
+      {/* 👑 full-page season hub — live cpanel-scheduled season + roadmap */}
+      {screen === "season" && <SeasonPage />}
+
+      {/* ✨ full-page suggestions — smart picks for this survivor */}
+      {screen === "suggested" && <SuggestedPage />}
+
+      {/* 📅 full-page daily board — tasks, streak, countdown */}
+      {screen === "daily" && <DailyPage />}
 
       {/* 7Nights: no side selection — everyone joins as a survivor (screen kept for legacy saves) */}
       {screen === "select" && <Creator onStart={startMatchLobby} />}

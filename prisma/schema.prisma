@@ -31,3 +31,47 @@ model PlayerProfile {
   updatedAt DateTime @updatedAt
   createdAt DateTime @default(now())
 }
+
+/// 🛡️ CPANEL — game admin accounts (login at /cpanel_app).
+/// Passwords are scrypt-hashed ("salt:hex"); sessions ride an HMAC-signed cookie.
+model AdminUser {
+  id        String    @id @default(cuid())
+  email     String    @unique
+  password  String // scrypt hash "salt:hex"
+  name      String    @default("Administrator")
+  role      String    @default("SUPERADMIN")
+  lastLogin DateTime?
+  createdAt DateTime  @default(now())
+}
+
+/// 🗓️ CPANEL — which season runs from which date to which date.
+/// One row per season (s1..s27); the lobby + game follow the LIVE row
+/// (now inside [startsAt, endsAt]) as the default match arena.
+model SeasonSchedule {
+  id        String   @id // "s1".."s27" — matches SEASONS config ids
+  number    Int      @unique
+  title     String
+  kit       String
+  tagline   String
+  startsAt  DateTime
+  endsAt    DateTime
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+/// 🚫 CPANEL — per-player moderation state (game-wide bans + chat restrictions).
+/// Ban enforcement: /api/profile + /api/scores reject banned names; the chat
+/// relay keeps its own mute/chat-ban tables (admin UI proxies to it).
+model PlayerModeration {
+  id           String    @id // lowercase player name
+  name         String
+  banned       Boolean   @default(false)
+  banReason    String?
+  bannedAt     DateTime?
+  muted        Boolean   @default(false) // in-game text/chat restriction mirror
+  muteUntil    DateTime?
+  flaggedCount Int       @default(0) // abusive-language strikes on record
+  notes        String?
+  updatedAt    DateTime  @updatedAt
+  createdAt    DateTime  @default(now())
+}

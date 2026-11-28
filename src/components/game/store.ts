@@ -8,7 +8,7 @@ import { DAILY_TASK_POOL, ALL_DONE_BONUS, applyRunToDaily, ensureDaily, freshDai
 import { shopItem } from "@/lib/game/shop";
 import { lsGet, lsRemove, lsSet } from "@/lib/game/storage";
 
-export type Screen = "landing" | "profile" | "shop" | "battlepass" | "challenges" | "career" | "news" | "locker" | "select" | "outfit" | "creator" | "connecting" | "lobby" | "matchlobby" | "play";
+export type Screen = "landing" | "profile" | "shop" | "battlepass" | "challenges" | "career" | "news" | "season" | "suggested" | "daily" | "locker" | "select" | "outfit" | "creator" | "connecting" | "lobby" | "matchlobby" | "play";
 export interface Toast { msg: string; kind: "info" | "good" | "bad"; id: number }
 
 export interface ScoreRow { id: string; name: string; points: number; votes: number; rescues: number; caught: number; won: boolean; timeMs: number; createdAt: string }
@@ -357,6 +357,10 @@ export interface GameStore {
   applyLook: (a: Appearance) => void;
   setName: (n: string) => void;
   setScreen: (s: Screen) => void;
+  /** 🎮 the lobby's SOLO PLAYER entry — registered by GameRoot so any full
+   *  page (Season page CTA, Suggested picks…) can queue the match lobby */
+  quickPlay: (() => void) | null;
+  setQuickPlay: (fn: (() => void) | null) => void;
   setHud: (h: HudData) => void;
   pushToast: (msg: string, kind?: "info" | "good" | "bad") => void;
   dropToast: (id: number) => void;
@@ -655,6 +659,8 @@ export const useGame = create<GameStore>()((set, get) => ({
     if (consentAccepted()) void get().pullProfile();
   },
   setScreen: (s) => set({ screen: s }),
+  quickPlay: null,
+  setQuickPlay: (fn) => set({ quickPlay: fn }),
   setHud: (h) => set({ hud: h }),
   setMpOpen: (v) => set((s) => ({ mp: { ...s.mp, open: v } })),
   patchMp: (p) => set((s) => ({ mp: { ...s.mp, ...p } })),
