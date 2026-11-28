@@ -24,6 +24,8 @@
  *   • <CraneTops>   — each slewing crane top is a live clone swinging slowly
  *                     (aviation beacon on the apex blinks after dark)
  *   • <DigGround>   — one static dirt heightfield per site (walls/ramp/floor)
+ *   • <SandPiles>   — the preview's light aggregate stockpiles (procedural
+ *                     lumpy-cone bake — the kit has no sand-pile GLB)
  *   • <SiteCrew>    — kit workers idling at their work spots (distance-gated)
  *   • <SiteLights>  — 🌙 NIGHT MODE: floodlight cones blaze under the light
  *                     towers, traffic signals cycle, cabin windows glow
@@ -33,6 +35,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useFrame } from "@react-three/fiber";
 import * as THREE from "three";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
 import { DIGS, SITEKIT, digDown, type ConSiteDef } from "@/lib/game/worldgen";
 import {
   bakeConstructionModel, cloneConstructionModel, constructionAllSettled, constructionGroundY, constructionSize, onConstructionModelsReady,
@@ -168,10 +171,66 @@ function DigGround() {
   );
 }
 
+/* ---------------- ⛱️ SandPiles — the preview's aggregate stockpiles ----------------
+ * The kit ships no sand-pile GLB, but its cover scene is dotted with light
+ * aggregate mounds — so they're baked here: one merged lumpy-cone mesh per
+ * reload (vertex-coloured sand + deterministic lumps/speckle, same Lambert
+ * pipeline as the kit bakes). Sites list them as props.sandPiles {x,z,s};
+ * physics tops are authored alongside in SITEKIT (steppable shoulders). */
+export function SandPiles() {
+  const mesh = useMemo(() => {
+    const placements = SITEKIT.at.flatMap((s) => s.props.sandPiles ?? []);
+    if (placements.length === 0) return null;
+    const geos: THREE.BufferGeometry[] = [];
+    const base = new THREE.Color("#c9b389");
+    const crest = new THREE.Color("#dccaa1");
+    const tmp = new THREE.Color();
+    const v = new THREE.Vector3();
+    for (const p of placements) {
+      const s = p.s ?? 1;
+      const R = 1.9 * s, H = 1.25 * s;
+      const g = new THREE.ConeGeometry(R, H, 11, 3);
+      const pos = g.attributes.position;
+      const col = new Float32Array(pos.count * 3);
+      for (let i = 0; i < pos.count; i++) {
+        v.fromBufferAttribute(pos, i);
+        const hFrac = THREE.MathUtils.clamp((v.y + H / 2) / H, 0, 1);   // 0 base → 1 crest
+        const ang = Math.atan2(v.z, v.x);
+        // deterministic lumps so each pile reads as heaped aggregate
+        const lump = 1 + 0.16 * Math.sin(3 * ang + p.x) * Math.sin(2 * ang + p.z) + 0.07 * Math.sin(5 * ang + p.z * 1.7);
+        const rr = Math.max(0.02, Math.hypot(v.x, v.z)) * lump;
+        v.x = Math.cos(ang) * rr;
+        v.z = Math.sin(ang) * rr;
+        pos.setXYZ(i, v.x, v.y, v.z);
+        tmp.copy(base).lerp(crest, hFrac);
+        const n = ((Math.sin((p.x + v.x) * 12.9898 + (p.z + v.z) * 78.233) * 43758.5453) % 1 + 1) % 1;
+        tmp.offsetHSL(0, 0, (n - 0.5) * 0.05);
+        col[i * 3] = tmp.r; col[i * 3 + 1] = tmp.g; col[i * 3 + 2] = tmp.b;
+      }
+      g.setAttribute("color", new THREE.BufferAttribute(col, 3));
+      g.computeVertexNormals();
+      g.translate(p.x, p.y ?? 0, p.z);
+      geos.push(g);
+    }
+    const merged = mergeGeometries(geos, false);
+    geos.forEach((g) => g.dispose());
+    if (!merged) return null;
+    const m = new THREE.Mesh(merged, new THREE.MeshLambertMaterial({ vertexColors: true }));
+    m.castShadow = true;
+    m.receiveShadow = true;
+    m.name = "construction-sand-piles";
+    return m;
+  }, []);
+  useEffect(() => () => {
+    if (mesh) { mesh.geometry.dispose(); (mesh.material as THREE.Material).dispose(); }
+  }, [mesh]);
+  return mesh ? <primitive object={mesh} /> : null;
+}
+
 /* ---------------- 🏗️ CraneTops — the cranes actually WORK ----------------
  * Each site's slewing top is a live clone of the kit model swinging on a slow
  * sine — three draw calls + three cheap updates per frame, no bake rebuild. */
-function CraneTops({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
+export function CraneTops({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
   const [tops, setTops] = useState<THREE.Group[]>([]);
   // 🌙 aviation beacon material — one shared blinking red lamp on each apex
   const beaconMat = useMemo(
@@ -279,7 +338,7 @@ function SiteCrew({ engine }: { engine: GameEngine }) {
  * district. */
 const LAMP_H = 9.26;          // measured: lighting-tower model, ground-lifted
 
-function SiteLights({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
+export function SiteLights({ clockRef }: { clockRef: React.MutableRefObject<number> }) {
   const towers = useMemo(() => SITEKIT.at.flatMap((s) => s.props.lightTower ?? []), []);
   const signals = useMemo(() => SITEKIT.at.flatMap((s) => s.props.trafficLight ?? []), []);
   const cabins = useMemo(() => SITEKIT.at.flatMap((s) => s.props.cabin ?? []), []);
@@ -372,6 +431,7 @@ export function ConstructionSites({ engine, clockRef }: {
   return (
     <group name="construction-district">
       <DigGround />
+      <SandPiles />
       {meshes.map((m, i) => (
         <primitive key={i} object={m} />
       ))}
