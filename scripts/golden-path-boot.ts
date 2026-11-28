@@ -17,6 +17,7 @@
 
 import { generateWorld, terrainHeight, type World } from "../src/lib/game/worldgen";
 import { generateSeasonWorld } from "../src/lib/game/seasonWorld";
+import { SEASON_BY_ID } from "../src/lib/game/seasons";
 import { GameEngine } from "../src/lib/game/engine";
 import { MASTER_MATCH_SEED } from "../src/lib/game/constants";
 import type { Appearance } from "../src/lib/game/constants";
@@ -61,7 +62,9 @@ async function main() {
   /* ---------- 3. the SEASON MATCH boots on the LIVE season ---------- */
   const arena = generateSeasonWorld(activeId ?? "s1");
   ok("season arena id", arena.seasonId === "s1", arena.seasonId);
-  ok("season arena is a 4×4 km world", (arena as unknown as { size?: number }).size === undefined || true);
+  const wantWall = 2000 * ((SEASON_BY_ID[arena.seasonId]?.sizeKm ?? 4) / 4);
+  ok("season arena wall matches its sizeKm (S1 = 2×2 km → wall 1000)", arena.map.wallR === wantWall,
+    `wall ${arena.map.wallR} (want ${wantWall}), ${arena.map.zoneRadii.join("/")}`);
   ok("season arena has POIs", arena.pois.length >= 16, `${arena.pois.length} POIs`);
   ok("season arena has kit buildings", arena.glb.length > 100, `${arena.glb.length} kit GLBs`);
   const match = new GameEngine(arena, LOOK, toast, MASTER_MATCH_SEED, undefined, "match");

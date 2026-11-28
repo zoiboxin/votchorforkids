@@ -19,7 +19,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { useGame } from "./store";
 import { sfx } from "@/lib/game/audio";
-import { SEASON_BY_ID } from "@/lib/game/seasons";
+import { SEASON_BY_ID, seasonSizeKm } from "@/lib/game/seasons";
 import { PageShell, Panel, Strip } from "./PageKit";
 
 /* the season slot shape served by GET /api/seasons */
@@ -87,6 +87,7 @@ export function SeasonPage() {
   const live = active ?? slots.find((s) => s.live) ?? null;
   const countdown = useCountdown(live?.endsAt ?? null);
   const def = live ? SEASON_BY_ID[live.id] : null;
+  const sizeKm = seasonSizeKm(def);
   const accent = def ? hex(def.pal.accent) : "#f97316";
 
   const play = () => {
@@ -141,7 +142,7 @@ export function SeasonPage() {
     <PageShell
       title={`SEASON ${live?.number ?? 1}`}
       emoji="👑"
-      subtitle={live ? `${live.title} — the live 4×4 km arena, scheduled by the game admin` : "Season calendar — scheduled by the game admin"}
+      subtitle={live ? `${live.title} — the live ${sizeKm}×${sizeKm} km arena, scheduled by the game admin` : "Season calendar — scheduled by the game admin"}
       screen="season"
     >
       {/* ---------- LIVE season hero ---------- */}
@@ -209,7 +210,7 @@ export function SeasonPage() {
                     {live.tagline}
                   </p>
                   <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-white/45">
-                    polyfork kit · {live.kit} · a 4×4 km themed battle arena
+                    polyfork kit · {live.kit} · a {sizeKm}×{sizeKm} km themed battle arena
                   </p>
                 </div>
               </div>
@@ -217,7 +218,7 @@ export function SeasonPage() {
               {/* arena fact strip */}
               <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
                 {[
-                  { k: "4×4 km", v: "themed arena", icon: MapPin },
+                  { k: `${sizeKm}×${sizeKm} km`, v: "themed arena", icon: MapPin },
                   { k: "100", v: "souls per night", icon: Flag },
                   { k: "7", v: "nights to outlast", icon: Crown },
                   { k: String(def?.poiNames.length ?? 12), v: "named POI drops", icon: Sparkles },

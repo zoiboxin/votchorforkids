@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import { useGame } from "./store";
 import { sfx } from "@/lib/game/audio";
-import { SEASON_BY_ID } from "@/lib/game/seasons";
+import { SEASON_BY_ID, seasonSizeKm } from "@/lib/game/seasons";
 import { ownedGear } from "@/lib/game/shop";
 import { rankFor } from "@/lib/game/ranks";
 import { ALL_DONE_BONUS } from "@/lib/game/daily";
@@ -53,6 +53,7 @@ export function SuggestedPage() {
   const gear = ownedGear(loadout.filter((id) => owned.includes(id)));
   const gearCount = gear.tools.length + gear.powers.length + gear.snacks.length + (gear.license ? 1 : 0) + gear.vehicles.length;
   const seasonDef = SEASON_BY_ID[seasonId];
+  const seasonKm = seasonSizeKm(seasonDef);
   const accent = seasonDef ? hex(seasonDef.pal.accent) : "#f97316";
   const recentRuns = history.slice(0, 5);
   const winless = recentRuns.length >= 3 && !recentRuns.some((r) => r.won);
@@ -73,7 +74,7 @@ export function SuggestedPage() {
         tone: "hover:border-yellow-300/50",
         glow: accent,
         title: `Drop into Season ${Number(seasonId.replace("s", "")) || 1} — ${seasonDef?.title ?? "the live arena"}`,
-        body: "The dropship is fuelled over tonight's themed 4×4 km world. Solo roams the town lobby first; friends quick-join into your lobby before the launch.",
+        body: `The dropship is fuelled over tonight's themed ${seasonKm}×${seasonKm} km world. Solo roams the town lobby first; friends quick-join into your lobby before the launch.`,
         reward: "season arena",
         cta: "queue up",
         go: "play",
@@ -238,7 +239,7 @@ export function SuggestedPage() {
               Drop into Season {Number(seasonId.replace("s", "")) || 1} — {seasonDef?.title ?? "the live arena"}
             </h2>
             <p className="mt-1 line-clamp-2 text-[11px] font-bold text-white/75 sm:text-xs">
-              {seasonDef?.tagline ?? "The themed 4×4 km battle arena is live."} The town lobby roams first; the dropship
+              {seasonDef?.tagline ?? `The themed ${seasonKm}×${seasonKm} km battle arena is live.`} The town lobby roams first; the dropship
               lifts when the countdown fires.
             </p>
           </div>

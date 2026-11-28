@@ -244,7 +244,7 @@ export function MatchLobby() {
               >
                 {seasonList().map((sn) => (
                   <option key={sn.id} value={sn.id} className="bg-slate-900">
-                    Season {sn.id.replace("s", "")}: {sn.title} — 4×4 km
+                    Season {sn.id.replace("s", "")}: {sn.title} — {sn.sizeKm}×{sn.sizeKm} km
                   </option>
                 ))}
               </select>

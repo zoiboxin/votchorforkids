@@ -94,7 +94,8 @@ export function mapOf(world: { map?: MapInfo }): MapInfo {
   return world.map ?? LOBBY_MAP;
 }
 
-/** Seasonal arena dimensions — a 4×4 km play field (half-extent 2000). */
+/** Seasonal arena dimensions — a 4×4 km play field (half-extent 2000).
+ *  Per-season sizes scale this ladder (S1 is a tight 2×2 km village). */
 export const SEASON_HALF = 2000;
 /**
  * Safe-zone ladder for the big map — the same 7-step squeeze as the lobby,

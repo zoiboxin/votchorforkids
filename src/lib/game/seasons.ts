@@ -63,6 +63,8 @@ export interface SeasonDef {
   /** polyfork kit page (attribution) */
   kit: string;
   tagline: string;
+  /** arena size in km per side (default 4) — S1 is a tight 2×2 km village */
+  sizeKm?: number;
   pal: SeasonPalette;
   /** tree pools to build, primary first */
   foliage: FoliageKind[];
@@ -76,6 +78,7 @@ export const SEASONS: SeasonDef[] = [
   {
     id: "s1", title: "Christmas Village", kit: "christmas-village-fbc27a",
     tagline: "Silent night, zombie night — survive under the snow",
+    sizeKm: 2,
     pal: P({
       ground: 0xeef2f6, ground2: 0xe0e9f0, dirt: 0xa8bcc8, road: 0xb8c8d4, roadLine: 0xe8f0f6,
       plaza: 0xd4e2ec, wall: [0x8a4a2a, 0xb5533c, 0x7c6f5d, 0x4a6741], roof: [0xb03a2e, 0x7b3f2e, 0x3f5e44, 0x54636e],
@@ -84,7 +87,7 @@ export const SEASONS: SeasonDef[] = [
       sunDay: 0xfff2dd, hemiDay: 0xcfe4f2, accent: 0xe4572e, snow: true,
     }),
     foliage: ["pine", "oak"],
-    poiNames: ["Workshop Plaza", "Gingerbread Lane", "Candy Cane Corner", "Ice Rink", "Toy Market", "Pine Hollow", "Snowman Field", "Reindeer Stables", "Fir Camp", "Cocoa Row", "Crystal Pines", "Sleigh Yard"],
+    poiNames: ["Workshop Plaza", "Gingerbread Lane", "Candy Cane Corner", "Ice Rink", "Toy Market", "Pine Hollow", "Snowman Field", "Reindeer Stables", "Fir Camp", "Cocoa Row", "Crystal Pines", "Sleigh Yard", "Nutcracker Keep", "Mistletoe Mill", "Frost Fair", "Tinsel Town", "Toy Workshop"],
   },
   {
     id: "s2", title: "Halloween Night", kit: "halloween-night-46ade4",
@@ -430,9 +433,14 @@ export const SEASON_BY_ID: Record<string, SeasonDef> = Object.fromEntries(
   SEASONS.map((s) => [s.id, s]),
 );
 
+/** arena side length in km for a season def (default 4). */
+export function seasonSizeKm(def: { sizeKm?: number } | null | undefined): number {
+  return def?.sizeKm ?? 4;
+}
+
 /** Ordered list for the season picker (S1 → S27). */
-export function seasonList(): { id: string; title: string; tagline: string; kit: string }[] {
-  return SEASONS.map((s) => ({ id: s.id, title: s.title, tagline: s.tagline, kit: s.kit }));
+export function seasonList(): { id: string; title: string; tagline: string; kit: string; sizeKm: number }[] {
+  return SEASONS.map((s) => ({ id: s.id, title: s.title, tagline: s.tagline, kit: s.kit, sizeKm: seasonSizeKm(s) }));
 }
 
 /** Does a season have vendored kit pieces (all but the procedural-only S20)? */

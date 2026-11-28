@@ -1,16 +1,17 @@
 /**
- * 🗺️ SEASON WORLDGEN — the 4×4 km themed battle-royale arenas.
+ * 🗺️ SEASON WORLDGEN — the themed battle-royale arenas.
  *
  * Every season (see seasons.ts) generates its own arena: a capital town at
- * the heart, ring roads and eight radials threading the map, 16 named POIs
+ * the heart, ring roads and eight radials threading the map, 17 named POIs
  * (villages, landmarks, farms) dressed with the kit's vendored GLB pieces,
  * themed tree lines, boulder fields, camps, ponds and lamp-lit avenues. The
  * same deterministic stream builds physics (boxes/circles/grid) and the
  * renderer's placement lists, so what you see is what you collide with.
  *
- * The play field is a 4 km disc (half-extent 2000 = the 4×4 km square's
- * half side) — walls, dropship route, safe-zone ladder and spawn rings all
- * scale from the MapInfo attached to the world (see mapInfo.ts).
+ * The play field is a disc of `def.sizeKm / 2` km radius (S1 Christmas
+ * Village is a tight 2×2 km village arena; every other season spans 4×4 km)
+ * — walls, dropship route, safe-zone ladder and spawn rings all scale from
+ * the MapInfo attached to the world (see mapInfo.ts).
  */
 import { buildColliderGrid, type BoxCollider, type Building, type CircleCollider, type Rock, type Tree, type World, type Camp, type Flower, type Field, type Lamp, type Bench, type Sign, type Pond, type FloorProp } from "./worldgen";
 import { mulberry32, range } from "./rng";
@@ -48,17 +49,17 @@ export interface SeasonWorld extends World {
 const smooth01 = (k: number) => { const t = Math.min(1, Math.max(0, k)); return t * t * (3 - 2 * t); };
 
 /** rolling hills for the big arenas — cheap (3 sin pairs), flat near POIs & roads */
-function makeSeasonTerrain(pois: SeasonPoi[], roads: RoadSeg[]) {
+function makeSeasonTerrain(pois: SeasonPoi[], roads: RoadSeg[], wallR: number) {
   const base = (x: number, z: number) =>
     1.9 * Math.sin(x * 0.0031 + z * 0.0027) * Math.cos(x * 0.0018 - z * 0.0035) +
     1.15 * Math.sin(x * 0.0063 + 1.7) * Math.sin(z * 0.0057 + 0.6) +
     0.35 * Math.sin(x * 0.021) * Math.sin(z * 0.019);
-  const WALL = 2000;
+  const rimStart = wallR * 0.89, rimBand = wallR * 0.16;
   const terrain = (x: number, z: number): number => {
     let h = base(x, z);
     // ⛰️ the rim rises gently toward the wall so the boundary reads as hills
     const r = Math.hypot(x, z);
-    if (r > 1780) h += smooth01((r - 1780) / 320) * 10;
+    if (r > rimStart) h += smooth01((r - rimStart) / rimBand) * 10;
     // 🏘️ POIs sit on a shared plateau
     for (const p of pois) {
       const dx = x - p.x, dz = z - p.z;
@@ -105,7 +106,8 @@ const cache = new Map<string, SeasonWorld>();
 
 /**
  * Build (and cache) a season arena. Deterministic per season id: every client
- * regenerates a byte-identical 4×4 km world with no network exchange.
+ * regenerates a byte-identical world (S1: 2×2 km · others: 4×4 km) with no
+ * network exchange.
  */
 export function generateSeasonWorld(seasonId: string): SeasonWorld {
   const hit = cache.get(seasonId);
@@ -114,6 +116,13 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
   const seed = 0x51ea50 ^ [...seasonId].reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 7);
   const rnd = mulberry32(seed);
   const pal = def.pal;
+
+  /* ---- arena scale: S1 is a tight 2×2 km village, the rest span 4×4 km.
+   * Distances scale with K; POI footprints stay village-sized so the map
+   * reads DENSER, not simply smaller. ---- */
+  const KM = def.sizeKm ?? 4;
+  const K = KM / 4;
+  const WALL_R = 2000 * K;
 
   /* ---- POI layout: capital + 3 rings of named settlements ---- */
   const names = def.poiNames;
@@ -137,17 +146,17 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
   for (let i = 0; i < ringA.length; i++) {
     const [r, type, pr] = ringA[i];
     const a = (i / ringA.length) * Math.PI * 2 + range(rnd, -0.08, 0.08);
-    pushPoi(nameNext(), Math.cos(a) * r, Math.sin(a) * r, pr, type);
+    pushPoi(nameNext(), Math.cos(a) * r * K, Math.sin(a) * r * K, pr, type);
   }
   for (let i = 0; i < ringB.length; i++) {
     const [r, type, pr] = ringB[i];
     const a = (i / ringB.length) * Math.PI * 2 + range(rnd, -0.1, 0.1) + 0.31;
-    pushPoi(nameNext(), Math.cos(a) * r, Math.sin(a) * r, pr, type);
+    pushPoi(nameNext(), Math.cos(a) * r * K, Math.sin(a) * r * K, pr, type);
   }
   for (let i = 0; i < ringC.length; i++) {
     const [r, type, pr] = ringC[i];
     const a = (i / ringC.length) * Math.PI * 2 + range(rnd, -0.12, 0.12) + 0.52;
-    pushPoi(nameNext(), Math.cos(a) * r, Math.sin(a) * r, pr, type);
+    pushPoi(nameNext(), Math.cos(a) * r * K, Math.sin(a) * r * K, pr, type);
   }
 
   /* ---- roads: 8 radials + 2 ring roads + POI stubs ---- */
@@ -156,7 +165,7 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
   for (let i = 0; i < 8; i++) {
     const a = (i / 8) * Math.PI * 2 + range(rnd, -0.06, 0.06);
     radials.push(a);
-    roads.push({ x1: Math.cos(a) * 150, z1: Math.sin(a) * 150, x2: Math.cos(a) * 1960, z2: Math.sin(a) * 1960, w: 11, h: 0 });
+    roads.push({ x1: Math.cos(a) * 150, z1: Math.sin(a) * 150, x2: Math.cos(a) * (WALL_R - 40), z2: Math.sin(a) * (WALL_R - 40), w: 11, h: 0 });
   }
   const ringRoad = (r: number) => {
     const N = 22;
@@ -165,8 +174,8 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
       roads.push({ x1: Math.cos(a0) * r, z1: Math.sin(a0) * r, x2: Math.cos(a1) * r, z2: Math.sin(a1) * r, w: 10, h: 0 });
     }
   };
-  ringRoad(520);
-  ringRoad(1620);
+  ringRoad(520 * K);
+  ringRoad(1620 * K);
   for (const p of pois) {
     const pr = Math.hypot(p.x, p.z);
     if (pr < 200) continue; // the capital already owns every radial head
@@ -183,7 +192,7 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
   }
 
   /* ---- terrain (needs POI heights) ---- */
-  const { base, terrain } = makeSeasonTerrain(pois, roads);
+  const { base, terrain } = makeSeasonTerrain(pois, roads, WALL_R);
   for (const p of pois) p.h = base(p.x, p.z);
   for (const seg of roads) {
     const mx = (seg.x1 + seg.x2) / 2, mz = (seg.z1 + seg.z2) / 2;
@@ -203,24 +212,44 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
     });
   };
 
-  /** a cluster of kit buildings + procedural filler around a POI centre */
+  /**
+   * a cluster of kit buildings + procedural filler around a POI centre.
+   * Dressed to read like a REAL village (the kit-preview look): centrepiece
+   * landmark on the plaza, a second landmark framing it, kit homes huddled
+   * close, a market-stall row facing the square, garland lamps, and a gate
+   * arch over the road in.
+   */
   const buildPoi = (p: SeasonPoi) => {
     const n = p.type === "capital" ? 26 : p.type === "town" ? 12 : p.type === "farm" ? 5 : 7;
-    // kit buildings on an inner ring, facing the centre
     const kitB = assets.filter((a) => a.role === "building");
     const kitL = assets.filter((a) => a.role === "landmark");
+    const kitP = assets.filter((a) => a.role === "prop");
+    const kitT = assets.filter((a) => a.role === "tree");
+    // themed prop families for the structured plaza dressing
+    const stallLike = kitP.filter((a) => /stall|stand|market|cart|booth|kiosk|well|stage|bench/i.test(a.name));
+    const lampLike = kitP.filter((a) => /lamp|post|light/i.test(a.name));
+    const archLike = kitP.filter((a) => /arch|gate|entrance/i.test(a.name));
+
     if (p.type === "landmark" && kitL.length > 0) {
       const a = kitL[Math.floor(rnd() * kitL.length)];
       glb.push({ file: a.file, name: a.name, role: "landmark", x: p.x, z: p.z + range(rnd, -4, 4), rot: rnd() * Math.PI * 2, s: 1, h: terrain(p.x, p.z) });
     } else if (p.type === "capital" && kitL.length > 0) {
-      const a = kitL[Math.floor(rnd() * kitL.length)];
-      glb.push({ file: a.file, name: a.name, role: "landmark", x: p.x, z: p.z, rot: rnd() * Math.PI * 2, s: 1, h: terrain(p.x, p.z) });
+      // 🎄 kit-image plaza: the kit's iconic centrepiece (tree/statue/tower…)
+      // dead centre, a second landmark framing it from behind
+      const centre = kitL.find((a) => /tree|skeleton|pyramid|moai|tower|dome|flag|statue|kiosco|fountain|carousel|lighthouse|throne|keep|shrine|obelisk|mausoleum|well/i.test(a.name)) ?? kitL[0];
+      glb.push({ file: centre.file, name: centre.name, role: "landmark", x: p.x, z: p.z, rot: rnd() * Math.PI * 2, s: 1, h: terrain(p.x, p.z) });
+      const back = kitL.find((a) => a.file !== centre.file) ?? centre;
+      const bA = rnd() * Math.PI * 2;
+      const bx = p.x + Math.cos(bA) * p.r * 0.3, bz = p.z + Math.sin(bA) * p.r * 0.3;
+      glb.push({ file: back.file, name: back.name, role: "landmark", x: bx, z: bz, rot: Math.atan2(p.x - bx, p.z - bz), s: 1, h: terrain(bx, bz) });
     }
-    for (let i = 0; i < Math.min(4, n); i++) {
+    // kit buildings huddled tight around the plaza (facing the centre)
+    const kitCount = p.type === "capital" ? 6 : p.type === "town" ? 5 : 4;
+    for (let i = 0; i < Math.min(kitCount, n); i++) {
       if (kitB.length === 0) break;
       const a = kitB[Math.floor(rnd() * kitB.length)];
-      const ang = (i / Math.min(4, n)) * Math.PI * 2 + rnd() * 0.5;
-      const dist = p.r * range(rnd, 0.42, 0.62);
+      const ang = (i / kitCount) * Math.PI * 2 + rnd() * 0.55;
+      const dist = p.r * (p.type === "capital" ? range(rnd, 0.36, 0.58) : range(rnd, 0.42, 0.62));
       const gx = p.x + Math.cos(ang) * dist, gz = p.z + Math.sin(ang) * dist;
       glb.push({ file: a.file, name: a.name, role: "building", x: gx, z: gz, rot: Math.atan2(p.x - gx, p.z - gz) + range(rnd, -0.2, 0.2), s: 1, h: terrain(gx, gz) });
     }
@@ -228,7 +257,7 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
     const forI = p.type === "capital" ? 22 : p.type === "town" ? 10 : p.type === "farm" ? 5 : 6;
     for (let i = 0; i < forI; i++) {
       const ang = rnd() * Math.PI * 2;
-      const dist = p.r * range(rnd, 0.55, 0.95);
+      const dist = p.r * range(rnd, 0.52, 0.92);
       const bx = p.x + Math.cos(ang) * dist, bz = p.z + Math.sin(ang) * dist;
       // keep clear of the stub road entrance
       let clear = true;
@@ -239,9 +268,38 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
       const h = kind === 2 ? range(rnd, 3.2, 4.4) : kind === 0 ? range(rnd, 7, p.type === "capital" && i % 6 === 0 ? 30 : 14) : range(rnd, 4, 7.5);
       addBuilding(bx, bz, w, d, h, kind);
     }
-    // kit props: lamps/stalls/carts scattered across the plaza band
-    const kitP = assets.filter((a) => a.role === "prop");
-    const props = p.type === "capital" ? 10 : 6;
+    // 🏕️ structured plaza dressing — market row + lamps + gate arch
+    if (p.type === "capital") {
+      // market stalls in an arc facing the square (the kit-preview market row)
+      for (let i = 0; i < 6 && stallLike.length > 0; i++) {
+        const a = stallLike[i % stallLike.length];
+        const ang = (i / 6) * Math.PI * 2 + 0.26;
+        const px = p.x + Math.cos(ang) * p.r * 0.3, pz = p.z + Math.sin(ang) * p.r * 0.3;
+        glb.push({ file: a.file, name: a.name, role: "prop", x: px, z: pz, rot: Math.atan2(p.x - px, p.z - pz), s: 1, h: terrain(px, pz) });
+      }
+      // garland lamps ringing the square
+      for (let i = 0; i < 4 && lampLike.length > 0; i++) {
+        const a = lampLike[i % lampLike.length];
+        const ang = (i / 4) * Math.PI * 2 + 0.7;
+        const px = p.x + Math.cos(ang) * p.r * 0.18, pz = p.z + Math.sin(ang) * p.r * 0.18;
+        glb.push({ file: a.file, name: a.name, role: "prop", x: px, z: pz, rot: rnd() * Math.PI * 2, s: 1, h: terrain(px, pz) });
+      }
+      // kit gate arches over two opposite avenues
+      for (let i = 0; i < 2 && archLike.length > 0; i++) {
+        const a = archLike[i % archLike.length];
+        const ang = i === 0 ? 0.3 : 0.3 + Math.PI;
+        const px = p.x + Math.cos(ang) * p.r * 0.62, pz = p.z + Math.sin(ang) * p.r * 0.62;
+        glb.push({ file: a.file, name: a.name, role: "prop", x: px, z: pz, rot: ang + Math.PI / 2, s: 1, h: terrain(px, pz) });
+      }
+    } else if (archLike.length > 0) {
+      // every village greets you with its gate arch over the road in
+      const a = archLike[Math.floor(rnd() * archLike.length)];
+      const ang = Math.atan2(p.z, p.x);
+      const px = p.x + Math.cos(ang) * p.r * 0.62, pz = p.z + Math.sin(ang) * p.r * 0.62;
+      glb.push({ file: a.file, name: a.name, role: "prop", x: px, z: pz, rot: ang + Math.PI / 2, s: 1, h: terrain(px, pz) });
+    }
+    // kit props scattered across the plaza band
+    const props = p.type === "capital" ? 6 : 6;
     for (let i = 0; i < props && kitP.length > 0; i++) {
       const a = kitP[Math.floor(rnd() * kitP.length)];
       const ang = rnd() * Math.PI * 2;
@@ -249,8 +307,8 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
       glb.push({ file: a.file, name: a.name, role: "prop", x: p.x + Math.cos(ang) * dist, z: p.z + Math.sin(ang) * dist, rot: rnd() * Math.PI * 2, s: 1, h: terrain(p.x + Math.cos(ang) * dist, p.z + Math.sin(ang) * dist) });
     }
     // kit trees sprinkled at the POI rim
-    const kitT = assets.filter((a) => a.role === "tree");
-    for (let i = 0; i < 3 && kitT.length > 0; i++) {
+    const rimTrees = p.type === "capital" ? 5 : 3;
+    for (let i = 0; i < rimTrees && kitT.length > 0; i++) {
       const a = kitT[Math.floor(rnd() * kitT.length)];
       const ang = rnd() * Math.PI * 2;
       const dist = p.r * range(rnd, 0.75, 1.05);
@@ -259,34 +317,34 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
   };
   for (const p of pois) buildPoi(p);
 
-  /* ---- trees (themed pool indexes) ---- */
+  /* ---- trees (themed pool indexes) — K-scaled field, denser per km² ---- */
   const trees: Tree[] = [];
   const nFoliage = def.foliage.length;
   const poolOf = (): number => {
     const x = rnd();
     return x < 0.68 ? 0 : x < 0.93 ? (nFoliage > 1 ? 1 : 0) : (nFoliage > 2 ? 2 : 0);
   };
-  const TREE_COUNT = 1500;
+  const TREE_COUNT = Math.round(1500 * K * 1.35);
   for (let i = 0; i < TREE_COUNT; i++) {
-    const r = Math.sqrt(rnd()) * 1960;
+    const r = Math.sqrt(rnd()) * (WALL_R - 40);
     const a = rnd() * Math.PI * 2;
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
-    if (r > 1945) continue; // off the playable rim
+    if (r > WALL_R - 55) continue; // off the playable rim
     let blocked = false;
     for (const p of pois) if (Math.hypot(x - p.x, z - p.z) < p.r + 5) { blocked = true; break; }
     if (blocked) continue;
     for (const seg of roads) if (roadDist(x, z, seg) < seg.w / 2 + 5) { blocked = true; break; }
     if (blocked) continue;
     // dense forest bands mid-field, thinner near the rim
-    const density = r < 700 ? 0.55 : r < 1500 ? 0.9 : 0.75;
+    const density = r < WALL_R * 0.35 ? 0.62 : r < WALL_R * 0.75 ? 0.92 : 0.8;
     if (rnd() > density) continue;
     trees.push({ x, z, r: 0.62, s: range(rnd, 0.85, 1.4), kind: poolOf() as Tree["kind"] });
   }
 
   /* ---- rocks, ponds, camps, lamps, fields, flowers ---- */
   const rocks: Rock[] = [];
-  for (let i = 0; i < 90; i++) {
-    const r = Math.sqrt(rnd()) * 1900, a = rnd() * Math.PI * 2;
+  for (let i = 0; i < Math.round(90 * K * 1.2); i++) {
+    const r = Math.sqrt(rnd()) * (WALL_R - 100), a = rnd() * Math.PI * 2;
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     let blocked = false;
     for (const p of pois) if (Math.hypot(x - p.x, z - p.z) < p.r + 6) { blocked = true; break; }
@@ -294,13 +352,13 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
     if (!blocked) rocks.push({ x, z, s: range(rnd, 0.7, 1.6) });
   }
   const ponds: Pond[] = [];
-  for (let i = 0; i < 2; i++) {
-    const a = rnd() * Math.PI * 2, r = range(rnd, 900, 1700);
+  for (let i = 0; i < Math.max(1, Math.round(2 * K)); i++) {
+    const a = rnd() * Math.PI * 2, r = range(rnd, WALL_R * 0.45, WALL_R * 0.85);
     ponds.push({ x: Math.cos(a) * r, z: Math.sin(a) * r, r: range(rnd, 10, 16) });
   }
   const camps: Camp[] = [];
-  for (let i = 0; i < 3; i++) {
-    const a = rnd() * Math.PI * 2, r = range(rnd, 1200, 1850);
+  for (let i = 0; i < Math.max(2, Math.round(3 * K)); i++) {
+    const a = rnd() * Math.PI * 2, r = range(rnd, WALL_R * 0.6, WALL_R * 0.92);
     const cx = Math.cos(a) * r, cz = Math.sin(a) * r;
     const tents = [0, 1, 2].map(() => {
       const ta = rnd() * Math.PI * 2, td = range(rnd, 3.2, 5.4);
@@ -319,7 +377,7 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
     if (seg.w < 9) continue; // lamp only the big roads
     const vx = seg.x2 - seg.x1, vz = seg.z2 - seg.z1;
     const L = Math.hypot(vx, vz);
-    const step = 150;
+    const step = 150 * K;
     const n = Math.floor(L / step);
     for (let k = 1; k < n; k++) {
       const t = k / n;
@@ -338,8 +396,8 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
       fields.push({ x: p.x + Math.cos(a) * d, z: p.z + Math.sin(a) * d, w: range(rnd, 10, 16), d: range(rnd, 7, 11), rot: rnd() * Math.PI, crop: Math.floor(rnd() * 4) });
     }
   }
-  for (let i = 0; i < 220; i++) {
-    const r = Math.sqrt(rnd()) * 1900, a = rnd() * Math.PI * 2;
+  for (let i = 0; i < Math.round(220 * K * 1.3); i++) {
+    const r = Math.sqrt(rnd()) * (WALL_R - 100), a = rnd() * Math.PI * 2;
     flowers.push({ x: Math.cos(a) * r, z: Math.sin(a) * r, c: Math.floor(rnd() * 3), s: range(rnd, 0.7, 1.2) });
   }
   const signs: Sign[] = [];
@@ -353,8 +411,8 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
   const ferns: FloorProp[] = [];
   const tufts: FloorProp[] = [];
   const bushes: FloorProp[] = [];
-  for (let i = 0; i < 160; i++) {
-    const r = Math.sqrt(rnd()) * 1900, a = rnd() * Math.PI * 2;
+  for (let i = 0; i < Math.round(160 * K * 1.3); i++) {
+    const r = Math.sqrt(rnd()) * (WALL_R - 100), a = rnd() * Math.PI * 2;
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     const fp: FloorProp = { x, z, rot: rnd() * Math.PI * 2, s: range(rnd, 0.7, 1.3), c: Math.floor(rnd() * 3) };
     (i % 3 === 0 ? ferns : i % 3 === 1 ? tufts : bushes).push(fp);
@@ -393,9 +451,9 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
   }
   for (const pd of ponds) circles.push({ x: pd.x, z: pd.z, r: pd.r * 0.82 }); // wade-into-the-edge shallow ring
 
-  /* ---- MapInfo ---- */
-  const wallR = 2000;
-  const cityR = 1650;
+  /* ---- MapInfo — everything scales off the arena size ---- */
+  const wallR = WALL_R;
+  const cityR = 1650 * K;
   const zones = (x: number, z: number): Zone => {
     const r = Math.hypot(x, z);
     return r < wallR * 0.3 ? "City" : r < wallR * 0.56 ? "Farmland" : r < wallR * 0.82 ? "Jungle" : "Deep Jungle";
@@ -406,16 +464,16 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
     seasonal: true,
     wallR,
     cityR,
-    farmR: 1780,
-    deepR: 1860,
-    jungleR: 1940,
-    mountInner: 1500,
-    mountOuter: 1740,
-    zoneRadii: SEASON_ZONE_RADII,
-    dropOuter: 2400,
-    autoEjectR: 1650,
+    farmR: 1780 * K,
+    deepR: 1860 * K,
+    jungleR: 1940 * K,
+    mountInner: 1500 * K,
+    mountOuter: 1740 * K,
+    zoneRadii: SEASON_ZONE_RADII.map((r) => Math.round(r * K)),
+    dropOuter: 2400 * K,
+    autoEjectR: 1650 * K,
     dropAlt: 90,
-    ringR: 520,
+    ringR: 520 * K,
     terrain,
     zones,
   };
