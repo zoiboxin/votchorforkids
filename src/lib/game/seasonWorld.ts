@@ -74,8 +74,16 @@ function makeSeasonTerrain(pois: SeasonPoi[], roads: RoadSeg[], wallR: number) {
     0.5 * Math.sin(x * 0.0231 + z * 0.0197) * Math.sin(z * 0.0263 - 1.1) +
     0.18 * Math.sin(x * 0.0621 + 0.8) * Math.sin(z * 0.0553 - 0.4);
   const rimStart = wallR * 0.89, rimBand = wallR * 0.16;
+  // ⛰️ the rim rises gently toward the wall so the boundary reads as hills —
+  // part of the NATURAL ground: POI plateau heights & road endpoint profiles
+  // bake it in (a village on the rim band sits on rimmed ground, flat)
+  const rimmed = (x: number, z: number): number => {
+    const h = base(x, z);
+    const r = Math.hypot(x, z);
+    return r > rimStart ? h + smooth01((r - rimStart) / rimBand) * 10 : h;
+  };
   const terrain = (x: number, z: number): number => {
-    let h = base(x, z);
+    let h = rimmed(x, z);
     // 🛣️ roads grade FIRST (their tarmac profile slopes between endpoint
     // heights — one flat strip would trench through the hills like a canal,
     // and per-chunk flat heights would terrace at every chunk joint)
@@ -109,12 +117,9 @@ function makeSeasonTerrain(pois: SeasonPoi[], roads: RoadSeg[], wallR: number) {
       }
     }
     if (own) h = own.h + (h - own.h) * smooth01((ownK - 0.55) / (0.45 + 8 / own.r));
-    // ⛰️ the rim rises gently toward the wall so the boundary reads as hills
-    const r = Math.hypot(x, z);
-    if (r > rimStart) h += smooth01((r - rimStart) / rimBand) * 10;
     return h;
   };
-  return { base, terrain };
+  return { base: rimmed, terrain };
 }
 
 /** distance from a point to a road segment's centreline */
