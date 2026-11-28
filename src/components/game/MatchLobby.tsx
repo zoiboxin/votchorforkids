@@ -20,6 +20,7 @@ import { motion } from "framer-motion";
 import { Button } from "@/components/ui/button";
 import { useGame } from "./store";
 import { net } from "@/lib/game/net/client";
+import { seasonList } from "@/lib/game/seasons";
 import { LOBBY_MS } from "@/lib/game/net/matchlobby";
 
 const SLOT_COLORS = ["#f472b6", "#fbbf24", "#4ade80", "#2dd4bf", "#f87171", "#c084fc", "#fb923c", "#a3e635"];
@@ -36,6 +37,8 @@ export function MatchLobby() {
   const setScreen = useGame((s) => s.setScreen);
   const [left, setLeft] = useState<number | null>(null); // seconds (null = matching…)
   const launchedRef = useRef(false);
+  const seasonId = useGame((s) => s.seasonId);
+  const setSeasonId = useGame((s) => s.setSeasonId);
 
   /* ---- roster + shared countdown sync (the relay is the one true clock) ---- */
   useEffect(() => {
@@ -224,6 +227,33 @@ export function MatchLobby() {
 
         {/* actions */}
         <div className="flex w-full flex-col gap-2 sm:flex-row">
+          {/* 🗓️ season arena picker — the host chooses which 4×4 km kit world the
+              room plays; the relay stamps it into every lobby payload so guests
+              grow the IDENTICAL themed map */}
+          <div className="flex w-full flex-col gap-1.5 rounded-xl border border-white/10 bg-white/5 p-3">
+            <div className="text-[10px] font-black uppercase tracking-widest text-white/50">Season arena {mp.isHost ? "— host pick" : "— chosen by host"}</div>
+            {mp.isHost ? (
+              <select
+                aria-label="Season arena"
+                value={seasonId}
+                onChange={(e) => {
+                  setSeasonId(e.target.value);
+                  net.sendSeason(e.target.value);
+                }}
+                className="w-full rounded-lg border border-white/15 bg-slate-900/80 px-3 py-2 text-xs font-bold text-white outline-none focus:border-amber-400/60"
+              >
+                {seasonList().map((sn) => (
+                  <option key={sn.id} value={sn.id} className="bg-slate-900">
+                    Season {sn.id.replace("s", "")}: {sn.title} — 4×4 km
+                  </option>
+                ))}
+              </select>
+            ) : (
+              <div className="text-xs font-bold text-white/80">
+                Season {seasonId.replace("s", "")}: {seasonList().find((x) => x.id === seasonId)?.title ?? "Unknown"}
+              </div>
+            )}
+          </div>
           {mp.isHost && mode !== "solo" && (
             <Button
               onClick={launch}

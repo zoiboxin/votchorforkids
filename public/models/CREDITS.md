@@ -254,3 +254,42 @@ house rows and the downtown art-deco / office tower skyline upgrade:
 | `undertaker-s-3e1285.glb` | Undertaker's | 950 |
 | `village-shopfront-d3088e.glb` | Village Shopfront | 2,208 |
 | `wide-shophouse-089f20.glb` | Wide Shophouse | 988 |
+
+## Seasons — polyfork.dev kits
+
+Seasonal map props vendored under `models/seasons/<seasonId>/`, selected from the
+polyfork catalog kits per season (terrain / buildings / landmarks / trees / props).
+The per-asset manifest with roles lives in `src/lib/game/seasonAssets.ts`.
+
+| Season | Kit | Source | Assets |
+| --- | --- | --- | --- |
+| `s1` | Christmas Village | https://polyfork.dev/kit/christmas-village-fbc27a | 15 |
+| `s2` | Halloween Night | https://polyfork.dev/kit/halloween-night-46ade4 | 14 |
+| `s3` | Chile: Fiestas Patrias | https://polyfork.dev/kit/chile-fiestas-patrias-87e847 | 15 |
+| `s4` | Campground & Lake | https://polyfork.dev/kit/campground-lake-ad32b0 | 15 |
+| `s5` | Countryside Railway | https://polyfork.dev/kit/countryside-railway-9b4c57 | 15 |
+| `s6` | Skatepark | https://polyfork.dev/kit/skatepark-0922a9 | 14 |
+| `s7` | Construction Site | https://polyfork.dev/kit/construction-site-9e40b0 | 14 |
+| `s8` | Coast & Boardwalk | https://polyfork.dev/kit/coast-and-boardwalk-d883fd | 15 |
+| `s9` | Alpine & Snow | https://polyfork.dev/kit/alpine-and-snow-092f66 | 15 |
+| `s10` | Stadium | https://polyfork.dev/kit/stadium-5db167 | 14 |
+| `s11` | Frontier Town | https://polyfork.dev/kit/frontier-town-a0085b | 15 |
+| `s12` | Día de Muertos | https://polyfork.dev/kit/dia-de-muertos-f2f8f8 | 15 |
+| `s13` | Salvage Commons / Sky Town | https://polyfork.dev/kit/salvage-commons-d0be9f | 15 |
+| `s14` | Cozy Farm | https://polyfork.dev/kit/cozy-farm-cc979f | 15 |
+| `s15` | Little Tokyo | https://polyfork.dev/kit/japanese-suburban-city-street-baa482 | 15 |
+| `s16` | Nature & Forest | https://polyfork.dev/kit/nature-forest-kit-f29d6a | 15 |
+| `s17` | New York City | https://polyfork.dev/kit/nyc-city-kit-fbca88 | 14 |
+| `s18` | Medieval Village | https://polyfork.dev/kit/medieval-village-kit-ca0b43 | 15 |
+| `s19` | Storybook Sandbox | https://polyfork.dev/kit/this-is-a-whimsical-dd1bde | 15 |
+| `s20` | Ancient Egypt | — kit unpublished | 0 (procedural-only season) |
+| `s21` | Myths of Olympus | https://polyfork.dev/kit/myths-of-olympus-d03622 | 14 |
+| `s22` | Three Kingdoms Settlements | https://polyfork.dev/kit/three-kingdoms-settlements-a-1e817b | 15 |
+| `s23` | Mediterranean Island Village | https://polyfork.dev/kit/mediterranean-island-village-4ac936 | 15 |
+| `s24` | Airport | https://polyfork.dev/kit/airport-43b137 | 14 |
+| `s25` | Easter Island / Rapa Nui | https://polyfork.dev/kit/easter-island-rapa-nui-368e86 | 15 |
+| `s26` | Roadside Americana | https://polyfork.dev/kit/roadside-americana-50d40c | 14 |
+| `s27` | Medieval Japan | https://polyfork.dev/kit/medieval-japan-cb01ad | 15 |
+
+Source: https://polyfork.dev — © Polyfork contributors, CC BY 4.0
+(https://creativecommons.org/licenses/by/4.0/)

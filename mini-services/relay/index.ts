@@ -53,6 +53,8 @@ interface Member {
 interface Room {
   code: string;
   hostSid: string;
+  /** 🗓️ which season arena the room plays (the host picks; rides every lobby payload) */
+  seasonId: string;
   members: Map<string, Member>; // socket.id → member
   createdAt: number;
   /** true once the host started the 7 nights — live sessions take mid-game joins */
@@ -98,6 +100,7 @@ const lobbyPayload = (room: Room) => ({
   })),
   phase: room.phase,
   lobbyEndsAt: room.lobbyEndsAt,
+  seasonId: room.seasonId,
   // 🌐 the authoritative match state — clients grow their world from THIS seed
   seed: room.match.seed,
   match: room.match,
@@ -147,7 +150,7 @@ function seatInRoom(io: Server, sock: { join: (c: string) => void; id: string; d
 }
 
 function createRoom(hostSid: string): Room {
-  const room: Room = { code: makeCode(), hostSid, members: new Map(), createdAt: Date.now(), started: false, phase: "lobby", lobbyEndsAt: 0, match: { seed: MASTER_MATCH_SEED, createdAt: Date.now(), startedAt: 0 } };
+  const room: Room = { code: makeCode(), hostSid, seasonId: "s1", members: new Map(), createdAt: Date.now(), started: false, phase: "lobby", lobbyEndsAt: 0, match: { seed: MASTER_MATCH_SEED, createdAt: Date.now(), startedAt: 0 } };
   rooms.set(room.code, room);
   return room;
 }
@@ -164,12 +167,26 @@ io.on("connection", (sock) => {
   console.log(`[relay] connect ${sock.id}`);
   sock.on("disconnect", (r: string) => console.log(`[relay] disconnect ${sock.id} (${r})`));
 
+  /* 🗓️ season pick — the host chooses which kit arena the room plays; the
+     relay owns the room's single source of truth and fans it out in every
+     lobby payload, so guests grow the IDENTICAL 4×4 km world. */
+  sock.on("mp:season", (p: { seasonId?: string } = {}, ack?: (r: unknown) => void) => {
+    const room = roomOf(sock.id);
+    if (!room || room.hostSid !== sock.id) return ack?.({ ok: false, err: "Host only" });
+    const sid = String(p.seasonId ?? "");
+    if (!/^s\d+$/.test(sid)) return ack?.({ ok: false, err: "Bad season" });
+    room.seasonId = sid;
+    io.to(room.code).emit("mp:lobby", { t: "roster", lobby: lobbyPayload(room) });
+    ack?.({ ok: true, seasonId: room.seasonId });
+  });
+
   /* ---------------- lobby lifecycle ---------------- */
   sock.on("mp:create", (p: { name?: string; look?: unknown } = {}, ack?: (r: unknown) => void) => {
     if (roomOf(sock.id)) return ack?.({ ok: false, err: "Already in a room" });
     const room: Room = {
       code: makeCode(),
       hostSid: sock.id,
+      seasonId: "s1",
       members: new Map(),
       createdAt: Date.now(),
       started: false,

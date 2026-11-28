@@ -1,6 +1,7 @@
 import { AIRPORT, BUILD_POOL, CAR_ROOF_TOP, CITY_RADIUS, DEEP_JUNGLE_RADIUS, FARM_RADIUS, GRAVEYARD, HEARSE_TYPE, JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER, MUSEUM, POLICE_STATIONS, PREHISTORIC, ROCK_COUNT, TAXI_TYPE, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_POOL, WALL_RADIUS, WORLD_SEED, inPrehistoricValley, pickVehicle, stationCage, stationGate } from "./constants";
 import { PREHISTORIC_LAYOUT, prehistoricColliders } from "./prehistoric";
 import { mulberry32, range } from "./rng";
+import type { MapInfo } from "./mapInfo";
 
 export interface BoxCollider { x: number; z: number; w: number; d: number; /** building height (top y) — lets the chase camera ignore roofs above it */ h?: number; /** 🧍 standable surface height (absolute y) — a body whose feet are at/above this stands ON TOP instead of being pushed out (crates, low walls, scaffolds…) */ top?: number } // half extents
 export interface CircleCollider { x: number; z: number; r: number; /** set for the two axle circles of a parked car — lets a DRIVEN car skip its own colliders */ car?: number; /** set on the ✈️ fuselage discs that follow a grounded plane (index into engine.planes) */ plane?: number; /** plane discs fold away once the plane climbs — false while grounded/taxiing */ air?: boolean; /** index inside world.circles — lets a DRIVEN car refresh its grid cells on every move */ idx?: number; /** set on the 🔨 breakable boulder this circle belongs to (index into world.rocks) */ rock?: number; /** set on the 🧱 builder pool circles — they MOVE onto built spots via moveCircle */ build?: number; /** 🧍 standable surface height (absolute y) — boulders, crates, hay bales, CAR ROOFS: jump on and stand (see standTopAt) */ top?: number }
@@ -37,7 +38,7 @@ function gridCellsFor(g: ColliderGrid, x: number, z: number, r: number, out: num
 }
 
 /** Build the collider grid from the finished boxes/circles arrays (call once at world-gen). */
-function buildColliderGrid(boxes: BoxCollider[], circles: CircleCollider[]): ColliderGrid {
+export function buildColliderGrid(boxes: BoxCollider[], circles: CircleCollider[]): ColliderGrid {
   let minX = Infinity, minZ = Infinity, maxX = -Infinity, maxZ = -Infinity;
   const grow = (x: number, z: number, r: number) => {
     if (x - r < minX) minX = x - r; if (x + r > maxX) maxX = x + r;
@@ -240,6 +241,8 @@ export interface World {
   insectProps: { k: string; x: number; z: number; rot: number; s: number }[];
   /** 🗺️ spatial hash over boxes+circles — makes resolve() O(neighbours) instead of O(world) */
   grid: ColliderGrid;
+  /** 🗺️ the map this world plays on — unset = the legacy town island */
+  map?: MapInfo;
 }
 
 /* ---------------- ⛰️ playable mountain band — rough, scary & CLIMBABLE ----------------
@@ -3433,7 +3436,7 @@ export function spotNear(
     const d = Math.sqrt(range(r, rMin * rMin, rMax * rMax));
     const p = { x: x + Math.cos(a) * d, z: z + Math.sin(a) * d };
     const rr = Math.hypot(p.x, p.z);
-    if (rr > CITY_RADIUS - 6) continue; // keep strolls inside the city walls
+    if (rr > (world.map?.cityR ?? CITY_RADIUS) - 6) continue; // keep strolls inside the city walls
     const before = { x: p.x, z: p.z };
     resolve(before, 0.9, world);
     if (Math.abs(before.x - p.x) > 0.05 || Math.abs(before.z - p.z) > 0.05) continue;

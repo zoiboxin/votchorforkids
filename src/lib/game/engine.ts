@@ -1,16 +1,15 @@
 import {
   AGE_STATS, ANIMAL_SET, BALLOT, BLINK_CD, BLINK_DIST, BUST_CARRY_BONUS, BUST_POINTS, BUST_TARGET, CARRY_RADIUS, CAR_ACCEL, CAR_BRAKE, CAR_COAST, CAR_COAST_FRICTION, CAR_ENTER_R, CAR_HIT_CD, CAR_HIT_MIN_CLOSING, CAR_HIT_TRANSFER, CAR_REV_SPEED, CAR_ROOF_TOP, CAR_SLIDE_FRICTION, CAR_SPIN_FRICTION, CAR_STEER, CIV_COP_CD, CIV_DETECT, CIV_DETAIN_S, CIV_FLEE_MULT, CIV_JAIL_S,
-  CHUTE_ALT, CHUTE_DRIFT, CHUTE_VY, DROP_ALT, DROP_OUTER, DROP_SPEED, AUTO_EJECT_R,
-  CIVIL_NAMES, CIVILIAN_COUNT, CITY_RADIUS, CONFISCATE_FINE, DAY_SECONDS,
+  CHUTE_ALT, CHUTE_DRIFT, CHUTE_VY, DROP_SPEED,
+  CIVIL_NAMES, CIVILIAN_COUNT, CONFISCATE_FINE, DAY_SECONDS,
   DELIVER_RADIUS, DETECT_BASE, DETECT_CARRY_BONUS, DETECT_STAR_BONUS, DETAIN_SECONDS, DROP_SCATTER,
-  ESCAPE_LOST_S, FARM_RADIUS, FLIP_S, GRAVITY, GRAVEYARD, HAUL_CAMP_R, HEARSE_GUARD_COUNT_MAX, HEARSE_GUARD_COUNT_MIN, HEARSE_GUARD_DMG, HEARSE_GUARD_HP, HEARSE_GUARD_HOME_R, HEARSE_GUARD_LEASH, HEARSE_GUARD_SPEED, HEARSE_HOARD, HEARSE_TYPE, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
-  DEEP_JUNGLE_RADIUS, MOUNTAIN_INNER, MOUNTAIN_OUTER,
-  ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_BUFFER_S, JUMP_MULT, JUNGLE_RADIUS, LAND_SQUASH_S, LAND_GRACE_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MASTER_MATCH_SEED, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
+  ESCAPE_LOST_S, FLIP_S, GRAVITY, GRAVEYARD, HAUL_CAMP_R, HEARSE_GUARD_COUNT_MAX, HEARSE_GUARD_COUNT_MIN, HEARSE_GUARD_DMG, HEARSE_GUARD_HP, HEARSE_GUARD_HOME_R, HEARSE_GUARD_LEASH, HEARSE_GUARD_SPEED, HEARSE_HOARD, HEARSE_TYPE, HURT_FLASH_S, ITEMS, INV_SLOTS, INV_STACK, ITEM_COUNT,
+  ITEM_RESPAWN_S, JUMP_COST, JUMP2_COST, JUMP_BUFFER_S, JUMP_MULT, LAND_SQUASH_S, LAND_GRACE_S, LICENSE_COUNT, LICENSE_PICKUP_R, MAGNET_PULL, MAGNET_RADIUS, MASTER_MATCH_SEED, MAX_CARRY, MAX_CIV_HELD, MORPH_ANIMALS, PICKUP_RADIUS,
   FREEFALL_DRIFT, FREEFALL_VMAX, AUTO_CHUTE_MIN_H, AUTO_CHUTE_VY,
   POINTS_DELIVER, POINTS_PICKUP, POINTS_RESCUE, POLICE_COUNT, POLICE_SPEED, POLICE_SPRINT, POLICE_STATIONS, POWER_COUNT, POWER_JUNGLE_SHARE, POWER_PICKUP_R, POWER_RESPAWN_S, POWERS, RELEASE_GRACE_S, RESCUE_POINTS,
   RESCUE_RADIUS, RUNNER_CATCH_CD, RUNNER_CATCH_R, RUNNER_COUNT, RUNNER_FLEE_R, RUNNER_LOSE_DELIVERIES, RUNNER_VOTE_RESPAWN_S, SCAVENGER_COUNT, SCAVENGER_SENSE_R, SPAWN, SONIC_MULT, STAR_DECAY_S, TAXI_TYPE, TOTAL_VOTES, TRAFFIC_COUNT, VEHICLE_AXLE, VEHICLE_AXLE_R, VEHICLE_GLB, VEHICLE_LABELS, VEHICLE_POOL, VEHICLE_STEER, VEHICLE_TOP, VAN_AXLE, VAN_LOAD_S, VAN_PATROL_GATE_S, VAN_PATROL_WAIT_S, VAN_RADIUS, VAN_SPEED, VAN_UNLOAD_S,
   AIRPORT, PLANE_COUNT, POWER_CARRY,
-  WALL_RADIUS, ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
+  ZOMBIE_DMG, ZOMBIE_NIGHT_SPEED,
   ZOMBIE_SPEED, ZOMBIE_TOUCH_CD, DOG_SPEED, ZOMDOG_DMG, ZOMDOG_HP, ZOMDOG_SENSE, ZOMDOG_SPEED, ZOMDOG_TOUCH_CD, POINTS_KILL_ZOMDOG, BOT_SPAWN_GAP, policeOutfitOf, randomAppearance, stationCage, stationGate,
   WILDLIFE, BUGS, BUG_NIGHT_MULT, BUG_TOAST_CD, BUG_LABEL,
   ACCUSE_RADIUS, ATTACK_CD, ATTACK_RANGE, BARRICADE_COST, BARRICADE_HP, CAMPFIRE_COST, CAMPFIRE_R, CLAW_DMG,
@@ -19,7 +18,7 @@ import {
   POINTS_BUILD, POINTS_HARVEST, POINTS_KILL_BEAST, POINTS_KILL_GUARD, POINTS_KILL_PLAYER, POINTS_KILL_ZOMBIE, POINTS_HEARSE_BONUS, POINTS_NIGHT, POINTS_RIGHT_ACCUSE,
   POINTS_WRONG_ACCUSE, ROCK_HITS, ROCK_PER_BOULDER, TOOL_PICKUP_R, TOOL_SPAWN, TOOLS,
   TREE_HITS, WOOD_PER_TREE, WIN_BONUS, PLAYERS_TOTAL, ZOMBIE_CREW_DMG, ZOMBIE_HP,
-  ZONE_DRAIN_BASE, ZONE_DRAIN_STEP, ZONE_GRACE_S, ZONE_RADII, DAWN_ALIVE_CAP, DAWN_WARN_S,
+  ZONE_DRAIN_BASE, ZONE_DRAIN_STEP, ZONE_GRACE_S, DAWN_ALIVE_CAP, DAWN_WARN_S,
   MONEY_PER_PILE, CASH_RESPAWN_S, CREW_PURSE, CIV_PURSE, ZOMBIE_PURSE, POINTS_LOOT, POLICE_CREW,
   POLICE_OUTFITS,
   CIV_PANIC_R, CREW_PANIC_R, ZOMBIE_HUNT_R, ZOMBIE_SNIFF, ZOMBIE_SWARM_CAP,
@@ -28,11 +27,12 @@ import {
   CREW_SEEK_R, CREW_EAT_R, CREW_BOOST_S, CREW_BOOST_MULT,
   CRIME_SEE_R, CRIME_CIV_SEE_R, CRIME_REPORT_RANGE, CRIME_REPORT_T, WARRANT_DETECT, CRIME_STAR_MURDER, CRIME_STAR_MINOR,
   WILDLIFE_ENABLED, normalizeAppearance,
-  type AnimalKind, type Appearance, type Phase, type PolicePerk, type PowerKind, type Side, type ToolKind, type Zone, zoneOf, ZONE_TOAST,
+  type AnimalKind, type Appearance, type Phase, type PolicePerk, type PowerKind, type Side, type ToolKind, type Zone, ZONE_TOAST,
 } from "./constants";
 import { clamp, mulberry32, range } from "./rng";
 import type { OwnedGear } from "./shop";
-import { addDynamicCircle, freeSpot, lineClear, refreshCarCircle, resolve, ringTrafficPoint, RING_R, ROADS, scatterSpots, spotNear, standTopAt, terrainHeight, TOWN_SQUARE, type Car, type CircleCollider, type World } from "./worldgen";
+import { addDynamicCircle, freeSpot, lineClear, refreshCarCircle, resolve, ringTrafficPoint, ROADS, scatterSpots, spotNear, standTopAt, terrainHeight, TOWN_SQUARE, type Car, type CircleCollider, type World } from "./worldgen";
+import { LOBBY_MAP, type MapInfo } from "./mapInfo";
 import { nightFactor, newBody, stepBody, stepNpc, type Body, type SteerMemory } from "./sim";
 import { botBrain } from "./botBrain";
 import { sfx, startDrone, stopDrone, setInsects, stopInsects } from "./audio";
@@ -1017,7 +1017,8 @@ export class GameEngine {
    *  so a backgrounded host can never leave the room's skies fighting. */
   netPhaseAt = 0;
 
-  constructor(world: World, look: Appearance, toast: ToastFn, rngSeed?: number, seat?: number) {
+  constructor(world: World, look: Appearance, toast: ToastFn, rngSeed?: number, seat?: number, mode: "match" | "lobby" = "match") {
+    this.mode = mode;
     this.world = world;
     this.look = look;
     this.rawToast = toast;
@@ -1031,15 +1032,20 @@ export class GameEngine {
     // 🌲 wildlife GLBs — 🚫 DROPPED with the animals & insects (WILDLIFE_ENABLED
     // in constants.ts); the call stays as the single switch to restore the zoo
     preloadModels();
-    // 🚓 the police cruiser & 🚕 yellow cab GLBs — the precinct fleet & the
-    // taxis stream in while you play
-    preloadVehicles();
-    // ✈️ and the airport kit GLBs — the planes & props stream in while you walk
-    preloadAirportModels();
-    // 🪦 and the cemetery kit GLBs — tombstones & the estate stream in alongside
-    preloadGraveyardModels();
-    // 🏥 and the hospital kit GLBs — St. Cross Medical Campus streams in too
-    preloadHospitalModels();
+    // 🗺️ SEASON ARENAS skip the lobby-only kit streams (airport, graveyard,
+    // hospital & the city vehicles never render there) — lighter boots on the
+    // 4×4 km worlds; the season kit pieces stream lazily instead (SeasonGlbs).
+    if (!this.M.seasonal) {
+      // 🚓 the police cruiser & 🚕 yellow cab GLBs — the precinct fleet & the
+      // taxis stream in while you play
+      preloadVehicles();
+      // ✈️ and the airport kit GLBs — the planes & props stream in while you walk
+      preloadAirportModels();
+      // 🪦 and the cemetery kit GLBs — tombstones & the estate stream in alongside
+      preloadGraveyardModels();
+      // 🏥 and the hospital kit GLBs — St. Cross Medical Campus streams in too
+      preloadHospitalModels();
+    }
     // 🧍 and the Polyfork cast — 13 rigged character GLBs stream in while you
     // play, so every soul (you, the 99 contestants, police, townsfolk) wears a
     // real animated body instead of the cartoon stand-in
@@ -1076,6 +1082,16 @@ export class GameEngine {
     }
   }
 
+  /** 🎬 run mode — "match" plays the full dropship → 7-nights story; "lobby"
+   *  roams the town island as a 3D lobby while the match countdown runs
+   *  (no dropship, no dusk possessions, no shrinking wall — a safe sandbox). */
+  mode: "match" | "lobby" = "match";
+
+  /** 🗺️ the active map — the legacy town island (world.map unset) or a 4×4 km
+   *  season arena (world.map set by generateSeasonWorld). Every radius read in
+   *  this file goes through here so both worlds share one physics stack. */
+  get M(): MapInfo { return this.world.map ?? LOBBY_MAP; }
+
   /* ---------------- 🔍 night trace: AI forensics for the stuck-horde mystery ----------------
    * Ring-buffered log lines (console.debug + `window.__vc.engine.trace()`).
    * Night sampling tracks the exact symptoms the lobby reported: hunters piling
@@ -1105,7 +1121,7 @@ export class GameEngine {
    *  exactly where its soul will drop, wherever it's rendered. */
   spawnSpotFor(slot: number): { x: number; z: number } {
     const r = mulberry32(0x7e57123 ^ ((slot + 1) * 2654435761));
-    return freeSpot(r, this.world, 14, CITY_RADIUS - 14);
+    return freeSpot(r, this.world, 14, this.M.cityR - 14);
   }
 
   /** 🌐 pin OUR spawn to the deterministic per-seat drop spot (same answer on
@@ -1154,7 +1170,7 @@ export class GameEngine {
       }
     }
     if (this.mp && this.mpSlot >= 0) this.playerSpawn = this.spawnSpotFor(this.mpSlot);
-    else this.playerSpawn = freeSpot(this.rnd, this.world, 14, CITY_RADIUS - 14);
+    else this.playerSpawn = freeSpot(this.rnd, this.world, 14, this.M.cityR - 14);
     return this.playerSpawn;
   }
 
@@ -1168,7 +1184,7 @@ export class GameEngine {
   private safeCopSpot(): { x: number; z: number } {
     const avoid = [{ x: this.playerSpawn.x, z: this.playerSpawn.z, r: 90 }];
     for (let i = 0; i < 14; i++) {
-      const p = freeSpot(this.rnd, this.world, 24, CITY_RADIUS - 14, avoid);
+      const p = freeSpot(this.rnd, this.world, 24, this.M.cityR - 14, avoid);
       if (Math.hypot(p.x - this.playerSpawn.x, p.z - this.playerSpawn.z) >= 90) return p;
     }
     // Last resort: walk a wide ring around spawn until a point survives colliders.
@@ -1186,7 +1202,7 @@ export class GameEngine {
     const p = this.player;
     let pick = { x: p.x + minD, z: p.z + minD };
     for (let i = 0; i < 10; i++) {
-      const t = freeSpot(this.rnd, this.world, 10, CITY_RADIUS - 10);
+      const t = freeSpot(this.rnd, this.world, 10, this.M.cityR - 10);
       pick = t;
       if (dist2(t.x, t.z, p.x, p.z) > minD * minD) break;
     }
@@ -1206,14 +1222,14 @@ export class GameEngine {
   /** Random free city spot — still used for the dizzy-stun respawn. */
   private cityRespawnSpot(): { x: number; z: number } {
     for (let i = 0; i < 24; i++) {
-      const t = freeSpot(this.rnd, this.world, 10, CITY_RADIUS - 10);
+      const t = freeSpot(this.rnd, this.world, 10, this.M.cityR - 10);
       let ok = true;
       for (const cop of this.cops) {
         if (dist2(t.x, t.z, cop.x, cop.z) < 45 * 45) { ok = false; break; }
       }
       if (ok) return t;
     }
-    return freeSpot(this.rnd, this.world, 10, CITY_RADIUS - 10); // fallback: any city spot
+    return freeSpot(this.rnd, this.world, 10, this.M.cityR - 10); // fallback: any city spot
   }
 
   /** Index of the station closest to a point — vans always take the nearest one. */
@@ -1307,7 +1323,7 @@ export class GameEngine {
     // (110 ambient civilians would drown out the 100-soul contest and make the
     // alive counter read as a lie). Other modes keep the full living city.
     const civN = this.horror ? 26 : CIVILIAN_COUNT;
-    const civSpots = scatterSpots(r, this.world, civN, 8, CITY_RADIUS - 8, BOT_SPAWN_GAP);
+    const civSpots = scatterSpots(r, this.world, civN, 8, this.M.cityR - 8, BOT_SPAWN_GAP);
     for (let i = 0; i < civN; i++) {
       const p = civSpots[i];
       this.civs.push({ id: this.nid(), kind: "civilian", x: p.x, z: p.z, vx: 0, vz: 0, face: 0, mode: "wander", tx: p.x, tz: p.z, timer: range(r, 0, 4), phase: Math.random() * 6, name: CIVIL_NAMES[i % CIVIL_NAMES.length], speed: range(r, 2.2, 3.4), alertT: 0, purse: Math.round(range(r, CIV_PURSE[0], CIV_PURSE[1])) });
@@ -1325,7 +1341,7 @@ export class GameEngine {
     }
     // 🤖 the JOIN BOT — when a real player joins, one dedicated bot drops into
     // the contest at a random street too (same anti-clump rule as everyone)
-    const jx = freeSpot(r, this.world, 14, CITY_RADIUS - 14);
+    const jx = freeSpot(r, this.world, 14, this.M.cityR - 14);
     this.civs.push({ id: this.nid(), kind: "civilian", x: jx.x, z: jx.z, vx: 0, vz: 0, face: 0, mode: "wander", tx: jx.x, tz: jx.z, timer: range(r, 1, 3), phase: Math.random() * 6, name: "Bijli", speed: 3.15, alertT: 0, companion: true, purse: Math.round(range(r, CIV_PURSE[0], CIV_PURSE[1])) });
     // 🧟 contest zombies never pre-spawn — each dusk the TURNED rise where they stood
     // 👥 the crew — 7 fellow "players" join you for the 7 nights
@@ -1335,19 +1351,19 @@ export class GameEngine {
     const kinds: ToolKind[] = [];
     for (const t of TOOLS) for (let i = 0; i < TOOL_SPAWN[t.kind]; i++) kinds.push(t.kind);
     const toolZone: [number, number][] = [
-      [300, 398],                                   // city outskirts
-      [CITY_RADIUS + 10, FARM_RADIUS - 10],         // farmland
-      [FARM_RADIUS + 8, DEEP_JUNGLE_RADIUS - 6],    // jungle
-      [DEEP_JUNGLE_RADIUS + 4, JUNGLE_RADIUS - 6],  // deep jungle
-      [MOUNTAIN_INNER + 4, MOUNTAIN_OUTER - 8],     // ⛰️ mountain slopes
+      [Math.round(this.M.cityR * 0.74), Math.round(this.M.cityR * 0.98)], // city outskirts
+      [this.M.cityR + 10, this.M.farmR - 10],       // farmland
+      [this.M.farmR + 8, this.M.deepR - 6],         // jungle
+      [this.M.deepR + 4, this.M.jungleR - 6],       // deep jungle
+      [this.M.mountInner + 4, this.M.mountOuter - 8], // ⛰️ mountain slopes
     ];
     kinds.forEach((kind, i) => {
       const [r0, r1] = toolZone[i % toolZone.length];
       let p = freeSpot(r, this.world, r0, r1);
-      if (r0 >= MOUNTAIN_INNER) {
+      if (r0 >= this.M.mountInner) {
         // mountain tools must sit on a walkable slope — retry until the ground is gentle
         for (let k = 0; k < 14; k++) {
-          if (terrainHeight(p.x, p.z) < 12) break;
+          if (this.M.terrain(p.x, p.z) < 12) break;
           p = freeSpot(r, this.world, r0, r1);
         }
       }
@@ -1369,9 +1385,9 @@ export class GameEngine {
         // few times if the pick lands on a cliff face, then settle for anything
         let p: { x: number; z: number };
         if (set.zone === "mountain") {
-          p = freeSpot(r, this.world, MOUNTAIN_INNER + 4, MOUNTAIN_OUTER - 8);
-          for (let tries = 0; tries < 6 && terrainHeight(p.x, p.z) > 11; tries++) {
-            const q = freeSpot(r, this.world, MOUNTAIN_INNER + 4, MOUNTAIN_OUTER - 8);
+          p = freeSpot(r, this.world, this.M.mountInner + 4, this.M.mountOuter - 8);
+          for (let tries = 0; tries < 6 && this.M.terrain(p.x, p.z) > 11; tries++) {
+            const q = freeSpot(r, this.world, this.M.mountInner + 4, this.M.mountOuter - 8);
             p.x = q.x; p.z = q.z;
           }
         } else if (set.zone === "grave") {
@@ -1381,19 +1397,19 @@ export class GameEngine {
           resolve(p, 0.6, this.world);
         } else if (set.zone === "city") {
           // 🐕🐕‍⬛ strays & the black cat sleep & roam RANDOM city spots — streets, parks, alley mouths
-          p = freeSpot(r, this.world, 14, CITY_RADIUS - 14);
+          p = freeSpot(r, this.world, 14, this.M.cityR - 14);
         } else if (set.zone === "grass") {
           // 🐜 the grass fields — the meadow band between city & farm
-          p = freeSpot(r, this.world, CITY_RADIUS + 6, FARM_RADIUS + 40);
+          p = freeSpot(r, this.world, this.M.cityR + 6, this.M.farmR + 40);
         } else if (set.zone === "random") {
           // 🐝 wasps, bees & centipedes nest anywhere — town fringes, meadows, jungle edge
-          p = freeSpot(r, this.world, 24, DEEP_JUNGLE_RADIUS - 10);
+          p = freeSpot(r, this.world, 24, this.M.deepR - 10);
         } else if (set.zone === "farm") {
           // 🚜 DOMESTIC HERDS — inside the city streets AND the near-city pastures:
           // cows & chickens & horses graze where the player actually walks
-          p = freeSpot(r, this.world, r() < 0.45 ? 18 : CITY_RADIUS + 6, FARM_RADIUS - 8);
+          p = freeSpot(r, this.world, r() < 0.45 ? 18 : this.M.cityR + 6, this.M.farmR - 8);
         } else {
-          p = freeSpot(r, this.world, FARM_RADIUS + 10, JUNGLE_RADIUS - 30);
+          p = freeSpot(r, this.world, this.M.farmR + 10, this.M.jungleR - 30);
         }
         animalPool.push({
           id: this.nid(), kind: set.kind, x: p.x, z: p.z, vx: 0, vz: 0, face: 0, tx: p.x, tz: p.z,
@@ -1406,7 +1422,7 @@ export class GameEngine {
       }
     // items
     for (let i = 0; i < ITEM_COUNT; i++) {
-      const p = freeSpot(r, this.world, 10, 430);
+      const p = freeSpot(r, this.world, 10, Math.round(this.M.farmR - 30));
       this.items.push({ id: this.nid(), def: Math.floor(r() * ITEMS.length), x: p.x, z: p.z, active: true, respawn: 0 });
     }
     // 🏕️ camp supplies — every jungle camp left snacks and a money stash by the fire
@@ -1423,13 +1439,13 @@ export class GameEngine {
     // rare super powers — mostly deep-jungle treasures, a couple of mystery spots anywhere
     for (let i = 0; i < POWER_COUNT; i++) {
       const jungle = r() < POWER_JUNGLE_SHARE;
-      const p = freeSpot(r, this.world, jungle ? FARM_RADIUS + 12 : 10, jungle ? JUNGLE_RADIUS - 14 : 430);
+      const p = freeSpot(r, this.world, jungle ? this.M.farmR + 12 : 10, jungle ? this.M.jungleR - 14 : this.M.farmR - 30);
       this.powers.push({ id: this.nid(), def: i % POWERS.length, x: p.x, z: p.z, active: true, respawn: 0 });
     }
     // driving-license cards — most around town streets, two out in the farmland
     for (let i = 0; i < LICENSE_COUNT; i++) {
       const far = i >= LICENSE_COUNT - 2;
-      const p = freeSpot(r, this.world, far ? CITY_RADIUS + 8 : 14, far ? FARM_RADIUS - 14 : 240);
+      const p = freeSpot(r, this.world, far ? this.M.cityR + 8 : 14, far ? this.M.farmR - 14 : Math.round(this.M.cityR * 0.6));
       this.licenses.push({ id: this.nid(), x: p.x, z: p.z, active: true });
     }
     // police van fleet — one van per station, parked at its gate
@@ -1444,7 +1460,7 @@ export class GameEngine {
     for (let i = 0; i < TRAFFIC_COUNT; i++) {
       const dir: 1 | -1 = i % 2 === 0 ? 1 : -1;
       this.traffic.push({
-        r: RING_R + (dir > 0 ? -2.7 : 2.7),
+        r: this.M.ringR + (dir > 0 ? -2.7 : 2.7),
         dir,
         a: (i / TRAFFIC_COUNT) * Math.PI * 2,
         sp: 0.034 + (i % 3) * 0.011, // ≈7–12 u/s — quicker than a walking kid, dodgeable when sprinting
@@ -1461,9 +1477,13 @@ export class GameEngine {
     // legacy side: a slice of the civilians scavenge loose cash & haul it to the town square
     this.assignScavengers();
     // bot planes — staggered so a flight is always somewhere in its cycle
+    // 🗺️ seasonal arenas have no airport kit — the fleet parks at the capital's
+    // east lawn (open plaza edge) and cycles from there
+    const seasonal = this.M.seasonal;
     for (let i = 0; i < PLANE_COUNT; i++) {
       const slot = i % 3;
-      const ax = AIRPORT.terminal.x - 26 + slot * 22, az = AIRPORT.apronZ;
+      const ax = seasonal ? 60 + slot * 24 : AIRPORT.terminal.x - 26 + slot * 22;
+      const az = seasonal ? -70 : AIRPORT.apronZ;
       this.planes.push({
         id: this.nid(), c: (i * 2 + 1) % PLANE_COLORS.length,
         x: ax, z: az, alt: 0,
@@ -1925,7 +1945,7 @@ export class GameEngine {
     const seed = this.rngSeed ?? MASTER_MATCH_SEED;
     const r = mulberry32(seed ^ 0x44521f0);
     const a = r() * Math.PI * 2;
-    const cx = Math.cos(a) * DROP_OUTER, cz = Math.sin(a) * DROP_OUTER;
+    const cx = Math.cos(a) * this.M.dropOuter, cz = Math.sin(a) * this.M.dropOuter;
     this.deployPath = { x0: cx, z0: cz, x1: -cx, z1: -cz };
     // 🪂 precompute where the AFK auto-drop fires: the path distance on the
     // EXIT leg (past the mid-point) where the ship crosses AUTO_EJECT_R.
@@ -1934,7 +1954,7 @@ export class GameEngine {
     const L = Math.hypot(this.deployPath.x1 - this.deployPath.x0, this.deployPath.z1 - this.deployPath.z0) || 1;
     const dx = (this.deployPath.x1 - this.deployPath.x0) / L, dz = (this.deployPath.z1 - this.deployPath.z0) / L;
     const b = 2 * (cx * dx + cz * dz);
-    const c = cx * cx + cz * cz - AUTO_EJECT_R * AUTO_EJECT_R;
+    const c = cx * cx + cz * cz - this.M.autoEjectR * this.M.autoEjectR;
     const disc = b * b - 4 * c;
     const root = disc > 0 ? (-b + Math.sqrt(disc)) / 2 : L;
     this.autoDropU = Math.min(L, Math.max(0, root));
@@ -1971,7 +1991,7 @@ export class GameEngine {
     return {
       x: path.x0 + (path.x1 - path.x0) * t,
       z: path.z0 + (path.z1 - path.z0) * t,
-      y: DROP_ALT,
+      y: this.M.dropAlt,
       rot: Math.atan2(path.x1 - path.x0, path.z1 - path.z0), // nose points at the far end
     };
   }
@@ -2015,7 +2035,7 @@ export class GameEngine {
       const t = Math.min(1, this.shipU / L);
       p.x = path.x0 + (path.x1 - path.x0) * t;
       p.z = path.z0 + (path.z1 - path.z0) * t;
-      p.y = DROP_ALT;
+      p.y = this.M.dropAlt;
       p.vx = 0; p.vz = 0; p.vy = 0;
       p.face = Math.atan2(path.x1 - path.x0, path.z1 - path.z0);
       p.sprinting = false;
@@ -2023,7 +2043,7 @@ export class GameEngine {
       // ship is past the island mid-point and closes on the map edge, eject
       // BEFORE the mountain band (the old end-of-line eject at r = 760 spilled
       // idle skydivers past the wall, straight onto the peaks).
-      if (t >= 0.5 && (Math.hypot(p.x, p.z) >= AUTO_EJECT_R || t >= 1)) this.jumpFromShip(true);
+      if (t >= 0.5 && (Math.hypot(p.x, p.z) >= this.M.autoEjectR || t >= 1)) this.jumpFromShip(true);
       return;
     }
     // falling / under canopy — WASD steering relative to the camera yaw.
@@ -2031,7 +2051,7 @@ export class GameEngine {
     // the tallest standable roof under our boots (buildings carry standable
     // `top`s — see worldgen). The chute pops and TOUCHES DOWN on rooftops
     // instead of sailing through them and landing inside the walls.
-    const ground = Math.max(terrainHeight(p.x, p.z), standTopAt(this.world, p.x, p.z, p.y, 0.02));
+    const ground = Math.max(this.M.terrain(p.x, p.z), standTopAt(this.world, p.x, p.z, p.y, 0.02));
     const f = this.personalPause || this.lost ? 0 : this.input.f;
     const rr = this.personalPause || this.lost ? 0 : this.input.r;
     const drift = d.phase === "fall" ? FREEFALL_DRIFT : CHUTE_DRIFT;
@@ -2050,8 +2070,8 @@ export class GameEngine {
     resolve(p, 0.45, this.world, -1, p.y);
     // keep the dive inside the playable disc (the wall does not catch skydivers)
     const rad = Math.hypot(p.x, p.z);
-    if (rad > WALL_RADIUS - 30) {
-      const k = (WALL_RADIUS - 30) / rad;
+    if (rad > this.M.wallR - 30) {
+      const k = (this.M.wallR - 30) / rad;
       p.x *= k; p.z *= k;
     }
     if (d.phase === "fall") {
@@ -2158,7 +2178,7 @@ export class GameEngine {
     stopDrone(); stopInsects(); // 🦗 the chorus falls silent with the light
     // 🪪 the license is NO LONGER a freebie: every survivor must physically hunt
     // down a glowing 🪪 card (or be handed one by a teammate) before any car starts
-    for (const v of this.votes) { v.state = "world"; v.carrierId = undefined; v.respawnT = undefined; v.claimBy = undefined; const p = freeSpot(this.rnd, this.world, 16, 420); v.x = p.x; v.z = p.z; }
+    for (const v of this.votes) { v.state = "world"; v.carrierId = undefined; v.respawnT = undefined; v.claimBy = undefined; const p = freeSpot(this.rnd, this.world, 16, Math.round(this.M.farmR - 40)); v.x = p.x; v.z = p.z; }
     for (const it of this.items) { it.active = true; it.respawn = 0; }
     for (const c of this.civs) { c.mode = "wander"; c.vanId = undefined; c.runner = false; c.voteId = undefined; c.pauseT = 0; }
     this.assignRunners();
@@ -2194,7 +2214,17 @@ export class GameEngine {
     /* --- ✈️ Phase 3: THE DROP — every match opens aboard the shared dropship ---
      * The flight path is deterministic (master seed), the ship crosses the
      * island and every soul jumps when they choose. playerSpawn stays the
-     * deterministic scatter anchor for cops/crew; our BODY starts at 62 u. */
+     * deterministic scatter anchor for cops/crew; our BODY starts at 62 u
+    🏙️ LOBBY ROAM skips the dropship: the player strolls the town plaza
+     * (game boot passes mode:"lobby") while the match countdown runs. */
+    if (this.mode === "lobby") {
+      this.player.x = SPAWN.x; this.player.z = SPAWN.z;
+      this.player.y = terrainHeight(SPAWN.x, SPAWN.z);
+      this.deploy = null; this.deployPath = null; this.shipU = 0;
+      this.running = true;
+      return;
+    }
+    
     if (!this.deployPath) this.rollDropPath();
     this.deploy = { phase: "ship", vy: 0, jumped: false };
     this.shipU = 0;
@@ -2496,11 +2526,11 @@ export class GameEngine {
     p.x = d.x + Math.cos(d.rot) * 2.3;
     p.z = d.z - Math.sin(d.rot) * 2.3;
     // hop out ONTO the ground — on the ⛰️ band y=0 would bury us inside the mesh
-    p.y = terrainHeight(p.x, p.z); p.vx = p.vz = p.vy = 0;
+    p.y = this.M.terrain(p.x, p.z); p.vx = p.vz = p.vy = 0;
     p.face = d.rot;
     resolve(p, 0.45, this.world);
     const rr = Math.hypot(p.x, p.z);
-    if (rr > WALL_RADIUS) { p.x *= WALL_RADIUS / rr; p.z *= WALL_RADIUS / rr; }
+    if (rr > this.M.wallR) { p.x *= this.M.wallR / rr; p.z *= this.M.wallR / rr; }
     sfx.door();
   }
 
@@ -2719,11 +2749,11 @@ export class GameEngine {
     const p = this.player;
     p.x = car.x + Math.cos(car.rot) * 2.3;
     p.z = car.z - Math.sin(car.rot) * 2.3;
-    p.y = terrainHeight(p.x, p.z); p.vx = p.vz = p.vy = 0;
+    p.y = this.M.terrain(p.x, p.z); p.vx = p.vz = p.vy = 0;
     p.face = car.rot;
     resolve(p, 0.45, this.world);
     const rr = Math.hypot(p.x, p.z);
-    if (rr > WALL_RADIUS) { p.x *= WALL_RADIUS / rr; p.z *= WALL_RADIUS / rr; }
+    if (rr > this.M.wallR) { p.x *= this.M.wallR / rr; p.z *= this.M.wallR / rr; }
     if (!silent) sfx.door();
   }
 
@@ -2833,7 +2863,7 @@ export class GameEngine {
     // 🧍 the roof is a MOVABLE platform — wherever the car rolls, its standable
     // top follows (jump onto a slow car and hitch a ride; it drives out from
     // under you and you drop off the back — physics does the comedy)
-    const roofY = terrainHeight(d.x, d.z) + CAR_ROOF_TOP;
+    const roofY = this.M.terrain(d.x, d.z) + CAR_ROOF_TOP;
     pair[0].top = roofY; pair[1].top = roofY;
     if (pair[0].idx !== undefined) refreshCarCircle(this.world, pair[0].idx);
     if (pair[1].idx !== undefined) refreshCarCircle(this.world, pair[1].idx);
@@ -3008,8 +3038,8 @@ export class GameEngine {
       // when momentum was handed over, or the two double-punish the same crash
       if (scrape > 0.004 && !carHit) { ph.vx *= Math.exp(-dt * 10); ph.vz *= Math.exp(-dt * 10); ph.w *= 0.7; }
       const rr = Math.hypot(ph.x, ph.z);
-      if (rr > WALL_RADIUS) {
-        ph.x *= WALL_RADIUS / rr; ph.z *= WALL_RADIUS / rr;
+      if (rr > this.M.wallR) {
+        ph.x *= this.M.wallR / rr; ph.z *= this.M.wallR / rr;
         ph.vx *= 0.4; ph.vz *= 0.4; ph.w *= 0.5;
       }
       // ring-road traffic & police vans are solid for coasters too — bonk off
@@ -3338,8 +3368,8 @@ export class GameEngine {
     // the same crash, so the scrape damp skips on the frame of a hand-over.
     if (scrape > 0.004 && !carHit) { d.v *= Math.exp(-dt * 12); if (d.hitT <= 0) this.addShake(0.16); d.hitT = 0.35; }
     const rr = Math.hypot(d.x, d.z);
-    if (rr > WALL_RADIUS) {
-      d.x *= WALL_RADIUS / rr; d.z *= WALL_RADIUS / rr;
+    if (rr > this.M.wallR) {
+      d.x *= this.M.wallR / rr; d.z *= this.M.wallR / rr;
       if (d.v > 4) d.v = 4 + (d.v - 4) * Math.exp(-dt * 6); // bleed to wall speed — don't snap 26→4 in one frame
     }
     // ring-road traffic & police vans are solid — the vehicle bonks off, nobody gets hurt
@@ -3390,7 +3420,7 @@ export class GameEngine {
     // and the camera hangs off p.y — keeping it at a flat 0.32 sank the chase
     // camera (and every look-at) into the hillside while the car climbed.
     p.x = d.x; p.z = d.z;
-    const gy = terrainHeight(d.x, d.z) + 0.32;
+    const gy = this.M.terrain(d.x, d.z) + 0.32;
     // ⛰️ tracked a touch tighter (12/s): on the rolling mud-valley bumps a lazy
     // ease let the body lag below fast climbs and read as sinking into the hill
     p.y += (gy - p.y) * Math.min(1, dt * 12); // eased so bumpy ground never jolts the camera
@@ -3441,7 +3471,7 @@ export class GameEngine {
     if (c.timer > 0 && !c.voteId) {
       c.timer -= dt;
       if (dist2(c.x, c.z, c.tx, c.tz) < 2 || Math.random() < dt * 0.5) {
-        const t = freeSpot(this.rnd, this.world, 8, CITY_RADIUS - 6);
+        const t = freeSpot(this.rnd, this.world, 8, this.M.cityR - 6);
         c.tx = t.x; c.tz = t.z;
       }
       stepNpc(c, c.tx, c.tz, c.speed * 0.6, dt, this.world);
@@ -3558,7 +3588,7 @@ export class GameEngine {
     if (dist2(c.x, c.z, c.tx, c.tz) < 2) {
       const t = this.rnd() < 0.78
         ? spotNear(this.rnd, this.world, c.x, c.z, 10, 75)
-        : freeSpot(this.rnd, this.world, 8, CITY_RADIUS - 8);
+        : freeSpot(this.rnd, this.world, 8, this.M.cityR - 8);
       c.tx = t.x; c.tz = t.z;
       if (this.rnd() < 0.5) c.pauseT = range(this.rnd, 0.8, 3);
     }
@@ -4046,7 +4076,7 @@ export class GameEngine {
     }
     p.x = landX; p.z = landZ;
     const rr = Math.hypot(p.x, p.z);
-    if (rr > WALL_RADIUS) { p.x *= WALL_RADIUS / rr; p.z *= WALL_RADIUS / rr; }
+    if (rr > this.M.wallR) { p.x *= this.M.wallR / rr; p.z *= this.M.wallR / rr; }
     p.vy = 2.4; // tiny magic hop on arrival
     p.face = Math.atan2(dx, dz); // turn the body to face the blink direction
     sfx.blink();
@@ -4114,10 +4144,10 @@ export class GameEngine {
     const grave = an.kind === "spider";                         // 🕷️ the giant yard spider lurks in the graveyard
     const mountain = an.kind === "ibex" || an.kind === "hare";  // 🏔️ alpine wildlife keeps to the mountain band
     // 🚜 DOMESTIC herds graze inside the city streets AND the near-city pastures
-    const minR = city ? 10 : grave ? GRAVEYARD.r + 2 : mountain ? MOUNTAIN_INNER + 4
-      : farm ? 12 : FARM_RADIUS + 6;
-    const maxR = city ? CITY_RADIUS - 16 : grave ? GRAVEYARD.r - 3 : mountain ? MOUNTAIN_OUTER - 8
-      : farm ? FARM_RADIUS - 8 : JUNGLE_RADIUS - 30;
+    const minR = city ? 10 : grave ? GRAVEYARD.r + 2 : mountain ? this.M.mountInner + 4
+      : farm ? 12 : this.M.farmR + 6;
+    const maxR = city ? this.M.cityR - 16 : grave ? GRAVEYARD.r - 3 : mountain ? this.M.mountOuter - 8
+      : farm ? this.M.farmR - 8 : this.M.jungleR - 30;
     for (let i = 0; i < 12; i++) {
       const a = this.rnd() * Math.PI * 2, d = mountain ? 4 + this.rnd() * 8 : city ? 6 + this.rnd() * 14 : 7 + this.rnd() * 16;
       const x = an.x + Math.cos(a) * d, z = an.z + Math.sin(a) * d;
@@ -4141,7 +4171,7 @@ export class GameEngine {
    *  names & colors every run, so the accusation mystery stays learnable. Shirt
    *  color = identity. */
   private spawnCrew() {
-    const spots = scatterSpots(this.rnd, this.world, CREW_COUNT, 14, CITY_RADIUS - 14, BOT_SPAWN_GAP);
+    const spots = scatterSpots(this.rnd, this.world, CREW_COUNT, 14, this.M.cityR - 14, BOT_SPAWN_GAP);
     for (let i = 0; i < CREW_COUNT; i++) {
       const spot = spots[i];
       const look = randomAppearance(this.rnd);
@@ -4192,7 +4222,7 @@ export class GameEngine {
 
   /** 🧱 current safe-zone radius in world units (level 0 = the whole map). */
   zoneRadius(): number {
-    return ZONE_RADII[Math.min(this.zoneLevel, ZONE_RADII.length - 1)];
+    return this.M.zoneRadii[Math.min(this.zoneLevel, this.M.zoneRadii.length - 1)];
   }
 
   /** 🌅 radius the wall will hold AFTER the coming dawn shrink (equals the
@@ -4200,7 +4230,7 @@ export class GameEngine {
    *  no longer moves it). Dusk shelter picks & the pre-dawn march aim here so
    *  a night spent hiding is a morning still alive. */
   dawnWallRadius(): number {
-    return ZONE_RADII[Math.min(this.zoneLevel + 1, ZONE_RADII.length - 1)];
+    return this.M.zoneRadii[Math.min(this.zoneLevel + 1, this.M.zoneRadii.length - 1)];
   }
 
   /** 🌅 true during the last DAWN_WARN_S of the night — the warning window
@@ -4230,7 +4260,7 @@ export class GameEngine {
    *  same second, on every screen. The zone field on the 2 Hz phase packets
    *  re-arms anyone who missed the event (packet loss, late joiner). */
   private shrinkZone() {
-    if (this.zoneLevel >= ZONE_RADII.length - 1) return;
+    if (this.zoneLevel >= this.M.zoneRadii.length - 1) return;
     if (this.mp && !this.mpHost) return; // the wall word comes from the host
     this.zoneLevel++;
     this.zoneGraceT = ZONE_GRACE_S;
@@ -4288,6 +4318,12 @@ export class GameEngine {
   /** Advance the 7-Nights story clock. The visual day/night `clock` is SYNTHESIZED
    *  from the phase so sky, fog, lamps, windows & fireflies all follow the story. */
   private stepPhase(dt: number) {
+    // lobby roam: the story clock is FROZEN in golden afternoon (no dusk
+    // possessions, no shrinking wall, no win/loss while the countdown runs).
+    if (this.mode === "lobby") {
+      this.clock += (0.32 - this.clock) * Math.min(1, dt * 2.4);
+      return;
+    }
     this.phaseT -= dt;
     // 🕐 HOST-DOWN GUARD (guests): the story never CROSSES a phase transition
     // on its own while the host's clock stream is stale — a throttled/backgrounded
@@ -4544,7 +4580,7 @@ export class GameEngine {
         an.hp = undefined;
         an.resting = false;
         if (an.dead) {
-          const t = freeSpot(this.rnd, this.world, 14, CITY_RADIUS - 14);
+          const t = freeSpot(this.rnd, this.world, 14, this.M.cityR - 14);
           an.x = t.x; an.z = t.z; an.tx = t.x; an.tz = t.z;
           an.vx = 0; an.vz = 0; an.dead = false;
         }
@@ -4563,17 +4599,17 @@ export class GameEngine {
         t = { x: GRAVEYARD.x + Math.cos(a) * d, z: GRAVEYARD.z + Math.sin(a) * d };
         resolve(t, 0.6, this.world);
       } else if (mountain) {
-        t = freeSpot(this.rnd, this.world, MOUNTAIN_INNER + 4, MOUNTAIN_OUTER - 8);
-        for (let tries = 0; tries < 6 && terrainHeight(t.x, t.z) > 11; tries++) {
-          const q = freeSpot(this.rnd, this.world, MOUNTAIN_INNER + 4, MOUNTAIN_OUTER - 8);
+        t = freeSpot(this.rnd, this.world, this.M.mountInner + 4, this.M.mountOuter - 8);
+        for (let tries = 0; tries < 6 && this.M.terrain(t.x, t.z) > 11; tries++) {
+          const q = freeSpot(this.rnd, this.world, this.M.mountInner + 4, this.M.mountOuter - 8);
           t.x = q.x; t.z = q.z;
         }
       } else if (cat) {
-        t = freeSpot(this.rnd, this.world, 14, CITY_RADIUS - 14);
+        t = freeSpot(this.rnd, this.world, 14, this.M.cityR - 14);
       } else {
         t = freeSpot(this.rnd, this.world,
-          farm ? CITY_RADIUS + 8 : FARM_RADIUS + 10,
-          farm ? FARM_RADIUS - 10 : JUNGLE_RADIUS - 24);
+          farm ? this.M.cityR + 8 : this.M.farmR + 10,
+          farm ? this.M.farmR - 10 : this.M.jungleR - 24);
       }
       an.x = t.x; an.z = t.z; an.tx = t.x; an.tz = t.z;
       an.vx = 0; an.vz = 0; an.dead = false; an.resting = false; an.hp = undefined;
@@ -4587,7 +4623,7 @@ export class GameEngine {
     let revived = 0;
     const deadCivs = this.civs.filter((c) => c.dead);
     const revShare = this.nightNo <= 2 ? 1 : this.nightNo === 3 ? 0.6 : this.nightNo === 4 ? 0.3 : 0;
-    const revMax = Math.max(20, Math.min(CITY_RADIUS - 10, this.zoneRadius() - 12)); // 🧱 fresh faces wake INSIDE the wall
+    const revMax = Math.max(20, Math.min(this.M.cityR - 10, this.zoneRadius() - 12)); // 🧱 fresh faces wake INSIDE the wall
     const revQuota = Math.floor(deadCivs.length * revShare);
     for (const c of deadCivs) {
       if (revived >= revQuota) break;
@@ -5481,7 +5517,7 @@ export class GameEngine {
     if (botCarHit) { d.v -= botCarHit.j; d.hitT = 0.35; }
     if (scrape > 0.004 && !botCarHit) { d.v *= Math.exp(-dt * 12); d.hitT = 0.35; }
     const rr = Math.hypot(d.x, d.z);
-    if (rr > WALL_RADIUS) { d.x *= WALL_RADIUS / rr; d.z *= WALL_RADIUS / rr; }
+    if (rr > this.M.wallR) { d.x *= this.M.wallR / rr; d.z *= this.M.wallR / rr; }
     // 🚦 ring-road traffic & police vans are solid for BOT drivers too — a joyrider
     // can never ghost through oncoming metal (the player's car already gets this)
     const bti = d.t % VEHICLE_AXLE_R.length;
@@ -6696,13 +6732,13 @@ export class GameEngine {
     }
     const fx = -Math.sin(this.input.yaw), fz = -Math.cos(this.input.yaw);
     const spot = { x: this.player.x + fx * 3.4, z: this.player.z + fz * 3.4 };
-    if (terrainHeight(spot.x, spot.z) > 12) {
+    if (this.M.terrain(spot.x, spot.z) > 12) {
       this.toast("🧱 Too steep to build here — find flatter ground!", "info");
       return;
     }
     resolve(spot, kind === "barricade" ? 1.2 : 0.7, this.world);
     const rr = Math.hypot(spot.x, spot.z);
-    if (rr > WALL_RADIUS - 2) { spot.x *= (WALL_RADIUS - 2) / rr; spot.z *= (WALL_RADIUS - 2) / rr; }
+    if (rr > this.M.wallR - 2) { spot.x *= (this.M.wallR - 2) / rr; spot.z *= (this.M.wallR - 2) / rr; }
     if (this.builds.some((b) => dist2(b.x, b.z, spot.x, spot.z) < 2.6 * 2.6)) {
       this.toast("Too close to another building — step aside a little.", "info");
       return;
@@ -6919,7 +6955,7 @@ export class GameEngine {
     this.input.yaw = ((this.input.yaw + Math.PI) % TAU + TAU) % TAU - Math.PI;
 
     // day/night zone toast (✈️ silent from the sky — no spam while crossing the map)
-    const z = zoneOf(p.x, p.z);
+    const z = this.M.zones(p.x, p.z);
     if (z !== this.zone && !this.deploy) { this.zone = z; this.toast(ZONE_TOAST[z], "info"); }
     // 🦗 the jungle never goes quiet — crickets & cicadas swell at night and
     // fade to lone daytime chirps; silent the moment you leave the trees
@@ -7094,7 +7130,7 @@ export class GameEngine {
       // faster than any jump can ever return AND with real air still below the
       // boots. Normal hops (return fall ≈ −9 u/s) and low sheds never trigger it.
       if (!p.onGround && p.vy < -AUTO_CHUTE_VY) {
-        const surf = Math.max(terrainHeight(p.x, p.z), standTopAt(this.world, p.x, p.z, p.y, 0.02));
+        const surf = Math.max(this.M.terrain(p.x, p.z), standTopAt(this.world, p.x, p.z, p.y, 0.02));
         if (p.y - surf > AUTO_CHUTE_MIN_H) {
           this.deploy = { phase: "chute", vy: p.vy, jumped: true };
           sfx.bonk(); // the canopy snaps open
@@ -7729,7 +7765,7 @@ export class GameEngine {
             // the occasional long cross-town trip — no more downtown beeline crowds.
             // 🧱🌅 wander targets stay INSIDE the circle dawn will hold — the
             // town drifts home before the wall tightens, not after.
-            const zMax = Math.max(20, Math.min(CITY_RADIUS - 8, this.dawnWallRadius() - 12));
+            const zMax = Math.max(20, Math.min(this.M.cityR - 8, this.dawnWallRadius() - 12));
             const t = c.protest
               ? { x: range(this.rnd, -9, 9), z: range(this.rnd, -120, 260) }
               : (this.rnd() < 0.7
@@ -8311,7 +8347,7 @@ export class GameEngine {
         }
         if (d2p < 5.5 * 5.5) {
           // too close — it dissolves and re-forms deeper in the jungle
-          const spot = freeSpot(this.rnd, this.world, DEEP_JUNGLE_RADIUS + 8, JUNGLE_RADIUS - 40);
+          const spot = freeSpot(this.rnd, this.world, this.M.deepR + 8, this.M.jungleR - 40);
           this.fxQueue.push({ type: "confetti", x: an.x, y: 1.6, z: an.z, hue: 0.48 });
           an.x = spot.x; an.z = spot.z; an.tx = spot.x; an.tz = spot.z;
           an.vx = 0; an.vz = 0; an.resting = false; an.timer = range(this.rnd, 3, 7);
@@ -8757,7 +8793,7 @@ export class GameEngine {
             alt: Math.max(0, this.player.y),
             // 🧍 roof-aware — the altimeter counts down to the ROOF when you are
             // dropping onto one, not to the street hidden underneath it
-            ground: Math.max(terrainHeight(this.player.x, this.player.z), standTopAt(this.world, this.player.x, this.player.z, this.player.y, 0.02)),
+            ground: Math.max(this.M.terrain(this.player.x, this.player.z), standTopAt(this.world, this.player.x, this.player.z, this.player.y, 0.02)),
             route: Math.min(1, this.shipU / this.shipPathLen()),
             autoDropT: this.autoDropSeconds(),
           }
@@ -8839,7 +8875,7 @@ export class GameEngine {
    *  lower level is a stale echo from before our own snap and is ignored. */
   applyNetZone(level: number, nightNo: number) {
     if (!this.mp || this.mpHost) return; // the host IS the truth
-    const lv = Math.max(0, Math.min(level, ZONE_RADII.length - 1));
+    const lv = Math.max(0, Math.min(level, this.M.zoneRadii.length - 1));
     if (lv <= this.zoneLevel) return;
     const prev = this.zoneLevel;
     this.zoneLevel = lv;
@@ -9105,5 +9141,5 @@ export class GameEngine {
   }
 }
 
-export const WALL_R = WALL_RADIUS;
+export const WALL_R = LOBBY_MAP.wallR;
 export const DAY_LEN = DAY_SECONDS;

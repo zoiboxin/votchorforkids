@@ -41,6 +41,9 @@ interface Cluster {
   /** world-space center (refreshed every pass for dynamic clusters) */
   cx: number;
   cz: number;
+  /** distance multiplier for big worlds — the 4×4 km arenas cull ~2.6× farther
+   *  so sparse POIs don't pop in and out while roaming empty ground */
+  baseMul: number;
   /** bounding-sphere radius (world units) */
   r: number;
   /** bounding-box height (world units) — taller clusters cull farther */
@@ -61,7 +64,7 @@ const BASE = 250;
 const TALL_SCALE = 2.4;
 
 const clusters: Cluster[] = [];
-const roots: { obj: THREE.Object3D; dynamic: boolean }[] = [];
+const roots: { obj: THREE.Object3D; dynamic: boolean; baseMul: number }[] = [];
 /** Clusters the CULLER itself hid — lets re-collection distinguish "hidden
  *  by us, may re-show" from "hidden by its owner, never touch" (e.g. the
  *  procedural car slots the kit/GLB bodies replaced are hidden forever). */
@@ -86,7 +89,7 @@ function hasGuardedContent(o: THREE.Object3D): boolean {
 
 /** Walk a registered root, collecting the top-most local clusters (no
  *  descent below one — parents and children must never both toggle). */
-function collect(obj: THREE.Object3D, dynamic: boolean): void {
+function collect(obj: THREE.Object3D, dynamic: boolean, baseMul: number): void {
   const stack: { o: THREE.Object3D; depth: number }[] = [{ o: obj, depth: 0 }];
   while (stack.length) {
     const { o, depth } = stack.pop()!;
@@ -121,6 +124,7 @@ function collect(obj: THREE.Object3D, dynamic: boolean): void {
           r,
           h: _size.y,
           dynamic,
+          baseMul,
           shown: o.visible,
         });
         continue; // do not descend — children of a cluster ride its visibility
@@ -132,10 +136,10 @@ function collect(obj: THREE.Object3D, dynamic: boolean): void {
 
 /** Register a subtree root for distance culling (idempotent). `dynamic` for
  *  roots whose clusters move every frame (the car fleets). */
-export function registerCullRoot(obj: THREE.Object3D | null, dynamic = false): void {
+export function registerCullRoot(obj: THREE.Object3D | null, dynamic = false, baseMul = 1): void {
   if (!obj) return;
   if (roots.some((r) => r.obj === obj)) return;
-  roots.push({ obj, dynamic });
+  roots.push({ obj, dynamic, baseMul });
   clusters.length = 0; // force a re-collection next pass
 }
 
@@ -163,7 +167,7 @@ export function tickStaticCull(camera: THREE.Camera, dt: number): void {
   if (collectAcc >= COLLECT_EVERY) {
     collectAcc = 0;
     clusters.length = 0;
-    for (const { obj, dynamic } of roots) collect(obj, dynamic);
+    for (const { obj, dynamic, baseMul } of roots) collect(obj, dynamic, baseMul);
   }
   if (acc < PASS_EVERY) return;
   acc = 0;
@@ -178,7 +182,7 @@ export function tickStaticCull(camera: THREE.Camera, dt: number): void {
     }
     const dx = cx - cam.x, dz = cz - cam.z;
     const d = Math.sqrt(dx * dx + dz * dz) - c.r;
-    const want = d < BASE + c.h * TALL_SCALE;
+    const want = d < BASE * c.baseMul + c.h * TALL_SCALE;
     if (want === c.shown) continue;
     c.obj.visible = want;
     c.shown = want;

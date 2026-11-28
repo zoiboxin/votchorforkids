@@ -5,6 +5,7 @@ import dynamic from "next/dynamic";
 import { WORLD } from "./WorldView";
 import { GameEngine } from "@/lib/game/engine";
 import { terrainHeight } from "@/lib/game/worldgen";
+import { generateSeasonWorld } from "@/lib/game/seasonWorld";
 import { useGame } from "./store";
 import { sfx, startMusic, stopMusic, stopDrone } from "@/lib/game/audio";
 import { useGameInput, requestGameLock } from "./Scene";
@@ -39,6 +40,9 @@ const Scene = dynamic(() => import("./Scene").then((m) => m.Scene), {
  *  menu before the finished night walks them back to the main screen — the
  *  town kept living while they were away, so nothing is left to wait for. */
 const END_IDLE_GRACE_MS = 20_000;
+/** 🏙️ how long a solo player roams the town island before the dropship lifts
+ *  for the season arena — the HUD chip counts it down (LAUNCH NOW skips it). */
+const LOBBY_ROAM_MS = 45_000;
 
 export function GameRoot() {
   const screen = useGame((s) => s.screen);
@@ -92,32 +96,26 @@ export function GameRoot() {
     }
   }, [clearEndKick]);
 
-  /** 🏟️ PUBG-style entry: don't boot the world alone — park in the MATCH LOBBY
-   *  with a shared 30 s countdown. Friends who Quick join during the window
-   *  launch TOGETHER with you; AI bots (survivors, runners & police) fill the
-   *  rest of the 100-soul session. */
-  const startMatchLobby = useCallback(() => {
-    useGame.getState().setPaused(false);
-    useGame.getState().setPauseReport(false);
-    useGame.getState().setVictoryOpen(false);
-    clearEndKick();
-    sfx.click();
-    startMusic();
-    void enterMatchLobby();
-  }, [clearEndKick]);
-
-  const startGame = useCallback(() => {
+  const startGame = useCallback((mode: "match" | "lobby" = "match") => {
     useGame.getState().setScreen("connecting");
     useGame.getState().setPaused(false);
     useGame.getState().setPauseReport(false);
     useGame.getState().setVictoryOpen(false);
-    useGame.getState().setShowHelp(true); // goal card re-shows every round, auto-hides after 12 s
+    useGame.getState().setShowHelp(mode !== "lobby"); // goal card re-shows every round, auto-hides after 12 s
     useGame.getState().setWheelOpen(false); // never carry a stale 🎒 tool wheel into a fresh run
     endSavedRef.current = false; // 💾 fresh run → its end gets saved again
     recapPostedRef.current = false; // 📝 fresh run → its own leaderboard POST
     clearEndKick();
     sfx.click();
     startMusic();
+    // 🗓️ the lobby roam arms its countdown; a match clears it
+    if (mode === "lobby") {
+      useGame.getState().setLobbyRoam(true);
+      useGame.getState().setMatchStartsAt(Date.now() + LOBBY_ROAM_MS);
+    } else {
+      useGame.getState().setLobbyRoam(false);
+      useGame.getState().setMatchStartsAt(0);
+    }
     setTimeout(() => {
       // read the look FRESH from the store — the join screen applies the final
       // look right before calling this, so a closure-captured look would lag a beat
@@ -133,12 +131,23 @@ export function GameRoot() {
         const mpSeat = mpRef.current && net.code && net.slot >= 0;
         const seed = mpSeat ? sessionSeed(net.code) : MASTER_MATCH_SEED;
         const seat = mpSeat ? net.slot : undefined;
+        // 🗺️ MAP PICK — the lobby roam plays the town island; every match
+        // (solo or relayed) plays the SEASON arena: a deterministic 4×4 km
+        // world grown from the season kit. Precedence: the HOST's own pick
+        // wins (guests follow the relay's room season); a fresh solo room
+        // adopts the player's season and pushes it to the relay below.
+        const seasonId = mpSeat && !net.isHost
+          ? (net.lobby?.seasonId || useGame.getState().seasonId || "s1")
+          : (useGame.getState().seasonId || "s1");
+        const world = mode === "lobby" ? WORLD : generateSeasonWorld(seasonId);
         let eng = engineRef.current;
-        if (!eng) {
-          eng = new GameEngine(WORLD, freshLook, (msg, kind) => pushToast(msg, kind), seed, seat);
+        if (!eng || eng.mode !== mode || eng.world !== world) {
+          if (eng) eng.running = false; // the old world's sim halts before the swap
+          eng = new GameEngine(world, freshLook, (msg, kind) => pushToast(msg, kind), seed, seat, mode);
           engineRef.current = eng;
           setEngine(eng);
-          (window as unknown as { __vc?: unknown }).__vc = { engine: eng, world: WORLD, terrainH: terrainHeight, net };
+          setRunId((v) => v + 1); // remount the Scene for a clean GL state
+          (window as unknown as { __vc?: unknown }).__vc = { engine: eng, world, terrainH: terrainHeight, net };
           (window as unknown as { __vcStore?: unknown }).__vcStore = useGame; // debug/test hook
         }
         // 🌐 net glue BEFORE reset — the engine learns mp/mpSlot first, so the
@@ -180,6 +189,10 @@ export function GameRoot() {
 
       if (mpRef.current && net.code && net.slot >= 0) {
         boot(); // 🏟️ lobby / match-lobby path — the seat is already ours
+        return;
+      }
+      if (mode === "lobby") {
+        boot(); // 🏙️ the 3D lobby roam is private — no seat claim, no relay
         return;
       }
 
@@ -252,6 +265,9 @@ export function GameRoot() {
           return;
         }
         if (r) mpRef.current = true;
+        // 🗓️ a freshly-hosted room adopts OUR season pick before the world
+        // boots, so quick-joiners grow the same themed arena
+        if (r && net.isHost && !r.started) net.sendSeason(useGame.getState().seasonId || "s1");
         boot();
         if (r && net.isHost && !r.started) {
           net.send({ t: "start" }); // the relay marks this room LIVE for quick-joiners
@@ -284,6 +300,27 @@ export function GameRoot() {
     }, 650);
   }, [pushToast, makeOnReset, clearEndKick]);
 
+  /** 🏟️ PUBG-style entry: don't boot the world alone — park in the MATCH LOBBY
+   *  with a shared 30 s countdown. Friends who Quick join during the window
+   *  launch TOGETHER with you; AI bots (survivors, runners & police) fill the
+   *  rest of the 100-soul session. */
+  const startMatchLobby = useCallback(() => {
+    useGame.getState().setPaused(false);
+    useGame.getState().setPauseReport(false);
+    useGame.getState().setVictoryOpen(false);
+    clearEndKick();
+    sfx.click();
+    startMusic();
+    // 🏙️ SOLO FLOW — the town island IS the lobby: boot it in roam mode and
+    // count down to the season drop. A live relay room (Multiplayer panel or
+    // "Play again" after a shared match) still gathers in the match lobby.
+    if (!net.code) {
+      startGame("lobby");
+      return;
+    }
+    void enterMatchLobby();
+  }, [clearEndKick, startGame]);
+
   /* ---------- 🌐 match launch — every lobby member boots the night together ----------
    * The MatchLobby countdown is the primary trigger; this shared fn is the ONE
    * launch path (guarded so a timer + a racing `start` event can't double-boot). */
@@ -297,10 +334,41 @@ export function GameRoot() {
         net.sessionStarted = true; // our room is LIVE now (relobby-aware)
       }
       net.send({ t: "hello" }); // a friendly wave that also verifies the wire
-      startGame();
+      startGame("match");
     });
     return () => useGame.getState().setMpStartRun(null);
   }, [startGame]);
+
+  /* ---------- 🏙️ lobby roam → season match ----------
+   * The 3D lobby countdown (or the HUD's LAUNCH NOW button) tears down the
+   * roam engine and boots a fresh one on the season arena — the dropship
+   * opens the match the classic way, now over a 4×4 km themed world. */
+  const startSeasonMatch = useCallback(() => {
+    const st = useGame.getState();
+    if (st.screen !== "play" || engineRef.current?.mode !== "lobby") return;
+    st.setMatchStartsAt(0);
+    st.setLobbyRoam(false);
+    engineRef.current = null; // drop the roam engine — boot() grows the arena
+    setEngine(null);
+    startGame("match");
+  }, [startGame]);
+
+  useEffect(() => {
+    useGame.getState().setForceStartMatch(startSeasonMatch);
+    return () => useGame.getState().setForceStartMatch(null);
+  }, [startSeasonMatch]);
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      const st = useGame.getState();
+      if (st.screen !== "play") return;
+      const eng = engineRef.current;
+      if (!eng || eng.mode !== "lobby" || !st.matchStartsAt) return;
+      if (Date.now() < st.matchStartsAt) return;
+      startSeasonMatch();
+    }, 500);
+    return () => clearInterval(t);
+  }, [startSeasonMatch]);
 
   /* ---------- 🏟️ the host's `start` event = the launch backstop ----------
    * The shared countdown fires on every client's own clock; machines a beat
@@ -403,6 +471,8 @@ export function GameRoot() {
     mpRef.current = false;
     leaveMatchmaking();
     useGame.getState().setMpOpen(false);
+    useGame.getState().setLobbyRoam(false);
+    useGame.getState().setMatchStartsAt(0);
     setScreen("landing");
   }, [setScreen, clearEndKick]);
 

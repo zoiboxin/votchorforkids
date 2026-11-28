@@ -1,4 +1,4 @@
-import { AGE_STATS, COYOTE_S, DAY_SECONDS, DOUBLE_JUMP_VY, GRAVITY, MOUNTAIN_INNER, MOUNTAIN_OUTER, SPRINT_MULT, WALL_RADIUS, type AgeGroup } from "./constants";
+import { AGE_STATS, COYOTE_S, DAY_SECONDS, DOUBLE_JUMP_VY, GRAVITY, MOUNTAIN_INNER, SPRINT_MULT, WALL_RADIUS, type AgeGroup } from "./constants";
 import { clamp } from "./rng";
 import { resolve, standTopAt, terrainHeight, type World } from "./worldgen";
 
@@ -45,9 +45,11 @@ export function stepBody(
   // inside the visual mountain band, yet x/z both stayed under 598 so the old
   // check skipped the ground sample and the survivor waded INSIDE the mud-valley
   // mesh instead of walking on top of it)
-  if (Math.hypot(b.x, b.z) > MOUNTAIN_INNER - 12) {
-    const hx = terrainHeight(b.x + 0.8, b.z) - terrainHeight(b.x - 0.8, b.z);
-    const hz = terrainHeight(b.x, b.z + 0.8) - terrainHeight(b.x, b.z - 0.8);
+  const map = world.map;
+  if (Math.hypot(b.x, b.z) > (map?.mountInner ?? MOUNTAIN_INNER) - 12) {
+    const terr = map?.terrain ?? terrainHeight;
+    const hx = terr(b.x + 0.8, b.z) - terr(b.x - 0.8, b.z);
+    const hz = terr(b.x, b.z + 0.8) - terr(b.x, b.z - 0.8);
     const slope = Math.hypot(hx, hz) / 1.6;
     climb = clamp(1 - slope * 0.62, 0.38, 1);
   }
@@ -73,7 +75,7 @@ export function stepBody(
   // second FULL-POWER "ground" jump (jumps stayed 1 — no flip, no jump2 sfx).
   // Coyote forgiveness now applies only to a body that hasn't jumped yet
   // (stepping off a ledge keeps jumps=0; a real jump sets jumps=1).
-  const terr = terrainHeight(b.x, b.z);
+  const terr = (world.map?.terrain ?? terrainHeight)(b.x, b.z);
   const stepGate = b.onGround && b.vy <= 0.01 ? 0.55 : 0.02; // walking step-up vs falling landing
   const plat = standTopAt(world, b.x, b.z, b.y, stepGate);
   const ground = Math.max(terr, plat);
@@ -96,7 +98,7 @@ export function stepBody(
   // 🧍 re-probe the platform with a landing gate — after this frame's fall the
   // feet may now be low enough to rest on a roof/boulder edge
   const landPlat = standTopAt(world, b.x, b.z, b.y + Math.max(0, -b.vy * dt) + 0.04, 0.04);
-  const landGround = Math.max(terrainHeight(b.x, b.z), landPlat);
+  const landGround = Math.max((world.map?.terrain ?? terrainHeight)(b.x, b.z), landPlat);
   if (b.y <= landGround) {
     b.y = landGround;      // landed (or the hill / a platform rose to meet us)
     b.vy = 0;
@@ -110,7 +112,8 @@ export function stepBody(
   b.x += b.vx * dt; b.z += b.vz * dt;
   resolve(b, 0.45, world, -1, b.y); // 🧍 feet height skips climbable tops we stand on
   const rr = Math.hypot(b.x, b.z);
-  if (rr > WALL_RADIUS) { b.x *= WALL_RADIUS / rr; b.z *= WALL_RADIUS / rr; }
+  const wallR = world.map?.wallR ?? WALL_RADIUS;
+  if (rr > wallR) { b.x *= wallR / rr; b.z *= wallR / rr; }
   if (moving) b.face = Math.atan2(b.vx, b.vz);
 }
 

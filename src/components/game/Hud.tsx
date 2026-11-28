@@ -11,6 +11,8 @@ import type { GameEngine } from "@/lib/game/engine";
 import { AIRPORT, DETAIN_SECONDS, GRAVEYARD, ITEMS, INV_SLOTS, MUSEUM, NIGHTS_TOTAL, POLICE_STATIONS, POWERS, PREHISTORIC, TOOLS, WILDLIFE_ENABLED } from "@/lib/game/constants";
 import { BARN_BASE, HOSPITAL, MALL, RAILWAY, RAILWAY_stationHouse, SCHOOL } from "@/lib/game/worldgen";
 import { useGame } from "./store";
+import type { SeasonWorld } from "@/lib/game/seasonWorld";
+import { SEASON_BY_ID } from "@/lib/game/seasons";
 import { requestGameLock } from "./Scene";
 import { setMuted as setAudioMuted, sfx, stopMusic, startMusic } from "@/lib/game/audio";
 import { Button } from "@/components/ui/button";
@@ -42,11 +44,85 @@ const MAP_POIS: { x: number; z: number; disc: string; ring: string; glyph: strin
   ...BARN_BASE.map(([x, z]) => ({ x, z, disc: "#92400e", ring: "#451a03", glyph: "F", label: "FARM", ly: 26 })),
 ];
 
+/* ------- 🗺️ seasonal arena painter — one pass for the 4×4 km kit worlds.
+   Ground/rim read the season palette, roads stroke their real segments, and
+   every named POI gets the same haloed-badge treatment as the lobby landmarks. ------- */
+function drawSeasonMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine, K: number, U: number, mini: boolean) {
+  const w = engine.world as SeasonWorld;
+  const map = engine.world.map!;
+  const pal = w.def.pal;
+  const hex = (n: number) => `#${n.toString(16).padStart(6, "0")}`;
+  const dot = (x: number, z: number, r: number, col: string, alpha = 1) => {
+    c.globalAlpha = alpha;
+    c.fillStyle = col;
+    c.beginPath();
+    c.arc(S / 2 + x * K, S / 2 + z * K, r, 0, 6.3);
+    c.fill();
+    c.globalAlpha = 1;
+  };
+  // rim mountains band + the playable ground disc
+  c.fillStyle = hex(pal.snow ? 0xc8d4e2 : 0x37413a);
+  c.beginPath(); c.arc(S / 2, S / 2, (map.wallR + 260) * K, 0, 6.3); c.fill();
+  c.fillStyle = hex(pal.ground);
+  c.beginPath(); c.arc(S / 2, S / 2, map.wallR * K, 0, 6.3); c.fill();
+  // dirt patchwork hint (big map only)
+  if (!mini) {
+    c.fillStyle = hex(pal.ground2);
+    for (let i = 0; i < 26; i++) {
+      const a = i * 2.399963, r = (0.15 + (i % 7) * 0.11) * map.wallR;
+      c.beginPath();
+      c.arc(S / 2 + Math.cos(a) * r * K, S / 2 + Math.sin(a) * r * K, (60 + (i * 37) % 90) * K, 0, 6.3);
+      c.globalAlpha = 0.5; c.fill(); c.globalAlpha = 1;
+    }
+  }
+  // roads — the real segments, scaled
+  c.strokeStyle = "rgba(20,16,10,0.34)";
+  c.lineWidth = Math.max(1, 9 * K);
+  for (const seg of w.roads) {
+    c.beginPath();
+    c.moveTo(S / 2 + seg.x1 * K, S / 2 + seg.z1 * K);
+    c.lineTo(S / 2 + seg.x2 * K, S / 2 + seg.z2 * K);
+    c.stroke();
+  }
+  // POI plazas + haloed badges (labels on the big map)
+  c.textAlign = "center";
+  c.textBaseline = "middle";
+  for (const p of w.pois) {
+    dot(p.x, p.z, p.r * K, hex(pal.plaza), 0.85);
+    const px = S / 2 + p.x * K, pz = S / 2 + p.z * K;
+    const r = (mini ? 5.4 : 6.2) * U;
+    c.beginPath(); c.arc(px, pz, r + Math.max(1.2, 1.3 * U), 0, 6.3); c.fillStyle = "rgba(248,250,252,0.92)"; c.fill();
+    c.beginPath(); c.arc(px, pz, r, 0, 6.3); c.fillStyle = hex(pal.accent); c.fill();
+    c.lineWidth = Math.max(1, 0.75 * U); c.strokeStyle = "rgba(20,16,10,0.5)"; c.stroke();
+    const glyph = p.type === "capital" ? "★" : p.type === "landmark" ? "▲" : p.type === "farm" ? "F" : "⌂";
+    c.fillStyle = "#1c1408";
+    c.font = `900 ${Math.round(r * 1.25)}px ui-sans-serif, system-ui, sans-serif`;
+    c.fillText(glyph, px, pz + r * 0.06);
+  }
+  c.textBaseline = "alphabetic";
+  if (!mini) {
+    // dashed zone rings + POI name labels
+    c.strokeStyle = "rgba(255,255,255,0.2)";
+    c.lineWidth = 1;
+    for (const frac of [0.3, 0.56, 0.82]) { c.beginPath(); c.arc(S / 2, S / 2, map.wallR * frac * K, 0, 6.3); c.stroke(); }
+    c.fillStyle = "rgba(255,255,255,0.6)";
+    c.font = `700 ${Math.round(7 * U)}px ui-sans-serif, system-ui, sans-serif`;
+    for (const p of w.pois) {
+      c.strokeStyle = "rgba(0,0,0,0.65)"; c.lineWidth = 2.4;
+      c.strokeText(p.name.toUpperCase(), S / 2 + p.x * K, S / 2 + (p.z - p.r) * K);
+      c.fillText(p.name.toUpperCase(), S / 2 + p.x * K, S / 2 + (p.z - p.r) * K);
+    }
+  }
+}
+
 /* ------- shared world-map canvas painting (156px minimap + 560px big map).
    mini = true → clean survival view: terrain, landmarks, night zombies & YOU only —
    all the food/loot/police/contestant clutter stays on the big map (M). ------- */
 function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine, night: boolean, mini = false, pin: MapPin = null) {
-  const K = S / 1150;         // world units → px (fits the bigger 545-radius wall)
+  // 🗺️ seasonal arenas scale the whole painter off their own wall radius —
+  // the town island AND the 4×4 km season worlds share this one painter
+  const sm = engine.world.map?.seasonal ? engine.world.map : null;
+  const K = S / (sm ? (sm.wallR + 340) * 2 : 1150);
   const U = S / 156;          // scale for the hand-tuned 156px marker sizes
   const dot = (x: number, z: number, r: number, col: string, alpha = 1) => {
     c.globalAlpha = alpha;
@@ -57,6 +133,8 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     c.globalAlpha = 1;
   };
   c.clearRect(0, 0, S, S);
+  if (sm) drawSeasonMap(c, S, engine, K, U, mini);
+  if (!sm) {
   dot(0, 0, 712 * K, "#4a4038");     // ⛰️ rough mountain band hugging the wall
   // 🦕 prehistoric valley — a sandy sector wedge on the mountain band (SW arc)
   c.fillStyle = "rgba(169,141,95,0.6)";
@@ -133,6 +211,7 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
     c.fillText("⛰ MOUNTAINS", S / 2 + 480 * K, S / 2 + 480 * K);
     for (const p of MAP_POIS) c.fillText(p.label, S / 2 + p.x * K, S / 2 + (p.z + p.ly) * K);
   }
+  } // 🗺️ end town-island terrain paint
   // 🧱 THE WALL — the shrinking safe zone. Every map (mini & big) shows it:
   // the ground beyond the wall dims red, the boundary glows teal (red when
   // YOU are caught outside it).
@@ -166,12 +245,12 @@ function drawWorldMap(c: CanvasRenderingContext2D, S: number, engine: GameEngine
   }
   // (the city museum badge now comes from MAP_POIS — the old bare amber rect is gone)
   // ballot (big map only — the mini stays clean)
-  if (!mini) {
+  if (!mini && !sm) {
     c.fillStyle = "#f7c948";
     c.beginPath(); c.arc(S / 2, S / 2 - 170 * K, 2.6 * U, 0, 6.3); c.fill();
   }
-  // police stations — white squares with a navy badge
-  for (const st of POLICE_STATIONS) {
+  // police stations — white squares with a navy badge (lobby map only)
+  for (const st of sm ? [] : POLICE_STATIONS) {
     const sx = S / 2 + st.x * K, sz = S / 2 + st.z * K;
     const r = 4.6 * U;
     c.fillStyle = "#f2f4f0";
@@ -559,6 +638,12 @@ function Bar({ v, color, icon, low = false }: { v: number; color: string; icon: 
 /* ------- 🌙 night strip — 7-moon story tracker + phase countdown (top-center).
    Replaces the old vote/police objective cards: the 7Nights story IS the objective. ------- */
 function NightStrip() {
+  // 🏙️ 3D LOBBY ROAM — while the player roams the town island waiting for the
+  // match, the story strip swaps to the season countdown (with LAUNCH NOW)
+  const lobbyRoam = useGame((s) => s.lobbyRoam);
+  const matchStartsAt = useGame((s) => s.matchStartsAt);
+  const seasonId = useGame((s) => s.seasonId);
+  const forceStart = useGame((s) => s.forceStartMatch);
   const nightNo = useGame((s) => s.hud.nightNo);
   const phase = useGame((s) => s.hud.phase);
   const phaseLeft = useGame((s) => s.hud.phaseLeft);
@@ -576,6 +661,13 @@ function NightStrip() {
   const youFed = useGame((s) => s.hud.youFed ?? 0);
   const beastCount = useGame((s) => s.hud.beastCount);
   const beast = youPossessed && phase === "night";
+  // 🏙️ lobby-roam ticker — a 1 Hz clock for the match countdown chip
+  const [roamNow, setRoamNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!lobbyRoam) return;
+    const t = setInterval(() => setRoamNow(Date.now()), 500);
+    return () => clearInterval(t);
+  }, [lobbyRoam]);
   const secs = Math.max(0, Math.ceil(phaseLeft));
   const mm = String(Math.floor(secs / 60)).padStart(2, "0");
   const ss = String(secs % 60).padStart(2, "0");
@@ -591,6 +683,28 @@ function NightStrip() {
     : phase === "dawn" ? "🌅 DAWN — you made it"
     : `☀️ DAY ${nightNo} — gather & build`;
   const hot = phase === "dusk" || phase === "night" || dawnSoon;
+  if (lobbyRoam) {
+    const left = Math.max(0, Math.ceil((matchStartsAt - roamNow) / 1000));
+    const def = SEASON_BY_ID[seasonId];
+    return (
+      <div className="flex items-center gap-1.5">
+        <div role="status" aria-label={`Lobby roam: ${def?.title ?? "season"} match starts in ${left} seconds`}
+          className="flex items-center gap-2 rounded-full border border-amber-400/50 bg-black/55 px-3 py-1 shadow-[0_0_16px_rgba(245,158,11,0.3)] backdrop-blur-md">
+          <span aria-hidden className="text-xs">🏙️</span>
+          <span className="whitespace-nowrap text-[10px] font-black uppercase tracking-wider text-amber-200 sm:text-[11px]">
+            {def?.title ?? "Season"} drop in {left}s — roam the town
+          </span>
+          <span className="rounded bg-white/10 px-1 text-[10px] font-black tabular-nums text-white/85 sm:text-[11px]">{left}s</span>
+        </div>
+        <button
+          onClick={() => forceStart?.()}
+          className="rounded-full border border-amber-300/70 bg-amber-500/85 px-3 py-1 text-[10px] font-black uppercase tracking-wider text-amber-950 transition hover:bg-amber-400 sm:text-[11px]"
+        >
+          Launch now ✈️
+        </button>
+      </div>
+    );
+  }
   return (
     <div className="flex items-center gap-1.5">
       <motion.div

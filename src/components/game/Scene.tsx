@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
 import { GameLoop, Npcs, Zombies, HearseGuards, Animals, JungleInsects, Pickups, Powers, Licenses, Shadows, Confetti, CrewRig, RemotesView, ToolDrops, BuildsView, RocksView, Stumps, LootView, ZoneWall, type ClockRef } from "./Entities";
 import { WorldView, WORLD } from "./WorldView";
+import { SeasonWorldView } from "./SeasonWorldView";
 import { GameEngine } from "@/lib/game/engine";
 import type { Appearance } from "@/lib/game/constants";
 import { WILDLIFE_ENABLED } from "@/lib/game/constants";
@@ -312,6 +313,11 @@ export function useGameInput(engine: GameEngine | null) {
 
 export function Scene({ engine }: { engine: GameEngine }) {
   const clockRef = useRef<number>(0.3) as ClockRef;
+  // 🗺️ seasonal arenas run the same physics on a 4×4 km field — the camera far
+  // plane and the world renderer both switch with the map. Keying the Canvas by
+  // map id gives every boot a clean GL state (fog, sky, cull roots reset).
+  const mapId = engine.world.map?.id ?? "lobby";
+  const seasonal = engine.world.map?.seasonal === true;
   const low = useMemo(() => isLowPower(), []);
   // hide the OS mouse icon over the world while actively playing — pointer lock
   // hides it natively; this covers browsers/iframes where the lock is blocked.
@@ -326,8 +332,9 @@ export function Scene({ engine }: { engine: GameEngine }) {
   }, [low]);
   return (
     <Canvas
+      key={mapId}
       className={`absolute inset-0 ${playing && !touch ? "cursor-none" : ""}`}
-      camera={{ fov: 62, near: 0.5, far: 900, position: [0, 40, 90] }}
+      camera={{ fov: 62, near: 0.5, far: seasonal ? 1900 : 900, position: [0, 40, 90] }}
       dpr={dpr}
       gl={{ antialias: !low, powerPreference: "high-performance" }}
       onCreated={({ gl, scene, camera }) => {
@@ -344,7 +351,7 @@ export function Scene({ engine }: { engine: GameEngine }) {
         * that swung the car around the screen through every turn — the residual
         * "jerky driving" feel. The sim now ticks before any view reads it. */}
       <GameLoop engine={engine} clockRef={clockRef} />
-      <WorldView clockRef={clockRef} engine={engine} />
+      {seasonal ? <SeasonWorldView clockRef={clockRef} engine={engine} /> : <WorldView clockRef={clockRef} engine={engine} />}
       <Npcs engine={engine} />
       <CrewRig engine={engine} />
       <RemotesView engine={engine} />

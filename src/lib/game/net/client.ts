@@ -47,6 +47,8 @@ export interface LobbySnapshot {
   seed?: number;
   /** 🌐 the full authoritative match state (seed + timeline stamps) */
   match?: { seed: number; createdAt: number; startedAt: number };
+  /** 🗓️ which season arena the room plays (host's pick, relay-authoritative) */
+  seasonId?: string;
 }
 
 export type ConnState = "idle" | "connecting" | "lobby" | "room" | "error" | "closed";
@@ -392,6 +394,11 @@ export class NetClient {
 
   setReady(ready: boolean) {
     this.sock?.emit("mp:ready", ready);
+  }
+
+  /** 🗓️ host-only: pick the season arena for the room (rides every lobby payload) */
+  sendSeason(seasonId: string) {
+    this.sock?.emit("mp:season", { seasonId });
   }
 
   /** 🏟️ arm (or extend) the shared match-lobby countdown — the relay stamps

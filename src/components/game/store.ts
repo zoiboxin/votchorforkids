@@ -349,6 +349,10 @@ export interface GameStore {
   /** 🌐 registered by GameRoot: flips everyone into "connecting" and boots a net run */
   mpStartRun: (() => void) | null;
   setMpStartRun: (fn: (() => void) | null) => void;
+  /** 🏙️ registered by GameRoot: launches the season match from the 3D lobby roam
+   *  (the HUD countdown chip's LAUNCH NOW button) */
+  forceStartMatch: (() => void) | null;
+  setForceStartMatch: (fn: (() => void) | null) => void;
   setLook: (p: Partial<Appearance>) => void;
   applyLook: (a: Appearance) => void;
   setName: (n: string) => void;
@@ -365,6 +369,18 @@ export interface GameStore {
   setPaused: (p: boolean) => void;
   setPauseReport: (v: boolean) => void;
   setEndKickAt: (t: number) => void;
+  /** 🗓️ the active SEASON — picks which 4×4 km kit arena the match plays on
+   *  (s1 Christmas Village, s2 Halloween Night, … persisted with the profile) */
+  seasonId: string;
+  setSeasonId: (id: string) => void;
+  /** 🏙️ true while the player roams the TOWN ISLAND as the 3D match lobby
+   *  (solo flow) — the HUD shows the countdown chip; at zero the match boots
+   *  on the season arena with the dropship drop */
+  lobbyRoam: boolean;
+  setLobbyRoam: (v: boolean) => void;
+  /** 🏟️ epoch ms when the 3D lobby roam auto-launches the season match (0 = none) */
+  matchStartsAt: number;
+  setMatchStartsAt: (t: number) => void;
   setBigMapOpen: (v: boolean) => void;
   setWheelOpen: (v: boolean) => void;
   setLicenseOpen: (v: boolean) => void;
@@ -434,6 +450,9 @@ export const useGame = create<GameStore>()((set, get) => ({
   paused: false,
   pauseReport: false,
   endKickAt: 0,
+  seasonId: "s1",
+  lobbyRoam: false,
+  matchStartsAt: 0,
   bigMapOpen: false,
   wheelOpen: false,
   licenseOpen: false,
@@ -642,6 +661,8 @@ export const useGame = create<GameStore>()((set, get) => ({
   pushMpChat: (name, msg) => set((s) => ({ mp: { ...s.mp, chat: [...s.mp.chat.slice(-30), { name, msg, at: Date.now() }] } })),
   mpStartRun: null,
   setMpStartRun: (fn) => set({ mpStartRun: fn }),
+  forceStartMatch: null,
+  setForceStartMatch: (fn) => set({ forceStartMatch: fn }),
   pushToast: (msg, kind = "info") => set((s) => ({ toasts: [...s.toasts.slice(-3), { msg, kind, id: toastId++ }] })),
   dropToast: (id) => set((s) => ({ toasts: s.toasts.filter((t) => t.id !== id) })),
   setMuted: (m) => set({ muted: m }),
@@ -653,6 +674,12 @@ export const useGame = create<GameStore>()((set, get) => ({
   setPaused: (p) => set({ paused: p }),
   setPauseReport: (v) => set({ pauseReport: v }),
   setEndKickAt: (t) => set({ endKickAt: t }),
+  setSeasonId: (id) => {
+    set({ seasonId: id });
+    try { localStorage.setItem("7n.season", id); } catch { /* private mode */ }
+  },
+  setLobbyRoam: (v) => set({ lobbyRoam: v }),
+  setMatchStartsAt: (t) => set({ matchStartsAt: t }),
   setMouseLocked: (v) => set({ mouseLocked: v }),
   setBigMapOpen: (v) => set({ bigMapOpen: v }),
   setWheelOpen: (v) => set({ wheelOpen: v }),
@@ -802,4 +829,13 @@ export function downloadProfile() {
   a.download = `7nights-profile-${tag}.json`;
   a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 3000);
+}
+
+/* 🗓️ restore the persisted season pick once at module load (client only) —
+ * the zustand store exists by now, so a direct setState is safe here. */
+if (typeof window !== "undefined") {
+  try {
+    const sid = localStorage.getItem("7n.season");
+    if (sid && /^s\d+$/.test(sid)) useGame.setState({ seasonId: sid });
+  } catch { /* private mode */ }
 }
