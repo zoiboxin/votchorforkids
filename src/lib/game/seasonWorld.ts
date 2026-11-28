@@ -625,7 +625,9 @@ export function generateSeasonWorld(seasonId: string): SeasonWorld {
     zoneRadii: SEASON_ZONE_RADII.map((r) => Math.round(r * K)),
     dropOuter: 2400 * K,
     autoEjectR: 1650 * K,
-    dropAlt: 90,
+    // ✈️ cruise above the ridged rim skyline (S1's tight arena raises the
+    // range up to ~151 u — the ship must clear every summit on its crossing)
+    dropAlt: KM < 4 ? 160 : 90,
     ringR: 520 * K,
     terrain,
     zones,

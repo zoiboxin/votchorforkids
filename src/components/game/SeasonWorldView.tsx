@@ -18,6 +18,8 @@ import { registerCullRoot, resetCullRoots, tickStaticCull } from "@/lib/game/sta
 import { enableGlbCulling } from "@/lib/game/glbCull";
 import { preloadSeasonModels, seasonModelSize, spawnSeasonModel } from "@/lib/game/seasonModels";
 import { isKitType, kitWheelR, makeKitCar } from "@/lib/game/cars/kit";
+import { buildMountainGeometry, clearPeaks, HILL_COLS, ROCK_COLS, type Peak } from "@/lib/game/mountainShapes";
+import { mulberry32, range } from "@/lib/game/rng";
 import type { SeasonWorld } from "@/lib/game/seasonWorld";
 import { roadProfileH } from "@/lib/game/seasonWorld";
 import type { SeasonDef, SeasonPalette, FoliageKind } from "@/lib/game/seasons";
@@ -1052,37 +1054,106 @@ function SeasonGlbs({ world }: { world: SeasonWorld }) {
 
 function SeasonRim({ world }: { world: SeasonWorld }) {
   const pal = world.def.pal;
-  const ref = useRef<THREE.InstancedMesh>(null!);
-  const PEAKS = 64;
-  // 🗺️ the skyline hugs the wall — radius/height scale from the arena size so
-  // the 2×2 km village reads its peaks at ~1.2 km, the 4×4 maps at ~2.3 km
-  const layout = useMemo(() => {
+  // 🏔️ one merged ridged range from the shared mountainShapes builder — fluted
+  // concave slopes, asymmetric flanks, off-centre twin summits and per-face
+  // rock/snow colouring — instead of the old 6-sided cone spikes. Deterministic
+  // per season id, so every client regrows the identical skyline.
+  const geo = useMemo(() => {
     const R = world.map.wallR;
-    return Array.from({ length: PEAKS }, (_, i) => {
-      const a = (i / PEAKS) * Math.PI * 2 + (i % 3) * 0.014;
-      const r = R + 110 + ((i * 83) % 180);
-      const base = Math.max(64, 130 * (R / 2000));
-      const s = base + ((i * 137) % 130) * Math.max(0.55, R / 2000);
-      const h = s * (0.9 + ((i * 53) % 40) / 90);
-      return { a, r, s, h };
+    const seed = (0x51ea50 ^ [...world.seasonId].reduce((a, c) => (a * 31 + c.charCodeAt(0)) | 0, 7)) ^ 0x51515;
+    const r = mulberry32(seed);
+    // skyline scale — the tight S1 arena reads its range BIG; big maps cap a
+    // little above the old cone fence (their fog hides anything taller anyway)
+    const HS = Math.min(1.35, Math.max(0.9, R / 1000));
+    // major summits — heights cluster by sector so some directions are huge
+    // snowy massifs and others low shoulders, never a uniform spike fence.
+    // S1 keeps every summit under the dropship's 160 u cruise altitude
+    // (worst case: 0.91 apex fraction × 168 h ≈ 153 + jitter — 7 u of air).
+    // WIDE bases make each major read as a massif, not an isoceles triangle.
+    const majors: Peak[] = Array.from({ length: 28 }, (_, i) => {
+      const a = (i / 28) * Math.PI * 2 + range(r, -0.06, 0.06);
+      const cl = 0.5 + 0.5 * Math.sin(2 * a + 1.7) * Math.sin(3 * a + 0.6); // 0..1
+      const h = (78 + cl * 80 + range(r, -8, 8)) * HS;
+      const d = R + 95 + cl * 55 + range(r, -20, 20);
+      const w = (110 + cl * 90 + range(r, -20, 20)) * Math.max(1, HS * 0.8);
+      return {
+        x: Math.cos(a) * d, z: Math.sin(a) * d, h, w,
+        rot: range(r, 0, Math.PI * 2),
+        sx: range(r, 0.78, 1.22), sz: range(r, 0.78, 1.22),
+        ci: i % ROCK_COLS.length, tint: range(r, -0.045, 0.055),
+        // winter grips snow from mid-slope (steep crags stay rocky); the rest
+        // only dust the tops
+        snow: pal.snow ? range(r, 0.26, 0.44) : h > 150 ? range(r, 0.55, 0.68) : range(r, 0.72, 0.9),
+        seed: 11 + i * 3.17,
+        k: range(r, 1.25, 1.85),
+        skew: range(r, 0.14, 0.3),
+        amp: [range(r, 0.18, 0.34), range(r, 0.1, 0.19), range(r, 0.05, 0.12)],
+        ph: [range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28)],
+        jit: range(r, 0.18, 0.32),
+        topT: range(r, 0.6, 0.85),
+        green: false,
+      };
     });
-  }, [world]);
-  useLayoutEffect(() => {
-    const m = new THREE.Matrix4();
-    const q = new THREE.Quaternion();
-    layout.forEach((p, i) => {
-      q.setFromAxisAngle(new THREE.Vector3(0, 1, 0), p.a);
-      m.compose(new THREE.Vector3(Math.cos(p.a) * p.r, p.h * 0.28, Math.sin(p.a) * p.r), q, new THREE.Vector3(p.s, p.h, p.s));
-      ref.current.setMatrixAt(i, m);
+    // shoulder peaks — hug the majors so the ring fuses into a CONNECTED
+    // range (isolated cones is exactly the triangle look we killed)
+    const shoulders: Peak[] = [];
+    majors.forEach((m, i) => {
+      const nSh = r() < 0.5 ? 3 : r() < 0.85 ? 2 : 1;
+      for (let k = 0; k < nSh; k++) {
+        const a = Math.atan2(m.z, m.x) + (k === 0 ? 1 : -1) * range(r, 0.012, 0.042);
+        const d = Math.hypot(m.x, m.z) + range(r, -34, 42);
+        const h = m.h * range(r, 0.5, 0.82);
+        shoulders.push({
+          x: Math.cos(a) * d, z: Math.sin(a) * d, h,
+          w: m.w * range(r, 0.66, 1.0),
+          rot: range(r, 0, Math.PI * 2),
+          sx: range(r, 0.85, 1.18), sz: range(r, 0.85, 1.18),
+          ci: (i + k + 1) % ROCK_COLS.length, tint: range(r, -0.04, 0.05),
+          snow: pal.snow ? range(r, 0.3, 0.5) : h > 90 ? range(r, 0.62, 0.76) : range(r, 0.8, 0.95),
+          seed: 71 + i * 7.7 + k * 2.9,
+          k: range(r, 1.2, 1.7),
+          skew: range(r, 0.1, 0.24),
+          amp: [range(r, 0.15, 0.28), range(r, 0.09, 0.17), range(r, 0.04, 0.11)],
+          ph: [range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28)],
+          jit: range(r, 0.15, 0.26),
+          topT: range(r, 0.62, 0.88),
+          green: false,
+        });
+      }
     });
-    ref.current.instanceMatrix.needsUpdate = true;
-  }, [layout]);
+    // snow-dusted foothills — a DENSE overlapping band hugging the wall, so
+    // the skyline never falls to nothing between massifs (always outside the
+    // playable ring)
+    const hills: Peak[] = Array.from({ length: 64 }, (_, i) => {
+      const a = (i / 64) * Math.PI * 2 + range(r, -0.03, 0.03), d = R + range(r, 30, 95);
+      return {
+        x: Math.cos(a) * d, z: Math.sin(a) * d,
+        h: range(r, 34, 58) * HS, w: range(r, 60, 100) * Math.max(1, HS * 0.7),
+        rot: range(r, 0, Math.PI * 2),
+        sx: range(r, 0.85, 1.2), sz: range(r, 0.85, 1.2),
+        ci: i % HILL_COLS.length, tint: range(r, -0.05, 0.06),
+        snow: pal.snow ? range(r, 0.45, 0.75) : 2,
+        seed: 211 + i * 5.3,
+        k: range(r, 0.5, 0.62),
+        skew: range(r, 0.08, 0.18),
+        amp: [range(r, 0.12, 0.22), range(r, 0.08, 0.16), range(r, 0.05, 0.1)],
+        ph: [range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28), range(r, 0, 6.28)],
+        jit: range(r, 0.16, 0.24),
+        topT: range(r, 0.82, 0.92),
+        green: !pal.snow,
+      };
+    });
+    const peaks = [...majors, ...shoulders, ...hills];
+    // base rings stay beyond the wall — the boundary clamps the player long
+    // before the first slope
+    clearPeaks(peaks, R + 34);
+    return buildMountainGeometry(peaks, { snow: pal.snow });
+  }, [world, pal.snow]);
+
+  const mat = useMemo(() => new THREE.MeshLambertMaterial({ vertexColors: true, flatShading: true }), []);
   return (
     <group>
-      <instancedMesh ref={ref} args={[undefined, undefined, PEAKS]} frustumCulled={false}>
-        <coneGeometry args={[1, 1.1, 6]} />
-        <meshLambertMaterial color={pal.snow ? "#dfe8f2" : "#4a5446"} />
-      </instancedMesh>
+      <mesh geometry={geo} material={mat} frustumCulled={false} />
       {/* the hard boundary band — matches the wall clamp at wallR */}
       <mesh position={[0, 6, 0]} rotation-x={-Math.PI / 2}>
         <ringGeometry args={[world.map.wallR - 3, world.map.wallR + 4, 96, 1]} />
